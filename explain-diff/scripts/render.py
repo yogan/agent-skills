@@ -790,12 +790,7 @@ def format_meta(text: str) -> str:
         escaped,
     )
     escaped = re.sub(r"`([^`]+)`", r"<code>\1</code>", escaped)
-    # An MR title can be long enough that the whole "MR !123: <title> · `branch` · commit
-    # `hash`" line wraps wherever it happens to fit width-wise, splitting mid-segment (e.g.
-    # right after the branch name) instead of at a sensible boundary. Force a deliberate
-    # break right after the MR link instead, dropping the separator that follows it - a
-    # leading "·" would otherwise dangle at the start of line 2 with nothing before it to
-    # separate from. No-op for branch:/commit: specs, which have no link and stay on one line.
+    # Break onto a new line after a long MR title instead of an arbitrary width-based wrap.
     return re.sub(r"(</a>)\s*·\s*", r"\1<br>", escaped, count=1)
 
 
