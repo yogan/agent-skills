@@ -662,15 +662,18 @@ def _format_label_segment(text: str) -> str:
     for m in _BACKTICK_RE.finditer(text):
         if m.start() > last:
             parts.append(html.escape(text[last : m.start()]))
-        parts.append(f'<FONT FACE="Menlo">{html.escape(m.group(1))}</FONT>')
+        code = m.group(1)
+        parts.append(f'<FONT FACE="Menlo">{html.escape(code)}</FONT>')
         last = m.end()
-        # Graphviz's built-in width estimate for a FONT-FACE run tends to come in a
-        # touch narrow versus how the font actually renders, so punctuation immediately
-        # following a code span (a comma, a period, ...) can visually overlap its last
-        # glyph. A hair space closes that gap; it's a no-op when real whitespace
-        # already follows.
-        if last < len(text) and not text[last].isspace():
-            parts.append("&#8201;")
+        # Graphviz's built-in width estimate for a FONT-FACE run tends to come in ~4-5%
+        # narrow versus how the font actually renders (measured via getComputedTextLength()
+        # in a real browser), and that gap scales with the run's own length - so it's not
+        # just tight-touching punctuation (a comma, a period, ...) that can visually overlap
+        # the code span's last glyph, a real following space can be fully swallowed too once
+        # the run is long enough that the deficit exceeds the space glyph's own width (e.g.
+        # "`documents` row" rendering as "documentsrow"). Compensate with thin spaces scaled
+        # to the run's length, unconditionally - not only when no whitespace already follows.
+        parts.append("&#8201;" * max(1, len(code) // 8))
     parts.append(html.escape(text[last:]))
     return "".join(parts)
 
