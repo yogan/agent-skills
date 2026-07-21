@@ -33,7 +33,7 @@ Run the bundled script (handles detached HEAD transparently, same as `/review-br
 bash ~/.claude/skills/explain-diff/scripts/resolve-target.sh "<spec>"
 ```
 
-Source the output variables: `BASE`, `HEAD_REF`, `LABEL`, `IS_SINGLE_COMMIT`.
+Source the output variables: `BASE`, `HEAD_REF`, `LABEL`, `IS_SINGLE_COMMIT`, `MR_NUM`, `MR_URL`, `MR_TITLE`. The last three are only set for an `mr:` spec (empty otherwise) — all fetched from `glab` during resolution, so there's no need to query the MR again later just to build a link.
 
 If the script errors (not a git repo, unknown branch, MR not found, `glab` unavailable), report the error and stop.
 
@@ -65,14 +65,15 @@ Write only a small JSON content spec covering these sections, in this order:
 Content rules for each section's `html` field (raw HTML, not markdown):
 
 - Write with the clarity and flow of Martin Kleppmann — engaging, classic technical-writing style, smooth transitions between sections.
-- Diagrams: reuse a small number of diagram families throughout (e.g. a simplified UI mock for UI changes, a system/data-flow diagram with example data for backend changes). Define each as a small graph (nodes/edges) in the spec's top-level `"diagrams"` dict, drop it into a section's `html` via a bare `{{diagram:name}}` token — it already expands into the full bordered, click-to-enlarge card, don't wrap it in your own `<div class="diagram">`. `render.py` renders it through Graphviz into a scalable, zoomable inline SVG. Run `render.py --help` for the exact node/edge JSON shape. Never ASCII art, and don't hand-write flowchart HTML — the diagrams dict is the only path now.
-- Code blocks: use `<pre><code class="language-XXX">` for syntax highlighting (renderer does the tokenizing client-side, no CDN) — `<pre>` alone still works but loses highlighting. For a diff-style snippet, use `language-diff-XXX` so `+`/`-` lines get diff coloring *and* nested syntax highlighting (plain `language-diff` if the language isn't worth specifying); partial/incomplete snippets tokenize fine, no need for valid complete syntax. See `render.py --help` for the full language list and diff-line format.
+- Diagrams: reuse a small number of diagram families throughout (e.g. a simplified UI mock for UI changes, a system/data-flow diagram with example data for backend changes). Define each as a small graph (nodes/edges) in the spec's top-level `"diagrams"` dict, drop it into a section's `html` via a bare `{{diagram:name}}` token. Run `render.py --help` for the exact node/edge JSON shape. Never ASCII art, and don't hand-write flowchart HTML — the diagrams dict is the only path now.
+- Code blocks: use `<pre><code class="language-XXX">` for syntax highlighting — `<pre>` alone still works but loses highlighting. For a diff-style snippet, use `language-diff-XXX` so `+`/`-` lines get diff coloring *and* nested syntax highlighting (plain `language-diff` if the language isn't worth specifying); partial/incomplete snippets tokenize fine, no need for valid complete syntax. See `render.py --help` for the full language list and diff-line format.
 - Use `.callout` divs for key concepts, definitions, and important edge cases; plain `<table>` for comparisons.
 - Use a real ellipsis character ("…") wherever one is called for — never three dots ("...").
 - If `IS_SINGLE_COMMIT` is `true`, the Background/Code sections should scope to just that commit's change, not the whole branch history.
 - Set the spec's `"slug"` to `$LABEL` so the output filename matches the resolved target.
+- Set the spec's `"subtitle"` to a short metadata line (source ref + commit) — same backtick-for-`<code>` convention as quiz text, e.g. `` `fix/drop-legacy-auth-adapter` · commit `a1b2c3d4` ``. When `MR_URL` is set, link the MR instead of writing it as plain text or backticked, and use its title as the link label: `` [MR !$MR_NUM: $MR_TITLE]($MR_URL) · `branch` · commit `hash` ``.
 
-Dark/light mode is handled entirely by the renderer — it defaults to the reader's OS preference (`prefers-color-scheme`) and adds a toggle button that overrides it (persisted in `localStorage`). No spec fields needed for this.
+Dark/light mode is handled entirely by the renderer. No spec fields needed for this.
 
 ### Step 5 — Render & open
 
@@ -80,7 +81,7 @@ Dark/light mode is handled entirely by the renderer — it defaults to the reade
 python3 ~/.claude/skills/explain-diff/scripts/render.py spec.json
 ```
 
-It refuses to render (exit 1) if the correct option is the longest — or the shortest — one in more than 1/3 of quiz questions (each direction checked independently) — a classic tell that lets readers guess without understanding. If it errors, adjust lengths in the flagged questions and re-run; don't reach for `--allow-length-bias` unless you're sure the flagged cases are fine.
+It refuses to render if option length correlates with correctness across too many quiz questions — a classic tell that lets readers guess without understanding. If it errors, adjust lengths in the flagged questions and re-run; don't reach for `--allow-length-bias` unless you're sure the flagged cases are fine.
 
 It prints the path it wrote (`/tmp/YYYY-MM-DD-explanation-${LABEL}.html`). Open that path:
 
