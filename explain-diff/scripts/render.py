@@ -789,7 +789,13 @@ def format_meta(text: str) -> str:
         r'<a href="\2" target="_blank" rel="noopener noreferrer">\1</a>',
         escaped,
     )
-    return re.sub(r"`([^`]+)`", r"<code>\1</code>", escaped)
+    escaped = re.sub(r"`([^`]+)`", r"<code>\1</code>", escaped)
+    # An MR title can be long enough that the whole "MR !123: <title> · `branch` · commit
+    # `hash`" line wraps wherever it happens to fit width-wise, splitting mid-segment (e.g.
+    # right after the branch name) instead of at a sensible boundary. Force a deliberate
+    # break right after the MR link instead, so line 2 always starts at "· branch · commit"
+    # - a no-op for branch:/commit: specs, which have no link and stay on one line.
+    return re.sub(r"(</a>)\s*·\s*", r"\1<br>· ", escaped, count=1)
 
 
 def collect_all_quiz_questions(spec: dict) -> list:
