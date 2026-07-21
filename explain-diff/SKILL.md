@@ -45,6 +45,7 @@ Run in parallel:
 git log --oneline "$BASE".."$HEAD_REF"
 git diff "$BASE".."$HEAD_REF"
 git diff --name-only "$BASE".."$HEAD_REF"
+git diff --shortstat "$BASE".."$HEAD_REF"
 ```
 
 ### Step 3 — Explore surrounding code
@@ -72,6 +73,7 @@ Content rules for each section's `html` field (raw HTML, not markdown):
 - If `IS_SINGLE_COMMIT` is `true`, the Background/Code sections should scope to just that commit's change, not the whole branch history.
 - Set the spec's `"slug"` to `$LABEL` so the output filename matches the resolved target.
 - Set the spec's `"subtitle"` to a short metadata line (source ref + commit) — same backtick-for-`<code>` convention as quiz text, e.g. `` `fix/drop-msal-react` · commit `1026fb48` ``. When `MR_URL` is set, link the MR instead of writing it as plain text or backticked, and use its title as the link label: `` [MR !$MR_NUM: $MR_TITLE]($MR_URL) · `branch` · commit `hash` ``.
+- Parse Step 2's `git diff --shortstat` line into the spec's top-level `"diffstat"` field (`{"files", "insertions", "deletions"}` — either count can be absent when zero, then omit that key). `render.py` appends it to the end of the subtitle automatically; don't hand-write it into `"subtitle"` yourself.
 
 Dark/light mode is handled entirely by the renderer. No spec fields needed for this.
 
