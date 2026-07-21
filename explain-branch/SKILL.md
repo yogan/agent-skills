@@ -20,7 +20,7 @@ Same spec syntax as explain-diff (blank/"this branch", `branch:foo/bar`, `mr:123
 Run the **same script**, unmodified:
 
 ```bash
-bash ~/.claude/skills/explain-diff/scripts/resolve-target.sh "<spec>"
+python3 ~/.claude/skills/explain-diff/scripts/resolve-target.py "<spec>"
 ```
 
 Source `BASE`, `HEAD_REF`, `LABEL`, `IS_SINGLE_COMMIT`, `MR_NUM`, `MR_URL`, `MR_TITLE`. If

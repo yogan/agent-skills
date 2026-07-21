@@ -30,7 +30,7 @@ Translate the user's request to one canonical spec:
 Run the bundled script (handles detached HEAD transparently, same as `/review-branch`):
 
 ```bash
-bash ~/.claude/skills/explain-diff/scripts/resolve-target.sh "<spec>"
+python3 ~/.claude/skills/explain-diff/scripts/resolve-target.py "<spec>"
 ```
 
 Source the output variables: `BASE`, `HEAD_REF`, `LABEL`, `IS_SINGLE_COMMIT`, `MR_NUM`, `MR_URL`, `MR_TITLE`. The last three are only set for an `mr:` spec (empty otherwise) — all fetched from `glab` during resolution, so there's no need to query the MR again later just to build a link.
