@@ -123,6 +123,13 @@ directly — use real markup (headings, <pre> blocks, tables, ".callout" divs pe
 the CSS classes below, `{{diagram:name}}` tokens per the "diagrams" section
 above), not markdown.
 
+"subtitle" is plain text too, with the same backtick-to-`<code>` convention, plus one
+more: a markdown link `[label](https://...)` renders as a real `<a target="_blank">`.
+Use this for a source link picked up during data gathering (e.g. an MR's `web_url` from
+`glab`) — don't hand-write raw backticks or a bare URL where a link is available:
+
+    "subtitle": "[MR !502](https://gitlab.example.com/.../merge_requests/502) · `fix/drop-msal-react` · commit `1026fb48`"
+
 The page defaults to the reader's OS light/dark preference
 (`prefers-color-scheme`) and includes a manual toggle button that overrides it,
 persisted in localStorage — no spec changes needed for this.
@@ -200,6 +207,9 @@ CSS = (
   h1 { font-size: 1.9rem; border-bottom: 3px solid var(--accent); padding-bottom: .5rem; }
   h2 { font-size: 1.4rem; margin-top: 3rem; color: var(--accent); }
   h3 { font-size: 1.1rem; margin-top: 1.8rem; }
+  a { color: var(--accent); }
+  a:visited { color: var(--accent); }
+  a:hover { text-decoration: none; }
   code { font-family: 'SF Mono', Consolas, monospace; background: var(--inline-code-bg); color: inherit;
     padding: .1rem .3rem; border-radius: 3px; font-size: .92em; }
   pre { background: var(--code-bg); color: var(--code-fg); padding: 1rem 1.2rem; border-radius: 8px;
@@ -755,6 +765,18 @@ def format_inline(text: str) -> str:
     return re.sub(r"`([^`]+)`", r"<code>\1</code>", escaped)
 
 
+def format_meta(text: str) -> str:
+    """Like format_inline, plus markdown links `[label](url)` -> a real <a> tag. Used for
+    the subtitle line (e.g. an MR link picked up from `glab`), not for quiz text."""
+    escaped = html.escape(text)
+    escaped = re.sub(
+        r"\[([^\]]+)\]\((https?://[^\s)]+)\)",
+        r'<a href="\2" target="_blank" rel="noopener noreferrer">\1</a>',
+        escaped,
+    )
+    return re.sub(r"`([^`]+)`", r"<code>\1</code>", escaped)
+
+
 def collect_all_quiz_questions(spec: dict) -> list:
     """Every quiz question in the spec: the top-level "quiz" plus each section's own "quiz"."""
     questions = list(spec.get("quiz", []))
@@ -855,7 +877,7 @@ def render(spec: dict) -> str:
 </div>
 
 <h1>{html.escape(title)}</h1>
-{f'<p style="color:var(--muted); margin-top:-.5rem;">{html.escape(subtitle)}</p>' if subtitle else ''}
+{f'<p style="color:var(--muted); margin-top:-.5rem;">{format_meta(subtitle)}</p>' if subtitle else ''}
 
 <div class="toc">
 <strong>Contents</strong>

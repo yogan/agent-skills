@@ -23,9 +23,11 @@ Run the **same script**, unmodified:
 bash ~/.claude/skills/explain-diff/scripts/resolve-target.sh "<spec>"
 ```
 
-Source `BASE`, `HEAD_REF`, `LABEL`, `IS_SINGLE_COMMIT`. If `IS_SINGLE_COMMIT` is `true` (the
-user gave a `commit:` spec), there is no multi-commit story to tell — stop here and just run
-the **explain-diff** skill instead of this one.
+Source `BASE`, `HEAD_REF`, `LABEL`, `IS_SINGLE_COMMIT`, `MR_NUM`, `MR_URL`, `MR_TITLE`. If
+`IS_SINGLE_COMMIT` is `true` (the user gave a `commit:` spec), there is no multi-commit story to
+tell — stop here and just run the **explain-diff** skill instead of this one. `MR_NUM`/`MR_URL`/
+`MR_TITLE` are only set for an `mr:` spec — see explain-diff's `SKILL.md` for how to use them in
+the subtitle.
 
 ### Step 2 — List the commits and classify each one
 
@@ -96,7 +98,8 @@ Leave the spec's top-level `"quiz"` empty — all questions live on their chapte
 Content rules (diagrams, code-block language classes, `.callout`/`.diagram` divs, Kleppmann-ish
 voice) are identical to explain-diff's — see its `SKILL.md` for the full list; not repeated here.
 
-Set `"slug"` to `$LABEL`, same convention as explain-diff.
+Set `"slug"` to `$LABEL`, and `"subtitle"` the same way as explain-diff (link the MR via
+`[MR !$MR_NUM: $MR_TITLE]($MR_URL)` when set, backtick branch/commit refs).
 
 ### Step 5 — Render & open
 

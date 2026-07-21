@@ -6,7 +6,8 @@
 #   spec="mr:<number>":     a GitLab MR's source branch since it diverged from its target branch (via glab)
 #   spec="commit:<ref>":    a single commit's own diff (ref defaults to HEAD, i.e. "last commit")
 #
-# Prints shell-sourceable variables: BASE, HEAD_REF, LABEL, IS_SINGLE_COMMIT
+# Prints shell-sourceable variables: BASE, HEAD_REF, LABEL, IS_SINGLE_COMMIT, MR_NUM, MR_URL, MR_TITLE
+# MR_NUM/MR_URL/MR_TITLE are only populated for an mr: spec; empty otherwise.
 
 set -euo pipefail
 
@@ -14,6 +15,9 @@ SPEC="${1:-}"
 KIND="${SPEC%%:*}"
 VALUE="${SPEC#*:}"
 [ "$KIND" = "$SPEC" ] && VALUE=""
+MR_NUM=""
+MR_URL=""
+MR_TITLE=""
 
 find_main_ref() {
   git branch -r 2>/dev/null | grep -E '^\s*origin/(main|master)$' | head -1 | xargs
@@ -71,9 +75,12 @@ case "$KIND" in
       echo "ERROR: glab could not fetch MR !$NUM: $MR_JSON" >&2
       exit 1
     }
-    SRC=$(echo "$MR_JSON" | grep -o '"source_branch":"[^"]*"' | cut -d'"' -f4)
-    TGT=$(echo "$MR_JSON" | grep -o '"target_branch":"[^"]*"' | cut -d'"' -f4)
-    TITLE=$(echo "$MR_JSON" | grep -o '"title":"[^"]*"' | cut -d'"' -f4)
+    # Parse top-level fields only (not via grep -o: "web_url" also appears nested under
+    # author/pipelines/etc., and a naive grep would grab the wrong one).
+    SRC=$(echo "$MR_JSON" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("source_branch",""))')
+    TGT=$(echo "$MR_JSON" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("target_branch",""))')
+    TITLE=$(echo "$MR_JSON" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("title",""))')
+    MR_URL=$(echo "$MR_JSON" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("web_url",""))')
     if [ -z "$SRC" ] || [ -z "$TGT" ]; then
       echo "ERROR: Could not parse source/target branch for MR !$NUM." >&2
       exit 1
@@ -83,6 +90,8 @@ case "$KIND" in
     BASE=$(git merge-base "$HEAD_REF" "origin/$TGT")
     LABEL="mr-${NUM}-${TITLE:-$SRC}"
     IS_SINGLE_COMMIT="false"
+    MR_NUM="$NUM"
+    MR_TITLE="$TITLE"
     ;;
 
   commit)
@@ -109,7 +118,12 @@ esac
 # Slugify label for safe filenames
 LABEL=$(echo "$LABEL" | tr -c '[:alnum:]' '-' | tr -s '-' | sed 's/^-//;s/-$//')
 
-echo "BASE='$BASE'"
-echo "HEAD_REF='$HEAD_REF'"
-echo "LABEL='$LABEL'"
-echo "IS_SINGLE_COMMIT='$IS_SINGLE_COMMIT'"
+# printf %q (not naive quoting): MR_TITLE can contain apostrophes/quotes that would
+# otherwise break sourcing the output as shell.
+printf 'BASE=%q\n' "$BASE"
+printf 'HEAD_REF=%q\n' "$HEAD_REF"
+printf 'LABEL=%q\n' "$LABEL"
+printf 'IS_SINGLE_COMMIT=%q\n' "$IS_SINGLE_COMMIT"
+printf 'MR_NUM=%q\n' "$MR_NUM"
+printf 'MR_URL=%q\n' "$MR_URL"
+printf 'MR_TITLE=%q\n' "$MR_TITLE"
