@@ -33,6 +33,7 @@ the subtitle.
 
 ```bash
 git log --reverse --format='%H %s' "$BASE".."$HEAD_REF"
+git diff --shortstat "$BASE".."$HEAD_REF"
 ```
 
 This is the chronological build order (oldest first) — the order the chapters will follow.
@@ -81,9 +82,15 @@ Structure the spec's `"sections"` as:
    intact even though the detail is now chaptered.
 2. **One chapter per substantial commit**, in build order, `id: "chapter-N"`, heading titled
    by what the commit *does* (not its raw subject line) — e.g. "Chapter 2: Making `x-extract-method`
-   mandatory", not "Chapter 2: 9f8e7d6". Directly under the `<h2>`, add one small muted line
-   citing the real commit for traceability:
-   `<p style="color:var(--muted); margin-top:-.5rem; font-size:.85em;">commit <code>9f8e7d6</code> — refactor(ABC-123): make x-extract-method explicit, skip fields without one</p>`
+   mandatory", not "Chapter 2: 9f8e7d6". Give the section a `"commit"` field — e.g.
+   `{"hash": "9f8e7d6", "subject": "refactor(ABC-123): make x-extract-method explicit, skip fields without one", "url": ..., "diffstat": {...}}`
+   — `render.py` renders the muted citation line under the `<h2>` automatically; don't
+   hand-write that `<p>` into the chapter's own `"html"`. `"hash"` is the short SHA from Step
+   2's `git log`; `"diffstat"` is `git show --shortstat <full-sha>` parsed the same way as the
+   branch-wide one below. Only set `"url"` when `MR_URL` is set (an MR-context run) — strip
+   the trailing `/-/merge_requests/$MR_NUM` off `MR_URL` to get the project's base URL, then
+   `url = "<project-base>/-/commit/<full-sha>"` (full SHA, from `git log --format='%H %s'`).
+   For a plain branch (no MR), omit `"url"` — the subject renders as plain text.
    Each chapter's `html` covers that commit's own intuition + a code walkthrough of *its* diff
    only (use `git diff <hash>^..<hash>` to get exactly that commit's change) — do not re-explain
    ground already covered by an earlier chapter.
@@ -98,8 +105,13 @@ Leave the spec's top-level `"quiz"` empty — all questions live on their chapte
 Content rules (diagrams, code-block language classes, `.callout`/`.diagram` divs, Kleppmann-ish
 voice) are identical to explain-diff's — see its `SKILL.md` for the full list; not repeated here.
 
-Set `"slug"` to `$LABEL`, and `"subtitle"` the same way as explain-diff (link the MR via
-`[MR !$MR_NUM: $MR_TITLE]($MR_URL)` when set, backtick branch/commit refs).
+Set `"slug"` to `$LABEL`. Build `"subtitle"` mostly like explain-diff (link the MR via
+`[MR !$MR_NUM: $MR_TITLE]($MR_URL)` when set, backtick the branch), but **drop the trailing
+commit-hash segment entirely** — with chapters in play there's no single commit to name up
+top, each chapter already cites its own (see above). So the whole-branch subtitle is just
+`` [MR !$MR_NUM: $MR_TITLE]($MR_URL) · `branch` `` (or just `` `branch` `` with no MR).
+Parse Step 2's `git diff --shortstat` into the spec's top-level `"diffstat"` field, same as
+explain-diff — `render.py` appends it to the end of the subtitle automatically.
 
 ### Step 5 — Render & open
 

@@ -62,10 +62,18 @@ Spec format (JSON):
       "edges": [["a", "b"], ["b", "c", "up to 3x"]]
     }
   },
+  "diffstat": {"files": 27, "insertions": 736, "deletions": 19},
   "sections": [
     {"id": "background", "heading": "Background", "html": "<p>...</p>"},
     {"id": "intuition", "heading": "Intuition", "html": "<p>...</p>{{diagram:retry-flow}}"},
-    {"id": "code", "heading": "Code walkthrough", "html": "<pre><code>...</code></pre>"}
+    {
+      "id": "code", "heading": "Code walkthrough", "html": "<pre><code>...</code></pre>",
+      "commit": {
+        "hash": "a1b2c3d4", "subject": "fix: drop legacy-auth-adapter",
+        "url": "https://gitlab.example.com/.../-/commit/a1b2c3d4...",
+        "diffstat": {"files": 3, "insertions": 40, "deletions": 12}
+      }
+    }
   ],
   "quiz": [
     {
@@ -102,6 +110,17 @@ prose, not code). Wrap an identifier, path, or literal in backticks (`` `POST /v
 to render just that span in monospace, same convention as quiz text. Always use a real ellipsis
 character ("…"), never three dots - diagram labels normalize "..." to "…" automatically as a
 safety net, but write "…" directly rather than relying on it.
+
+A top-level "diffstat" ({"files", "insertions", "deletions"}, all optional except
+"files") renders as a small GitLab-style summary (file count + colored +/-) appended to
+the end of the subtitle line - used for a whole-branch/whole-diff total. A section's own
+"commit" ({"hash", "subject", "url"?, "diffstat"?}) renders as a muted byline directly
+under that section's heading - "hash" is the short SHA (a plain <code> chip), "subject"
+is linked to "url" when given (omit "url" entirely when there's no resolvable commit
+page, e.g. no MR context - it then renders as plain text), and "diffstat" (same shape as
+the top-level one) is appended after an em dash. Used by the explain-branch skill to cite
+each chapter's own commit - don't hand-write this line into a section's "html" instead,
+the styling/linking/diffstat formatting is centralized here so it stays consistent.
 
 A section may carry its own "quiz" array (same question/options shape as the
 top-level one). When present, it renders as a "Check your understanding"
@@ -794,6 +813,30 @@ def format_meta(text: str) -> str:
     return re.sub(r"(</a>)\s*·\s*", r"\1<br>", escaped, count=1)
 
 
+def format_diffstat(diffstat: dict) -> str:
+    """Render a {"files", "insertions", "deletions"} diffstat as a small GitLab-style
+    summary: file count plus colored +insertions/-deletions, reusing the page's existing
+    diff-highlight palette. A zero count omits its span, matching GitLab's own behavior."""
+    parts = [f'{diffstat["files"]} file{"s" if diffstat["files"] != 1 else ""}']
+    if diffstat.get("insertions"):
+        parts.append(f'<span style="color:var(--diff-add-fg)">+{diffstat["insertions"]}</span>')
+    if diffstat.get("deletions"):
+        parts.append(f'<span style="color:var(--diff-del-fg)">−{diffstat["deletions"]}</span>')
+    return " ".join(parts)
+
+
+def format_commit_byline(commit: dict) -> str:
+    """Render a section's commit citation line: hash chip + subject (linked to `url` when
+    given) + optional diffstat - see the module docstring for the field shapes."""
+    subject = html.escape(commit["subject"])
+    if commit.get("url"):
+        subject = f'<a href="{html.escape(commit["url"])}" target="_blank" rel="noopener noreferrer">{subject}</a>'
+    line = f'commit <code>{html.escape(commit["hash"])}</code> — {subject}'
+    if commit.get("diffstat"):
+        line += " · " + format_diffstat(commit["diffstat"])
+    return f'<p style="color:var(--muted); margin-top:-.5rem; font-size:.85em;">{line}</p>'
+
+
 def collect_all_quiz_questions(spec: dict) -> list:
     """Every quiz question in the spec: the top-level "quiz" plus each section's own "quiz"."""
     questions = list(spec.get("quiz", []))
@@ -865,12 +908,18 @@ def render(spec: dict) -> str:
 
     def render_section(s: dict) -> str:
         body = render_diagrams_in_html(s["html"], diagrams)
-        out = f'<h2 id="{s["id"]}">{html.escape(s["heading"])}</h2>\n{body}'
+        byline = format_commit_byline(s["commit"]) + "\n" if s.get("commit") else ""
+        out = f'<h2 id="{s["id"]}">{html.escape(s["heading"])}</h2>\n{byline}{body}'
         if s.get("quiz"):
             out += '\n\n<h3>Check your understanding</h3>\n\n' + render_quiz_blocks(s["quiz"])
         return out
 
     body_sections = "\n\n".join(render_section(s) for s in sections)
+
+    subtitle_html = format_meta(subtitle) if subtitle else ""
+    if spec.get("diffstat"):
+        sep = " · " if subtitle_html else ""
+        subtitle_html += f'{sep}{format_diffstat(spec["diffstat"])}'
 
     quiz_html = ""
     if quiz:
@@ -894,7 +943,7 @@ def render(spec: dict) -> str:
 </div>
 
 <h1>{html.escape(title)}</h1>
-{f'<p style="color:var(--muted); margin-top:-.5rem;">{format_meta(subtitle)}</p>' if subtitle else ''}
+{f'<p style="color:var(--muted); margin-top:-.5rem;">{subtitle_html}</p>' if subtitle_html else ''}
 
 <div class="toc">
 <strong>Contents</strong>
