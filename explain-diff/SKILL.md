@@ -33,9 +33,9 @@ Run the bundled script (handles detached HEAD transparently, same as `/review-br
 python3 ~/.claude/skills/explain-diff/scripts/resolve-target.py "<spec>"
 ```
 
-Source the output variables: `BASE`, `HEAD_REF`, `LABEL`, `IS_SINGLE_COMMIT`, `MR_NUM`, `MR_URL`, `MR_TITLE`. The last three are only set for an `mr:` spec (empty otherwise) — all fetched from `glab` during resolution, so there's no need to query the MR again later just to build a link.
+Source the output variables: `BASE`, `HEAD_REF`, `LABEL`, `IS_SINGLE_COMMIT`, `MR_NUM`, `MR_URL`, `MR_TITLE`. The last three are only set for an `mr:` spec (empty otherwise) — no need to query the MR again later to build a link.
 
-If the script errors (not a git repo, unknown branch, MR not found, `glab` unavailable), report the error and stop.
+If the script errors, report the error and stop.
 
 ### Step 2 — Collect raw material
 
@@ -54,7 +54,7 @@ For the **Background** section you need more than the diff. Read the touched fil
 
 ### Step 4 — Write the content spec (don't hand-write HTML)
 
-**Use `render.py`** (bundled at `~/.claude/skills/explain-diff/scripts/render.py`) instead of writing the full HTML page by hand. It owns all CSS, quiz JavaScript, page scaffolding, table of contents, and quiz-option randomization — regenerating that boilerplate per invocation wastes tokens and drifts in quality. Run `python3 ~/.claude/skills/explain-diff/scripts/render.py --help` if you need the exact JSON schema.
+**Use `render.py`** (bundled at `~/.claude/skills/explain-diff/scripts/render.py`) instead of writing the full HTML page by hand — it owns all page boilerplate, so regenerating that per invocation wastes tokens and drifts in quality. Run `python3 ~/.claude/skills/explain-diff/scripts/render.py --help` if you need the exact JSON schema.
 
 Write only a small JSON content spec covering these sections, in this order:
 
@@ -83,9 +83,9 @@ Dark/light mode is handled entirely by the renderer. No spec fields needed for t
 python3 ~/.claude/skills/explain-diff/scripts/render.py spec.json
 ```
 
-It refuses to render if option length correlates with correctness across too many quiz questions — a classic tell that lets readers guess without understanding. If it errors, adjust lengths in the flagged questions and re-run; don't reach for `--allow-length-bias` unless you're sure the flagged cases are fine.
+It may refuse to render over quiz option-length bias (see its own error for specifics). If it errors, adjust lengths in the flagged questions and re-run; don't reach for `--allow-length-bias` unless you're sure the flagged cases are fine.
 
-It prints the path it wrote (`/tmp/YYYY-MM-DD-explanation-${LABEL}.html`). Open that path:
+It prints the path it wrote. Open that path:
 
 ```bash
 open "$FILE_PATH"
