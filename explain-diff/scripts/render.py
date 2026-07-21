@@ -280,10 +280,15 @@ CSS = (
   /* Semi-transparent (not opaque like a plain surface) so the "?" motif reads through the
      option rows instead of being fully hidden behind them - color-mix keeps each option's
      own theme color, just lets some of the card (and the glyph) bleed through. */
+  /* Zero the question <p>'s default top margin and the last option's bottom margin -
+     otherwise they stack on top of .quiz-q's own padding and make the box look
+     top-heavy (nothing balances them on the bottom side). */
+  .quiz-q > p:first-child { margin-top: 0; }
   .quiz-opt { display: block; width: 100%; text-align: left; padding: .6rem 1rem; margin: .4rem 0;
     border: 1px solid var(--border); border-radius: 6px;
     background: color-mix(in srgb, var(--surface) 82%, transparent); color: var(--fg);
     cursor: pointer; font-family: inherit; font-size: .95rem; }
+  .quiz-opt:last-child { margin-bottom: 0; }
   .quiz-opt:hover { background: color-mix(in srgb, var(--surface-hover) 88%, transparent); }
   .quiz-opt code, .quiz-q code {
     font-size: .88em; background: color-mix(in srgb, var(--inline-code-bg) 65%, transparent); }
@@ -659,6 +664,13 @@ def _format_label_segment(text: str) -> str:
             parts.append(html.escape(text[last : m.start()]))
         parts.append(f'<FONT FACE="Menlo">{html.escape(m.group(1))}</FONT>')
         last = m.end()
+        # Graphviz's built-in width estimate for a FONT-FACE run tends to come in a
+        # touch narrow versus how the font actually renders, so punctuation immediately
+        # following a code span (a comma, a period, ...) can visually overlap its last
+        # glyph. A hair space closes that gap; it's a no-op when real whitespace
+        # already follows.
+        if last < len(text) and not text[last].isspace():
+            parts.append("&#8201;")
     parts.append(html.escape(text[last:]))
     return "".join(parts)
 
