@@ -251,7 +251,7 @@ CSS = (
   .diff-marker { display: inline-block; width: 1ch; margin-right: .6em; font-weight: bold; }
   .diff-add .diff-marker { color: var(--diff-add-fg); }
   .diff-del .diff-marker { color: var(--diff-del-fg); }
-  .callout { background: var(--callout-bg); border-left: 4px solid var(--accent); padding: .9rem 1.2rem;
+  .callout { display: block; background: var(--callout-bg); border-left: 4px solid var(--accent); padding: .9rem 1.2rem;
     border-radius: 0 6px 6px 0; margin: 1.2rem 0; }
   .toc { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 1rem 1.5rem; margin: 1.5rem 0; }
   .toc a { color: var(--accent); text-decoration: none; }
