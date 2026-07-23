@@ -100,6 +100,9 @@ for any of that.
   `rankdir`.
 - "nodes": each needs "id" (referenced by edges, not shown) and "label" - a `\n` in the label
   puts the first line at normal size and any further lines smaller, like a title + detail line.
+  In the spec JSON, write a single backslash (`\n`), NOT `\\n` - `_html_label` splits on an
+  actual newline character, so a doubled backslash decodes to a literal two-char `\n` that
+  survives untouched into the SVG (shows up as literal "\n" in the rendered diagram).
   Add `"fail": true` for a red/error-styled node (e.g. a rejected or failing state).
 - "edges": `["from_id", "to_id"]`, or `["from_id", "to_id", "edge label"]` for a labeled arrow.
   Nothing stops a node from having more than one outgoing or incoming edge - it's a real graph,
