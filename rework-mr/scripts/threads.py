@@ -7,10 +7,12 @@ project + MR iid, so it survives across sessions (the re-review cycle spans days
 and never collides with another MR's rework. Two sessions on the *same* MR can
 race; that's the only unhandled case.
 
-Status is derived from the thread, never hand-set:
-  ● done      — every thread resolved by the reviewer
-  ◐ waiting   — you answered last; waiting for the reviewer  (internal key: "replied")
-  ○ open      — your turn (reviewer spoke last, or not yet handled)
+Status:
+  ● done      — every thread resolved by the reviewer  (mechanical)
+  ○ open      — your turn: reviewer spoke last, OR you spoke last but haven't
+                actually addressed it yet (the default — never hides work)
+  ◐ waiting   — you fully addressed it (fix pushed / complete answer) and it only
+                needs the reviewer now. Set semantically: `set <t> --state waiting`.
 
 Subcommands:
   sync        fetch + reconcile, render the overview           (default; also for "status")
@@ -31,9 +33,8 @@ from _gl import api, context, current_user, die, mr_view
 
 STATE_ROOT = os.path.expanduser("~/.claude/rework-mr")
 TOPIC_ICON = "◈"
-GLYPH = {"open": "○", "replied": "◐", "done": "●"}
-DISPLAY = {"open": "open", "replied": "waiting", "done": "done"}
-STATUS_ORDER = {"open": 0, "replied": 1, "done": 2}
+GLYPH = {"open": "○", "waiting": "◐", "done": "●"}
+STATUS_ORDER = {"open": 0, "waiting": 1, "done": 2}
 
 
 def first_name(name):
@@ -118,6 +119,11 @@ def next_tid(state):
 
 
 def topic_status(state, t):
+    """done = reviewer resolved it. Otherwise: if the reviewer spoke last it is
+    clearly your turn (open). If YOU spoke last it is ambiguous — you may have
+    fixed it (waiting) or merely acknowledged it (still open) — so it defaults to
+    open and only shows 'waiting' when semantically classified via `set --state
+    waiting`. This avoids the trap of an author ACK looking like "done"."""
     thr = [state["threads"].get(x) for x in t["thread_ids"]]
     thr = [x for x in thr if x]
     if not thr:
@@ -125,9 +131,9 @@ def topic_status(state, t):
     if all(x["resolved"] for x in thr):
         return "done"
     unresolved = [x for x in thr if not x["resolved"]]
-    if all(x.get("awaiting") == "reviewer" for x in unresolved):
-        return "replied"
-    return "open"
+    if any(x.get("awaiting") == "you" for x in unresolved):
+        return "open"                       # reviewer spoke last → your turn
+    return t.get("state") or "open"          # you spoke last → LLM decides
 
 
 def sync(state, live):
@@ -140,11 +146,19 @@ def sync(state, live):
             state["threads"][tid] = rec
             state["topics"].append({
                 "id": next_tid(state), "thread_ids": [tid], "summary": None,
-                "decision": None, "plan": None, "start_sha": None, "diff_url": None,
+                "state": None, "decision": None, "plan": None,
+                "start_sha": None, "diff_url": None,
             })
     for tid in state["threads"]:
         if tid not in live:
             state["threads"][tid]["resolved"] = True
+    # a reviewer note since your last one (or a reopen) makes any stored
+    # "waiting" stale — clear it so the thread re-derives to open.
+    for t in state["topics"]:
+        thr = [state["threads"].get(x) for x in t["thread_ids"]]
+        unresolved = [x for x in thr if x and not x["resolved"]]
+        if any(x.get("awaiting") == "you" for x in unresolved):
+            t["state"] = None
 
 
 def short_summary(state, t, width=72):
@@ -166,7 +180,7 @@ def _rows(state, scope, show_done=False):
     counts = {s: sum(1 for t in topics if st[t["id"]] == s) for s in GLYPH}
     ordered = sorted(topics, key=lambda t: (STATUS_ORDER[st[t["id"]]], _num(t["id"])))
     keep = {"open"} if scope == "mine" else \
-           ({"open", "replied"} | ({"done"} if show_done else set()))
+           ({"open", "waiting"} | ({"done"} if show_done else set()))
     return st, counts, [t for t in ordered if st[t["id"]] in keep]
 
 
@@ -186,14 +200,14 @@ def render_table(state, scope="all", show_done=False):
         for t in shown:
             s = st[t["id"]]
             summ = short_summary(state, t).replace("|", "\\|")
-            out.append(f"| {GLYPH[s]} {DISPLAY[s]} | {TOPIC_ICON} **{t['id']}** "
+            out.append(f"| {GLYPH[s]} {s} | {TOPIC_ICON} **{t['id']}** "
                        f"| `{_loc(state, t)}` | {summ} |")
     else:
         out.append("_✓ nothing needs you — open threads are waiting on the reviewer_"
                    if scope == "mine" else "_✓ no open threads_")
     footer = [f"{counts['done']} of {len(state['topics'])} topics done"]
-    if counts["replied"]:
-        footer.append(f"{counts['replied']} waiting for reply")
+    if counts["waiting"]:
+        footer.append(f"{counts['waiting']} waiting for reply")
     return "\n".join(out + ["", "_" + " · ".join(footer) + "._"])
 
 
@@ -259,16 +273,21 @@ def render_plans(state):
 
 
 def render_bodies(state):
+    """First + last note of each open thread — enough to write a summary AND
+    judge status (did the author actually address it, or just acknowledge?)."""
     out = []
     for t in state["topics"]:
         if topic_status(state, t) == "done":
             continue
-        thr = [state["threads"].get(x, {}) for x in t["thread_ids"]]
-        f = thr[0] if thr else {}
-        out.append(f"[{t['id']}] {os.path.basename(f.get('file') or '')}:"
-                   f"{f.get('line') or ''}  {f.get('url')}")
-        for x in thr:
-            out.append((x.get("body") or "").strip())
+        for th in t["thread_ids"]:
+            x = state["threads"].get(th, {})
+            out.append(f"[{t['id']}] {os.path.basename(x.get('file') or '')}:"
+                       f"{x.get('line') or ''}  (last spoke: {first_name(x.get('last_author'))})"
+                       f"  {x.get('url')}")
+            out.append(f"  {first_name(x.get('author'))}: {(x.get('body') or '').strip()}")
+            if x.get("note_count", 1) > 1:
+                out.append(f"  {first_name(x.get('last_author'))} (last of {x['note_count']}): "
+                           f"{(x.get('last_body') or '').strip()}")
         out.append("")
     return "\n".join(out).strip() or "(no open threads)"
 
@@ -304,6 +323,7 @@ def main():
     ps = sub.add_parser("set")
     ps.add_argument("topic")
     ps.add_argument("--iid", type=int)
+    ps.add_argument("--state", choices=("open", "waiting"))
     for f in ("summary", "decision", "plan", "start-sha", "diff-url"):
         ps.add_argument(f"--{f}")
     pm = sub.add_parser("merge")
@@ -333,7 +353,7 @@ def main():
     elif cmd == "set":
         t = topic_for(state, args.topic) or die(f"no topic {args.topic}")
         fld = {"start-sha": "start_sha", "diff-url": "diff_url"}
-        for f in ("summary", "decision", "plan", "start-sha", "diff-url"):
+        for f in ("summary", "state", "decision", "plan", "start-sha", "diff-url"):
             v = getattr(args, f.replace("-", "_"))
             if v is not None:
                 t[fld.get(f, f)] = v
