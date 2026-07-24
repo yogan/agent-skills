@@ -32,10 +32,20 @@ A reply that has no pasted table, touches more than one topic, or edits code is 
 Do the prep silently (it prints nothing the user needs):
 
 ```bash
-python3 $SD/threads.py sync                       # fetch + reconcile
-python3 $SD/threads.py bodies                      # read each open thread's opening note
+python3 $SD/threads.py sync                        # fetch + reconcile
+python3 $SD/threads.py bodies                      # first + last note of each open thread
 python3 $SD/threads.py set <t> --summary "…"       # one concise line per open topic (user's language)
 python3 $SD/threads.py merge <into> <other...>     # only if two threads raise the SAME point
+```
+
+**Classify status semantically — don't trust who spoke last.** A thread defaults to `open`
+(work for you). Mark it `waiting` **only if, reading the notes, YOU already fully addressed
+it** — pushed a fix or gave a complete answer and it genuinely needs only the reviewer now.
+If your last note merely acknowledged or refined the point ("stimmt", "guter Punkt", "mach
+ich") with the work still to do, it stays `open`. `bodies` shows your last note so you can tell.
+
+```bash
+python3 $SD/threads.py set <t> --state waiting     # only for a truly-addressed thread
 ```
 
 Then run **one** command and paste its whole output as the top of your reply:
@@ -56,7 +66,8 @@ After pasting it, add — for that one topic only:
 Then **STOP**. No code edits. Nothing about the other topics.
 
 The output is markdown the chat renders (bold title, GFM table, `code` locations, blockquoted
-comment). Status: `○ open` (your turn) · `◐ waiting` (you replied, waiting on reviewer) · `● done`.
+comment). Status: `○ open` (your turn — default) · `◐ waiting` (you fully addressed it; only
+the reviewer's action is left — set semantically) · `● done` (reviewer resolved).
 
 ## Resuming — topics already planned
 
@@ -130,7 +141,8 @@ Per topic:
 5. Topic diff URL: `diff-url.py url --start-sha <stored>` (never a commit URL — force-push
    rots it) → `set <t> --diff-url`.
 6. Draft the reply (rules below). **STOP — wait for ACK**, then post via `glab` or copy via
-   `clip.sh`. Your reply becomes the last note → next `sync` shows `◐ waiting`.
+   `clip.sh`. Once addressed, mark it: `set <t> --state waiting` (now genuinely waiting on the
+   reviewer; a later reviewer note auto-clears it back to `open`).
 7. Only now, the next topic.
 
 ## Reply draft rules
