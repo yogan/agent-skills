@@ -20,14 +20,16 @@ Your chat message is their *only* window. So:
    write no heading, the full `MR !<num>: <title>` is a fine standalone one.
 2. **One topic at a time.** Present the current topic, then **STOP and wait**. Never
    mention, preview, or recommend anything about other topics.
-3. **This skill NEVER writes to GitLab.** It does not post comments and does not
-   resolve threads — *you* do that in the UI, so the tone is yours. The skill only
-   *reads* (discussions, branch tip) and *drafts* text for you to copy. If you ever
-   feel the urge to `glab api … -X POST`, stop — that's the user's job.
+3. **The skill does not comment or resolve on GitLab.** It never posts comments and
+   never resolves threads — *you* do that in the UI, so the tone is yours. It only
+   *reads* (discussions, branch tip, merge/approval status) and *drafts* text for you
+   to copy. **The one exception:** approving/unapproving the MR — `glab mr approve` /
+   `glab mr revoke` — which you may run **only on the user's explicit ACK** (see
+   *Merge readiness*). Never any other `glab … -X POST`.
 4. **No code changes, ever.** You review; you don't fix. (The author fixes.)
 
-A reply with no pasted table, that touches more than one topic, or that posts/resolves
-on GitLab is wrong — redo it.
+A reply with no pasted table, that touches more than one topic, that comments/resolves
+on GitLab, or that approves without an explicit ACK is wrong — redo it.
 
 **Name people by first name.** GitLab names look like `Doe, Jane - AB12345`; always
 refer to the author as `Jane`. The table header already renders the short name (from
@@ -218,6 +220,26 @@ python3 $SD/findings.py set <t> --state wontfix --ticket …   # ⊘ agreed not 
 **An author resolving a thread is NOT a close — only your ack is.** After you've reviewed a
 push, `set-head` to move the baseline. Always end a check with what's still left (`todo`).
 
+## Merge readiness & approval
+
+Every overview (`sync`/`present`) now carries a footer line — **Approvals** (count + whether
+*you* approved) and **Merge** (GitLab's `detailed_merge_status`, in plain words, with whose turn
+it is: `needs rebase`/`CI failing`/`conflicts` → the author; `threads unresolved` → resolve on
+GitLab). `python3 $SD/findings.py status` prints just this block on demand.
+
+The footer also carries the **approve/revoke nudge**, and it's the only place you act on GitLab:
+
+- **Approve** — offered *only* when every topic is closed on your side **and** GitLab reports all
+  threads resolved. On the user's explicit ACK, run `glab mr approve <iid>` (from the worktree,
+  so the project auto-resolves). If they've closed everything locally but GitLab still shows
+  unresolved threads, say so — don't nudge to approve yet.
+- After approving, if the merge is still blocked, **state the blocker and whose turn** (e.g.
+  "approved — merge still needs a rebase, author's turn"). Don't draft a nudge message.
+- **Revoke** — if a re-review turns up something after you'd approved, offer `glab mr revoke
+  <iid>`, again only on explicit ACK.
+
+Never approve/revoke without that ACK; never comment or resolve (still your job in the UI).
+
 ## Status glyphs
 
 `✎ draft` (post it) · `○ open` (author's turn) · `◐ needs-ack` (your turn) · `● acked` ·
@@ -230,5 +252,5 @@ yet. Source: 🤖 llm · 👤 you · 👥 both/merged · 💬 peer reviewer · �
 
 `glab` authenticated; a review worktree (or willingness to create one); run inside the target
 repo. `python3`; macOS for `clip.sh`. Build blocks: the `explain-branch` and `review-branch`
-skills installed. `findings.py` subcommands: sync·todo·present·updates·bodies·quote·diff·candidates·import·
-add·set·drop·merge·link·head·set-head·worktree·path (run any with `-h`).
+skills installed. `findings.py` subcommands: sync·todo·present·status·updates·bodies·quote·diff·candidates·
+import·add·set·drop·merge·link·head·set-head·worktree·path (run any with `-h`).

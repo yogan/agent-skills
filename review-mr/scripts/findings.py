@@ -33,6 +33,7 @@ Subcommands (all read-only against GitLab):
   sync           fetch discussions + branch tip, reconcile, render overview  (default)
   todo           render only what needs YOU (✎ drafts + ◐ needs-ack)
   present        overview + the first topic that needs you
+  status         approval + merge-readiness (detailed_merge_status) + approve/revoke nudge
   updates        pushes since your baseline: compare URLs + diffstats + topics touched
   bodies         first + last note of each posted thread (to judge status)
   quote <t>      render a topic's thread notes verbatim
@@ -69,6 +70,24 @@ KIND_ICON = {"question": "❓", "praise": "💚"}
 # llm/human/both = who found it; author/peer = an inbound thread you didn't open
 SRC_ICON = {"llm": "🤖", "human": "👤", "both": "👥", "peer": "💬", "author": "🖊️"}
 INBOUND = ("peer", "author")
+
+# detailed_merge_status → (icon, wording, whose turn). Unknown values fall through.
+MERGE_FRIENDLY = {
+    "mergeable": ("✅", "ready to merge", None),
+    "not_approved": ("🔸", "needs approval", None),
+    "discussions_not_resolved": ("⛔", "threads unresolved on GitLab", "resolve"),
+    "need_rebase": ("⚠️", "needs rebase", "author"),
+    "ci_must_pass": ("❌", "CI failing", "author"),
+    "ci_still_running": ("⏳", "CI running", None),
+    "conflict": ("⛔", "merge conflicts", "author"),
+    "draft_status": ("📝", "marked draft", "author"),
+    "requested_changes": ("🔻", "changes requested", None),
+    "blocked_status": ("⛔", "blocked by another MR", None),
+    "checking": ("…", "merge status still checking", None),
+    "unchecked": ("…", "merge status not checked yet", None),
+    "not_open": ("—", "not open", None),
+}
+TURN_TXT = {"author": " — author's turn", "resolve": " — resolve them on GitLab"}
 
 
 def first_name(name):
@@ -345,14 +364,22 @@ def render_table(state, scope="all"):
                    else "_no findings yet_")
     total = len(state["topics"])
     done = counts["acked"] + counts["wontfix"]
-    footer = [f"{done} of {total} closed"]
+    prog = [f"{done}/{total} acked/closed"]
     if counts["draft"]:
-        footer.append(f"{counts['draft']} to post")
+        prog.append(f"{counts['draft']} to post")
     if counts["needs_ack"]:
-        footer.append(f"{counts['needs_ack']} need your ack")
+        prog.append(f"{counts['needs_ack']} need your ack")
     if counts["open"]:
-        footer.append(f"{counts['open']} awaiting author")
-    return "\n".join(out + ["", "_" + " · ".join(footer) + "._"])
+        prog.append(f"{counts['open']} awaiting author")
+    tail = ["", "**Topics:** " + " · ".join(prog)]
+    r = state.get("readiness")
+    if r:
+        tail += ["", f"**Approvals:** {_approval_line(r)}  |  "
+                 f"**Merge:** {_merge_line(r)}"]
+        adv = _advice(state, st)
+        if adv:
+            tail += ["", adv]
+    return "\n".join(out + tail)
 
 
 def _note_md(name, body):
@@ -552,6 +579,86 @@ def _topics_touching(state, files):
     return hit
 
 
+# ---------------------------------------------------------------- readiness
+
+
+def _approvals(ctx, iid):
+    try:
+        return api(f"projects/{ctx['enc']}/merge_requests/{iid}/approvals") or {}
+    except SystemExit:
+        return {}
+
+
+def refresh_readiness(state, ctx, iid, me):
+    """Fetch approval + merge status into state["readiness"] so the renderers (all
+    offline) can show it. Read-only. Called by the fetching commands."""
+    mr = mr_object(ctx, iid)
+    ap = _approvals(ctx, iid)
+    who = ap.get("approved_by") or []
+    users = [(u.get("user") or {}) for u in who]
+    state["readiness"] = {
+        "merge": mr.get("detailed_merge_status") or mr.get("merge_status"),
+        "resolved": mr.get("blocking_discussions_resolved"),
+        "draft": bool(mr.get("draft") or mr.get("work_in_progress")),
+        "req": ap.get("approvals_required"),
+        "you_approved": bool(me) and any(u.get("username") == me for u in users),
+        "approvers": [first_name(u.get("name") or u.get("username")) for u in users],
+    }
+    return state["readiness"]
+
+
+def _merge_line(r):
+    ms = r.get("merge")
+    icon, text, turn = MERGE_FRIENDLY.get(ms, ("•", (ms or "unknown").replace("_", " "), None))
+    return f"{icon} {text}{TURN_TXT.get(turn, '')}"
+
+
+def _approval_line(r):
+    apr = r.get("approvers") or []
+    req = r.get("req")
+    base = str(len(apr)) + (f"/{req}" if req else "")
+    who = f" ({', '.join(apr)})" if apr else ""
+    return f"{base} · you {'✓' if r.get('you_approved') else '✗'}{who}"
+
+
+def _advice(state, st):
+    """The approve/revoke nudge. Nudge to approve only when your review is fully
+    done AND GitLab agrees all threads are resolved (else name the gap). Offer to
+    revoke when a topic needs you again after you'd approved."""
+    r = state.get("readiness")
+    if not r or not state["topics"]:
+        return None
+    open_work = sum(1 for t in state["topics"]
+                    if st[t["id"]] in ("draft", "open", "needs_ack"))
+    if r.get("you_approved"):
+        if open_work:
+            return ("⚠️ you've already approved, but a topic needs you again — "
+                    "**revoke approval?** (I can run `glab mr revoke` on your OK)")
+        return None                              # approved & done; merge line says the rest
+    if open_work:
+        return None                              # review not finished → no approve nudge
+    if r.get("resolved"):
+        return ("✅ all topics closed and GitLab shows every thread resolved — "
+                "**approve?** (I'll run `glab mr approve` on your OK)")
+    return ("you've closed every topic on your side, but GitLab still shows "
+            "unresolved threads — resolve them there first, then approve")
+
+
+def render_status(state):
+    """Compact merge-readiness block for the `status` command."""
+    r = state.get("readiness")
+    if not r:
+        return "(no merge status fetched yet — run `sync`)"
+    st = {t["id"]: topic_status(state, t) for t in state["topics"]}
+    out = [f"**MR !{state['iid']}** — merge readiness",
+           f"**Approvals:** {_approval_line(r)}",
+           f"**Merge:** {_merge_line(r)}"]
+    adv = _advice(state, st)
+    if adv:
+        out += ["", adv]
+    return "\n".join(out)
+
+
 def head_report(state, ctx, iid):
     """One-liner for the sync banner: did the author push since your baseline?"""
     cur = mr_head(ctx, iid)
@@ -722,7 +829,7 @@ def main():
     sub = ap.add_subparsers(dest="cmd")
 
     for name in ("sync", "todo", "present", "bodies", "candidates",
-                 "head", "set-head", "updates", "path"):
+                 "head", "set-head", "updates", "status", "path"):
         sub.add_parser(name).add_argument("--iid", type=int)
 
     sub.add_parser("worktree").add_argument("--set", dest="set_path")
@@ -794,17 +901,24 @@ def main():
         print(path)
     elif cmd == "sync":
         sync(state, fetch_threads(ctx, iid, me, author))
+        refresh_readiness(state, ctx, iid, me)
         save(path, state)
         print(render_table(state, "all"))
         print("\n_" + head_report(state, ctx, iid) + "_")
     elif cmd == "todo":
         sync(state, fetch_threads(ctx, iid, me, author))
+        refresh_readiness(state, ctx, iid, me)
         save(path, state)
         print(render_table(state, "mine"))
     elif cmd == "present":
         sync(state, fetch_threads(ctx, iid, me, author))
+        refresh_readiness(state, ctx, iid, me)
         save(path, state)
         print(render_present(state))
+    elif cmd == "status":
+        refresh_readiness(state, ctx, iid, me)
+        save(path, state)
+        print(render_status(state))
     elif cmd == "bodies":
         print(render_bodies(state))
     elif cmd == "candidates":
@@ -817,6 +931,7 @@ def main():
         print(render_topic_diff(state, ctx, iid, args.topic))
     elif cmd == "updates":
         sync(state, fetch_threads(ctx, iid, me, author))
+        refresh_readiness(state, ctx, iid, me)
         save(path, state)
         print(render_updates(state, ctx, iid))
     elif cmd == "head":
