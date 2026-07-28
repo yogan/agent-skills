@@ -116,6 +116,14 @@ A review spans days; the state file persists across sessions. Each check:
    python3 $SD/findings.py todo        # ✎ still to post + ◐ still needing your ack
    ```
 
+6. **Merge readiness.** `sync`/`present`/`status` fetch approval + `detailed_merge_status` and
+   render an Approvals/Merge footer plus a nudge. When every topic is closed on your side *and*
+   GitLab reports all threads resolved, it nudges to **approve** — on the user's explicit ACK,
+   `glab mr approve <iid>` (from the worktree). If the merge is still blocked afterwards, name
+   the blocker and whose turn (rebase/CI/conflict → author). If a later re-review reopens work
+   after you approved, it offers `glab mr revoke <iid>` (explicit ACK only). Approve/revoke are
+   the *only* GitLab writes — never comment or resolve for the user.
+
 ## Inbound threads (peer reviewers / the author)
 
 `sync` auto-adopts every unresolved thread you didn't open as a topic, so it shows in your
