@@ -25,12 +25,18 @@ A topic has two orthogonal axes plus a lifecycle state:
   An author resolving a thread does NOT close a topic — only your ack does. So a
   resolved thread sits at ◐ needs-ack until you ack it.
 
+Threads you did not open are surfaced automatically on sync as topics — a peer
+reviewer's (💬 peer) or the author's own (🖊️ author) — so they show up in your
+lists and can be merged with your findings.
+
 Subcommands (all read-only against GitLab):
   sync           fetch discussions + branch tip, reconcile, render overview  (default)
   todo           render only what needs YOU (✎ drafts + ◐ needs-ack)
   present        overview + the first topic that needs you
+  updates        pushes since your baseline: compare URLs + diffstats + topics touched
   bodies         first + last note of each posted thread (to judge status)
   quote <t>      render a topic's thread notes verbatim
+  diff <t>       the author's change for one topic: compare URL + inline git command
   import <file>  bulk-add findings from a JSON array (review-branch seed)
   add            add one finding
   set <t> …      update a topic's fields / state
@@ -38,7 +44,7 @@ Subcommands (all read-only against GitLab):
   merge <into> <o…>  fold other topics into <into>
   link <t> <discussion_id>   attach a posted GitLab thread to a topic (✎→○)
   candidates     your posted threads not yet linked to any topic (for matching)
-  head           report the branch tip vs the last-reviewed head (author push?)
+  head           one-line push check (branch tip vs last-reviewed head)
   set-head       mark the current branch tip as reviewed
   worktree [--set PATH]   get/set the repo's review worktree path
   path           print the state-file path
@@ -49,7 +55,7 @@ import os
 import sys
 
 from _gl import (api, context, current_user, die, mr_head, mr_object,
-                 mr_view)
+                 mr_view, run)
 
 STATE_ROOT = os.path.expanduser("~/.claude/review-mr")
 TOPIC_ICON = "◈"
@@ -60,7 +66,9 @@ WORD = {"draft": "draft", "open": "open", "needs_ack": "needs-ack",
 STATUS_ORDER = {"needs_ack": 0, "draft": 1, "open": 2, "wontfix": 3, "acked": 4}
 SEV_ICON = {"critical": "🔴", "high": "🟠", "medium": "🟡", "low": "🔵"}
 KIND_ICON = {"question": "❓", "praise": "💚"}
-SRC_ICON = {"llm": "🤖", "human": "👤", "both": "👥"}
+# llm/human/both = who found it; author/peer = an inbound thread you didn't open
+SRC_ICON = {"llm": "🤖", "human": "👤", "both": "👥", "peer": "💬", "author": "🖊️"}
+INBOUND = ("peer", "author")
 
 
 def first_name(name):
@@ -104,11 +112,15 @@ def mr_author(mr):
     return first_name(a.get("name") or a.get("username"))
 
 
+def mr_author_username(mr):
+    return (mr.get("author") or {}).get("username")
+
+
 def new_state(ctx, mr):
     return {
         "project": ctx["path"], "slug": ctx["slug"], "iid": mr["iid"],
         "mr_web_url": mr.get("web_url"), "title": mr.get("title"),
-        "author": mr_author(mr),
+        "author": mr_author(mr), "author_username": mr_author_username(mr),
         "last_reviewed_head": None, "seq": 0,
         "threads": {}, "topics": [],
     }
@@ -117,9 +129,11 @@ def new_state(ctx, mr):
 # ---------------------------------------------------------------- fetch
 
 
-def fetch_threads(ctx, iid, me):
-    """All resolvable discussions on the MR, keyed by discussion id. `me` is the
-    reviewer; `awaiting` is 'you' when the author (anyone but you) spoke last."""
+def fetch_threads(ctx, iid, me, author=None):
+    """All resolvable discussions on the MR, keyed by discussion id. `awaiting` is
+    'you' (the reviewers' turn) when the MR author spoke last, else 'author'. This
+    is defined around the author so it is correct with several reviewers, not just
+    you and the author — falls back to a me-based guess if the author is unknown."""
     disc = api(f"projects/{ctx['enc']}/merge_requests/{iid}/discussions?per_page=100",
                paginate=True)
     out = {}
@@ -149,7 +163,9 @@ def fetch_threads(ctx, iid, me):
             "last_username": last_user,
             "last_body": last.get("body"),
             "mine": bool(me) and first_user == me,      # you opened this thread
-            "awaiting": "you" if (me and last_user != me) else "author",
+            "by_author": bool(author) and first_user == author,  # author's own thread
+            "awaiting": (("you" if last_user == author else "author") if author
+                         else ("you" if (me and last_user != me) else "author")),
         }
     return out
 
@@ -177,10 +193,10 @@ ADD_PROTECTED = {"id", "thread_ids", "seq"}   # never settable from seed/import
 
 def add_topic(state, **fields):
     t = {
-        "id": next_tid(state), "kind": "issue", "severity": "medium",
+        "id": next_tid(state), "kind": "issue", "severity": None,
         "source": "llm", "summary": None, "file": None, "line": None,
         "draft": None, "thread_ids": [], "state": None, "ticket": None,
-        "start_sha": None, "note": None,
+        "start_sha": None, "note": None, "by": None,
     }
     t.update({k: v for k, v in fields.items()
               if v is not None and k not in ADD_PROTECTED})
@@ -196,6 +212,8 @@ def topic_status(state, t):
     thr = [x for x in thr if x]
     if not thr:
         return "draft"
+    if t.get("kind") == "praise":                # no ack loop: resolved ⇒ done
+        return "acked" if all(x.get("resolved") for x in thr) else "open"
     author_active = any(
         x.get("awaiting") == "you" and not x.get("resolved") for x in thr)
     ov = t.get("state")
@@ -209,7 +227,7 @@ def topic_status(state, t):
 def kind_icon(t):
     if t.get("kind") in KIND_ICON:
         return KIND_ICON[t["kind"]]
-    return SEV_ICON.get(t.get("severity"), "🟡")
+    return SEV_ICON.get(t.get("severity")) or "⚪"    # ⚪ = severity not set yet
 
 
 # ---------------------------------------------------------------- reconcile
@@ -218,7 +236,7 @@ def kind_icon(t):
 def sync(state, live):
     keep = ("author", "first_username", "file", "line", "body", "resolved",
             "url", "note_count", "last_author", "last_username", "last_body",
-            "mine", "awaiting")
+            "mine", "by_author", "awaiting")
     for tid, rec in live.items():
         if tid in state["threads"]:
             state["threads"][tid].update({k: rec[k] for k in keep})
@@ -228,6 +246,23 @@ def sync(state, live):
         if tid not in live:                     # discussion deleted upstream
             state["threads"][tid]["resolved"] = True
             state["threads"][tid]["gone"] = True
+    adopt_inbound(state)
+
+
+def adopt_inbound(state):
+    """Surface discussions you didn't open — a peer reviewer's thread (💬, first
+    class and mergeable) or the author's own (🖊️, rare) — as topics, so they show
+    up in the overview and needs-ack flow. Threads you opened stay out of this
+    (they belong to your drafts, matched via `candidates`/`link`)."""
+    linked = {th for t in state["topics"] for th in t["thread_ids"]}
+    for tid, x in state["threads"].items():
+        if tid in linked or x.get("mine") or x.get("gone"):
+            continue
+        summ = " ".join((x.get("body") or "").split())[:80]
+        t = add_topic(state, source="author" if x.get("by_author") else "peer",
+                      summary=summ or None, file=x.get("file"), line=x.get("line"),
+                      by=first_name(x.get("author")))
+        t["thread_ids"].append(tid)
 
 
 # ---------------------------------------------------------------- render
@@ -281,6 +316,8 @@ def render_table(state, scope="all"):
         for t in shown:
             s = st[t["id"]]
             summ = short_summary(state, t).replace("|", "\\|")
+            if t.get("source") in INBOUND and t.get("by"):
+                summ = f"_{t['by']}:_ {summ}"           # who raised this thread
             out.append(
                 f"| {GLYPH[s]} {WORD[s]} | {TOPIC_ICON} **{t['id']}** "
                 f"| {kind_icon(t)} | {SRC_ICON.get(t.get('source'), '🤖')} "
@@ -390,20 +427,139 @@ def render_candidates(state, me):
     return "\n".join(out).strip() or "(no unlinked threads of yours)"
 
 
-# ---------------------------------------------------------------- head
+# ---------------------------------------------------------------- pushes / diffs
+
+
+def versions(ctx, iid):
+    """MR diff versions, newest first — one per push (survives force-push)."""
+    return api(f"projects/{ctx['enc']}/merge_requests/{iid}/versions?per_page=100",
+               paginate=True)
+
+
+def new_versions(state, vs):
+    """Versions pushed since your reviewed baseline, oldest→newest. Empty if the
+    baseline is the current tip (no push) or unset."""
+    last = state.get("last_reviewed_head")
+    if not last:
+        return []
+    out = []
+    for v in vs:                                 # newest first
+        if v.get("head_commit_sha") == last:
+            break
+        out.append(v)
+    return list(reversed(out))
+
+
+def _mr_web(state, ctx, iid):
+    return state.get("mr_web_url") or f"{ctx['web']}/-/merge_requests/{iid}"
+
+
+def _git_stat(wt, frm, to):
+    """`N files, +A −D` from the worktree, or '' if unavailable (objects not
+    fetched / no worktree). Read-only."""
+    if not wt or not frm or not to:
+        return ""
+    r = run(["git", "-C", wt, "diff", "--shortstat", f"{frm}..{to}"])
+    if r.returncode != 0:
+        return ""
+    s = r.stdout.strip()
+    files = ins = dele = "0"
+    for part in s.split(","):
+        p = part.strip()
+        if "file" in p:
+            files = p.split()[0]
+        elif "insertion" in p:
+            ins = p.split()[0]
+        elif "deletion" in p:
+            dele = p.split()[0]
+    return f"{files} {'file' if files == '1' else 'files'}, +{ins} −{dele}"
+
+
+def _changed_files(wt, frm, to):
+    if not wt or not frm or not to:
+        return []
+    r = run(["git", "-C", wt, "diff", "--name-only", f"{frm}..{to}"])
+    return r.stdout.split() if r.returncode == 0 else []
+
+
+def _topics_touching(state, files):
+    fs = set(files)
+    hit = []
+    for t in state["topics"]:
+        tf = t.get("file") or next((state["threads"].get(x, {}).get("file")
+                                    for x in t["thread_ids"]), None)
+        if tf and tf in fs:
+            hit.append(t["id"])
+    return hit
 
 
 def head_report(state, ctx, iid):
+    """One-liner for the sync banner: did the author push since your baseline?"""
     cur = mr_head(ctx, iid)
     last = state.get("last_reviewed_head")
     if not last:
-        return f"branch tip: `{(cur or '')[:12]}` (no reviewed baseline yet)"
+        return f"branch tip `{(cur or '')[:12]}` — no reviewed baseline yet (run set-head)"
     if cur == last:
         return f"no push since your last review (tip `{(cur or '')[:12]}`)"
-    web = state.get("mr_web_url") or ctx["web"] + f"/-/merge_requests/{iid}"
-    url = f"{web}/diffs?start_sha={last}"
-    return ("**author pushed since your last review** — compare "
-            f"`{last[:12]}` → `{(cur or '')[:12]}`\n{url}")
+    n = len(new_versions(state, versions(ctx, iid)))
+    return (f"**author pushed since your last review** — {n} new version(s); "
+            "run `updates` for the diffs")
+
+
+def render_updates(state, ctx, iid):
+    """The 'any updates?' report: each push since your baseline as a compare URL +
+    diffstat + the topics its files touch. You supply the prose summary on top."""
+    cur = mr_head(ctx, iid)
+    last = state.get("last_reviewed_head")
+    if not last:
+        return ("_no reviewed baseline yet — run `set-head` after your first pass, "
+                f"then updates are tracked from there (tip `{(cur or '')[:12]}`)._")
+    vs = versions(ctx, iid)
+    new = new_versions(state, vs)
+    if not new:
+        return f"_no changes since your last review (tip `{(cur or '')[:12]}`)._"
+    web = _mr_web(state, ctx, iid)
+    wt = get_worktree(state["slug"])
+    out = [f"**{len(new)} push(es) since your last review** "
+           f"(`{last[:12]}` → `{(cur or '')[:12]}`):", ""]
+    prev = last
+    for v in new:
+        to = v.get("head_commit_sha")
+        url = f"{web}/diffs?diff_id={v.get('id')}&start_sha={prev}"
+        stat = _git_stat(wt, prev, to)
+        touch = _topics_touching(state, _changed_files(wt, prev, to))
+        line = f"- {url}"
+        if stat:
+            line += f"  ({stat})"
+        out.append(line)
+        if touch:
+            out.append(f"  touches: {', '.join(touch)}")
+        prev = to
+    if not wt:
+        out += ["", "_(no review worktree set → no diffstats/topic mapping; "
+                "`worktree --set <path>`)_"]
+    return "\n".join(out)
+
+
+def render_topic_diff(state, ctx, iid, tid):
+    """What the author changed for one topic: the canonical compare URL (from the
+    baseline captured when you posted it) + the exact inline git command."""
+    t = topic_for(state, tid) or die(f"no topic {tid}")
+    start = t.get("start_sha") or state.get("last_reviewed_head")
+    if not start:
+        return f"{tid}: no baseline captured — nothing to compare yet"
+    cur = mr_head(ctx, iid)
+    file = _loc(state, t, full=True).rsplit(":", 1)[0]
+    vs = versions(ctx, iid)
+    diff_id = vs[0].get("id") if vs else None
+    web = _mr_web(state, ctx, iid)
+    url = f"{web}/diffs?diff_id={diff_id}&start_sha={start}"
+    wt = get_worktree(state["slug"]) or "<worktree>"
+    out = [f"**{TOPIC_ICON} {tid}** — author changes since you posted "
+           f"(`{start[:12]}` → `{(cur or '')[:12]}`)", url]
+    scope = f" -- {file}" if file else ""
+    out.append(f"inline: `git -C {wt} diff {start[:12]}..{(cur or '')[:12]}{scope}`")
+    return "\n".join(out)
 
 
 # ---------------------------------------------------------------- worktree
@@ -443,9 +599,11 @@ def resolve_state(args):
         state = new_state(ctx, mr)
     elif mr:
         state.update(mr_web_url=mr.get("web_url"), title=mr.get("title"),
-                     author=mr_author(mr))
-    if not state.get("author"):                  # self-heal older state files
-        state["author"] = mr_author(mr_object(ctx, iid))
+                     author=mr_author(mr), author_username=mr_author_username(mr))
+    if not state.get("author") or not state.get("author_username"):
+        obj = mr_object(ctx, iid)                # self-heal older state files
+        state["author"] = mr_author(obj)
+        state["author_username"] = mr_author_username(obj)
     return ctx, iid, path, state
 
 
@@ -455,7 +613,7 @@ def main():
     sub = ap.add_subparsers(dest="cmd")
 
     for name in ("sync", "todo", "present", "bodies", "candidates",
-                 "head", "set-head", "path"):
+                 "head", "set-head", "updates", "path"):
         sub.add_parser(name).add_argument("--iid", type=int)
 
     sub.add_parser("worktree").add_argument("--set", dest="set_path")
@@ -463,6 +621,10 @@ def main():
     pq = sub.add_parser("quote")
     pq.add_argument("topic")
     pq.add_argument("--iid", type=int)
+
+    pdf = sub.add_parser("diff")
+    pdf.add_argument("topic")
+    pdf.add_argument("--iid", type=int)
 
     pi = sub.add_parser("import")
     pi.add_argument("file")
@@ -514,6 +676,7 @@ def main():
 
     ctx, iid, path, state = resolve_state(args)
     me = current_user()
+    author = state.get("author_username")
     if me is None and cmd in ("sync", "todo", "present", "candidates"):
         print("warning: could not determine your glab username — needs-ack and "
               "candidates may be wrong (is `glab auth status` OK?)", file=sys.stderr)
@@ -521,26 +684,32 @@ def main():
     if cmd == "path":
         print(path)
     elif cmd == "sync":
-        sync(state, fetch_threads(ctx, iid, me))
+        sync(state, fetch_threads(ctx, iid, me, author))
         save(path, state)
         print(render_table(state, "all"))
-        print("\n_" + head_report(state, ctx, iid).splitlines()[0] + "_")
+        print("\n_" + head_report(state, ctx, iid) + "_")
     elif cmd == "todo":
-        sync(state, fetch_threads(ctx, iid, me))
+        sync(state, fetch_threads(ctx, iid, me, author))
         save(path, state)
         print(render_table(state, "mine"))
     elif cmd == "present":
-        sync(state, fetch_threads(ctx, iid, me))
+        sync(state, fetch_threads(ctx, iid, me, author))
         save(path, state)
         print(render_present(state))
     elif cmd == "bodies":
         print(render_bodies(state))
     elif cmd == "candidates":
-        sync(state, fetch_threads(ctx, iid, me))
+        sync(state, fetch_threads(ctx, iid, me, author))
         save(path, state)
         print(render_candidates(state, me))
     elif cmd == "quote":
         print(render_quote(state, args.topic))
+    elif cmd == "diff":
+        print(render_topic_diff(state, ctx, iid, args.topic))
+    elif cmd == "updates":
+        sync(state, fetch_threads(ctx, iid, me, author))
+        save(path, state)
+        print(render_updates(state, ctx, iid))
     elif cmd == "head":
         print(head_report(state, ctx, iid))
     elif cmd == "set-head":

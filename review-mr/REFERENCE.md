@@ -43,33 +43,38 @@ When the same point was found by both you and the agent, `merge` them — the so
 
 A review spans days; the state file persists across sessions. Each check:
 
-1. **Sync.** Reconcile the live threads and detect an author push:
+1. **Sync.** Reconcile the live threads and surface inbound ones:
    ```bash
-   python3 $SD/findings.py sync        # overview table + a one-line push report; paste verbatim
-   python3 $SD/findings.py head        # full push report + compare URL, if you want detail
+   python3 $SD/findings.py sync        # overview table + a one-line push banner; paste verbatim
    ```
    `sync` reconciles toward GitLab (the source of truth for a thread's existence and its
    resolved flag). The local file only overlays *your* ack/wontfix. A thread the author
-   resolved shows `◐ needs-ack`, not closed — your ack is the only close.
+   resolved shows `◐ needs-ack`, not closed — your ack is the only close. `sync` also adopts
+   threads you didn't open (see *Inbound threads* below).
 
-2. **Author push?** If `head` reports a new tip, the author force-pushed or added commits
-   (rework is almost always a force-push, so detection is by **head-SHA delta, never commit
-   count**). Offer the compare URL (`…/diffs?start_sha=<last-reviewed-head>`) and, if the
-   user wants, **offer to re-run `review-branch` on just the new range** (`<last_head>..<tip>`
-   in the worktree) to surface issues in the freshly pushed code. New findings become fresh
-   `✎` drafts (append-only ids) and go through Phase 1/2 again. Dedup them against existing
-   topics by location+gist and show only genuinely-new ones — **flag anything you dropped**,
-   never truncate silently. This incremental re-review is optional (tokens); ask, don't assume.
+2. **Any updates? (author push).** Rework is almost always a force-push, so detection is by
+   **head-SHA delta, never commit count**. The banner says if the tip moved; for the detail:
+   ```bash
+   python3 $SD/findings.py updates     # each push since your baseline; paste verbatim
+   ```
+   It prints, per push, the **compare URL** (`…/diffs?diff_id=<v>&start_sha=<prev>`), a
+   **diffstat** (`2 files, +33 −23`), and the **topics whose files it touches**. Add your prose
+   summary of *what* changed on top, and offer to `open` any URL. Diffstats/topic-mapping need
+   the review worktree fetched (objects present); without a worktree the URLs still print.
+   If the user wants a fresh critique of the newly pushed code, review the range ad hoc and
+   `add`/`import` any new issues as fresh topics — dedup against existing ones and **flag
+   anything you drop**, never truncate silently. (This is optional and costs tokens — ask.)
 
 3. **Work the `◐ needs-ack` topics, one at a time.** For each:
    ```bash
    python3 $SD/findings.py quote <t>   # the thread's notes (author's reply, resolved flag)
+   python3 $SD/findings.py diff <t>    # compare URL + inline git cmd for THIS topic's change
    ```
-   Paste it, then add a **short summary of what the author did**, and judge it:
+   Paste `quote`, add a **short summary of what the author did**, and judge it:
    - **Looks clearly addressed** (a "trivially fixed" case — the change matches the ask, or a
      question got a clean answer) → say so plainly so the user can ack fast. Still **offer to
-     show the change**: small → inline `git -C <wt> diff <start_sha>..<tip> -- <file>`; big →
-     the GitLab compare URL, and offer to `open` it in the browser.
+     show the change** via `diff <t>`: small → run its inline `git diff` and show it; big →
+     paste the compare URL and offer to `open` it.
    - **Author replied without a code change** (pushed back, or asked *you* something) → this is
      **not** a "fixed" case. Surface their point; it needs *your reply* (draft one) or your
      agreement (→ wontfix), never a silent ack.
@@ -93,6 +98,28 @@ A review spans days; the state file persists across sessions. Each check:
    ```bash
    python3 $SD/findings.py todo        # ✎ still to post + ◐ still needing your ack
    ```
+
+## Inbound threads (peer reviewers / the author)
+
+`sync` auto-adopts every unresolved thread you didn't open as a topic, so it shows in your
+tables and needs-ack flow — you're not blind to a discussion just because someone else started
+it:
+
+- **💬 peer** — another reviewer's thread. First-class: you can ack it, push back, or `merge`
+  it into one of your findings when it's the same point (merge sets source 👥).
+- **🖊️ author** — the author's own thread on their MR (rare). Shown so an author question
+  pinging the reviewers doesn't get lost.
+
+Adopted topics start at severity ⚪ (unknown) — reclassify with `set <t> --severity …` if you
+want. Whose-turn is derived around the **author**: the author speaking last ⇒ `◐ needs-ack`
+(reviewers' court); a reviewer (you or a peer) last ⇒ `○ open` (awaiting the author). Dropping
+an adopted topic is temporary — the next `sync` re-adopts the live thread.
+
+## Praise
+
+Praise is **detect-only** — you never draft or send it from here. If you posted a 💚 comment
+(usually resolved right after), label the matched topic `set <t> --kind praise`; a resolved
+praise topic lands terminal (`●`) with no ack loop.
 
 ## New findings at any time
 
