@@ -57,10 +57,20 @@ A review spans days; the state file persists across sessions. Each check:
    ```bash
    python3 $SD/findings.py updates     # each push since your baseline; paste verbatim
    ```
-   It prints, per push, the **compare URL** (`…/diffs?diff_id=<v>&start_sha=<prev>`), a
-   **diffstat** (`2 files, +33 −23`), and the **topics whose files it touches**. Add your prose
-   summary of *what* changed on top, and offer to `open` any URL. Diffstats/topic-mapping need
-   the review worktree fetched (objects present); without a worktree the URLs still print.
+   Each push is a `- **push N:** <url>` bullet with a nested `  - ` detail line — either a
+   **diffstat** (`2 files, +33 −23`) + **topics touched**, or — when the branch was rebased
+   (its base SHA moved) — a rebase classification:
+   - **↻ pure rebase** — only the base moved, no author content change; nothing to re-review.
+   - **⚠️ rebase + N real change(s) folded in** — the annoying case: someone rebased *and*
+     edited/added commits in one push. It lists the new/edited commit subjects so you know real
+     work is hidden in there — inspect via the URL. **Call this out to the user explicitly.**
+   - **↻ rebase (couldn't classify)** — the API didn't return version commits; use the URL.
+
+   Add your **one-line summary as a `  - ` sub-bullet** under each push (see SKILL *Resuming*),
+   and offer to `open` any URL. This is all **server-side** (GitLab compare API + version commit
+   lists), so it needs no worktree and — crucially — **survives force-push**: the intermediate
+   version heads a force-push prunes from the local repo still exist on GitLab, so diffstats and
+   the rebase classification keep working where a local `git diff`/`range-diff` would fail.
    If the user wants a fresh critique of the newly pushed code, review the range ad hoc and
    `add`/`import` any new issues as fresh topics — dedup against existing ones and **flag
    anything you drop**, never truncate silently. (This is optional and costs tokens — ask.)
@@ -68,13 +78,20 @@ A review spans days; the state file persists across sessions. Each check:
 3. **Work the `◐ needs-ack` topics, one at a time.** For each:
    ```bash
    python3 $SD/findings.py quote <t>   # the thread's notes (author's reply, resolved flag)
-   python3 $SD/findings.py diff <t>    # compare URL + inline git cmd for THIS topic's change
+   python3 $SD/findings.py diff <t>    # THIS topic's change since you posted (server-side)
    ```
-   Paste `quote`, add a **short summary of what the author did**, and judge it:
-   - **Looks clearly addressed** (a "trivially fixed" case — the change matches the ask, or a
-     question got a clean answer) → say so plainly so the user can ack fast. Still **offer to
-     show the change** via `diff <t>`: small → run its inline `git diff` and show it; big →
-     paste the compare URL and offer to `open` it.
+   Paste `quote`, add a **short summary of what the author did**, and judge it. **The thread is
+   the source of truth — judge against what was *agreed there*, not against the finding's
+   original one-line summary.** Points get down-scoped in discussion: if you said a fix was
+   optional and the author added a TODO / opened a ticket and resolved, the bar is *that*, not
+   the original defect. Re-deriving the original problem from the code and calling it "not
+   fixed" is a classic mistake — read the notes first.
+   - **Agreed & done** — the author did what the thread converged on (the fix, or the agreed
+     TODO/defer, or a clean answer to a question) → say so plainly so the user can ack fast, or
+     `⊘ wontfix --ticket` for a tracked defer. **Confirm via `diff <t>`** (topic file's diff
+     inline when small, else the compare URL) — server-side, so it survives the force-pushes
+     that prune the baseline sha locally. Use the diff to *confirm the agreed change landed*,
+     not to reopen a settled scope.
    - **Author replied without a code change** (pushed back, or asked *you* something) → this is
      **not** a "fixed" case. Surface their point; it needs *your reply* (draft one) or your
      agreement (→ wontfix), never a silent ack.
@@ -112,8 +129,15 @@ it:
 
 Adopted topics start at severity ⚪ (unknown) — reclassify with `set <t> --severity …` if you
 want. Whose-turn is derived around the **author**: the author speaking last ⇒ `◐ needs-ack`
-(reviewers' court); a reviewer (you or a peer) last ⇒ `○ open` (awaiting the author). Dropping
-an adopted topic is temporary — the next `sync` re-adopts the live thread.
+(reviewers' court); a reviewer (you or a peer) last ⇒ `○ open` (awaiting the author). **`drop`
+an adopted topic to dismiss a thread you don't want to track** — its discussion id is remembered
+in `ignored`, so `sync` won't re-adopt it.
+
+Notes on a couple of edges:
+- **Location on a *posted* topic is the thread's** — `set <t> --file/--line` only affects an
+  unposted draft; once linked, GitLab's position wins (and is what you want).
+- **`link` promptly after posting.** `link` captures the diff baseline for `diff <t>` at link
+  time; linking long after posting (and after a `set-head`) can make that baseline too new.
 
 ## Praise
 

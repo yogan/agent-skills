@@ -55,7 +55,7 @@ import os
 import sys
 
 from _gl import (api, context, current_user, die, mr_head, mr_object,
-                 mr_view, run)
+                 mr_view)
 
 STATE_ROOT = os.path.expanduser("~/.claude/review-mr")
 TOPIC_ICON = "◈"
@@ -122,7 +122,7 @@ def new_state(ctx, mr):
         "mr_web_url": mr.get("web_url"), "title": mr.get("title"),
         "author": mr_author(mr), "author_username": mr_author_username(mr),
         "last_reviewed_head": None, "seq": 0,
-        "threads": {}, "topics": [],
+        "threads": {}, "topics": [], "ignored": [],
     }
 
 
@@ -146,6 +146,9 @@ def fetch_threads(ctx, iid, me, author=None):
             continue
         resolvable = [n for n in notes if n.get("resolvable")]
         resolved = bool(resolvable) and all(n.get("resolved") for n in resolvable)
+        resolved_by = next((((n.get("resolved_by") or {}).get("name")
+                             or (n.get("resolved_by") or {}).get("username"))
+                            for n in resolvable if n.get("resolved_by")), None)
         pos = first.get("position") or {}
         last = notes[-1]
         first_user = (first.get("author") or {}).get("username")
@@ -157,6 +160,7 @@ def fetch_threads(ctx, iid, me, author=None):
             "line": pos.get("new_line") or pos.get("old_line"),
             "body": first.get("body"),
             "resolved": resolved,
+            "resolved_by": resolved_by,
             "url": f"{ctx['web']}/-/merge_requests/{iid}#note_{first.get('id')}",
             "note_count": len(notes),
             "last_author": (last.get("author") or {}).get("name") or last_user,
@@ -235,8 +239,8 @@ def kind_icon(t):
 
 def sync(state, live):
     keep = ("author", "first_username", "file", "line", "body", "resolved",
-            "url", "note_count", "last_author", "last_username", "last_body",
-            "mine", "by_author", "awaiting")
+            "resolved_by", "url", "note_count", "last_author", "last_username",
+            "last_body", "mine", "by_author", "awaiting")
     for tid, rec in live.items():
         if tid in state["threads"]:
             state["threads"][tid].update({k: rec[k] for k in keep})
@@ -255,8 +259,9 @@ def adopt_inbound(state):
     up in the overview and needs-ack flow. Threads you opened stay out of this
     (they belong to your drafts, matched via `candidates`/`link`)."""
     linked = {th for t in state["topics"] for th in t["thread_ids"]}
+    ignored = set(state.get("ignored") or [])       # dropped inbound → stay dropped
     for tid, x in state["threads"].items():
-        if tid in linked or x.get("mine") or x.get("gone"):
+        if tid in linked or tid in ignored or x.get("mine") or x.get("gone"):
             continue
         summ = " ".join((x.get("body") or "").split())[:80]
         t = add_topic(state, source="author" if x.get("by_author") else "peer",
@@ -281,15 +286,25 @@ def _num(tid):
     return int("".join(c for c in tid if c.isdigit()) or 0)
 
 
+def topic_file(state, t):
+    """Authoritative (file, line) for a topic. Once it's linked to a GitLab thread,
+    the *thread's* position wins — that's where the discussion physically lives, and
+    GitLab may have placed the comment on a different line/file than the draft's
+    original guess. Only an unposted draft falls back to its stored file/line."""
+    for i in t["thread_ids"]:
+        x = state["threads"].get(i) or {}
+        if x.get("file"):
+            return x["file"], x.get("line")
+    return t.get("file"), t.get("line")
+
+
 def _loc(state, t, full=False):
     """Location `path:line`. Compact (basename) for the overview table; full repo
     path when `full` — used in the per-topic header you read while discussing."""
-    def fmt(p, line):
-        return f"{p if full else os.path.basename(p)}:{line or ''}"
-    if t.get("file"):
-        return fmt(t["file"], t.get("line"))
-    thr = [state["threads"].get(x, {}) for x in t["thread_ids"]]
-    return next((fmt(x["file"], x.get("line")) for x in thr if x.get("file")), "")
+    f, line = topic_file(state, t)
+    if not f:
+        return ""
+    return f"{f if full else os.path.basename(f)}:{line or ''}"
 
 
 def _rows(state, scope):
@@ -318,8 +333,11 @@ def render_table(state, scope="all"):
             summ = short_summary(state, t).replace("|", "\\|")
             if t.get("source") in INBOUND and t.get("by"):
                 summ = f"_{t['by']}:_ {summ}"           # who raised this thread
+            resolved = any(state["threads"].get(x, {}).get("resolved")
+                           for x in t["thread_ids"])
+            mark = " ✓" if resolved and s == "needs_ack" else ""   # GitLab-resolved
             out.append(
-                f"| {GLYPH[s]} {WORD[s]} | {TOPIC_ICON} **{t['id']}** "
+                f"| {GLYPH[s]} {WORD[s]}{mark} | {TOPIC_ICON} **{t['id']}** "
                 f"| {kind_icon(t)} | {SRC_ICON.get(t.get('source'), '🤖')} "
                 f"| `{_loc(state, t)}` | {summ} |")
     else:
@@ -366,7 +384,9 @@ def render_quote(state, tid):
         if x.get("url"):
             out.append(x["url"])
         if x.get("resolved"):
-            out.append("_(thread resolved by the author — still needs your ack)_")
+            who = first_name(x.get("resolved_by")) or "someone"
+            out.append(f"_(GitLab thread resolved by {who} — that's their toggle; "
+                       "your ack is what closes this topic here)_")
         out += ["", _note_md(x.get("author"), x.get("body"))]
         if x.get("note_count", 1) > 1:
             skipped = x["note_count"] - 2
@@ -401,10 +421,11 @@ def render_bodies(state):
             continue
         for th in t["thread_ids"]:
             x = state["threads"].get(th, {})
+            res = (f", resolved by {first_name(x.get('resolved_by')) or '?'}"
+                   if x.get("resolved") else "")
             out.append(f"[{t['id']}] {os.path.basename(x.get('file') or '')}:"
                        f"{x.get('line') or ''}  "
-                       f"(last: {first_name(x.get('last_author'))}"
-                       f"{', resolved' if x.get('resolved') else ''})  {x.get('url')}")
+                       f"(last: {first_name(x.get('last_author'))}{res})  {x.get('url')}")
             out.append(f"  {first_name(x.get('author'))}: {(x.get('body') or '').strip()}")
             if x.get("note_count", 1) > 1:
                 out.append(f"  {first_name(x.get('last_author'))} "
@@ -454,40 +475,78 @@ def _mr_web(state, ctx, iid):
     return state.get("mr_web_url") or f"{ctx['web']}/-/merge_requests/{iid}"
 
 
-def _git_stat(wt, frm, to):
-    """`N files, +A −D` from the worktree, or '' if unavailable (objects not
-    fetched / no worktree). Read-only."""
-    if not wt or not frm or not to:
-        return ""
-    r = run(["git", "-C", wt, "diff", "--shortstat", f"{frm}..{to}"])
-    if r.returncode != 0:
-        return ""
-    s = r.stdout.strip()
-    files = ins = dele = "0"
-    for part in s.split(","):
-        p = part.strip()
-        if "file" in p:
-            files = p.split()[0]
-        elif "insertion" in p:
-            ins = p.split()[0]
-        elif "deletion" in p:
-            dele = p.split()[0]
-    return f"{files} {'file' if files == '1' else 'files'}, +{ins} −{dele}"
+def _compare(ctx, frm, to):
+    """Raw `diffs` array of GitLab's compare API (frm→to, straight). Server-side,
+    so it works even after a force-push prunes the old sha locally. None on error."""
+    if not frm or not to:
+        return None
+    try:
+        r = api(f"projects/{ctx['enc']}/repository/compare"
+                f"?from={frm}&to={to}&straight=true")
+    except SystemExit:
+        return None
+    return (r or {}).get("diffs")
 
 
-def _changed_files(wt, frm, to):
-    if not wt or not frm or not to:
-        return []
-    r = run(["git", "-C", wt, "diff", "--name-only", f"{frm}..{to}"])
-    return r.stdout.split() if r.returncode == 0 else []
+def _gl_compare(ctx, frm, to):
+    """Server-side diffstat for frm→to via GitLab's compare API. Robust across
+    force-push (GitLab keeps every SHA; the local repo prunes old version heads).
+    Returns {'stat': 'N files, +A −D', 'paths': [...]} or None if it can't."""
+    diffs = _compare(ctx, frm, to)
+    if diffs is None:
+        return None
+    add = dele = 0
+    paths = []
+    for d in diffs:
+        paths.append(d.get("new_path") or d.get("old_path"))
+        for ln in (d.get("diff") or "").splitlines():
+            if ln.startswith("+") and not ln.startswith("+++"):
+                add += 1
+            elif ln.startswith("-") and not ln.startswith("---"):
+                dele += 1
+    nf = len(diffs)
+    return {"stat": f"{nf} {'file' if nf == 1 else 'files'}, +{add} −{dele}",
+            "paths": paths}
+
+
+def _version_commits(ctx, iid, vid):
+    """Commit list of one MR diff version (id, title, message …). Used to classify
+    a rebase push by comparing commit messages before/after — works from GitLab
+    alone, so it survives the force-push that prunes the old heads locally."""
+    v = api(f"projects/{ctx['enc']}/merge_requests/{iid}/versions/{vid}")
+    return (v or {}).get("commits") or []
+
+
+def _rebase_kind(ctx, iid, pred_vid, cur_vid):
+    """Classify a rebase: compare the two versions' commit messages. Returns
+    {'changed': N, 'subjects': [...]} — N>0 means real commits were edited/added on
+    top of the rebase (the annoying mixed push). None if it can't be determined."""
+    try:
+        pred = _version_commits(ctx, iid, pred_vid)
+        cur = _version_commits(ctx, iid, cur_vid)
+    except SystemExit:
+        return None
+    if not cur:
+        return None
+    seen = {}                                    # multiset of pred commit messages
+    for c in pred:
+        k = (c.get("message") or c.get("title") or "").strip()
+        seen[k] = seen.get(k, 0) + 1
+    extra = []
+    for c in cur:
+        k = (c.get("message") or c.get("title") or "").strip()
+        if seen.get(k, 0) > 0:
+            seen[k] -= 1                         # matched an unchanged commit
+        else:
+            extra.append((c.get("title") or k.splitlines()[0] if k else "").strip())
+    return {"changed": len(extra), "subjects": [s for s in extra if s]}
 
 
 def _topics_touching(state, files):
     fs = set(files)
     hit = []
     for t in state["topics"]:
-        tf = t.get("file") or next((state["threads"].get(x, {}).get("file")
-                                    for x in t["thread_ids"]), None)
+        tf = topic_file(state, t)[0]
         if tf and tf in fs:
             hit.append(t["id"])
     return hit
@@ -507,44 +566,70 @@ def head_report(state, ctx, iid):
 
 
 def render_updates(state, ctx, iid):
-    """The 'any updates?' report: each push since your baseline as a compare URL +
-    diffstat + the topics its files touch. You supply the prose summary on top."""
+    """The 'any updates?' report: each push since your baseline as a compare URL,
+    labelled **rebase** (branch moved onto a new target base — no reviewable author
+    change) or a **diffstat** + topics touched. You add the prose summary per push.
+
+    Rebase vs real-change is read from version metadata: a push whose base_commit_sha
+    differs from the previous version's is a rebase; same base + new head is fixups."""
     cur = mr_head(ctx, iid)
     last = state.get("last_reviewed_head")
     if not last:
         return ("_no reviewed baseline yet — run `set-head` after your first pass, "
                 f"then updates are tracked from there (tip `{(cur or '')[:12]}`)._")
-    vs = versions(ctx, iid)
-    new = new_versions(state, vs)
+    vs = versions(ctx, iid)                       # newest first
+    new = new_versions(state, vs)                 # oldest → newest
     if not new:
         return f"_no changes since your last review (tip `{(cur or '')[:12]}`)._"
     web = _mr_web(state, ctx, iid)
-    wt = get_worktree(state["slug"])
+    pos = {v.get("id"): i for i, v in enumerate(vs)}
     out = [f"**{len(new)} push(es) since your last review** "
            f"(`{last[:12]}` → `{(cur or '')[:12]}`):", ""]
-    prev = last
-    for v in new:
+    for n, v in enumerate(new, 1):
+        i = pos.get(v.get("id"))
+        pred = vs[i + 1] if (i is not None and i + 1 < len(vs)) else None
+        start = (pred or {}).get("head_commit_sha") or v.get("base_commit_sha") or last
         to = v.get("head_commit_sha")
-        url = f"{web}/diffs?diff_id={v.get('id')}&start_sha={prev}"
-        stat = _git_stat(wt, prev, to)
-        touch = _topics_touching(state, _changed_files(wt, prev, to))
-        line = f"- {url}"
-        if stat:
-            line += f"  ({stat})"
-        out.append(line)
-        if touch:
-            out.append(f"  touches: {', '.join(touch)}")
-        prev = to
-    if not wt:
-        out += ["", "_(no review worktree set → no diffstats/topic mapping; "
-                "`worktree --set <path>`)_"]
+        url = f"{web}/diffs?diff_id={v.get('id')}&start_sha={start}"
+        rebased = bool(pred) and v.get("base_commit_sha") != pred.get("base_commit_sha")
+        out.append(f"- **push {n}:** {url}")
+        if rebased:
+            ob = (pred.get("base_commit_sha") or "")[:8]
+            nb = (v.get("base_commit_sha") or "")[:8]
+            rd = _rebase_kind(ctx, iid, pred.get("id"), v.get("id"))
+            if rd is None:
+                out.append(f"  - ↻ rebase onto new base `{ob}` → `{nb}` "
+                           "(couldn't classify — inspect via the URL)")
+            elif rd["changed"] == 0:
+                out.append(f"  - ↻ rebase onto new base `{ob}` → `{nb}` — commit "
+                           "messages unchanged (likely no author change; a silent "
+                           "`--amend` wouldn't show here, so skim the URL if unsure)")
+            else:                                # the annoying mixed push
+                subs = "; ".join(rd["subjects"][:3])
+                more = "…" if len(rd["subjects"]) > 3 else ""
+                out.append(f"  - ⚠️ rebase onto new base `{ob}` → `{nb}` **+ "
+                           f"{rd['changed']} real change(s) folded in** — inspect "
+                           f"carefully. New/edited commits: {subs}{more}")
+        else:
+            cmp = _gl_compare(ctx, start, to)
+            if cmp:
+                touch = _topics_touching(state, cmp["paths"])
+                line = f"  - {cmp['stat']}"
+                if touch:
+                    line += f" · touches {', '.join(touch)}"
+                out.append(line)
+            else:
+                out.append("  - (diffstat unavailable — inspect via the URL)")
     return "\n".join(out)
 
 
-def render_topic_diff(state, ctx, iid, tid):
-    """What the author changed for one topic: the canonical compare URL (from the
-    baseline captured when you posted it) + the exact inline git command."""
+def render_topic_diff(state, ctx, iid, tid, inline_limit=80):
+    """What the author changed for one topic since you posted it. Server-side via
+    the compare API (force-push-safe): shows the topic file's diff inline when it's
+    small (≤ inline_limit lines), else just the compare URL. Always prints the URL."""
     t = topic_for(state, tid) or die(f"no topic {tid}")
+    if not t["thread_ids"]:
+        return f"{tid} isn't posted on GitLab yet — nothing the author could change"
     start = t.get("start_sha") or state.get("last_reviewed_head")
     if not start:
         return f"{tid}: no baseline captured — nothing to compare yet"
@@ -554,11 +639,29 @@ def render_topic_diff(state, ctx, iid, tid):
     diff_id = vs[0].get("id") if vs else None
     web = _mr_web(state, ctx, iid)
     url = f"{web}/diffs?diff_id={diff_id}&start_sha={start}"
-    wt = get_worktree(state["slug"]) or "<worktree>"
     out = [f"**{TOPIC_ICON} {tid}** — author changes since you posted "
            f"(`{start[:12]}` → `{(cur or '')[:12]}`)", url]
-    scope = f" -- {file}" if file else ""
-    out.append(f"inline: `git -C {wt} diff {start[:12]}..{(cur or '')[:12]}{scope}`")
+    diffs = _compare(ctx, start, cur)
+    if diffs is None:
+        out.append("_(couldn't fetch the diff — open the URL)_")
+        return "\n".join(out)
+    picked = [d for d in diffs if file and (d.get("new_path") == file
+              or d.get("old_path") == file)] if file else diffs
+    if not picked:
+        out.append("_(no change to this topic's file in that range — the author may "
+                   "have addressed it elsewhere; open the URL for the whole diff)_")
+        return "\n".join(out)
+    blocks = []
+    for d in picked:
+        body = (d.get("diff") or "").rstrip("\n")
+        if body:
+            blocks.append(f"--- {d.get('new_path') or d.get('old_path')}\n{body}")
+    text = "\n".join(blocks)
+    nlines = text.count("\n") + 1 if text else 0
+    if 0 < nlines <= inline_limit:
+        out += ["", "```diff", text, "```"]
+    elif nlines:
+        out.append(f"_(diff is {nlines} lines — too big to inline; open the URL)_")
     return "\n".join(out)
 
 
@@ -600,10 +703,16 @@ def resolve_state(args):
     elif mr:
         state.update(mr_web_url=mr.get("web_url"), title=mr.get("title"),
                      author=mr_author(mr), author_username=mr_author_username(mr))
-    if not state.get("author") or not state.get("author_username"):
-        obj = mr_object(ctx, iid)                # self-heal older state files
-        state["author"] = mr_author(obj)
-        state["author_username"] = mr_author_username(obj)
+    # `glab mr view` often returns the author with only a username, no display
+    # name → mr_author falls back to the username. Heal from the API MR object
+    # (which carries the real name) when we have no name, or only the username.
+    au = state.get("author_username")
+    if not state.get("author") or not au or state.get("author") == au:
+        obj = mr_object(ctx, iid)
+        state["author_username"] = au or mr_author_username(obj)
+        nm = mr_author(obj)
+        if nm:
+            state["author"] = nm
     return ctx, iid, path, state
 
 
@@ -742,6 +851,10 @@ def main():
                 t[fld.get(f, f)] = v
         save(path, state)
     elif cmd == "drop":
+        t = topic_for(state, args.topic)
+        if t and t["thread_ids"]:                 # keep dropped inbound threads dropped
+            ign = state.setdefault("ignored", [])
+            ign += [th for th in t["thread_ids"] if th not in ign]
         state["topics"] = [t for t in state["topics"] if t["id"] != args.topic]
         save(path, state)
     elif cmd == "merge":
