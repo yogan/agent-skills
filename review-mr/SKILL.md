@@ -15,7 +15,9 @@ Your chat message is their *only* window. So:
 
 1. When a `findings.py` command prints a table/quote, **paste it verbatim into your
    reply** — table, blockquote and all. Never summarize, re-type, or wrap it in a
-   code fence.
+   code fence. Any heading you write above an overview table **must carry `MR !<num>`**
+   (the table's own `MR !<num> — <title>` header already does — don't drop it); if you'd
+   write no heading, the full `MR !<num>: <title>` is a fine standalone one.
 2. **One topic at a time.** Present the current topic, then **STOP and wait**. Never
    mention, preview, or recommend anything about other topics.
 3. **This skill NEVER writes to GitLab.** It does not post comments and does not
