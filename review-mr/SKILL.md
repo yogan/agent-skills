@@ -35,7 +35,10 @@ refer to the author as `Jane`. The table header already renders the short name (
 
 ## Setup — do this silently, then present
 
-Resolve the MR (from `123` / `!123`, or infer from the branch) and the review worktree:
+**You're given the MR number** (`534` from `/review-mr 534`) — **use it as `--iid` on every
+`findings.py` call** and don't rely on branch inference: you may be launched in a detached or
+unrelated worktree, and a bare `glab mr view` / `findings.py` there resolves the wrong thing.
+First find the review worktree (this is repo-level; run from anywhere inside the repo):
 
 ```bash
 python3 $SD/findings.py worktree            # stored review-worktree path for this repo, if any
@@ -43,14 +46,32 @@ git worktree list                           # else pick the one whose path looks
 python3 $SD/findings.py worktree --set <path>   # persist your choice (ask once if ambiguous / none)
 ```
 
-If no review worktree exists, offer to create one (`git worktree add`). **All git work
-happens in that worktree** — never disturb the user's current checkout. In it, **once**:
+If none exists, offer to create one (`git worktree add`). **Then `cd` into the worktree and run
+everything — glab *and* findings.py — from there.** Both auto-resolve the project from that
+worktree's `origin`, so you never name it by hand. **Do NOT guess the repo** (no
+`glab mr view -R "$(glab repo view …)"` — it misfires into 404s); and `findings.py` takes
+`--iid`, never `-R`. The review worktree is **disposable**, so hard-reset it onto the MR branch:
 
 ```bash
-git -C <wt> fetch <remote>                  # refuse if the worktree is dirty; warn and stop
-git -C <wt> checkout <mr-branch>            # or: glab mr checkout <iid> -R <project>
-python3 $SD/findings.py set-head            # mark the current tip as your reviewed baseline
+cd <wt>                                     # the review worktree
+git fetch origin
+git checkout <mr-branch> && git reset --hard origin/<mr-branch>   # pause only if <wt> holds work that looks intentionally yours
 ```
+
+Fresh vs resume: the state file exists iff you've reviewed this MR before —
+
+```bash
+test -f "$(python3 $SD/findings.py path --iid <n>)" && echo RESUME || echo FRESH
+```
+
+**FRESH only** — mark the current tip as your baseline so later pushes are measured from here:
+
+```bash
+python3 $SD/findings.py set-head --iid <n>  # ⚠️ first run ONLY
+```
+
+**RESUME** — do NOT `set-head` now (it would erase the "pushes since last review" detection).
+Jump to *Resuming*, below.
 
 **Explainer (opt-in, parallel).** Unless the user said "no explain(er)", decide by size —
 changed LOC **excluding tests**; below ~40 → skip (it's a short change). Otherwise launch
@@ -119,6 +140,35 @@ python3 $SD/findings.py link <t> <discussion_id>   # on the user's OK → topic 
 A linked topic captures a `start_sha` baseline, so later you can show exactly what the author
 changed for it (across force-pushes).
 
+## Resuming an in-progress review
+
+A state file exists (the common case — a review spans days). Fetch + checkout in the worktree
+(above, **no set-head**). Your opener must contain, in this order — **all pasted verbatim**:
+
+```bash
+python3 $SD/findings.py updates         # 1. pushes since your baseline (syncs internally)
+python3 $SD/findings.py present         # 2. the overview table + the first topic that needs you
+```
+
+**1 — `updates`.** Paste verbatim, then annotate — don't collapse it into prose. Each push is a
+`- **push N:** <url>` line with a nested `  - ` detail (diffstat + topics touched, or a rebase
+label). Add your **one-line summary as a further `  - ` sub-bullet**:
+
+```
+- **push 1:** <url>
+  - 3 files, +20 −8 · touches t1, t3, t5
+  - the five fixes, one commit — matches each finding
+- **push 2:** <url>
+  - ↻ rebase onto latest main — messages unchanged, nothing to re-review
+```
+
+A **⚠️ mixed rebase** line (real changes folded into a rebase) — **call it out loudly**.
+
+**2 — `present`.** Paste verbatim: the **overview table** (your map of every topic's state) plus
+the first topic needing you. **The overview table is mandatory in the opener — never drop it**
+(it's the user's only view of where all topics stand). Then walk the needs-ack topics one at a
+time from there. Advance the baseline (`set-head`) at the end, once you've digested the pushes.
+
 ## The re-review loop
 
 "any news?" / "check the MR" / "status" / "what's left" → the ongoing cycle. Full mechanics in
@@ -126,24 +176,38 @@ changed for it (across force-pushes).
 
 ```bash
 python3 $SD/findings.py sync            # reconcile threads + one-line push banner; paste it
-python3 $SD/findings.py updates         # "any updates?": pushes since baseline, diffs + topics touched
+python3 $SD/findings.py updates         # pushes since baseline: URLs + diffstats/rebase + topics
 python3 $SD/findings.py todo            # only what needs you (✎ + ◐)
 ```
 
-`updates` lists each push since your baseline with a compare URL, diffstat, and the topics its
-files touch — add your prose summary of *what* changed on top. `sync` also auto-surfaces
-threads you didn't open: a peer reviewer's (💬) or the author's own (🖊️), so they land in your
-lists and can be `merge`d with your findings.
+`updates` — **paste verbatim**, then one summary sentence per push (see *Resuming*). `sync` also
+auto-surfaces threads you didn't open: a peer reviewer's (💬) or the author's own (🖊️), so they
+land in your lists and can be `merge`d with your findings.
 
-For each `◐ needs-ack` (author replied and/or resolved), present it **one at a time** with a
-short summary of what the author did and — for a real fix — offer the diff:
+For each `◐ needs-ack` (author replied and/or resolved), present it **one at a time**. **Read
+the thread first — it is the source of truth for what was agreed:**
 
 ```bash
-python3 $SD/findings.py diff <t>        # compare URL (from the topic's baseline) + inline git cmd
+python3 $SD/findings.py quote <t>       # the full thread: your point + the author's reply
 ```
 
-small → run the inline `git -C <wt> diff …` and show it; big → paste the compare URL and offer
-to `open` it. On the user's word:
+**Judge against what the thread agreed, not against the finding's original one-line summary.**
+A point is often *down-scoped in discussion* — e.g. you said "ein `onError` wäre schön, muss
+aber nicht in diesem MR", the author replied "schreib ich als TODO hin" and resolved. Then the
+bar is **the TODO, not the full fix** — re-deriving the original defect from the code and
+declaring it "not fixed" is wrong. If the thread agreed to defer (a TODO / follow-up ticket)
+and the author did that → recommend **ack** (or `⊘ wontfix` if you want a ticket tracked), not a
+re-litigation.
+
+Use the diff only to **confirm the agreed change landed**:
+
+```bash
+python3 $SD/findings.py diff <t>        # the author's change for THIS topic (server-side)
+```
+
+`diff <t>` shows the topic file's change since you posted it — **inline when small**, else just
+the compare URL to `open`. It's server-side (force-push-safe), so it works even when the baseline
+sha is long gone locally. Paste whatever it returns. On the user's word:
 
 ```bash
 python3 $SD/findings.py set <t> --state acked            # ● you're satisfied
@@ -157,8 +221,10 @@ push, `set-head` to move the baseline. Always end a check with what's still left
 ## Status glyphs
 
 `✎ draft` (post it) · `○ open` (author's turn) · `◐ needs-ack` (your turn) · `● acked` ·
-`⊘ wontfix`. Kind: 🔴🟠🟡🔵 issue by severity · ❓ question · 💚 praise · ⚪ severity not set
-yet. Source: 🤖 llm · 👤 you · 👥 both · 💬 peer reviewer · 🖊️ author (inbound threads).
+`⊘ wontfix`. A trailing **`✓`** on `◐ needs-ack` = the GitLab thread is already resolved (by
+whoever toggled it) — that's separate from *your* ack, which is the only thing that closes the
+topic here. Kind: 🔴🟠🟡🔵 issue by severity · ❓ question · 💚 praise · ⚪ severity not set
+yet. Source: 🤖 llm · 👤 you · 👥 both/merged · 💬 peer reviewer · 🖊️ author (inbound threads).
 
 ## Prerequisites
 
