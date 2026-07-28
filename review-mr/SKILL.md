@@ -123,13 +123,25 @@ changed for it (across force-pushes).
 [REFERENCE.md](REFERENCE.md). In short:
 
 ```bash
-python3 $SD/findings.py sync            # reconcile threads + report author pushes; paste it
+python3 $SD/findings.py sync            # reconcile threads + one-line push banner; paste it
+python3 $SD/findings.py updates         # "any updates?": pushes since baseline, diffs + topics touched
 python3 $SD/findings.py todo            # only what needs you (✎ + ◐)
 ```
 
+`updates` lists each push since your baseline with a compare URL, diffstat, and the topics its
+files touch — add your prose summary of *what* changed on top. `sync` also auto-surfaces
+threads you didn't open: a peer reviewer's (💬) or the author's own (🖊️), so they land in your
+lists and can be `merge`d with your findings.
+
 For each `◐ needs-ack` (author replied and/or resolved), present it **one at a time** with a
-short summary of what the author did and — for a real fix — offer the diff (small → inline;
-big → the GitLab compare URL, offer to `open` it). On the user's word:
+short summary of what the author did and — for a real fix — offer the diff:
+
+```bash
+python3 $SD/findings.py diff <t>        # compare URL (from the topic's baseline) + inline git cmd
+```
+
+small → run the inline `git -C <wt> diff …` and show it; big → paste the compare URL and offer
+to `open` it. On the user's word:
 
 ```bash
 python3 $SD/findings.py set <t> --state acked            # ● you're satisfied
@@ -143,12 +155,12 @@ push, `set-head` to move the baseline. Always end a check with what's still left
 ## Status glyphs
 
 `✎ draft` (post it) · `○ open` (author's turn) · `◐ needs-ack` (your turn) · `● acked` ·
-`⊘ wontfix`. Kind: 🔴🟠🟡🔵 issue by severity · ❓ question · 💚 praise. Source: 🤖 llm ·
-👤 you · 👥 both.
+`⊘ wontfix`. Kind: 🔴🟠🟡🔵 issue by severity · ❓ question · 💚 praise · ⚪ severity not set
+yet. Source: 🤖 llm · 👤 you · 👥 both · 💬 peer reviewer · 🖊️ author (inbound threads).
 
 ## Prerequisites
 
 `glab` authenticated; a review worktree (or willingness to create one); run inside the target
 repo. `python3`; macOS for `clip.sh`. Build blocks: the `explain-branch` and `review-branch`
-skills installed. `findings.py` subcommands: sync·todo·present·bodies·quote·candidates·import·
+skills installed. `findings.py` subcommands: sync·todo·present·updates·bodies·quote·diff·candidates·import·
 add·set·drop·merge·link·head·set-head·worktree·path (run any with `-h`).
