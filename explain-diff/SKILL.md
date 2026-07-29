@@ -65,6 +65,7 @@ Write only a small JSON content spec covering these sections, in this order:
 
 Content rules for each section's `html` field (raw HTML, not markdown):
 
+- The backtick-to-`<code>` auto-conversion is quiz `question`/`text` and `subtitle` only. Section `html` is raw HTML — write inline identifiers as literal `<code>foo</code>`, never backticks; backticks left in `html` render as literal characters.
 - Write with the clarity and flow of Martin Kleppmann — engaging, classic technical-writing style, smooth transitions between sections.
 - Diagrams: reuse a small number of diagram families throughout (e.g. a simplified UI mock for UI changes, a system/data-flow diagram with example data for backend changes). Define each as a small graph (nodes/edges) in the spec's top-level `"diagrams"` dict, drop it into a section's `html` via a bare `{{diagram:name}}` token. Run `render.py --help` for the exact node/edge JSON shape. Never ASCII art, and don't hand-write flowchart HTML — the diagrams dict is the only path now.
 - Code blocks: use `<pre><code class="language-XXX">` for syntax highlighting — `<pre>` alone still works but loses highlighting. For a diff-style snippet, use `language-diff-XXX` so `+`/`-` lines get diff coloring *and* nested syntax highlighting (plain `language-diff` if the language isn't worth specifying); partial/incomplete snippets tokenize fine, no need for valid complete syntax. See `render.py --help` for the full language list and diff-line format.
