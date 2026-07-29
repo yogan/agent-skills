@@ -48,16 +48,18 @@ git worktree list                           # else pick the one whose path looks
 python3 $SD/findings.py worktree --set <path>   # persist your choice (ask once if ambiguous / none)
 ```
 
-If none exists, offer to create one (`git worktree add`). **Then `cd` into the worktree and run
+If none exists, offer to create one (`git worktree add --detach <path>` — no branch). **Then `cd` into the worktree and run
 everything — glab *and* findings.py — from there.** Both auto-resolve the project from that
 worktree's `origin`, so you never name it by hand. **Do NOT guess the repo** (no
 `glab mr view -R "$(glab repo view …)"` — it misfires into 404s); and `findings.py` takes
-`--iid`, never `-R`. The review worktree is **disposable**, so hard-reset it onto the MR branch:
+`--iid`, never `-R`. The review worktree is **disposable**, so hard-reset it onto the MR tip.
+Check out **detached** — nothing here reads the local branch name (sync/detection run off
+`--iid` + the GitLab API), so a detached HEAD keeps your local branch list clean:
 
 ```bash
 cd <wt>                                     # the review worktree
 git fetch origin
-git checkout <mr-branch> && git reset --hard origin/<mr-branch>   # pause only if <wt> holds work that looks intentionally yours
+git checkout -f --detach origin/<mr-branch>   # detached: lands exactly on the tip, no local branch created; -f discards worktree cruft — pause only if <wt> holds work that looks intentionally yours
 ```
 
 Fresh vs resume: the state file exists iff you've reviewed this MR before —
