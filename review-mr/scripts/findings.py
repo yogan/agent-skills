@@ -801,6 +801,19 @@ def resolve_state(args):
     iid = getattr(args, "iid", None)
     if iid is None:
         mr = mr_view()
+        # Footgun guard: with no --iid we fall back to the MR of the *current
+        # branch*. But every shell call tends to reset cwd to the main repo,
+        # which is usually checked out on YOUR own branch — so a bare call
+        # silently resolves to your MR and writes findings into the wrong
+        # state. This skill only ever reviews someone else's MR, so an inferred
+        # MR authored by you is always a mistake: refuse loudly.
+        me = current_user()
+        author = mr_author_username(mr)
+        if me and author and me == author:
+            die(f"inferred MR !{mr['iid']} from the current branch, but it's "
+                f"authored by you ({me}) — this skill reviews someone else's "
+                f"MR. You're likely in the wrong checkout (the main repo, not "
+                f"the review worktree). Re-run with --iid <n>.")
         iid = mr["iid"]
     path = state_file(ctx["slug"], iid)
     state = load(path)
