@@ -92,9 +92,14 @@ returns a prioritized critique. Turn each finding into a JSON object and import 
   "summary":"one line in the user's words"}]
 ```
 ```bash
-python3 $SD/findings.py import /tmp/seed.json
-python3 $SD/findings.py present             # paste verbatim as the top of your reply
+python3 $SD/findings.py import /tmp/seed.json --iid <n>
+python3 $SD/findings.py present --iid <n>    # paste verbatim as the top of your reply
 ```
+
+⚠️ **`--iid <n>` on these too** — `import`/`present` are as iid-sensitive as any other
+call. A bare `cd <wt>` from an earlier command does **not** persist (each shell call resets
+cwd to the repo root, usually *your own* branch), so without `--iid` these silently resolve to
+the wrong MR and land findings in the wrong state file.
 
 `present` = the overview table + the first topic that needs you. Then enter Phase 1.
 
