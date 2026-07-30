@@ -15,8 +15,10 @@ The skill is **read-only against GitLab** — you draft, the user posts and reso
   - **issue** → crisp "what's off" + optional suggestion/snippet.
   - **question** (❓) → just the question, one or two lines — you're asking, not demanding.
   - **praise** (💚) → one warm line. (You typically post it and resolve right after.)
-- Show the draft as GitLab-compatible markdown *in your chat reply* so the user can copy it,
-  and offer `clip.sh` too. **Never post it yourself.**
+- Show the draft *in your chat reply* via `quote <t>` (it also states where to open the
+  thread — `file:line`), and offer the clipboard with `clip.sh <(… draft <t>)`. Copy with
+  **`draft <t>`** (body only), never `quote <t>` (its meta header must not reach the posted
+  comment). **Never post it yourself.**
 
 ## Reconciling the user's hand-posted comments
 
