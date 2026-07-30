@@ -36,7 +36,9 @@ Subcommands (all read-only against GitLab):
   status         approval + merge-readiness (detailed_merge_status) + approve/revoke nudge
   updates        pushes since your baseline: compare URLs + diffstats + topics touched
   bodies         first + last note of each posted thread (to judge status)
-  quote <t>      render a topic's thread notes verbatim
+  quote <t>      render a topic's thread notes verbatim (for a draft: display
+                 with meta header + where to open the thread)
+  draft <t>      the draft's comment body ONLY — the paste/post payload (no meta)
   diff <t>       the author's change for one topic: compare URL + inline git command
   import <file>  bulk-add findings from a JSON array (review-branch seed)
   add            add one finding
@@ -394,11 +396,14 @@ def render_quote(state, tid):
     out = []
     if not t["thread_ids"]:                       # a draft — show its draft text
         title = f"**{TOPIC_ICON} {t['id']}" + (f" — {summ}**" if summ else "**")
-        out.append(f"{title} · `{_loc(state, t, full=True)}`  ({WORD['draft']})")
-        if t.get("draft"):
-            out += ["", t["draft"]]
-        elif t.get("note"):
-            out += ["", t["note"]]
+        # Meta lines (title + where to open the thread) are for the user's eyes
+        # only — NOT part of the comment. The paste payload is the body below,
+        # which `draft <t>` emits on its own for the clipboard / posting.
+        out.append(f"{title}  ({WORD['draft']} — not yet on GitLab)")
+        out.append(f"↳ open a new thread at `{_loc(state, t, full=True)}`, then paste:")
+        body = t.get("draft") or t.get("note")
+        if body:
+            out += ["", body]
         return "\n".join(out).strip()
     for i, th in enumerate(t["thread_ids"]):
         x = state["threads"].get(th, {})
@@ -422,6 +427,18 @@ def render_quote(state, tid):
             out += ["", _note_md(x.get("last_author"), x.get("last_body"))]
         out.append("")
     return "\n".join(out).strip()
+
+
+def draft_body(state, tid):
+    """The raw comment text for a draft topic — body only, no meta header (that
+    would otherwise land in the posted GitLab comment). This is the payload to
+    pipe into clip.sh or post via glab; `quote <t>` is the human-facing display."""
+    t = topic_for(state, tid) or die(f"no topic {tid}")
+    body = t.get("draft") or t.get("note")
+    if not body:
+        die(f"topic {tid} has no draft yet — set one with "
+            f"`set {tid} --draft \"…\"`")
+    return body
 
 
 def first_todo(state):
@@ -858,6 +875,10 @@ def main():
     pq.add_argument("topic")
     pq.add_argument("--iid", type=int)
 
+    pdr = sub.add_parser("draft")
+    pdr.add_argument("topic")
+    pdr.add_argument("--iid", type=int)
+
     pdf = sub.add_parser("diff")
     pdf.add_argument("topic")
     pdf.add_argument("--iid", type=int)
@@ -947,6 +968,8 @@ def main():
         print(render_candidates(state, me))
     elif cmd == "quote":
         print(render_quote(state, args.topic))
+    elif cmd == "draft":
+        print(draft_body(state, args.topic))
     elif cmd == "diff":
         print(render_topic_diff(state, ctx, iid, args.topic))
     elif cmd == "updates":

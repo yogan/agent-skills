@@ -127,12 +127,17 @@ for a concrete example, refine wording — possibly over several turns. Finish t
 
 Draft rules — see [REFERENCE.md](REFERENCE.md). In short: **German, informal *du*, as short
 as possible**; a ```suggestion block for a line-precise fix; identifiers in backticks; no
-headings. Show the draft as GitLab-compatible markdown in your reply, and offer the clipboard:
+headings. Show the draft as GitLab-compatible markdown in your reply (via `quote <t>`, which
+also tells the user **where to open the thread** — `file:line`), and offer the clipboard:
 
 ```bash
 python3 $SD/findings.py set <t> --draft "…"     # store the accepted draft
-$SD/clip.sh <(python3 $SD/findings.py quote <t>)   # or copy for pasting into GitLab
+$SD/clip.sh <(python3 $SD/findings.py draft <t>)   # copy the comment BODY only, for pasting
 ```
+
+⚠️ Copy with **`draft <t>`**, never `quote <t>` — `quote` includes the meta header (topic
+title + location) for *your* display; that must not land in the posted comment. `draft <t>`
+emits the body alone.
 
 The user posts it in the GitLab UI. **You never post.**
 
