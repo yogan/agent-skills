@@ -817,22 +817,29 @@ def resolve_state(args):
         iid = mr["iid"]
     path = state_file(ctx["slug"], iid)
     state = load(path)
-    if state is None:
-        mr = mr or mr_view()
-        state = new_state(ctx, mr)
-    elif mr:
-        state.update(mr_web_url=mr.get("web_url"), title=mr.get("title"),
-                     author=mr_author(mr), author_username=mr_author_username(mr))
-    # `glab mr view` often returns the author with only a username, no display
-    # name → mr_author falls back to the username. Heal from the API MR object
-    # (which carries the real name) when we have no name, or only the username.
-    au = state.get("author_username")
-    if not state.get("author") or not au or state.get("author") == au:
+    # Identity (iid/title/url/author) must come from the MR keyed by `iid`,
+    # NEVER from the ambient branch. `mr_view()` reads whatever branch cwd is on,
+    # and cwd resets to the main repo (usually YOUR own branch) between shell
+    # calls — so using it here bakes the wrong MR's identity into the correct
+    # per-iid state file (e.g. your MR !547's title landing in mr540's findings).
+    # `mr_object(ctx, iid)` fetches by iid and carries the real author name, so
+    # it also subsumes the old name-healing step. Fetch only when identity is
+    # actually needed — a healthy resume stays offline.
+    needs_identity = (
+        state is None
+        or state.get("iid") != iid
+        or not state.get("title")
+        or not state.get("author")
+        or state.get("author") == state.get("author_username")
+    )
+    if needs_identity:
         obj = mr_object(ctx, iid)
-        state["author_username"] = au or mr_author_username(obj)
-        nm = mr_author(obj)
-        if nm:
-            state["author"] = nm
+        if state is None:
+            state = new_state(ctx, obj)
+        else:
+            state.update(iid=iid, mr_web_url=obj.get("web_url"),
+                         title=obj.get("title"), author=mr_author(obj),
+                         author_username=mr_author_username(obj))
     return ctx, iid, path, state
 
 
