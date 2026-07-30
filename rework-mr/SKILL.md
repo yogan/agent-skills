@@ -48,22 +48,35 @@ ich") with the work still to do, it stays `open`. `bodies` shows your last note 
 python3 $SD/threads.py set <t> --state waiting     # only for a truly-addressed thread
 ```
 
-Then run **one** command and paste its whole output as the top of your reply:
+**Now research the first open topic — silently, before `present`.** `bodies` already gave you
+its reviewer comment, so you can read the code and work out the trade-off now. Do this first
+so that when you run `present` it is the **last** thing in your context, right before you type
+your reply — this is what stops the table getting dropped.
+
+Then, as your **final** action before replying, run `present`:
 
 ```bash
-python3 $SD/threads.py present
+python3 $SD/threads.py present      # run LAST — its output must lead your reply
 ```
 
 `present` outputs the overview table + a separator + the first open topic's reviewer comment.
-After pasting it, add — for that one topic only:
+Your reply is built in this exact order:
 
-- **2–4 lines** of research: what the code does + the real trade-off, citing `file:line`.
-  Plain prose, no "Code (…):" prefix.
-- Then: **trivial** → show the concrete change (fenced code block, as illustration of the
-  plan — you are NOT applying it) and ask **"Agreed?"**; **non-trivial** → alternatives + a
-  recommendation + **one** question.
+1. **The entire `present` output, verbatim, as the very first thing** — MR title line, GFM
+   table, separator, blockquoted comment and all. Nothing precedes it.
+2. Then, for that one topic only: **2–4 lines** of research (what the code does + the real
+   trade-off, citing `file:line`; plain prose, no "Code (…):" prefix).
+3. Then: **trivial** → show the concrete change (fenced code block, as illustration of the
+   plan — you are NOT applying it) and ask **"Agreed?"**; **non-trivial** → alternatives + a
+   recommendation + **one** question.
 
 Then **STOP**. No code edits. Nothing about the other topics.
+
+**Postcondition — check before sending.** Your message's first line must be the `present` MR
+title line (`**MR !…**`) and the table must follow. If your draft opens with your own research
+prose instead, you dropped the table — **redo it, table first.** (This is the exact failure the
+skill exists to prevent: `present` succeeds, then research tool calls push it out of mind and
+the reply starts with prose.)
 
 The output is markdown the chat renders (bold title, GFM table, `code` locations, blockquoted
 comment). Status: `○ open` (your turn — default) · `◐ waiting` (you fully addressed it; only
@@ -86,12 +99,16 @@ that have *no* plan yet. Re-confirm a plan only if the reviewer's ask changed si
 ## Next topics
 
 Once the user agrees on the current topic, **record the plan (no code yet)** and open the
-next one — paste its comment, add research + recommendation, stop again:
+next one. Same rule as the opener: research the next topic silently first, then run `quote`
+**last**, and lead your reply with its verbatim output before any prose.
 
 ```bash
 python3 $SD/threads.py set <t> --decision "…" --plan "…"
-python3 $SD/threads.py quote <next-t>      # paste verbatim
+python3 $SD/threads.py quote <next-t>      # run LAST — paste its output verbatim, first thing in your reply
 ```
+
+**Postcondition:** the reply must open with the `quote` comment block, not your research prose.
+If it opens with prose, you dropped the comment — redo it.
 
 Outcomes: **fix** · **reply-only** (reviewer wrong / no improvement) · **push-back** ·
 **question** (just answer, with a snippet / concrete example). Keep a TODO item per topic.
