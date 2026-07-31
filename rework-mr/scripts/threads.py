@@ -8,33 +8,60 @@ and never collides with another MR's rework. Two sessions on the *same* MR can
 race; that's the only unhandled case.
 
 Status:
-  ● done      — every thread resolved by the reviewer  (mechanical)
-  ○ open      — your turn: reviewer spoke last, OR you spoke last but haven't
-                actually addressed it yet (the default — never hides work)
-  ◐ waiting   — you fully addressed it (fix pushed / complete answer) and it only
-                needs the reviewer now. Set semantically: `set <t> --state waiting`.
+  ● done          — every thread resolved by the reviewer  (mechanical)
+  ✎ reply-pending — code already fixed AND pushed (a `diff_url` is stored); only the
+                    thread reply is left. Derived, so a resume never re-implements it.
+  ○ open          — your turn: reviewer spoke last, OR you spoke last but haven't
+                    addressed it yet and nothing is pushed (the default — never hides work)
+  ◐ waiting       — you fully addressed it (replied after pushing / gave a complete answer)
+                    and it only needs the reviewer now. Set via `set <t> --state waiting`.
 
 Subcommands:
   sync        fetch + reconcile, render the overview           (default; also for "status")
-  todo        fetch + reconcile, render only the open topics
+  todo        fetch + reconcile, render only what needs you (open + reply-pending)
   present     overview table + the first open topic's comment  (the opener; no fetch)
   bodies      print each open thread's opening note (to summarize from; no fetch)
   plans       print recorded decisions/plans for open topics  (resume; no fetch)
-  quote <t>   render a topic's reviewer comment(s)             (no fetch)
+  quote <t>   render a topic's whole thread — original + every reply  (no fetch)
+  url <t>     direct URL(s) to the topic's thread (to click & post)  (no fetch)
+  reply-view <t>  thread + your drafted reply (from reply-<t>.md) + URL, one paste  (no fetch)
   set <t> …   update a topic's fields (summary, decision, plan, start-sha, diff-url)
   merge <into> <o…>   fold other topics' threads into <into>
   path        print the state-file path
+  check-handles   internal — used by guard-reply.sh, no MR context needed
 """
 import argparse
 import json
 import os
+import re
+import sys
 
 from _gl import api, context, current_user, die, mr_view
 
+# internal topic handles (t5, t6, t10 …) — must never reach a GitLab comment.
+# Single source of truth: guard-reply.sh shells out to `check-handles` below
+# instead of reimplementing this regex in bash, so the two can't drift apart.
+HANDLE_RE = re.compile(r"\bt[0-9]+\b")
+
+
+def find_handles(text):
+    return sorted(set(HANDLE_RE.findall(text or "")))
+
+
 STATE_ROOT = os.path.expanduser("~/.claude/rework-mr")
 TOPIC_ICON = "◈"
-GLYPH = {"open": "○", "waiting": "◐", "done": "●"}
-STATUS_ORDER = {"open": 0, "waiting": 1, "done": 2}
+# Single source for the three per-status lookups below — this diff previously
+# needed to touch three separate dicts (plus the `keep` sets in `_rows`) just to
+# add one status; keying off one table keeps that to one place.
+STATUSES = {
+    "reply_pending": (0, "✎", "reply-pending"),
+    "open":          (1, "○", "open"),
+    "waiting":       (2, "◐", "waiting"),
+    "done":          (3, "●", "done"),
+}
+STATUS_ORDER = {k: v[0] for k, v in STATUSES.items()}
+GLYPH = {k: v[1] for k, v in STATUSES.items()}
+WORD = {k: v[2] for k, v in STATUSES.items()}
 
 
 def first_name(name):
@@ -102,6 +129,11 @@ def fetch_threads(ctx, iid, me):
             "last_author": (last.get("author") or {}).get("name") or last_user,
             "last_body": last.get("body"),
             "awaiting": "reviewer" if (me and last_user == me) else "you",
+            # full thread in order, so `quote` can show the whole discussion
+            # (original + every reply), not just first + last.
+            "notes": [{"author": (n.get("author") or {}).get("name")
+                       or (n.get("author") or {}).get("username"),
+                       "body": n.get("body")} for n in notes],
         }
     return out
 
@@ -120,25 +152,42 @@ def next_tid(state):
 
 def topic_status(state, t):
     """done = reviewer resolved it. Otherwise: if the reviewer spoke last it is
-    clearly your turn (open). If YOU spoke last it is ambiguous — you may have
-    fixed it (waiting) or merely acknowledged it (still open) — so it defaults to
-    open and only shows 'waiting' when semantically classified via `set --state
-    waiting`. This avoids the trap of an author ACK looking like "done"."""
+    your turn — but distinguish `reply_pending` (the code is already fixed AND
+    pushed, only the thread reply is left) from `open` (still needs work), via
+    the stored `diff_url` (set only after a push). Without that, a resume can't
+    tell an already-implemented topic from a merely-planned one and re-implements
+    it. If YOU spoke last it is ambiguous — you may have fixed it (waiting) or
+    merely acknowledged it (still open) — so it defaults to open and only shows
+    'waiting' when semantically classified via `set --state waiting`."""
     thr = [state["threads"].get(x) for x in t["thread_ids"]]
     thr = [x for x in thr if x]
     if not thr:
-        return "open"
+        return "reply_pending" if t.get("diff_url") else "open"
     if all(x["resolved"] for x in thr):
         return "done"
+    if t.get("state") == "waiting":
+        # you fully addressed it and marked it so; sync clears this back to open
+        # if the reviewer has since re-commented, so a surviving 'waiting' is real
+        return "waiting"
     unresolved = [x for x in thr if not x["resolved"]]
     if any(x.get("awaiting") == "you" for x in unresolved):
-        return "open"                       # reviewer spoke last → your turn
-    return t.get("state") or "open"          # you spoke last → LLM decides
+        # reviewer spoke last → your turn, even if a diff_url is stored from an
+        # earlier push: unlike `state`, diff_url is never cleared, so it must not
+        # outrank fresh reviewer feedback or a re-comment would be hidden behind
+        # a stale "reply_pending" forever.
+        return "open"
+    if t.get("diff_url"):
+        # code for this topic is already fixed AND pushed (diff_url is set only
+        # after a push) and the reviewer hasn't spoken since — only the reply is
+        # left. Takes precedence over "you spoke last, no push", so a resume
+        # never mistakes a pushed topic for unstarted work.
+        return "reply_pending"
+    return t.get("state") or "open"          # you spoke last, no push → LLM decides
 
 
 def sync(state, live):
     keep = ("author", "file", "line", "body", "resolved", "url",
-            "note_count", "last_author", "last_body", "awaiting")
+            "note_count", "last_author", "last_body", "awaiting", "notes")
     for tid, rec in live.items():
         if tid in state["threads"]:
             state["threads"][tid].update({k: rec[k] for k in keep})
@@ -179,8 +228,8 @@ def _rows(state, scope, show_done=False):
     st = {t["id"]: topic_status(state, t) for t in topics}
     counts = {s: sum(1 for t in topics if st[t["id"]] == s) for s in GLYPH}
     ordered = sorted(topics, key=lambda t: (STATUS_ORDER[st[t["id"]]], _num(t["id"])))
-    keep = {"open"} if scope == "mine" else \
-           ({"open", "waiting"} | ({"done"} if show_done else set()))
+    keep = {"open", "reply_pending"} if scope == "mine" else \
+           ({"open", "reply_pending", "waiting"} | ({"done"} if show_done else set()))
     return st, counts, [t for t in ordered if st[t["id"]] in keep]
 
 
@@ -200,12 +249,14 @@ def render_table(state, scope="all", show_done=False):
         for t in shown:
             s = st[t["id"]]
             summ = short_summary(state, t).replace("|", "\\|")
-            out.append(f"| {GLYPH[s]} {s} | {TOPIC_ICON} **{t['id']}** "
+            out.append(f"| {GLYPH[s]} {WORD[s]} | {TOPIC_ICON} **{t['id']}** "
                        f"| `{_loc(state, t)}` | {summ} |")
     else:
         out.append("_✓ nothing needs you — open threads are waiting on the reviewer_"
                    if scope == "mine" else "_✓ no open threads_")
     footer = [f"{counts['done']} of {len(state['topics'])} topics done"]
+    if counts["reply_pending"]:
+        footer.append(f"{counts['reply_pending']} pushed, reply pending")
     if counts["waiting"]:
         footer.append(f"{counts['waiting']} waiting for reply")
     return "\n".join(out + ["", "_" + " · ".join(footer) + "._"])
@@ -231,14 +282,49 @@ def render_quote(state, tid):
             out.append(f"`{path}`")
         if x.get("url"):
             out.append(x["url"])
-        out += ["", _note_md(x.get("author"), x.get("body"))]
-        if x.get("note_count", 1) > 1:
-            skipped = x["note_count"] - 2
-            if skipped > 0:
-                out += ["", f"_… {skipped} more …_"]
-            out += ["", _note_md(x.get("last_author"), x.get("last_body"))]
+        notes = x.get("notes")
+        if notes:                               # whole thread, in order
+            for n in notes:
+                out += ["", _note_md(n.get("author"), n.get("body"))]
+        else:                                   # pre-`notes` state: first + last only
+            out += ["", _note_md(x.get("author"), x.get("body"))]
+            if x.get("note_count", 1) > 1:
+                skipped = x["note_count"] - 2
+                if skipped > 0:
+                    out += ["", f"_… {skipped} more …_"]
+                out += ["", _note_md(x.get("last_author"), x.get("last_body"))]
         out.append("")
     return "\n".join(out).strip()
+
+
+def render_url(state, tid):
+    """Direct URL(s) to the topic's thread — the reviewer's first note anchor.
+    Shown with the reply draft so the user can click straight to the thread and
+    post. Several URLs only when threads were merged into one topic."""
+    t = topic_for(state, tid) or die(f"no topic {tid}")
+    urls = [state["threads"].get(th, {}).get("url") for th in t["thread_ids"]]
+    urls = [u for u in urls if u]
+    if not urls:
+        die(f"topic {tid} has no thread url yet (run `sync`)")
+    return "\n".join(urls)
+
+
+def render_reply_view(state, tid, body):
+    """The whole reply block, as ONE paste so none of its parts can be dropped:
+    the full thread (original + every reply), then the drafted body as a `> `
+    blockquote (matches the thread's rendering), then the thread URL, then the
+    c/p/n prompt. `body` is the raw draft (what gets posted); callers guard it
+    for internal topic handles first."""
+    quoted = "\n".join("> " + ln for ln in (body or "").rstrip("\n").splitlines())
+    return "\n".join([
+        render_quote(state, tid),
+        "", "**Draft reply:**", "",
+        quoted,
+        "", f"Thread (to post on): {render_url(state, tid)}",
+        "", "**`c`** copy to clipboard · **`p`** post on GitLab · "
+        "**`n`** next topic (already replied/resolved) · "
+        "or just type your thoughts to refine it.",
+    ])
 
 
 def first_open(state):
@@ -261,13 +347,18 @@ def render_plans(state):
     or a fresh session, so you don't re-grill what's already decided."""
     out = []
     for t in sorted(state["topics"], key=lambda t: _num(t["id"])):
-        if topic_status(state, t) == "done" or not (t.get("decision") or t.get("plan")):
+        s = topic_status(state, t)
+        if s == "done" or not (t.get("decision") or t.get("plan")):
             continue
-        out.append(f"{TOPIC_ICON} {t['id']} — {t.get('summary') or ''}")
+        stamp = ("  [✎ ALREADY PUSHED — reply pending; do NOT re-implement, "
+                 "go to the reply step]" if s == "reply_pending" else "")
+        out.append(f"{TOPIC_ICON} {t['id']} — {t.get('summary') or ''}{stamp}")
         if t.get("decision"):
             out.append(f"  decision: {t['decision']}")
         if t.get("plan"):
             out.append(f"  plan: {t['plan']}")
+        if t.get("diff_url"):
+            out.append(f"  pushed: {t['diff_url']}")
         out.append("")
     return "\n".join(out).strip() or "(no recorded plans yet — grill first)"
 
@@ -315,11 +406,19 @@ def main():
     sub = ap.add_subparsers(dest="cmd")
     for name in ("sync", "todo", "present", "bodies", "plans", "path"):
         sub.add_parser(name).add_argument("--iid", type=int)
+    sub.add_parser("check-handles", help="print any internal topic handles "
+                    "found in stdin (used by guard-reply.sh; no MR context needed)")
     sub.choices["sync"].add_argument("--all", action="store_true",
                                      help="include resolved topics")
     pq = sub.add_parser("quote")
     pq.add_argument("topic")
     pq.add_argument("--iid", type=int)
+    pu = sub.add_parser("url")
+    pu.add_argument("topic")
+    pu.add_argument("--iid", type=int)
+    prv = sub.add_parser("reply-view")
+    prv.add_argument("topic")
+    prv.add_argument("--iid", type=int)
     ps = sub.add_parser("set")
     ps.add_argument("topic")
     ps.add_argument("--iid", type=int)
@@ -333,12 +432,31 @@ def main():
     args = ap.parse_args()
     cmd = args.cmd or "sync"
 
+    if cmd == "check-handles":
+        # pure text check, no MR/state needed — keep it independent of glab/network
+        print(" ".join(find_handles(sys.stdin.read())))
+        return
+
     ctx, iid, path, state = resolve_state(args)
 
     if cmd == "path":
         print(path)
     elif cmd == "quote":
         print(render_quote(state, args.topic))
+    elif cmd == "url":
+        print(render_url(state, args.topic))
+    elif cmd == "reply-view":
+        topic_for(state, args.topic) or die(f"no topic {args.topic}")
+        f = os.path.join(os.path.dirname(path), f"reply-{args.topic}.md")
+        if not os.path.exists(f):
+            die(f"no draft yet — write the reply body to {f} first")
+        with open(f) as fh:
+            body = fh.read()
+        hits = find_handles(body)
+        if hits:
+            die(f"draft has internal topic handle(s): {' '.join(hits)} — reword "
+                f"(link the other thread via `url <other-t>`), then re-run")
+        print(render_reply_view(state, args.topic, body))
     elif cmd == "present":
         print(render_present(state))
     elif cmd == "bodies":

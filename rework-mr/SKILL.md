@@ -79,8 +79,10 @@ skill exists to prevent: `present` succeeds, then research tool calls push it ou
 the reply starts with prose.)
 
 The output is markdown the chat renders (bold title, GFM table, `code` locations, blockquoted
-comment). Status: `○ open` (your turn — default) · `◐ waiting` (you fully addressed it; only
-the reviewer's action is left — set semantically) · `● done` (reviewer resolved).
+comment). Status: `✎ reply-pending` (code already fixed **and pushed** — only the thread reply
+is left; derived from a stored `diff_url`) · `○ open` (your turn, still needs the fix —
+default) · `◐ waiting` (you fully addressed it; only the reviewer's action is left — set
+semantically) · `● done` (reviewer resolved).
 
 ## Resuming — topics already planned
 
@@ -93,8 +95,16 @@ python3 $SD/threads.py plans
 
 If open topics already carry a decision/plan (a prior grilling session, maybe after a
 `git` revert or a restart), **do not re-grill them** — tell the user what's already planned
-and go **straight to Phase 3**, implementing them one at a time. Grill only the open topics
-that have *no* plan yet. Re-confirm a plan only if the reviewer's ask changed since.
+and go **straight to Phase 3**, one topic at a time. Grill only the open topics that have
+*no* plan yet. Re-confirm a plan only if the reviewer's ask changed since.
+
+**Route each planned topic by its status — don't blindly re-implement.** `plans` (and the
+overview) mark a topic `✎ reply-pending` when its code was already fixed **and pushed** (a
+`diff_url` is stored). **A `reply-pending` topic is DONE code-wise** — skip Phase 3 steps 1–5
+and go straight to the **reply step (6)** for it: show the thread, draft the reply, show the
+URL. **Never re-implement it** (you'd duplicate a pushed change). Only `○ open` planned topics
+(no `diff_url`) get implemented from step 1. If a `reply-pending` topic's diff looks wrong or
+the reviewer re-commented asking for more, confirm with the user before touching code.
 
 ## Next topics
 
@@ -157,14 +167,64 @@ Per topic:
 4. `git rebase --autosquash`, **full QA** (hard gate), `git push --force-with-lease --force-if-includes`.
 5. Topic diff URL: `diff-url.py url --start-sha <stored>` (never a commit URL — force-push
    rots it) → `set <t> --diff-url`.
-6. Draft the reply (rules below). **STOP — wait for ACK**, then post via `glab` or copy via
-   `clip.sh`. Once addressed, mark it: `set <t> --state waiting` (now genuinely waiting on the
-   reviewer; a later reviewer note auto-clears it back to `open`).
+6. Reply — **one topic at a time; the `c`/`p`/`n` prompt is a hard STOP.** Do all
+   of this for the current topic before touching the next. The thread + draft + URL + prompt are
+   shown via **one** script command (`reply-view`) whose output you paste as your whole message —
+   so none of them can be dropped. The repeated bug was hand-assembling these and forgetting the
+   thread or the draft, or jumping to an interactive menu that swallowed them; a single pasted
+   block with the prompt baked in fixes that.
+   a. Compose the reply body (rules below) and write it — **raw, body only, no `>` prefixes** —
+      to the draft file with a **quoted heredoc** (not the Write tool: it can't overwrite a file
+      you haven't Read this session, so it fails on resume):
+      ```bash
+      d=$(dirname "$(python3 $SD/threads.py path --iid <n>)")
+      cat > "$d/reply-<t>.md" <<'REPLY_EOF'
+      <the reply body, verbatim>
+      REPLY_EOF
+      ```
+   b. Run `threads.py reply-view <t>` and **paste its ENTIRE output verbatim as your whole
+      message, then STOP** — it is the whole thread (original + every reply) + your drafted reply
+      (blockquoted) + the thread URL + the `c`/`p`/`n` prompt, all in one block. The prompt is the
+      last line, so **do not** add an `AskUserQuestion` menu or any other prompt — pasting the
+      block *is* the ask. It also **refuses a draft with an internal topic handle** (`t<number>`)
+      — if it errors, reword per the draft rules and re-run.
+      **Postcondition:** your message *is* the `reply-view` output — it opens with the reviewer's
+      blockquoted note, has the `**Draft reply:**` block, and ends with the `c`/`p`/`n` prompt line.
+      If any is missing, you dropped it — re-run and paste. Never replace it with a short stub
+      like "t7 — reply ready", even when moving fast across topics. (A `Stop` hook enforces this —
+      end the turn without the block and it forces a redo — so just paste it.)
+   c. **Wait for the user, then interpret their reply:**
+      - **`c`** (or "copy") → copy to clipboard.
+      - **`p`** (or "post") → post it (the one allowed write).
+      - **`n`** (or "next") → the topic is already handled (they replied by hand, or it's
+        resolved): mark it `set <t> --state waiting` and move straight to the next topic.
+      - **anything else** → they're discussing. There is no `d` command: treat any non-`c`/`p`/`n`
+        message as feedback — engage with it, refine the draft, rewrite the file, re-run
+        `reply-view`, paste the new block. Never post unprompted.
+      ```bash
+      $SD/clip.sh "$d/reply-<t>.md"                   # c — Copy (guard-reply runs inside clip.sh)
+      # p — Post: guard, then post (<discussion_id> = the topic's thread_ids[0] in the state file):
+      $SD/guard-reply.sh "$d/reply-<t>.md" && \
+      glab api projects/<enc>/merge_requests/<iid>/discussions/<discussion_id>/notes \
+        -X POST -F body=@"$d/reply-<t>.md"
+      ```
+   Only **Post** (or the user confirming they pasted it) counts as addressed — then mark it:
+   `set <t> --state waiting` (now genuinely waiting on the reviewer; a later reviewer note
+   auto-clears it back to `open`).
 7. Only now, the next topic.
 
 ## Reply draft rules
 
-- **Language = the thread's language** (often German even in an English session).
+- **Language = the thread's language** (often German even in an English session). The
+  scaffolding *around* the draft (labels, the thread-URL line, the action prompt) stays in the
+  **session language** — only the comment body uses the thread's language.
+- **NEVER put this skill's internal topic handles (`t5`, `t6`, `t10`, …) in a draft** — they
+  are the skill's own bookkeeping ids and mean nothing to a GitLab reader. To reference another
+  discussion, link its thread URL (`threads.py url <other-t>`) or describe it in plain words
+  ("in einem separaten Thread"), never "in t6". **Self-scan before you show the draft:** if the
+  body contains any `t<number>`, rewrite it. This is enforced — `clip.sh` and the post step run
+  `guard-reply.sh`, which hard-refuses a body with a topic handle, so an un-reworded draft
+  cannot be copied or posted.
 - GitLab markdown, code in fences, identifiers in `backticks`, **no headings**, bullets only if they help. Short but concrete.
 - Fixes: lead with `Fixed: <diff-url>`; explain only when needed (didn't follow exactly / did more / was complex).
 - reply-only / push-back: explain the reasoning. question: answer with a snippet or concrete example.
@@ -172,5 +232,8 @@ Per topic:
 ## Prerequisites
 
 `glab` authenticated; run on (or pass `--iid N` for) the MR branch. `python3`; macOS for `clip.sh`.
-`threads.py` subcommands: sync·todo·present·bodies·plans·quote·set·merge·path.
-`diff-url.py` (baseline·url), `clip.sh`. Run any with `-h`.
+`threads.py` subcommands: sync·todo·present·bodies·plans·quote·url·reply-view·set·merge·path.
+`diff-url.py` (baseline·url), `clip.sh` (guards + copies), `guard-reply.sh` (topic-handle gate).
+Run any with `-h`. **Setup:** the reply step needs the `Stop` hook (`scripts/stop-hook.py`)
+registered in `settings.json` — see [README.md](README.md); without it the reply-view block
+often won't reach the user.
