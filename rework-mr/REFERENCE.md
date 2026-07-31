@@ -45,15 +45,35 @@ the reply (step 9).
    python3 $SD/threads.py set <t> --diff-url <url>
    ```
    Never a commit URL — fixup + force-push rewrites commit hashes and rots the link.
-9. Draft the reply (rules in SKILL.md), then **on the user's explicit ACK** either post it or
-   copy it — offer both:
+9. Reply — thread + draft + URL are shown via **one** command so none can be dropped:
+   a. Write the reply **body only** (raw, no `>` prefixes) to the draft file with a **quoted
+      heredoc, not the Write tool** (Write can't overwrite a file unread this session → fails on
+      resume). Draft rules (SKILL.md): body in the thread's language, **scaffolding in the
+      session language**, and **NEVER an internal topic handle** (`t5`…) in the body — reword
+      (link another thread's URL).
+      ```bash
+      d=$(dirname "$(python3 $SD/threads.py path --iid <n>)")
+      cat > "$d/reply-<t>.md" <<'REPLY_EOF'
+      <the reply body, verbatim — NO leading "> " on any line>
+      REPLY_EOF
+      ```
+   b. `python3 $SD/threads.py reply-view <t>` — **paste its ENTIRE output verbatim as your whole
+      message, then STOP**: whole thread (original + every reply) + `**Draft reply:**`
+      (blockquoted) + thread URL + the `c`/`p`/`n` prompt, one block. The prompt is the last line, so
+      **no `AskUserQuestion` menu** — pasting the block is the ask. It **hard-refuses a draft with
+      a topic handle** (`t<number>`) — reword and re-run if it errors. Postcondition: the message
+      *is* that output (reviewer's blockquoted note → `**Draft reply:**` → prompt line); if any is
+      missing you dropped it → re-run and paste. Don't replace it with a stub even across topics.
+   c. Interpret the user's reply — **`c`** = copy, **`p`** = post, **`n`** = next topic (already
+      replied/resolved: `set <t> --state waiting`, move on), **anything else** = discussion (no
+      `d` command: engage with it, refine, rewrite the file, re-run reply-view, paste again):
    ```bash
-   # post:
+   # c — Copy (guard-reply runs inside clip.sh):
+   $SD/clip.sh "$d/reply-<t>.md"
+   # p — Post: guard, then post (the skill's one allowed write; <discussion_id> = thread_ids[0]):
+   $SD/guard-reply.sh "$d/reply-<t>.md" && \
    glab api projects/<enc>/merge_requests/<iid>/discussions/<discussion_id>/notes \
-     -X POST -F body=@reply.md
-   # or copy for manual paste:
-   python3 $SD/threads.py path        # <state-dir> for scratch files
-   $SD/clip.sh reply.md
+     -X POST -F body=@"$d/reply-<t>.md"
    ```
-   Posting your reply makes your note the thread's last → next `sync` shows it `◐ replied`.
+   After Post (or a confirmed paste) mark it `set <t> --state waiting` → `sync` shows `◐ waiting`.
    Don't resolve the thread yourself — the reviewer resolves it, and then it flips to `done`.
