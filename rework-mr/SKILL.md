@@ -66,9 +66,23 @@ Your reply is built in this exact order:
    table, separator, blockquoted comment and all. Nothing precedes it.
 2. Then, for that one topic only: **2–4 lines** of research (what the code does + the real
    trade-off, citing `file:line`; plain prose, no "Code (…):" prefix).
-3. Then: **trivial** → show the concrete change (fenced code block, as illustration of the
-   plan — you are NOT applying it) and ask **"Agreed?"**; **non-trivial** → alternatives + a
-   recommendation + **one** question.
+3. Then: **trivial** → illustrate the change (**not applying it**) via `change-preview.sh`, same
+   one-paste discipline as `present`/`quote`/`reply-view` (the repeated bug here was saying
+   "Trivial. Change:" and then never actually showing it — a Read or other tool call in between
+   pushed it out of mind):
+   ```bash
+   d=$(dirname "$(python3 $SD/threads.py path --iid <n>)")
+   cat > "$d/change-<t>.md" <<'CHANGE_EOF'
+   <the concrete change, verbatim — a diff or before/after snippet, illustration only>
+   CHANGE_EOF
+   $SD/change-preview.sh <t> "$d/change-<t>.md"
+   ```
+   **Paste its ENTIRE output verbatim as the rest of your message, then STOP** — the fenced
+   illustration and the final `Agreed?` are one block; do not describe the change instead of
+   showing it, and do not add your own "Agreed?" after it. (A `Stop` hook enforces this — end
+   the turn without the pasted block and it forces a redo.)
+   **non-trivial** → alternatives + a recommendation + **one** question (no script needed; this
+   is discussion, not something the model has to reproduce verbatim).
 
 Then **STOP**. No code edits. Nothing about the other topics.
 
@@ -76,7 +90,8 @@ Then **STOP**. No code edits. Nothing about the other topics.
 title line (`**MR !…**`) and the table must follow. If your draft opens with your own research
 prose instead, you dropped the table — **redo it, table first.** (This is the exact failure the
 skill exists to prevent: `present` succeeds, then research tool calls push it out of mind and
-the reply starts with prose.)
+the reply starts with prose. A `Stop` hook enforces this — end the turn without the pasted
+`present` output and it forces a redo — so just paste it.)
 
 The output is markdown the chat renders (bold title, GFM table, `code` locations, blockquoted
 comment). Status: `✎ reply-pending` (code already fixed **and pushed** — only the thread reply
@@ -118,7 +133,7 @@ python3 $SD/threads.py quote <next-t>      # run LAST — paste its output verba
 ```
 
 **Postcondition:** the reply must open with the `quote` comment block, not your research prose.
-If it opens with prose, you dropped the comment — redo it.
+If it opens with prose, you dropped the comment — redo it. (A `Stop` hook enforces this too.)
 
 Outcomes: **fix** · **reply-only** (reviewer wrong / no improvement) · **push-back** ·
 **question** (just answer, with a snippet / concrete example). Keep a TODO item per topic.
@@ -134,14 +149,19 @@ python3 $SD/threads.py sync        # overview (+ --all for resolved rows)
 python3 $SD/threads.py todo        # only what needs you
 ```
 
+Paste the table verbatim, same rule as everywhere else. **`todo`'s output is Stop-hook enforced
+like `present`/`quote`/`reply-view`/`change-preview`/`diff-view`; `sync`'s here is not** — `sync`
+also runs silently in the opener's prep, so gating it there would false-block on that unrelated,
+intentionally-unshown call. Prefer `todo` for a status-only reply when either works.
+
 ## Phase 3 — Implement, strictly ONE topic at a time
 
 As disciplined as the grilling loop. Full mechanics in [REFERENCE.md](REFERENCE.md).
 
 **Hard rules — the previous version violated these:**
 
-- Take **one** topic *all the way* — change → diff → ACK → fixup → push → diff URL → reply —
-  **before you touch the next topic's code.** Never edit a second topic while one is in
+- Take **one** topic *all the way* — change → blame → diff → ACK → fixup → push → diff URL →
+  reply — **before you touch the next topic's code.** Never edit a second topic while one is in
   flight. Each thread gets its own push and its own `Fixed: <url>`.
 - **Never batch topics into one diff/push on your own.** Consolidating several (e.g. all the
   "remove redundant comment" fixes) into a single diff is allowed **only when the user
@@ -155,13 +175,18 @@ Per topic:
 1. Bug/problem → **failing test first** (`tdd` skill), then fix. (reply-only / push-back /
    question → skip to 6.) Clean code for the *merged* result — no "changed from before"
    comments, no iteration leftovers.
-2. Light QA (unit/lint). Show the user `git diff`, **and state how it will be integrated** so
-   the ACK is informed: blame the changed hunks *now* and name the target(s) —
-   `→ fixup into <sha> ("<subject>")`, one per introducing commit (several if the change spans
-   commits). **Fixup is the default; a new commit is the rare exception** — only for a
-   fix/refactor to code the branch did *not* add (blame older than the branch point), as a
-   separate real commit *before* the fixups; call that out explicitly. Ask **"ACK to fix up
-   and push?"** — never just "commit" (that reads as a new commit). **STOP — wait for ACK.**
+2. Light QA (unit/lint) — silently. **Then, silently, blame the changed hunks** and name the
+   target(s) — `→ fixup into <sha> ("<subject>")`, one per introducing commit (several if the
+   change spans commits). **Fixup is the default; a new commit is the rare exception** — only
+   for a fix/refactor to code the branch did *not* add (blame older than the branch point), as
+   a separate real commit *before* the fixups; call that out explicitly. Only THEN, as your
+   **final** action before replying, run `diff-view.sh <t>` and **paste its ENTIRE output
+   verbatim as the rest of your message, then STOP**: state the fixup target(s) in 1–2 lines,
+   followed by the diff-view block (the diff + the "ACK to fix up and push?" question). Never
+   just "commit" (that reads as a new commit). (The repeated bug here was showing the diff, then
+   blaming/naming targets afterward — the `git blame` call in between pushed the diff out of
+   mind by the time the message was written. A `Stop` hook enforces the diff-view block actually
+   reaching the user, the same way it does for `present`/`quote`/`reply-view`/`change-preview`.)
 3. On ACK: capture the pre-push baseline (`diff-url.py baseline` → `set <t> --start-sha`),
    then `git commit --fixup=<sha>` for each named target.
 4. `git rebase --autosquash`, **full QA** (hard gate), `git push --force-with-lease --force-if-includes`.
@@ -233,7 +258,9 @@ Per topic:
 
 `glab` authenticated; run on (or pass `--iid N` for) the MR branch. `python3`; macOS for `clip.sh`.
 `threads.py` subcommands: sync·todo·present·bodies·plans·quote·url·reply-view·set·merge·path.
-`diff-url.py` (baseline·url), `clip.sh` (guards + copies), `guard-reply.sh` (topic-handle gate).
-Run any with `-h`. **Setup:** the reply step needs the `Stop` hook (`scripts/stop-hook.py`)
-registered in `settings.json` — see [README.md](README.md); without it the reply-view block
-often won't reach the user.
+`diff-url.py` (baseline·url), `clip.sh` (guards + copies), `guard-reply.sh` (topic-handle gate),
+`change-preview.sh` (trivial-topic change illustration, one paste), `diff-view.sh` (working diff
+before the fixup+push ACK, one paste). Run any with `-h`.
+**Setup:** `present`/`todo`/`quote`/`diff-view.sh`/`reply-view`/`change-preview.sh` all need the
+`Stop` hook (`scripts/stop-hook.py`) registered in `settings.json` — see
+[README.md](README.md); without it their output often won't reach the user.
