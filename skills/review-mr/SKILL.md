@@ -18,6 +18,12 @@ Your chat message is their *only* window. So:
    code fence. Any heading you write above an overview table **must carry `MR !<num>`**
    (the table's own `MR !<num> — <title>` header already does — don't drop it); if you'd
    write no heading, the full `MR !<num>: <title>` is a fine standalone one.
+   **This holds even when the output looks wrong to you.** If a rendered state
+   contradicts what you expected (or the state file), paste the output anyway and add one
+   line naming the discrepancy — never replace the table with your own prose, and never
+   tell the user the tooling is stale or buggy unless you have actually read the code that
+   produces the value. `topic_status()` derives state from GitLab plus your overlay, so a
+   row that surprises you is usually a rule you have not read, not a bug.
 2. **One topic at a time.** Present the current topic, then **STOP and wait**. Never
    mention, preview, or recommend anything about other topics.
 3. **The skill does not comment or resolve on GitLab.** It never posts comments and
