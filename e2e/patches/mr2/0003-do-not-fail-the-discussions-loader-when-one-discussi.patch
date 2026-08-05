@@ -1,0 +1,32 @@
+From 7d3557dbb33a800b07e81beb34aff50faacff9c9 Mon Sep 17 00:00:00 2001
+From: "Novak, Alex - CD67890" <author-bot@e2e.test>
+Date: Wed, 8 May 2024 15:44:00 +0200
+Subject: [PATCH 3/3] do not fail the discussions loader when one discussion is
+ missing
+
+---
+ src/routes/protected.tsx | 7 +++++--
+ 1 file changed, 5 insertions(+), 2 deletions(-)
+
+diff --git a/src/routes/protected.tsx b/src/routes/protected.tsx
+index e9d1138..51dcb5d 100644
+--- a/src/routes/protected.tsx
++++ b/src/routes/protected.tsx
+@@ -43,9 +43,12 @@ export const protectedRoutes = [
+         path: '/app/discussions/*',
+         element: <DiscussionsRoutes />,
+         loader: async ({ params }: { params: { discussionId?: string } }) => {
+-          await getQueryClient().ensureQueryData(getDiscussionsQueryOptions());
++          const client = getQueryClient();
++          await client.ensureQueryData(getDiscussionsQueryOptions());
+           if (params.discussionId) {
+-            await getQueryClient().ensureQueryData(getDiscussionQueryOptions(params.discussionId));
++            // A missing discussion must not block the route — the view renders its
++            // own not-found state.
++            await client.ensureQueryData(getDiscussionQueryOptions(params.discussionId)).catch(() => null);
+           }
+           return null;
+         },
+-- 
+2.55.0
+

@@ -1,0 +1,315 @@
+From acd71fe64f1f4a9b9790688162331044c8ec0567 Mon Sep 17 00:00:00 2001
+From: "Blendinger, Frank - AB12345" <frank@e2e.test>
+Date: Tue, 4 Aug 2026 18:06:04 +0200
+Subject: [PATCH 2/2] use the query-key factories in every discussions/comments
+ hook
+
+Replaces the repeated key literals. updateDiscussion now refetches the discussions
+namespace after a successful update instead of naming the single detail query.
+---
+ src/features/comments/api/createComment.ts      | 12 +++++++-----
+ src/features/comments/api/deleteComment.ts      | 10 ++++++----
+ src/features/comments/api/getComments.ts        |  4 +++-
+ .../discussions/api/createDiscussion.ts         | 12 +++++++-----
+ .../discussions/api/deleteDiscussion.ts         | 12 +++++++-----
+ src/features/discussions/api/getDiscussion.ts   |  4 +++-
+ src/features/discussions/api/getDiscussions.ts  |  4 +++-
+ .../discussions/api/updateDiscussion.ts         | 17 +++++++++--------
+ 8 files changed, 45 insertions(+), 30 deletions(-)
+
+diff --git a/src/features/comments/api/createComment.ts b/src/features/comments/api/createComment.ts
+index 903c661..423d863 100644
+--- a/src/features/comments/api/createComment.ts
++++ b/src/features/comments/api/createComment.ts
+@@ -6,6 +6,8 @@ import { useNotificationStore } from '@/stores/notifications';
+ 
+ import { Comment } from '../types';
+ 
++import { queryKeys } from './query-keys';
++
+ export type CreateCommentDTO = {
+   data: {
+     body: string;
+@@ -29,13 +31,13 @@ export const useCreateComment = ({ config, discussionId }: UseCreateCommentOptio
+   return useMutation({
+     onMutate: async (newComment) => {
+       await queryClient.cancelQueries({
+-        queryKey: ['comments', discussionId],
++        queryKey: queryKeys.list(discussionId),
+       });
+ 
+-      const previousComments = queryClient.getQueryData<Comment[]>(['comments', discussionId]);
++      const previousComments = queryClient.getQueryData<Comment[]>(queryKeys.list(discussionId));
+ 
+       queryClient.setQueryData(
+-        ['comments', discussionId],
++        queryKeys.list(discussionId),
+         [...(previousComments || []), newComment.data]
+       );
+ 
+@@ -43,12 +45,12 @@ export const useCreateComment = ({ config, discussionId }: UseCreateCommentOptio
+     },
+     onError: (_, __, context: any) => {
+       if (context?.previousComments) {
+-        queryClient.setQueryData(['comments', discussionId], context.previousComments);
++        queryClient.setQueryData(queryKeys.list(discussionId), context.previousComments);
+       }
+     },
+     onSuccess: () => {
+       queryClient.invalidateQueries({
+-        queryKey: ['comments', discussionId],
++        queryKey: queryKeys.list(discussionId),
+       });
+       addNotification({
+         type: 'success',
+diff --git a/src/features/comments/api/deleteComment.ts b/src/features/comments/api/deleteComment.ts
+index 196863c..fa12419 100644
+--- a/src/features/comments/api/deleteComment.ts
++++ b/src/features/comments/api/deleteComment.ts
+@@ -6,6 +6,8 @@ import { useNotificationStore } from '@/stores/notifications';
+ 
+ import { Comment } from '../types';
+ 
++import { queryKeys } from './query-keys';
++
+ export const deleteComment = ({ commentId }: { commentId: string }) => {
+   return axios.delete(`/comments/${commentId}`);
+ };
+@@ -22,10 +24,10 @@ export const useDeleteComment = ({ config, discussionId }: UseDeleteCommentOptio
+   return useMutation({
+     onMutate: async (deletedComment) => {
+       await queryClient.cancelQueries({
+-        queryKey: ['comments', discussionId],
++        queryKey: queryKeys.list(discussionId),
+       });
+ 
+-      const previousComments = queryClient.getQueryData<Comment[]>(['comments', discussionId]);
++      const previousComments = queryClient.getQueryData<Comment[]>(queryKeys.list(discussionId));
+ 
+       queryClient.setQueryData(
+         ['comments', discussionId],
+@@ -36,12 +38,12 @@ export const useDeleteComment = ({ config, discussionId }: UseDeleteCommentOptio
+     },
+     onError: (_, __, context: any) => {
+       if (context?.previousComments) {
+-        queryClient.setQueryData(['comments', discussionId], context.previousComments);
++        queryClient.setQueryData(queryKeys.list(discussionId), context.previousComments);
+       }
+     },
+     onSuccess: () => {
+       queryClient.invalidateQueries({
+-        queryKey: ['comments', discussionId],
++        queryKey: queryKeys.list(discussionId),
+       });
+       addNotification({
+         type: 'success',
+diff --git a/src/features/comments/api/getComments.ts b/src/features/comments/api/getComments.ts
+index 58f1c71..4022654 100644
+--- a/src/features/comments/api/getComments.ts
++++ b/src/features/comments/api/getComments.ts
+@@ -5,6 +5,8 @@ import { ApiFnReturnType, QueryConfig } from '@/lib/react-query';
+ 
+ import { Comment } from '../types';
+ 
++import { queryKeys } from './query-keys';
++
+ export const getComments = ({ discussionId }: { discussionId: string }): Promise<Comment[]> => {
+   return axios.get(`/comments`, {
+     params: {
+@@ -22,7 +24,7 @@ type UseCommentsOptions = {
+ 
+ export const useComments = ({ discussionId, config }: UseCommentsOptions) => {
+   return useQuery<ApiFnReturnType<QueryFnType>>({
+-    queryKey: ['comments', discussionId],
++    queryKey: queryKeys.list(discussionId),
+     queryFn: () => getComments({ discussionId }),
+     ...config,
+   });
+diff --git a/src/features/discussions/api/createDiscussion.ts b/src/features/discussions/api/createDiscussion.ts
+index 989fe76..754470b 100644
+--- a/src/features/discussions/api/createDiscussion.ts
++++ b/src/features/discussions/api/createDiscussion.ts
+@@ -6,6 +6,8 @@ import { useNotificationStore } from '@/stores/notifications';
+ 
+ import { Discussion } from '../types';
+ 
++import { discussionKeys } from './query-keys';
++
+ export type CreateDiscussionDTO = {
+   data: {
+     title: string;
+@@ -28,13 +30,13 @@ export const useCreateDiscussion = ({ config }: UseCreateDiscussionOptions = {})
+   return useMutation({
+     onMutate: async (newDiscussion) => {
+       await queryClient.cancelQueries({
+-        queryKey: ['discussions'],
++        queryKey: discussionKeys.all,
+       });
+ 
+-      const previousDiscussions = queryClient.getQueryData<Discussion[]>(['discussions']);
++      const previousDiscussions = queryClient.getQueryData<Discussion[]>(discussionKeys.all);
+ 
+       queryClient.setQueryData(
+-        ['discussions'],
++        discussionKeys.all,
+         [...(previousDiscussions || []), newDiscussion.data]
+       );
+ 
+@@ -42,12 +44,12 @@ export const useCreateDiscussion = ({ config }: UseCreateDiscussionOptions = {})
+     },
+     onError: (_, __, context: any) => {
+       if (context?.previousDiscussions) {
+-        queryClient.setQueryData(['discussions'], context.previousDiscussions);
++        queryClient.setQueryData(discussionKeys.all, context.previousDiscussions);
+       }
+     },
+     onSuccess: () => {
+       queryClient.invalidateQueries({
+-        queryKey: ['discussions'],
++        queryKey: discussionKeys.all,
+       });
+       addNotification({
+         type: 'success',
+diff --git a/src/features/discussions/api/deleteDiscussion.ts b/src/features/discussions/api/deleteDiscussion.ts
+index ebfb1ba..e9ae377 100644
+--- a/src/features/discussions/api/deleteDiscussion.ts
++++ b/src/features/discussions/api/deleteDiscussion.ts
+@@ -6,6 +6,8 @@ import { useNotificationStore } from '@/stores/notifications';
+ 
+ import { Discussion } from '../types';
+ 
++import { discussionKeys } from './query-keys';
++
+ export const deleteDiscussion = ({ discussionId }: { discussionId: string }) => {
+   return axios.delete(`/discussions/${discussionId}`);
+ };
+@@ -21,13 +23,13 @@ export const useDeleteDiscussion = ({ config }: UseDeleteDiscussionOptions = {})
+   return useMutation({
+     onMutate: async (deletedDiscussion) => {
+       await queryClient.cancelQueries({
+-        queryKey: ['discussions'],
++        queryKey: discussionKeys.all,
+       });
+ 
+-      const previousDiscussions = queryClient.getQueryData<Discussion[]>(['discussions']);
++      const previousDiscussions = queryClient.getQueryData<Discussion[]>(discussionKeys.all);
+ 
+       queryClient.setQueryData(
+-        ['discussions'],
++        discussionKeys.all,
+         previousDiscussions?.filter(
+           (discussion) => discussion.id !== deletedDiscussion.discussionId
+         )
+@@ -37,12 +39,12 @@ export const useDeleteDiscussion = ({ config }: UseDeleteDiscussionOptions = {})
+     },
+     onError: (_, __, context: any) => {
+       if (context?.previousDiscussions) {
+-        queryClient.setQueryData(['discussions'], context.previousDiscussions);
++        queryClient.setQueryData(discussionKeys.all, context.previousDiscussions);
+       }
+     },
+     onSuccess: () => {
+       queryClient.invalidateQueries({
+-        queryKey: ['discussions'],
++        queryKey: discussionKeys.all,
+       });
+       addNotification({
+         type: 'success',
+diff --git a/src/features/discussions/api/getDiscussion.ts b/src/features/discussions/api/getDiscussion.ts
+index 69d214d..5032e42 100644
+--- a/src/features/discussions/api/getDiscussion.ts
++++ b/src/features/discussions/api/getDiscussion.ts
+@@ -5,6 +5,8 @@ import { ApiFnReturnType, QueryConfig } from '@/lib/react-query';
+ 
+ import { Discussion } from '../types';
+ 
++import { discussionKeys } from './query-keys';
++
+ export const getDiscussion = ({ discussionId }: { discussionId: string }): Promise<Discussion> => {
+   return axios.get(`/discussions/${discussionId}`);
+ };
+@@ -19,7 +21,7 @@ type UseDiscussionOptions = {
+ export const useDiscussion = ({ discussionId, config }: UseDiscussionOptions) => {
+   return useQuery<ApiFnReturnType<QueryFnType>>({
+     ...config,
+-    queryKey: ['discussion', discussionId],
++    queryKey: discussionKeys.detail(discussionId),
+     queryFn: () => getDiscussion({ discussionId }),
+   });
+ };
+diff --git a/src/features/discussions/api/getDiscussions.ts b/src/features/discussions/api/getDiscussions.ts
+index b27828c..d7b87a4 100644
+--- a/src/features/discussions/api/getDiscussions.ts
++++ b/src/features/discussions/api/getDiscussions.ts
+@@ -5,6 +5,8 @@ import { ApiFnReturnType, QueryConfig } from '@/lib/react-query';
+ 
+ import { Discussion } from '../types';
+ 
++import { discussionKeys } from './query-keys';
++
+ export const getDiscussions = (): Promise<Discussion[]> => {
+   return axios.get('/discussions');
+ };
+@@ -18,7 +20,7 @@ type UseDiscussionsOptions = {
+ export const useDiscussions = ({ config }: UseDiscussionsOptions = {}) => {
+   return useQuery<ApiFnReturnType<QueryFnType>>({
+     ...config,
+-    queryKey: ['discussions'],
++    queryKey: discussionKeys.all,
+     queryFn: () => getDiscussions(),
+   });
+ };
+diff --git a/src/features/discussions/api/updateDiscussion.ts b/src/features/discussions/api/updateDiscussion.ts
+index a65afe4..7e95f5e 100644
+--- a/src/features/discussions/api/updateDiscussion.ts
++++ b/src/features/discussions/api/updateDiscussion.ts
+@@ -6,6 +6,8 @@ import { useNotificationStore } from '@/stores/notifications';
+ 
+ import { Discussion } from '../types';
+ 
++import { discussionKeys } from './query-keys';
++
+ export type UpdateDiscussionDTO = {
+   data: {
+     title: string;
+@@ -32,15 +34,14 @@ export const useUpdateDiscussion = ({ config }: UseUpdateDiscussionOptions = {})
+   return useMutation({
+     onMutate: async (updatingDiscussion: any) => {
+       await queryClient.cancelQueries({
+-        queryKey: ['discussion', updatingDiscussion?.discussionId],
++        queryKey: discussionKeys.detail(updatingDiscussion?.discussionId),
+       });
+ 
+-      const previousDiscussion = queryClient.getQueryData<Discussion>([
+-        'discussion',
+-        updatingDiscussion?.discussionId,
+-      ]);
++      const previousDiscussion = queryClient.getQueryData<Discussion>(
++        discussionKeys.detail(updatingDiscussion?.discussionId)
++      );
+ 
+-      queryClient.setQueryData(['discussion', updatingDiscussion?.discussionId], {
++      queryClient.setQueryData(discussionKeys.detail(updatingDiscussion?.discussionId), {
+         ...previousDiscussion,
+         ...updatingDiscussion.data,
+         id: updatingDiscussion.discussionId,
+@@ -51,14 +52,14 @@ export const useUpdateDiscussion = ({ config }: UseUpdateDiscussionOptions = {})
+     onError: (_, __, context: any) => {
+       if (context?.previousDiscussion) {
+         queryClient.setQueryData(
+-          ['discussion', context.previousDiscussion.id],
++          discussionKeys.detail(context.previousDiscussion.id),
+           context.previousDiscussion
+         );
+       }
+     },
+     onSuccess: (data) => {
+       queryClient.refetchQueries({
+-        queryKey: ['discussion', data.id],
++        queryKey: discussionKeys.all,
+       });
+       addNotification({
+         type: 'success',
+-- 
+2.55.0
+

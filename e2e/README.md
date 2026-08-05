@@ -3,7 +3,8 @@
 A local GitLab CE with a seeded project, three MRs and pre-seeded review conversations, for
 demoing and end-to-end testing `review-mr` and `rework-mr` without touching a real instance.
 
-Design decisions and rationale: [PLAN.md](PLAN.md).
+Design decisions and rationale: [PLAN.md](PLAN.md). Talk-day checklist and run of show:
+[RUNBOOK.md](RUNBOOK.md).
 
 ## Layout
 
@@ -12,7 +13,9 @@ Design decisions and rationale: [PLAN.md](PLAN.md).
 | `docker-compose.yml` | GitLab CE (arm64-native), `http://gitlab.test`, no CI runner |
 | `bootstrap.py` | one-time: users, deterministic tokens, group, project, `glab` auth |
 | `fixture.py` | resettable: branches, the three MRs, seeded threads, skill state |
+| `patches/` | the frozen MR diffs (`mr1-flaws.patch`, `mr2/`, `mr3/`) |
 | `.env.local` | generated token/host values (gitignored) |
+| `.cache/` | bare upstream mirror + throwaway build tree (gitignored) |
 
 ## One-time setup
 
@@ -55,17 +58,44 @@ exactly that, so the fixture exercises the real path.
 ## Reset before every run
 
 ```sh
-python3 fixture.py          # < 60 s, idempotent, offline
+python3 fixture.py          # ~20 s, idempotent, offline
 ```
 
 Deletes and recreates the *project* (that is what restarts MR IIDs at 1), re-pushes branches,
-recreates the MRs, seeds threads, re-clones the local working copy, and wipes skill state under
+recreates the MRs, seeds threads and the local review state, re-clones the working copy at
+`~/src/agent-skills-demo` (plus a review worktree beside it), and wipes skill state under
 `~/.claude/review-mr/` and `~/.claude/rework-mr/`.
+
+### What it builds
+
+| MR | Author | Contents | Used by |
+|---|---|---|---|
+| `!1` | `author-bot` | upstream **PR #175** (standalone mock server), 2 real commits, 20 files, with 2 planted flaws alongside 2 genuine upstream ones. Targets `release/2024-06`, not `main` | `/review-mr`, live first pass |
+| `!2` | `author-bot` | route-level prefetch, plus a seeded conversation: fixed-by-push, author-asks-a-question, promised-but-not-done, untouched, and one peer thread | `/review-mr`, re-review |
+| `!3` | **you** | query-key factories in 2 commits, with 3 reviewer threads (trivial / hard / small) | `/rework-mr` |
+
+The MR !2 state is not hand-written. Threads are posted, recorded through `findings.py`'s own
+CLI (`import` → `link`), the baseline is taken with `set-head` while the worktree still sits on
+version 1, and only then are the author's two fixes pushed. Ordering is the mechanism, so no
+SHA is hardcoded anywhere — and if a refactor breaks `import`/`link`/`set-head`, the reset
+fails loudly. That is what makes this an E2E harness and not just a demo prop.
+
+### Verify a reset
+
+```sh
+cd ~/src/agent-skills-demo-review
+python3 ~/.claude/skills/review-mr/scripts/findings.py sync --iid 2
+#   "drafts in en", t1/t2/t3 ◐ needs-ack, t4 ○ open, t5 💬 peer, 2 pushes since baseline
+
+cd ~/src/agent-skills-demo
+python3 ~/.claude/skills/rework-mr/scripts/threads.py sync --iid 3
+#   three ○ open topics
+```
 
 ## Talk day
 
-Do **not** `docker compose down` — keep the container warm. Run `fixture.py` immediately before
-the talk. Run-of-show: see [PLAN.md](PLAN.md) §6.
+Do **not** `docker compose down` — keep the container warm (a cold boot is 3-5 min). Run
+`fixture.py` immediately before the talk. Full checklist: [RUNBOOK.md](RUNBOOK.md).
 
 ## Troubleshooting
 

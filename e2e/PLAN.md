@@ -53,16 +53,16 @@ review worktree; the fixture sets it via `findings.py worktree --set`.
 Upstream: `github.com/alan2207/bulletproof-react` (React + TS + Vitest, 535 files, ~23k LOC).
 
 Era matters: the monorepo split is `1508d6d` (2024-07-20). Everything from 2024-04 → 2024-06
-is flat `src/…`. **Pin `main` at `a3aff530`** (2024-04-27); all demo branches replay later
-commits from that coherent era.
+is flat `src/…`. **Pin `main` at `74c76128`** (2024-05-03) — see the replay section below for
+why this base and not `a3aff530`.
 
 ### The three MRs — IID == demo step
 
 | MR | Upstream commit | Size | Author | Demo segment |
 |---|---|---|---|---|
-| **!1** | `e74349ee` *store the auth token in a cookie instead of localStorage* **+ planted flaws** | 11f / 183L | `author-bot` | `/review-mr` live first pass |
-| **!2** | `9aecaf6e` *use react router loaders to fetch data before rendering* | 12f / 340L | `author-bot` | `/review-mr` re-review |
-| **!3** | `7ddd5c46` *improve query keys* | 11f / 118L | **you** | `/rework-mr` |
+| **!1** | upstream **PR #175** *standalone mock server* (2 real commits) **+ planted flaws** | 20f / ~256L | `author-bot` | `/review-mr` live first pass |
+| **!2** | authored, modelled on `9aecaf6e` *react router loaders* | ~8f | `author-bot` | `/review-mr` re-review |
+| **!3** | authored, modelled on `7ddd5c46` *improve query keys* | ~8f | **you** | `/rework-mr` |
 
 Creation order sets the IIDs, so `!1`/`!2`/`!3` match the run-of-show. Deleting and
 recreating the project on reset restarts IIDs at 1 — that is why reset recreates the
@@ -72,17 +72,40 @@ Rationale: !1 is a **security** change (auth token storage) — the audience lea
 there is genuine substance to review. !3 is small and mechanical, so live fixups are quick.
 !2 is the largest, giving room for five seeded threads.
 
-### Replay mechanism — do **not** cherry-pick
+### Replay mechanism — measured, not assumed
 
-Cherry-picking across a 5-week span can conflict, and a conflict at fixture-build time is a
-flaky setup. Instead, per branch: branch from `main`, then
+The original plan (one shared base, replay three upstream commits onto it) **does not work for
+this repository**. Measured:
 
-```
-git checkout <upstream-sha> -- <paths touched by that commit>
-git commit
-```
+- 39 commits sit between `a3aff530` and `9aecaf6e`, including a sweeping camelCase→kebab-case
+  file rename (`deleteComment.ts` → `delete-comment.ts`).
+- Cherry-picking any of the three chosen commits onto `a3aff530`: **all three conflict**, 8-10
+  files each.
+- Scanning the 25 commits after `e74349ee^` for any that apply cleanly onto it: **only
+  `e74349ee` itself**.
+- Scanning ~200 commits of a later window: 3 clean candidates, all small and topic-poor
+  (react-query typings, zustand mocks).
 
-Always applies cleanly, diff is still 100 % real upstream code, deterministic forever.
+The `git checkout <sha> -- <paths>` fallback would have applied cleanly but produced files
+importing modules that were renamed in between — incoherent code, and a review agent would
+surface those broken imports as findings. Worse than useless on stage.
+
+**Decision — base `main` at `74c76128`** ("validate env variables", 2024-05-03, the parent of
+`e74349ee`). A real, coherent snapshot: React 18 + TS + react-query + MSW + Vite.
+
+| MR | Provenance |
+|---|---|
+| **!1** | upstream **PR #175**, replayed commit for commit onto the PR's own base — conflict-free by construction, since that is exactly what happened historically. Plus planted flaws |
+| **!2**, **!3** | **authored by us** on the same base, modelled on the upstream commits' *topics* (router loaders; query keys) |
+
+Why this split: !1 is the live-review MR, where credibility matters most, so it stays 100 % real
+upstream code. !2 and !3 are pre-seeded fixtures whose value is *determinism* — authoring them
+gives coherent trees, controlled diff size, guaranteed review substance, and exactly the
+trivial-vs-hard reviewer-thread pair `/rework-mr` needs to show off. It also removes
+cherry-pick fragility from the reset path entirely: a reset can never fail on a conflict.
+
+Each MR's changes are frozen as tracked patch files under `e2e/patches/`, applied by
+`fixture.py`. Deterministic forever, and reviewable when a diff needs retuning after rehearsal.
 
 **MR !3 gets 2-3 commits**, not one (split by path group: `api/`, then `features/`) —
 `/rework-mr` does fixup + force-push, so there must be commits to squash *into*.
@@ -93,14 +116,14 @@ Three deliberate defects layered on the real diff. Reason: the live review **mus
 something worth discussing — unplanted real code is a gamble on stage. Three distinct
 severities *and* three distinct kinds of finding:
 
-| # | Plant | Location | Kind |
+| # | Flaw | Location | Kind |
 |---|---|---|---|
-| 1 | cookie set with `sameSite: 'none'`, no `secure`, no `httpOnly` | `src/test/server/utils.ts` | security config — dead on-topic for the MR's own purpose |
-| 2 | a surviving `storage.setToken(...)` call — the token **still** lands in localStorage | `src/lib/auth.tsx` | **contradicts the MR's stated purpose**; the money finding |
-| 3 | `logout.ts` posts to `/auth/logout` but never clears the cookie → session survives logout | `src/features/auth/api/logout.ts` | behavioural bug, one breath to explain |
+| 1 | **planted** — `cors({ origin: '*', credentials: true })`; upstream had `origin: env.APP_URL` | `mock-server.ts` | security config. Wildcard origin *with* credentials is the classic misconfiguration, and it reads like a plausible "make it work locally" slip |
+| 2 | **planted** — one `persistDb('comment')` left un-awaited; this very PR adds those `await`s | `src/testing/mocks/handlers/comments.ts` | subtle correctness: the response returns before the write lands, so concurrent writes lose data |
+| 3 | *genuine upstream* — `loadDb()` returns `null` on a read error, while callers spread the result | `src/testing/mocks/db.ts` | crash instead of a clear failure |
+| 4 | *genuine upstream* — the mock DB path is relative (`mocked-db.json`), so it depends on cwd | `src/testing/mocks/db.ts` | works from the repo root, breaks anywhere else |
 
-Rejected as a fourth plant: "cookie auth with no CSRF token added". Architecturally sound
-finding, but least reliably surfaced, and four plants clutter the overview.
+Two planted, two genuinely upstream — so the talk can say so honestly.
 
 **Applied folded into the replayed commits**, so the diff looks native on GitLab — but kept as
 a tracked `e2e/patches/mr1-flaws.patch` for provenance and for retuning after rehearsal.
@@ -108,7 +131,11 @@ a tracked `e2e/patches/mr1-flaws.patch` for provenance and for retuning after re
 Plants are known by filename, so the two topics driven live can be picked instantly regardless
 of how many findings the seed produces.
 
-**Keep `yarn.lock` in the replay** (395 of the commit's lines). Every exclusion manufactures a
+**MR !1 cannot target `main`.** PR #175 sits later on upstream master than our base, so a
+diff against `main` would drag in every unrelated master change in between. It therefore targets
+a pinned `release/2024-06` branch at the PR's own base. MRs !2/!3 keep targeting `main`.
+
+**Keep `yarn.lock` in the replay** (hundreds of churn lines). Every exclusion manufactures a
 false finding — drop the lockfile and the agent may lead with "lockfile not updated"; drop
 `package.json` too and it becomes "`js-cookie` isn't declared". Real MRs carry lockfile churn
 and GitLab collapses it in the UI.

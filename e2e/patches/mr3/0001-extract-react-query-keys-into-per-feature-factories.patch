@@ -1,0 +1,37 @@
+From 65e29f8efa6aff36bd2fee2b0481c658629d83cb Mon Sep 17 00:00:00 2001
+From: "Blendinger, Frank - AB12345" <frank@e2e.test>
+Date: Tue, 4 Aug 2026 18:05:27 +0200
+Subject: [PATCH 1/2] extract react-query keys into per-feature factories
+
+The raw key arrays were repeated across every hook, so a rename meant hunting
+string literals. No behaviour change in this commit.
+---
+ src/features/comments/api/query-keys.ts    | 4 ++++
+ src/features/discussions/api/query-keys.ts | 4 ++++
+ 2 files changed, 8 insertions(+)
+ create mode 100644 src/features/comments/api/query-keys.ts
+ create mode 100644 src/features/discussions/api/query-keys.ts
+
+diff --git a/src/features/comments/api/query-keys.ts b/src/features/comments/api/query-keys.ts
+new file mode 100644
+index 0000000..33dc6ed
+--- /dev/null
++++ b/src/features/comments/api/query-keys.ts
+@@ -0,0 +1,4 @@
++export const queryKeys = {
++  all: ['comments'] as const,
++  list: (discussionId: string) => [...queryKeys.all, discussionId] as const,
++};
+diff --git a/src/features/discussions/api/query-keys.ts b/src/features/discussions/api/query-keys.ts
+new file mode 100644
+index 0000000..3826373
+--- /dev/null
++++ b/src/features/discussions/api/query-keys.ts
+@@ -0,0 +1,4 @@
++export const discussionKeys = {
++  all: ['discussions'] as const,
++  detail: (discussionId: string) => ['discussion', discussionId] as const,
++};
+-- 
+2.55.0
+

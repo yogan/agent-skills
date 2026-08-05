@@ -1,0 +1,90 @@
+From 5af2f2806d0694876ca380d330c5c0a52bc96bb3 Mon Sep 17 00:00:00 2001
+From: "Novak, Alex - CD67890" <author-bot@e2e.test>
+Date: Wed, 8 May 2024 09:20:00 +0200
+Subject: [PATCH 2/3] create the query client per session instead of at module
+ scope
+
+---
+ src/lib/query-client.ts  | 20 +++++++++++++++-----
+ src/providers/app.tsx    |  4 ++--
+ src/routes/protected.tsx |  6 +++---
+ 3 files changed, 20 insertions(+), 10 deletions(-)
+
+diff --git a/src/lib/query-client.ts b/src/lib/query-client.ts
+index fc94c93..34d2039 100644
+--- a/src/lib/query-client.ts
++++ b/src/lib/query-client.ts
+@@ -2,8 +2,18 @@ import { QueryClient } from '@tanstack/react-query';
+ 
+ import { queryConfig } from './react-query';
+ 
+-// Route loaders run outside React, so they need a client that does not live in
+-// component state.
+-export const queryClient = new QueryClient({
+-  defaultOptions: queryConfig,
+-});
++export const createQueryClient = () =>
++  new QueryClient({
++    defaultOptions: queryConfig,
++  });
++
++// One client per browser session. Tests build their own via createQueryClient(), so
++// no cache is shared between them.
++let client: QueryClient | undefined;
++
++export const getQueryClient = () => {
++  if (!client) {
++    client = createQueryClient();
++  }
++  return client;
++};
+diff --git a/src/providers/app.tsx b/src/providers/app.tsx
+index ced25ab..b2ed6e9 100644
+--- a/src/providers/app.tsx
++++ b/src/providers/app.tsx
+@@ -10,7 +10,7 @@ import { Button, Spinner } from '@/components/Elements';
+ import { Notifications } from '@/components/Notifications/Notifications';
+ // import { AuthLoader } from '@/lib/auth';
+ import { AuthLoader } from '@/lib/auth';
+-import { queryClient } from '@/lib/query-client';
++import { getQueryClient } from '@/lib/query-client';
+ 
+ const ErrorFallback = () => {
+   return (
+@@ -41,7 +41,7 @@ export const AppProvider = ({ children }: AppProviderProps) => {
+     >
+       <ErrorBoundary FallbackComponent={ErrorFallback}>
+         <HelmetProvider>
+-          <QueryClientProvider client={queryClient}>
++          <QueryClientProvider client={getQueryClient()}>
+             {import.meta.env.NODE_ENV !== 'test' && <ReactQueryDevtools />}
+             <Notifications />
+             <AuthLoader
+diff --git a/src/routes/protected.tsx b/src/routes/protected.tsx
+index 2cc3f36..e9d1138 100644
+--- a/src/routes/protected.tsx
++++ b/src/routes/protected.tsx
+@@ -7,7 +7,7 @@ import {
+   getDiscussionsQueryOptions,
+   getDiscussionQueryOptions,
+ } from '@/features/discussions/api/getDiscussions';
+-import { queryClient } from '@/lib/query-client';
++import { getQueryClient } from '@/lib/query-client';
+ import { lazyImport } from '@/utils/lazyImport';
+ 
+ const { DiscussionsRoutes } = lazyImport(
+@@ -43,9 +43,9 @@ export const protectedRoutes = [
+         path: '/app/discussions/*',
+         element: <DiscussionsRoutes />,
+         loader: async ({ params }: { params: { discussionId?: string } }) => {
+-          await queryClient.ensureQueryData(getDiscussionsQueryOptions());
++          await getQueryClient().ensureQueryData(getDiscussionsQueryOptions());
+           if (params.discussionId) {
+-            await queryClient.ensureQueryData(getDiscussionQueryOptions(params.discussionId));
++            await getQueryClient().ensureQueryData(getDiscussionQueryOptions(params.discussionId));
+           }
+           return null;
+         },
+-- 
+2.55.0
+

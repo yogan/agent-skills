@@ -1,0 +1,27 @@
+diff --git a/mock-server.ts b/mock-server.ts
+index cb8b0b3..c86e698 100644
+--- a/mock-server.ts
++++ b/mock-server.ts
+@@ -11,7 +11,8 @@ const app = express();
+ 
+ app.use(
+   cors({
+-    origin: env.APP_URL,
++    // allow the app on whichever port vite picked
++    origin: '*',
+     credentials: true,
+   }),
+ );
+diff --git a/src/testing/mocks/handlers/comments.ts b/src/testing/mocks/handlers/comments.ts
+index 6ad8cc2..be4c78b 100644
+--- a/src/testing/mocks/handlers/comments.ts
++++ b/src/testing/mocks/handlers/comments.ts
+@@ -97,7 +97,7 @@ export const commentsHandlers = [
+             }),
+           },
+         });
+-        await persistDb('comment');
++        persistDb('comment');
+         return HttpResponse.json(result);
+       } catch (error: any) {
+         return HttpResponse.json(
