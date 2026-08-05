@@ -41,12 +41,31 @@ def parse_remote(url):
     return host, path.strip("/")
 
 
+def api_protocol(host):
+    """Scheme glab uses for `host`. NEVER derive this from the remote URL: an SSH
+    remote carries no scheme at all, and `git_protocol=ssh` with
+    `api_protocol=https` is a perfectly normal setup — so the remote is a guess
+    while glab's own config is the answer. Falls back to https."""
+    r = run(["glab", "config", "get", "api_protocol", "--host", host])
+    p = r.stdout.strip() if r.returncode == 0 else ""
+    return p if p in ("http", "https") else "https"
+
+
+def web_base(web_url):
+    """Project web base from an MR's own `web_url` — the authoritative source, since
+    it carries scheme, host, port and any install path. Returns None if unusable."""
+    marker = "/-/merge_requests/"
+    if web_url and marker in web_url:
+        return web_url.split(marker, 1)[0]
+    return None
+
+
 def context():
     host, path = parse_remote(remote_url())
     return {
         "path": path,
         "enc": quote(path, safe=""),
-        "web": f"https://{host}/{path}",
+        "web": f"{api_protocol(host)}://{host}/{path}",
         "slug": path.replace("/", "-").replace(".", "-"),
     }
 

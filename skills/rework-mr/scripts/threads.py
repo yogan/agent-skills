@@ -36,7 +36,7 @@ import os
 import re
 import sys
 
-from _gl import api, context, current_user, die, mr_view
+from _gl import api, context, current_user, die, mr_view, web_base
 
 # internal topic handles (t5, t6, t10 …) — must never reach a GitLab comment.
 # Single source of truth: guard-reply.sh shells out to `check-handles` below
@@ -397,6 +397,10 @@ def resolve_state(args):
         state = new_state(ctx, mr)
     elif mr:
         state.update(mr_web_url=mr.get("web_url"), title=mr.get("title"))
+    # Single override point: the MR's own web_url beats anything reconstructed from
+    # the remote (scheme, port, install path). Doing it here means every consumer of
+    # ctx["web"] — thread URLs, diff URLs — inherits it for free.
+    ctx["web"] = web_base(state.get("mr_web_url")) or ctx["web"]
     return ctx, iid, path, state
 
 
