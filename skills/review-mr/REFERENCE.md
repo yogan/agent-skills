@@ -3,6 +3,24 @@
 Draft rules and the re-review loop in full. `SD=~/.claude/skills/review-mr/scripts`.
 The skill is **read-only against GitLab** — you draft, the user posts and resolves.
 
+## Comments you posted yourself
+
+`sync` reconciles threads you opened in the GitLab UI, not just the ones this skill drafted:
+
+| Situation | Behaviour |
+|---|---|
+| your thread, no ✎ draft on that file | adopted automatically as a 👤 human topic, `○ open` |
+| your thread, a ✎ draft exists on that file | held back — it may be that draft posted by hand, so it lands in `candidates` for you to disambiguate |
+| a peer's thread | adopted as 💬 peer |
+| the author's own thread | adopted as 🖊️ author |
+
+Once adopted, a hand-posted comment is tracked exactly like a drafted one: the author's reply
+flips it to ◐ needs-ack, `diff <t>` shows what they changed for it, and only your ack closes it.
+
+Keying the hold-back on the *file* rather than on "any draft pending" is deliberate: during
+curation there are almost always drafts pending, so the coarser rule meant a comment written in
+the UI never reached the table.
+
 ## Draft rules (Phase 2 and follow-ups)
 
 - **Language: whatever `drafts in <lang>` says.** Every view you draft from — `sync`,

@@ -42,11 +42,12 @@ Subcommands (all read-only against GitLab):
   draft <t>      the draft's comment body ONLY — the paste/post payload (no meta)
   diff <t>       the author's change for one topic: compare URL + inline git command
   import <file>  bulk-add findings from a JSON array (review-branch seed)
-  add            add one finding
+  add [--thread <id>]  add one finding; --thread links an already-posted thread
   set <t> …      update a topic's fields / state
   drop <t>       remove a (draft) topic
   merge <into> <o…>  fold other topics into <into>
-  link <t> <discussion_id>   attach a posted GitLab thread to a topic (✎→○)
+  link <t> [<discussion_id>]  attach a posted GitLab thread to a topic (✎→○);
+                 omit the id to auto-pick your one unlinked thread on that file
   candidates     your posted threads not yet linked to any topic (for matching)
   head           one-line push check (branch tip vs last-reviewed head)
   set-head       mark the current branch tip as reviewed
@@ -264,6 +265,17 @@ def add_topic(state, **fields):
     return t
 
 
+def attach_thread(state, t, discussion_id, ctx, iid, start_sha=None):
+    """Link a posted GitLab thread to a topic and capture its baseline."""
+    if discussion_id not in t["thread_ids"]:
+        t["thread_ids"].append(discussion_id)
+    if start_sha:
+        t["start_sha"] = start_sha
+    elif not t.get("start_sha"):
+        t["start_sha"] = state.get("last_reviewed_head") or mr_head(ctx, iid)
+    return t
+
+
 def topic_status(state, t):
     """draft until posted; then derive from GitLab. Overlay (acked/wontfix) wins,
     but a *fresh* author note re-opens it.
@@ -336,13 +348,28 @@ def adopt_inbound(state):
     (they belong to your drafts, matched via `candidates`/`link`)."""
     linked = {th for t in state["topics"] for th in t["thread_ids"]}
     ignored = set(state.get("ignored") or [])       # dropped inbound → stay dropped
+    # A thread YOU opened is normally left to candidates/link, because it may be the
+    # posted form of a ✎ draft — auto-adopting it would duplicate that topic. But that
+    # only applies to a draft about the SAME FILE. Keying on "any draft pending" made
+    # this useless in practice: during curation there are essentially always drafts
+    # pending, so a comment you wrote straight in the UI would never land in the table.
+    draft_files = {t.get("file") for t in state["topics"]
+                   if topic_status(state, t) == "draft" and t.get("file")}
     for tid, x in state["threads"].items():
-        if tid in linked or tid in ignored or x.get("mine") or x.get("gone"):
+        if tid in linked or tid in ignored or x.get("gone"):
             continue
+        if x.get("mine") and x.get("file") in draft_files:
+            continue                          # could be that draft, posted — ask instead
         summ = " ".join((x.get("body") or "").split())[:80]
-        t = add_topic(state, source="author" if x.get("by_author") else "peer",
-                      summary=summ or None, file=x.get("file"), line=x.get("line"),
-                      by=first_name(x.get("author")))
+        if x.get("mine"):
+            source = "human"                  # 👤 you found it and posted it yourself
+        elif x.get("by_author"):
+            source = "author"
+        else:
+            source = "peer"
+        t = add_topic(state, source=source, summary=summ or None, file=x.get("file"),
+                      line=x.get("line"),
+                      by=None if x.get("mine") else first_name(x.get("author")))
         t["thread_ids"].append(tid)
 
 
@@ -543,6 +570,8 @@ def render_candidates(state, me):
     for tid, x in state["threads"].items():
         if tid in linked or not x.get("mine"):
             continue
+        if x.get("gone"):
+            continue          # deleted upstream — offering it to link would be a trap
         out.append(f"{tid}  `{os.path.basename(x.get('file') or '')}:"
                    f"{x.get('line') or ''}`  {(x.get('body') or '').strip()[:80]}")
     return "\n".join(out).strip() or "(no unlinked threads of yours)"
@@ -981,6 +1010,9 @@ def main():
     pa.add_argument("--kind", choices=("issue", "question", "praise"))
     pa.add_argument("--severity", choices=tuple(SEV_ICON))
     pa.add_argument("--source", choices=tuple(SRC_ICON))
+    pa.add_argument("--thread", dest="thread",
+                    help="discussion id of an already-posted thread — links it in the "
+                         "same call (use for a comment you posted in the UI yourself)")
     for f in ("summary", "file", "line", "draft", "note"):
         pa.add_argument(f"--{f}")
 
@@ -1005,7 +1037,9 @@ def main():
 
     pl = sub.add_parser("link")
     pl.add_argument("topic")
-    pl.add_argument("discussion_id")
+    pl.add_argument("discussion_id", nargs="?",
+                    help="omit to auto-pick the one unlinked thread of yours on this "
+                         "topic's file (the 'I just posted it by hand' case)")
     pl.add_argument("--iid", type=int)
     pl.add_argument("--start-sha", dest="start_sha")
 
@@ -1091,6 +1125,11 @@ def main():
         t = add_topic(state, kind=args.kind, severity=args.severity,
                       source=args.source, summary=args.summary, file=args.file,
                       line=args.line, draft=args.draft, note=args.note)
+        if args.thread:
+            # Adopting a comment you posted yourself: creating the topic and linking the
+            # thread are one intention, so they are one call. Splitting them produced a
+            # pointless "link it too?" confirmation.
+            attach_thread(state, t, args.thread, ctx, iid)
         save(path, state)
         print(t["id"])
     elif cmd == "set":
@@ -1130,14 +1169,24 @@ def main():
         save(path, state)
     elif cmd == "link":
         t = topic_for(state, args.topic) or die(f"no topic {args.topic}")
-        if args.discussion_id not in t["thread_ids"]:
-            t["thread_ids"].append(args.discussion_id)
-        if args.start_sha:
-            t["start_sha"] = args.start_sha
-        elif not t.get("start_sha"):
-            t["start_sha"] = state.get("last_reviewed_head") or mr_head(ctx, iid)
+        did = args.discussion_id
+        if not did:
+            # "I posted it by hand" — resolve it instead of asking the user for an id
+            # they would have to hunt for. Unambiguous when exactly one unlinked thread
+            # of theirs sits on this topic's file, which is the normal case.
+            sync(state, fetch_threads(ctx, iid, me, author))
+            linked = {th for x in state["topics"] for th in x["thread_ids"]}
+            hits = [tid for tid, x in state["threads"].items()
+                    if x.get("mine") and not x.get("gone") and tid not in linked
+                    and x.get("file") == t.get("file")]
+            if len(hits) != 1:
+                die(f"cannot auto-link {args.topic}: found {len(hits)} unlinked threads "
+                    f"of yours on {t.get('file')} — pass the discussion id "
+                    f"(see `candidates`)")
+            did = hits[0]
+        attach_thread(state, t, did, ctx, iid, args.start_sha)
         save(path, state)
-        print(f"{args.topic} ← {args.discussion_id}")
+        print(f"{args.topic} ← {did}")
 
 
 if __name__ == "__main__":

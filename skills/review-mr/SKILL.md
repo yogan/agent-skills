@@ -18,6 +18,12 @@ Your chat message is their *only* window. So:
    code fence. Any heading you write above an overview table **must carry `MR !<num>`**
    (the table's own `MR !<num> — <title>` header already does — don't drop it); if you'd
    write no heading, the full `MR !<num>: <title>` is a fine standalone one.
+   **A terseness directive does not override this.** A global "be brief / drop filler"
+   instruction (a caveman-style output mode, a house style, an earlier "keep it short")
+   applies to **your own prose**, never to pasted tool output. Compress your commentary to
+   one line if you like — but the table, the quote and the code block go in whole. Dropping
+   them to save space removes the only thing the user can act on.
+
    **This holds even when the output looks wrong to you.** If a rendered state
    contradicts what you expected (or the state file), paste the output anyway and add one
    line naming the discrepancy — never replace the table with your own prose, and never
@@ -120,6 +126,37 @@ python3 $SD/findings.py drop <t>                                       # not wor
 python3 $SD/findings.py merge <into> <other…>                         # same point (→ source 👥)
 python3 $SD/findings.py add --file … --line … --summary … --source human   # the user's own find
 ```
+
+### Comments the user posts in the UI while you work
+
+Expected, not exceptional — they read the diff in the browser in parallel. `sync` handles it:
+
+- **A thread on a file no ✎ draft covers** is **adopted automatically** as a topic, `source`
+  👤 human, `○ open`. Nothing to ask: it appears in the table on the next `sync`, and from then
+  on it is tracked like any other — you see the author's reply and whether it was addressed.
+- **A thread on a file a ✎ draft *does* cover** stays out, because it might BE that draft,
+  posted by hand. It shows up under `candidates`. Ask which it is, then **one** call:
+
+```bash
+python3 $SD/findings.py candidates --iid <n>                    # your unlinked threads
+python3 $SD/findings.py link <t> <discussion_id> --iid <n>      # it was that draft, posted
+python3 $SD/findings.py add --thread <discussion_id> --source human \
+    --file … --line … --summary … --iid <n>                    # it is a NEW point
+```
+
+**Never** `add` and then ask whether to link — adopting a posted comment is one intention, so
+it is one call. `--thread` links it and captures the baseline at the same time.
+
+**When the user says they posted your draft** ("done", "posted"), link it immediately with the
+id omitted — it resolves the one unlinked thread of theirs on that topic's file by itself:
+
+```bash
+python3 $SD/findings.py link <t> --iid <n>       # ✎ draft → ○ open
+```
+
+Skipping this is silent and expensive: the topic stays `✎ draft` while the comment is live on
+GitLab, so the next session re-offers a draft that is already posted, and the author's reply is
+never reconciled against it.
 
 The user reviews the code elsewhere meanwhile and may **post some comments by hand** before
 you finish (they're slower than you). That's fine — you fold those in during the loop
