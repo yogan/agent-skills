@@ -571,6 +571,69 @@ def code_snippet(state, t, context_lines=4):
     return f"```{lang}\n" + "\n".join(body) + "\n```"
 
 
+def anchor_warning(state, t, context_lines=4):
+    """Flag a topic whose `line` probably points at the wrong code.
+
+    Seeded line numbers come from review-branch's output — a model's estimate — and they
+    are wrong often enough to matter: an anchor off by four lines renders unrelated code
+    next to the finding, and a comment posted there lands on the wrong line in GitLab.
+
+    Heuristic: the summary almost always names the culprit in backticks. If none of those
+    identifiers appear on the marked line but one does appear elsewhere in the file, say so
+    and name the closest candidate. Silent when the summary has no usable identifier, or
+    when the marked line already matches.
+    """
+    file, line, summary = t.get("file"), t.get("line"), t.get("summary") or ""
+    if not (file and line and summary):
+        return None
+    wt = get_worktree(state.get("slug") or "")
+    if not wt:
+        return None
+    full = os.path.join(wt, file)
+    if not os.path.isfile(full):
+        return None
+    # Identifiers to look for. Backticks are the reliable signal, but seeded summaries
+    # often carry none (they are prose from the reviewer model), so also take
+    # code-SHAPED bare words: camelCase or PascalCase/ALLCAPS, which English prose in a
+    # summary does not produce. "redirectTo" and "URLSearchParams" qualify; "instead",
+    # "created" and "null" do not.
+    candidates = [raw.strip().rstrip("()").split("(")[0].split(".")[-1].strip()
+                  for raw in re.findall(r"`([^`]+)`", summary)]
+    candidates += re.findall(r"\b[A-Za-z_][A-Za-z0-9_]{3,}\b", summary)
+    needles = []
+    for tok in candidates:
+        if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", tok or ""):
+            continue
+        if len(tok) < 4:
+            continue
+        if not re.search(r"[a-z][A-Z]|^[A-Z]{2,}", tok):     # must look like code
+            continue
+        needles.append(tok)
+    needles = list(dict.fromkeys(needles))
+    if not needles:
+        return None
+    try:
+        with open(full, encoding="utf-8", errors="replace") as f:
+            lines = f.read().splitlines()
+        n = int(line)
+    except (OSError, TypeError, ValueError):
+        return None
+    if not 1 <= n <= len(lines):
+        return (f"⚠️ **anchor check**: `{file}` has {len(lines)} lines, so line {n} does not "
+                f"exist. Seeded line numbers are the reviewer model's estimate — fix it "
+                f"with `set {t['id']} --line <n>` before posting.")
+    if any(x in lines[n - 1] for x in needles):
+        return None
+    hits = [i for i, text in enumerate(lines, 1) if any(x in text for x in needles)]
+    if not hits:
+        return None
+    best = min(hits, key=lambda i: abs(i - n))
+    named = ", ".join(f"`{x}`" for x in dict.fromkeys(needles))
+    return (f"⚠️ **anchor check**: line {n} does not mention {named}; the closest line that "
+            f"does is **{best}**. Seeded line numbers are the reviewer model's estimate, so "
+            f"verify before posting — `set {t['id']} --line {best}` if that is the right spot.")
+
+
 def render_quote(state, tid):
     t = topic_for(state, tid) or die(f"no topic {tid}")
     summ = t.get("summary") or ""
@@ -588,6 +651,9 @@ def render_quote(state, tid):
         loc = _loc(state, t, full=True)
         if snip:
             out += ["", f"_Code currently in MR — `{loc}`:_", "", snip]
+        warn = anchor_warning(state, t)
+        if warn:
+            out += ["", warn]
         body = t.get("draft") or t.get("note")
         if body:
             lang = FENCE_BY_EXT.get(os.path.splitext(t.get("file") or "")[1], "")
