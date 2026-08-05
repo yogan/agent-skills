@@ -29,8 +29,28 @@ services:
         gitlab_kas['enable'] = false
         gitlab_pages['enable'] = false
 
-        puma['worker_processes'] = 2
-        sidekiq['max_concurrency'] = 9
+        # -- memory discipline; see README "VM memory" --
+        # A 6 GB Rancher VM shared with k3s died twice under fixture load at the
+        # defaults. Single-process puma is the big win (each worker is ~400-600 MB) and
+        # a one-user demo instance has no use for more.
+        # ONE worker, not zero. worker_processes = 0 is single mode: GitLab warns
+        # "some features may not work", there is no worker supervision, and an observed
+        # consequence was puma silently ceasing to listen after ~15 h while runit still
+        # reported it as running — a 502 that nothing recovers from. One cluster worker
+        # keeps nearly all the memory saving AND the memory-killer/auto-restart.
+        puma['worker_processes'] = 1
+        puma['per_worker_max_memory_mb'] = 1024
+        sidekiq['max_concurrency'] = 5
+        postgresql['shared_buffers'] = "128MB"
+        postgresql['max_connections'] = 100
+        gitaly['configuration'] = {
+          concurrency: [
+            { rpc: "/gitaly.SmartHTTPService/PostReceivePack", max_per_repo: 2 },
+          ],
+        }
+        # Glibc arena bloat is a known Ruby memory sink; capping it saves real RSS.
+        gitlab_rails['env'] = { 'MALLOC_ARENA_MAX' => '2' }
+        gitaly['env'] = { 'MALLOC_ARENA_MAX' => '2' }
 
         # Signup off: every account is created by bootstrap.py
         gitlab_rails['gitlab_signup_enabled'] = false

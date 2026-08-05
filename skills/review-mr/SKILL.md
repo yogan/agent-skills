@@ -107,8 +107,10 @@ annotate afterwards):
 python3 $SD/findings.py resume --iid <n>
 ```
 
-**Explainer (opt-in, parallel).** Unless the user said "no explain(er)", decide by size —
-changed LOC **excluding tests**; below ~40 → skip (it's a short change). Otherwise launch
+**Explainer (opt-in, parallel).** If the user **asked for** an explainer (in the invocation
+or since), generate it — **their request beats the size heuristic, always**; never talk them out
+of it because the diff looks short. If they said "no explain(er)", skip it. Otherwise decide by
+size — changed LOC **excluding tests**; below ~40 → skip (it's a short change). Otherwise launch
 `explain-branch` as a **background subagent** pointed at the checked-out worktree, and move
 on immediately (it opens the HTML when ready). It must only *read* git (no checkout/fetch —
 that already happened) so it can't race review-branch.

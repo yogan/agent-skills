@@ -1,0 +1,136 @@
+From 18b4330fe2a8c7c9286ce8d7e53604ea29693412 Mon Sep 17 00:00:00 2001
+From: "Novak, Alex - CD67890" <author-bot@e2e.test>
+Date: Mon, 6 May 2024 14:31:00 +0200
+Subject: [PATCH 1/3] prefetch route data before rendering
+
+Discussion routes waited for their queries to start after the component mounted,
+which shows a spinner on every navigation. The route now warms the cache first.
+
+- a shared query client that loaders can reach outside React
+- query-options factories for the discussions endpoints
+- a loader on the discussions route
+---
+ src/features/discussions/api/getDiscussion.ts  |  5 +++++
+ src/features/discussions/api/getDiscussions.ts |  5 +++++
+ src/lib/query-client.ts                        |  9 +++++++++
+ src/providers/app.tsx                          |  9 ++-------
+ src/routes/protected.tsx                       | 17 ++++++++++++++++-
+ 5 files changed, 37 insertions(+), 8 deletions(-)
+ create mode 100644 src/lib/query-client.ts
+
+diff --git a/src/features/discussions/api/getDiscussion.ts b/src/features/discussions/api/getDiscussion.ts
+index 69d214d..d54f30b 100644
+--- a/src/features/discussions/api/getDiscussion.ts
++++ b/src/features/discussions/api/getDiscussion.ts
+@@ -9,6 +9,11 @@ export const getDiscussion = ({ discussionId }: { discussionId: string }): Promi
+   return axios.get(`/discussions/${discussionId}`);
+ };
+ 
++export const getDiscussionQueryOptions = (discussionId: string) => ({
++  queryKey: ['discussion', discussionId],
++  queryFn: () => getDiscussion({ discussionId }),
++});
++
+ type QueryFnType = typeof getDiscussion;
+ 
+ type UseDiscussionOptions = {
+diff --git a/src/features/discussions/api/getDiscussions.ts b/src/features/discussions/api/getDiscussions.ts
+index b27828c..0d1cff3 100644
+--- a/src/features/discussions/api/getDiscussions.ts
++++ b/src/features/discussions/api/getDiscussions.ts
+@@ -9,6 +9,11 @@ export const getDiscussions = (): Promise<Discussion[]> => {
+   return axios.get('/discussions');
+ };
+ 
++export const getDiscussionsQueryOptions = () => ({
++  queryKey: ['discussions'],
++  queryFn: () => getDiscussions(),
++});
++
+ type QueryFnType = typeof getDiscussions;
+ 
+ type UseDiscussionsOptions = {
+diff --git a/src/lib/query-client.ts b/src/lib/query-client.ts
+new file mode 100644
+index 0000000..fc94c93
+--- /dev/null
++++ b/src/lib/query-client.ts
+@@ -0,0 +1,9 @@
++import { QueryClient } from '@tanstack/react-query';
++
++import { queryConfig } from './react-query';
++
++// Route loaders run outside React, so they need a client that does not live in
++// component state.
++export const queryClient = new QueryClient({
++  defaultOptions: queryConfig,
++});
+diff --git a/src/providers/app.tsx b/src/providers/app.tsx
+index be6a3c8..ced25ab 100644
+--- a/src/providers/app.tsx
++++ b/src/providers/app.tsx
+@@ -1,4 +1,4 @@
+-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
++import { QueryClientProvider } from '@tanstack/react-query';
+ import { ReactQueryDevtools } from '@tanstack/react-query-devtools';
+ import * as React from 'react';
+ import { useState } from 'react';
+@@ -10,7 +10,7 @@ import { Button, Spinner } from '@/components/Elements';
+ import { Notifications } from '@/components/Notifications/Notifications';
+ // import { AuthLoader } from '@/lib/auth';
+ import { AuthLoader } from '@/lib/auth';
+-import { queryConfig } from '@/lib/react-query';
++import { queryClient } from '@/lib/query-client';
+ 
+ const ErrorFallback = () => {
+   return (
+@@ -31,11 +31,6 @@ type AppProviderProps = {
+ };
+ 
+ export const AppProvider = ({ children }: AppProviderProps) => {
+-  const [queryClient] = useState(() => {
+-    return new QueryClient({
+-      defaultOptions: queryConfig,
+-    });
+-  });
+   return (
+     <React.Suspense
+       fallback={
+diff --git a/src/routes/protected.tsx b/src/routes/protected.tsx
+index a2f7658..2cc3f36 100644
+--- a/src/routes/protected.tsx
++++ b/src/routes/protected.tsx
+@@ -3,6 +3,11 @@ import { Navigate, Outlet } from 'react-router-dom';
+ 
+ import { Spinner } from '@/components/Elements';
+ import { MainLayout } from '@/components/Layout';
++import {
++  getDiscussionsQueryOptions,
++  getDiscussionQueryOptions,
++} from '@/features/discussions/api/getDiscussions';
++import { queryClient } from '@/lib/query-client';
+ import { lazyImport } from '@/utils/lazyImport';
+ 
+ const { DiscussionsRoutes } = lazyImport(
+@@ -34,7 +39,17 @@ export const protectedRoutes = [
+     path: '/app',
+     element: <App />,
+     children: [
+-      { path: '/app/discussions/*', element: <DiscussionsRoutes /> },
++      {
++        path: '/app/discussions/*',
++        element: <DiscussionsRoutes />,
++        loader: async ({ params }: { params: { discussionId?: string } }) => {
++          await queryClient.ensureQueryData(getDiscussionsQueryOptions());
++          if (params.discussionId) {
++            await queryClient.ensureQueryData(getDiscussionQueryOptions(params.discussionId));
++          }
++          return null;
++        },
++      },
+       { path: '/app/users', element: <Users /> },
+       { path: '/app/profile', element: <Profile /> },
+       { path: '/app/', element: <Dashboard /> },
+-- 
+2.55.0
+
