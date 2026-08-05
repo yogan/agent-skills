@@ -55,6 +55,7 @@ Subcommands (all read-only against GitLab):
   path           print the state-file path
 """
 import argparse
+import datetime
 import json
 import os
 import sys
@@ -103,6 +104,21 @@ def first_name(name):
         n = n.split(",", 1)[1].strip()
     parts = n.split()
     return parts[0] if parts else (name or "")
+
+
+def _ts(value):
+    """Parse a GitLab timestamp; None for anything unparseable so comparisons fail
+    safe (treated as "no information" rather than "very old")."""
+    if not value:
+        return None
+    try:
+        return datetime.datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+
+def now_iso():
+    return datetime.datetime.now(datetime.timezone.utc).isoformat()
 
 
 def lang_hint(state):
@@ -202,6 +218,10 @@ def fetch_threads(ctx, iid, me, author=None):
             "last_author": (last.get("author") or {}).get("name") or last_user,
             "last_username": last_user,
             "last_body": last.get("body"),
+            # When the author last spoke. Needed to tell "the author replied and I have
+            # not looked yet" from "the author replied, I read it, and I acked" — see
+            # topic_status(). Without it an ack can never stick on an unresolved thread.
+            "last_at": last.get("created_at"),
             "mine": bool(me) and first_user == me,      # you opened this thread
             "by_author": bool(author) and first_user == author,  # author's own thread
             "awaiting": (("you" if last_user == author else "author") if author
@@ -236,7 +256,7 @@ def add_topic(state, **fields):
         "id": next_tid(state), "kind": "issue", "severity": None,
         "source": "llm", "summary": None, "file": None, "line": None,
         "draft": None, "thread_ids": [], "state": None, "ticket": None,
-        "start_sha": None, "note": None, "by": None,
+        "start_sha": None, "note": None, "by": None, "acked_at": None,
     }
     t.update({k: v for k, v in fields.items()
               if v is not None and k not in ADD_PROTECTED})
@@ -246,17 +266,31 @@ def add_topic(state, **fields):
 
 def topic_status(state, t):
     """draft until posted; then derive from GitLab. Overlay (acked/wontfix) wins,
-    but a fresh author note re-opens it: if a linked thread is unresolved and the
-    author spoke last, it is needs-ack regardless of a stale ack."""
+    but a *fresh* author note re-opens it.
+
+    "Fresh" means newer than your ack — compared against `acked_at`, not merely "the
+    author holds the last word". Without that comparison an ack could never stick on a
+    thread the author had replied to and nobody had resolved on GitLab: the overlay was
+    set, and the very reply you were acking kept overriding it, so the topic sat at
+    needs-ack forever and the table contradicted the state file."""
     thr = [state["threads"].get(x) for x in t["thread_ids"]]
     thr = [x for x in thr if x]
     if not thr:
         return "draft"
     if t.get("kind") == "praise":                # no ack loop: resolved ⇒ done
         return "acked" if all(x.get("resolved") for x in thr) else "open"
-    author_active = any(
-        x.get("awaiting") == "you" and not x.get("resolved") for x in thr)
     ov = t.get("state")
+    acked_at = _ts(t.get("acked_at"))
+
+    def spoke_after_ack(x):
+        if x.get("awaiting") != "you" or x.get("resolved"):
+            return False
+        if not acked_at:                     # never acked → any author note is fresh
+            return True
+        said_at = _ts(x.get("last_at"))
+        return said_at is None or said_at > acked_at
+
+    author_active = any(spoke_after_ack(x) for x in thr)
     if ov in ("acked", "wontfix") and not author_active:
         return ov
     if any(x.get("awaiting") == "you" or x.get("resolved") for x in thr):
@@ -273,13 +307,19 @@ def kind_icon(t):
 # ---------------------------------------------------------------- reconcile
 
 
+# Keys on a thread record that belong to US, not to the fetch — everything else is
+# refreshed from GitLab wholesale. Deriving the merge this way instead of listing the
+# fetched fields means adding a field to fetch_threads() cannot silently fail to
+# propagate onto threads that already exist locally (which is exactly what happened
+# when `last_at` was introduced).
+LOCAL_THREAD_FIELDS = ("gone",)
+
+
 def sync(state, live):
-    keep = ("author", "first_username", "file", "line", "body", "resolved",
-            "resolved_by", "url", "note_count", "last_author", "last_username",
-            "last_body", "mine", "by_author", "awaiting")
     for tid, rec in live.items():
         if tid in state["threads"]:
-            state["threads"][tid].update({k: rec[k] for k in keep})
+            state["threads"][tid].update(
+                {k: v for k, v in rec.items() if k not in LOCAL_THREAD_FIELDS})
         else:
             state["threads"][tid] = rec
     for tid in state["threads"]:
@@ -1057,8 +1097,11 @@ def main():
         t = topic_for(state, args.topic) or die(f"no topic {args.topic}")
         if args.state == "reset":
             t["state"] = None
+            t.pop("acked_at", None)
         elif args.state:
             t["state"] = args.state
+            # Stamped so a later author note can be recognised as newer than the ack.
+            t["acked_at"] = now_iso() if args.state in ("acked", "wontfix") else None
         fld = {"start-sha": "start_sha"}
         for f in ("kind", "severity", "source", "summary", "file", "line",
                   "draft", "note", "ticket", "start-sha"):
