@@ -13,6 +13,19 @@ Reviewing **someone else's** GitLab MR. glab-only, **read-only** against GitLab.
 **The user cannot see your tool calls or their output** — those are collapsed.
 Your chat message is their *only* window. So:
 
+0. **Your first reply in a session is an opener, pasted whole.** Before anything else —
+   no "picking up where we left off", no summary of what is left, no question:
+
+   ```bash
+   python3 $SD/findings.py resume --iid <n>    # state exists (it syncs internally)
+   python3 $SD/findings.py present --iid <n>   # fresh review, after seeding
+   ```
+
+   Paste that output verbatim as the start of the reply. It carries the MR header, the
+   overview table, the pushes since your baseline and the topic that needs the user —
+   i.e. everything they need to orient. **If your reply names a topic (`t2`) without a
+   pasted table above it, it is wrong: the user has no idea what `t2` is.** Do not run
+   `sync`/`head`/`bodies` first and narrate from those; `resume` already includes them.
 1. When a `findings.py` command prints a table/quote, **paste it verbatim into your
    reply** — table, blockquote and all. Never summarize, re-type, or wrap it in a
    code fence. Any heading you write above an overview table **must carry `MR !<num>`**
@@ -87,7 +100,12 @@ python3 $SD/findings.py set-head --iid <n>  # ⚠️ first run ONLY
 ```
 
 **RESUME** — do NOT `set-head` now (it would erase the "pushes since last review" detection).
-Jump to *Resuming*, below.
+Run the opener and paste it whole; that IS your first reply (see *Resuming* for what to
+annotate afterwards):
+
+```bash
+python3 $SD/findings.py resume --iid <n>
+```
 
 **Explainer (opt-in, parallel).** Unless the user said "no explain(er)", decide by size —
 changed LOC **excluding tests**; below ~40 → skip (it's a short change). Otherwise launch
@@ -168,13 +186,21 @@ Still **one topic at a time**. The user may want to discuss a finding first — 
 for a concrete example, refine wording — possibly over several turns. Finish the topic
 (draft accepted / self-posted / skipped) **before** moving on.
 
+**Lead with the topic, never with your research.** Every turn about a topic opens with
+`quote <t>` pasted verbatim — it names the topic, gives `file:line`, shows the code in
+question and the draft. Only *then* your 2-4 lines of reasoning. Opening on a verdict
+("Confirmed: …", "Yes, that's a real bug") is unreadable: the user cannot tell which finding
+you mean, cannot see the code you are asserting things about, and has no `file:line` to open.
+If you find yourself writing a conclusion before a pasted `quote`, reorder.
+
 Draft rules — see [REFERENCE.md](REFERENCE.md). In short: **write in the language named by
 the `· drafts in <lang>` marker** that every `sync`/`todo`/`present`/`quote` header carries —
 if you cannot see it in the output in front of you, run `python3 $SD/findings.py lang` rather
 than assuming (`de` means informal *du*). **As short as
 possible**; a ```suggestion block for a line-precise fix; identifiers in backticks; no
 headings. Show the draft as GitLab-compatible markdown in your reply (via `quote <t>`, which
-also tells the user **where to open the thread** — `file:line`), and offer the clipboard:
+also gives **where to open the thread** — `file:line` — and the surrounding code with the
+line marked), and offer the clipboard:
 
 ```bash
 python3 $SD/findings.py set <t> --draft "…"     # store the accepted draft
@@ -203,12 +229,17 @@ changed for it (across force-pushes).
 ## Resuming an in-progress review
 
 A state file exists (the common case — a review spans days). Fetch + checkout in the worktree
-(above, **no set-head**). Your opener must contain, in this order — **all pasted verbatim**:
+(above, **no set-head**). Then **one command** produces your entire opener — paste it verbatim,
+whole:
 
 ```bash
-python3 $SD/findings.py updates         # 1. pushes since your baseline (syncs internally)
-python3 $SD/findings.py present         # 2. the overview table + the first topic that needs you
+python3 $SD/findings.py resume          # pushes since your baseline + overview table + first topic
 ```
+
+It is one call on purpose. As two steps ("run `updates`, then run `present`") the second gets
+dropped once you start digging into the first topic, and the overview table — the user's only
+view of where every topic stands — silently goes missing. If you catch yourself about to reply
+without that table, you skipped it.
 
 **1 — `updates`.** Paste verbatim, then annotate — don't collapse it into prose. Each push is a
 `- **push N:** <url>` line with a nested `  - ` detail (diffstat + topics touched, or a rebase
@@ -224,7 +255,7 @@ label). Add your **one-line summary as a further `  - ` sub-bullet**:
 
 A **⚠️ mixed rebase** line (real changes folded into a rebase) — **call it out loudly**.
 
-**2 — `present`.** Paste verbatim: the **overview table** (your map of every topic's state) plus
+**2 — the overview + first topic** (the part after the `---`). Paste verbatim: the **overview table** (your map of every topic's state) plus
 the first topic needing you. **The overview table is mandatory in the opener — never drop it**
 (it's the user's only view of where all topics stand). Then walk the needs-ack topics one at a
 time from there. Advance the baseline (`set-head`) at the end, once you've digested the pushes.
@@ -308,6 +339,8 @@ yet. Source: 🤖 llm · 👤 you · 👥 both/merged · 💬 peer reviewer · �
 
 ## Prerequisites
 
+A `Stop` hook (`scripts/stop-hook.py`) registered in `settings.json` — see the repo
+README; without it, pasted blocks get silently paraphrased away.
 `glab` authenticated; a review worktree (or willingness to create one); run inside the target
 repo. `python3`; macOS for `clip.sh`. Build blocks: the `explain-branch` and `review-branch`
 skills installed. `findings.py` subcommands: sync·todo·present·status·updates·bodies·quote·diff·candidates·

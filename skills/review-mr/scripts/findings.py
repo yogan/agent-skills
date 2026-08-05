@@ -34,6 +34,7 @@ Subcommands (all read-only against GitLab):
   sync           fetch discussions + branch tip, reconcile, render overview  (default)
   todo           render only what needs YOU (✎ drafts + ◐ needs-ack)
   present        overview + the first topic that needs you
+  resume         the whole resume opener: updates + overview + first topic (one call)
   status         approval + merge-readiness (detailed_merge_status) + approve/revoke nudge
   updates        pushes since your baseline: compare URLs + diffstats + topics touched
   bodies         first + last note of each posted thread (to judge status)
@@ -59,6 +60,7 @@ import argparse
 import datetime
 import json
 import os
+import re
 import sys
 
 from _gl import (api, context, current_user, die, mr_head, mr_object,
@@ -473,6 +475,102 @@ def _note_md(name, body):
     return f"> **{first_name(name)}**\n>\n{quoted}"
 
 
+FENCE_BY_EXT = {".ts": "ts", ".tsx": "tsx", ".js": "js", ".jsx": "jsx",
+                ".py": "python", ".rb": "ruby", ".go": "go", ".java": "java",
+                ".kt": "kotlin", ".sh": "bash", ".yml": "yaml", ".yaml": "yaml",
+                ".json": "json", ".sql": "sql", ".css": "css", ".html": "html"}
+
+
+SUGGESTION_FENCE = re.compile(r"^```suggestion(?::-(\d+)\+(\d+))?\s*$")
+
+
+def render_draft(body, lang, anchor=None):
+    """Display form of a draft. The paste payload (`draft <t>`) is never touched.
+
+    Three things happen here, each for a reason:
+
+    * ```suggestion is re-fenced to the file's language. GitLab needs the literal
+      ```suggestion for one-click-apply, but no terminal or chat renderer knows it as a
+      language, so the block the user has to approve would render unhighlighted.
+    * Its lines are numbered from the range GitLab's own `suggestion:-A+B` syntax implies
+      (A lines above the anchor through B below), so the replacement lines up against the
+      source shown above it — and it becomes visible when 3 lines are replaced by 2.
+    * PROSE is blockquoted so the draft reads as the artefact being posted rather than as
+      commentary. Fenced blocks stay at line start on purpose: indenting or prefixing a
+      fence (even with "> ") risks losing the syntax highlighting, which is the single most
+      useful thing in this view.
+    """
+    if not body:
+        return body
+    out, in_sug, num, width = [], False, None, 2
+    for line in body.splitlines():
+        m = SUGGESTION_FENCE.match(line)
+        if m and not in_sug:
+            in_sug = True
+            above, below = m.group(1), m.group(2)
+            num, width = None, 2
+            if anchor:
+                try:
+                    start_ln = int(anchor) - int(above or 0)
+                    end_ln = int(anchor) + int(below or 0)
+                    num, width = start_ln, len(str(end_ln))
+                except (TypeError, ValueError):
+                    num = None
+            out.append(f"```{lang}" if lang else "```")
+            continue
+        if in_sug and line.strip() == "```":
+            in_sug, num = False, None
+            out.append(line)
+            continue
+        if in_sug:
+            out.append(f"{str(num).rjust(width)} | {line}" if num is not None else line)
+            if num is not None:
+                num += 1
+            continue
+        out.append(f"> {line}".rstrip() if line.strip() else ">")
+    return "\n".join(out)
+
+
+def code_snippet(state, t, context_lines=4):
+    """The lines under discussion, read from the review worktree.
+
+    A draft is a comment about specific code, so the code belongs next to it — without
+    this the user is asked to approve a comment about a line they cannot see, and the
+    agent's research reads as unsourced assertion. Read from the worktree recorded for
+    the repo, NOT from cwd: every shell call resets cwd to the repo root, so a relative
+    open() would silently read the wrong checkout (or fail).
+    """
+    file, line = t.get("file"), t.get("line")
+    if not file:
+        return None
+    wt = get_worktree(state.get("slug") or "")
+    if not wt:
+        return None
+    full = os.path.join(wt, file)
+    if not os.path.isfile(full):
+        return None
+    try:
+        with open(full, encoding="utf-8", errors="replace") as f:
+            lines = f.read().splitlines()
+    except OSError:
+        return None
+    try:
+        n = int(line)
+    except (TypeError, ValueError):
+        n = None
+    if not n or n > len(lines):
+        return None
+    lo = max(1, n - context_lines)
+    hi = min(len(lines), n + context_lines)
+    width = len(str(hi))
+    body = []
+    for i in range(lo, hi + 1):
+        mark = "►" if i == n else " "
+        body.append(f"{mark} {str(i).rjust(width)} | {lines[i - 1]}")
+    lang = FENCE_BY_EXT.get(os.path.splitext(file)[1], "")
+    return f"```{lang}\n" + "\n".join(body) + "\n```"
+
+
 def render_quote(state, tid):
     t = topic_for(state, tid) or die(f"no topic {tid}")
     summ = t.get("summary") or ""
@@ -482,11 +580,23 @@ def render_quote(state, tid):
         # Meta lines (title + where to open the thread) are for the user's eyes
         # only — NOT part of the comment. The paste payload is the body below,
         # which `draft <t>` emits on its own for the clipboard / posting.
-        out.append(f"{title}  ({WORD['draft']} — not yet on GitLab) · {lang_hint(state)}")
-        out.append(f"↳ open a new thread at `{_loc(state, t, full=True)}`, then paste:")
+        out.append(f"{title}  ({WORD['draft']} — not yet on GitLab)")
+        # The code block carries the location, so there is no separate "open a thread
+        # at …, then paste" line: it sat directly above the SOURCE snippet and read as if
+        # that were the paste payload.
+        snip = code_snippet(state, t)
+        loc = _loc(state, t, full=True)
+        if snip:
+            out += ["", f"_Code currently in MR — `{loc}`:_", "", snip]
         body = t.get("draft") or t.get("note")
         if body:
-            out += ["", body]
+            lang = FENCE_BY_EXT.get(os.path.splitext(t.get("file") or "")[1], "")
+            # The draft language rides on THIS label. It has to stay somewhere in the
+            # drafting view — it is what keeps the agent from falling back to the
+            # documented default language — and next to the draft is where it belongs.
+            out += ["", f"_Draft of comment to post ({state.get('lang') or DEFAULT_LANG})"
+                    f" — thread on `{loc}`:_", "",
+                    render_draft(body, lang, t.get("line"))]
         return "\n".join(out).strip()
     for i, th in enumerate(t["thread_ids"]):
         x = state["threads"].get(th, {})
@@ -982,7 +1092,7 @@ def main():
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest="cmd")
 
-    for name in ("sync", "todo", "present", "bodies", "candidates",
+    for name in ("sync", "todo", "present", "resume", "bodies", "candidates",
                  "head", "set-head", "updates", "status", "path"):
         sub.add_parser(name).add_argument("--iid", type=int)
 
@@ -1109,6 +1219,18 @@ def main():
         refresh_readiness(state, ctx, iid, me)
         save(path, state)
         print(render_updates(state, ctx, iid))
+    elif cmd == "resume":
+        # The complete opener for an in-progress review, in one call: pushes since your
+        # baseline THEN the overview table THEN the first topic needing you.
+        # Deliberately one command rather than "run updates, then run present": as two
+        # steps the second one gets skipped, and the overview table — the user's only
+        # view of where all topics stand — silently goes missing.
+        sync(state, fetch_threads(ctx, iid, me, author))
+        refresh_readiness(state, ctx, iid, me)
+        save(path, state)
+        print(render_updates(state, ctx, iid))
+        print("\n---\n")
+        print(render_present(state))
     elif cmd == "head":
         print(head_report(state, ctx, iid))
     elif cmd == "set-head":
@@ -1148,6 +1270,12 @@ def main():
             if v is not None:
                 t[fld.get(f, f)] = v
         save(path, state)
+        if args.draft is not None:
+            # Echo the refreshed view: after storing a draft the agent needs to show it,
+            # and reconstructing the block by hand reintroduces the raw ```suggestion
+            # fence (unhighlighted) that render_quote deliberately re-fences for display.
+            # Printing it here means the correct block is already in front of it.
+            print(render_quote(state, args.topic))
     elif cmd == "drop":
         t = topic_for(state, args.topic)
         if t and t["thread_ids"]:                 # keep dropped inbound threads dropped
