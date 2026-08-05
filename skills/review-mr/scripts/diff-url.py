@@ -18,7 +18,7 @@ Subcommands:
 """
 import argparse
 
-from _gl import api, context, die, mr_view
+from _gl import api, context, die, mr_object, mr_view, web_base
 
 
 def versions(ctx, iid):
@@ -52,7 +52,11 @@ def main():
         if len(vs) < 2:
             die("only one version exists — capture and pass --start-sha")
         start = vs[1]["head_commit_sha"]
-    print(f"{ctx['web']}/-/merge_requests/{iid}/diffs"
+    # The MR's own web_url is authoritative for scheme/host/port/install path;
+    # ctx["web"] is only a reconstruction from the remote. Fetched here, not at the
+    # top, so the `baseline` subcommand stays a single API call.
+    web = web_base(mr_object(ctx, iid).get("web_url")) or ctx["web"]
+    print(f"{web}/-/merge_requests/{iid}/diffs"
           f"?diff_id={vs[0]['id']}&start_sha={start}")
 
 
