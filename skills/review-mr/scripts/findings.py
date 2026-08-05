@@ -10,7 +10,8 @@ tip, and keeps a local overlay of your findings and their lifecycle.
 
 State lives at ~/.claude/review-mr/<slug>--mr<iid>/findings.json, keyed by
 project + MR iid, so it survives across sessions (a review spans days). The
-review worktree path is remembered repo-wide at ~/.claude/review-mr/<slug>/worktree.
+review worktree path is remembered repo-wide at ~/.claude/review-mr/<slug>/worktree,
+and the draft language at ~/.claude/review-mr/<slug>/lang (default de).
 
 A topic has two orthogonal axes plus a lifecycle state:
   kind    issue (carries a severity) | question | praise
@@ -50,6 +51,7 @@ Subcommands (all read-only against GitLab):
   head           one-line push check (branch tip vs last-reviewed head)
   set-head       mark the current branch tip as reviewed
   worktree [--set PATH]   get/set the repo's review worktree path
+  lang [--set XX]         get/set the repo's draft language (default de)
   path           print the state-file path
 """
 import argparse
@@ -58,7 +60,7 @@ import os
 import sys
 
 from _gl import (api, context, current_user, die, mr_head, mr_object,
-                 mr_view)
+                 mr_view, web_base)
 
 STATE_ROOT = os.path.expanduser("~/.claude/review-mr")
 TOPIC_ICON = "◈"
@@ -103,6 +105,18 @@ def first_name(name):
     return parts[0] if parts else (name or "")
 
 
+def lang_hint(state):
+    """The standing "write drafts in X" instruction.
+
+    This has to appear in EVERY view the agent reads while drafting, not just the
+    overview header. Drafting happens many turns after the last `sync`, so a marker
+    that only rides along with the overview scrolls out of context and the agent falls
+    back to the documented default — which produced a German draft in an
+    all-English project.
+    """
+    return f"drafts in {state.get('lang') or DEFAULT_LANG}"
+
+
 def state_dir(slug):
     d = os.path.join(STATE_ROOT, slug)
     os.makedirs(d, exist_ok=True)
@@ -142,6 +156,7 @@ def new_state(ctx, mr):
         "project": ctx["path"], "slug": ctx["slug"], "iid": mr["iid"],
         "mr_web_url": mr.get("web_url"), "title": mr.get("title"),
         "author": mr_author(mr), "author_username": mr_author_username(mr),
+        "lang": get_lang(ctx["slug"]),
         "last_reviewed_head": None, "seq": 0,
         "threads": {}, "topics": [], "ignored": [],
     }
@@ -345,6 +360,7 @@ def render_table(state, scope="all"):
     head = f"**MR !{state['iid']}** — {state.get('title') or ''}"
     if state.get("author"):
         head += f" · by {state['author']}"
+    head += f" · {lang_hint(state)}"
     out = [head, ""]
     if shown:
         out += ["| State | Topic | Kind | Src | Location | Summary |",
@@ -399,7 +415,7 @@ def render_quote(state, tid):
         # Meta lines (title + where to open the thread) are for the user's eyes
         # only — NOT part of the comment. The paste payload is the body below,
         # which `draft <t>` emits on its own for the clipboard / posting.
-        out.append(f"{title}  ({WORD['draft']} — not yet on GitLab)")
+        out.append(f"{title}  ({WORD['draft']} — not yet on GitLab) · {lang_hint(state)}")
         out.append(f"↳ open a new thread at `{_loc(state, t, full=True)}`, then paste:")
         body = t.get("draft") or t.get("note")
         if body:
@@ -410,7 +426,7 @@ def render_quote(state, tid):
         path = f"{x.get('file')}:{x.get('line') or ''}"
         if i == 0:
             title = f"**{TOPIC_ICON} {t['id']}" + (f" — {summ}**" if summ else "**")
-            out.append(f"{title} · `{path}`")
+            out.append(f"{title} · `{path}` · {lang_hint(state)}")
         else:
             out.append(f"`{path}`")
         if x.get("url"):
@@ -809,6 +825,33 @@ def set_worktree(slug, path):
         f.write(path.strip() + "\n")
 
 
+# ---------------------------------------------------------------- draft language
+
+DEFAULT_LANG = "de"
+
+
+def lang_path(slug):
+    return os.path.join(state_dir(slug), "lang")
+
+
+def get_lang(slug):
+    """Draft language for this repo. Repo-wide, NOT per-MR, on purpose: an MR being
+    reviewed for the first time has no state file yet, so a per-MR field could never
+    be configured up front — the setting has to outlive the individual review."""
+    p = lang_path(slug)
+    if os.path.exists(p):
+        with open(p) as f:
+            v = f.read().strip()
+            if v:
+                return v
+    return DEFAULT_LANG
+
+
+def set_lang(slug, lang):
+    with open(lang_path(slug), "w") as f:
+        f.write(lang.strip() + "\n")
+
+
 # ---------------------------------------------------------------- driver
 
 
@@ -857,6 +900,11 @@ def resolve_state(args):
             state.update(iid=iid, mr_web_url=obj.get("web_url"),
                          title=obj.get("title"), author=mr_author(obj),
                          author_username=mr_author_username(obj))
+    # Single override point: the MR's own web_url beats anything reconstructed from
+    # the remote (scheme, port, install path). Doing it here means every consumer of
+    # ctx["web"] — thread URLs, compare URLs, diff URLs — inherits it for free.
+    ctx["web"] = web_base(state.get("mr_web_url")) or ctx["web"]
+    state.setdefault("lang", get_lang(ctx["slug"]))   # backfill pre-lang state files
     return ctx, iid, path, state
 
 
@@ -870,6 +918,7 @@ def main():
         sub.add_parser(name).add_argument("--iid", type=int)
 
     sub.add_parser("worktree").add_argument("--set", dest="set_path")
+    sub.add_parser("lang").add_argument("--set", dest="set_lang")
 
     pq = sub.add_parser("quote")
     pq.add_argument("topic")
@@ -922,6 +971,15 @@ def main():
 
     args = ap.parse_args()
     cmd = args.cmd or "sync"
+
+    # lang is repo-level (no MR needed) — it must be settable before any MR in the
+    # project has ever been reviewed, which is exactly when no state file exists.
+    if cmd == "lang":
+        ctx = context()
+        if args.set_lang:
+            set_lang(ctx["slug"], args.set_lang)
+        print(get_lang(ctx["slug"]))
+        return
 
     # worktree is repo-level (no MR needed)
     if cmd == "worktree":

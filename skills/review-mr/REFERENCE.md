@@ -5,8 +5,17 @@ The skill is **read-only against GitLab** — you draft, the user posts and reso
 
 ## Draft rules (Phase 2 and follow-ups)
 
-- **Language: German. Hardcoded** — the MR title/description are English, but review
-  comments are German. Informal **du**. As short as possible.
+- **Language: whatever `drafts in <lang>` says.** Every view you draft from — `sync`,
+  `todo`, `present` and `quote <t>` — ends its header with `· drafts in <lang>`. That is the
+  instruction; it wins for the whole session.
+  - **Never guess it, and never carry it over from an earlier session.** If the marker is
+    not visible in the output you are looking at, run `python3 $SD/findings.py lang` and use
+    what it prints. Assuming a default is how an all-English project got a German draft.
+  - Do **not** infer the language from the MR itself: title and description are typically
+    English while review comments may be German, so mirroring them is wrong.
+  - It is configured per repo (`findings.py lang --set en`), stored at
+    `~/.claude/review-mr/<slug>/lang`.
+  - For **de**: informal **du**. Any language: as short as possible.
 - **Concrete code only when it earns its place.** For a line-precise fix, prefer a GitLab
   ` ```suggestion ` block (renders as one-click-apply for the author). Bigger changes → a
   normal fenced snippet in the right language.
