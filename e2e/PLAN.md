@@ -180,23 +180,15 @@ e2e/
 README.md
 ```
 
-Knock-on: local symlinks must be repointed — every one of these hardcodes
-`~/src/agent-skills/<skill>` and breaks the moment skills move into `skills/`:
+**Done.** All five links were repointed at `~/src/agent-skills/skills/<name>` (two directly
+under `~/.claude/skills/`, three via `~/.agents/skills/`) and verified: every entry under both
+directories resolves to a dir containing `SKILL.md`. A dangling skill link fails silently — the
+skill just stops being offered — so that assertion is the checkpoint, not an afterthought.
 
-```
-~/.claude/skills/review-mr      -> ~/src/agent-skills/review-mr          (direct, absolute)
-~/.claude/skills/rework-mr      -> ~/src/agent-skills/rework-mr          (direct, absolute)
-~/.claude/skills/explain-branch -> ~/.agents/skills/explain-branch -> ~/src/agent-skills/explain-branch
-~/.claude/skills/explain-diff   -> ~/.agents/skills/explain-diff   -> ~/src/agent-skills/explain-diff
-~/.claude/skills/review-branch  -> ~/.agents/skills/review-branch  -> ~/src/agent-skills/review-branch
-```
+No in-repo path edits were needed: skills refer to each other as
+`~/.claude/skills/<name>/scripts/…`, which the repointed links still satisfy.
 
-Do the whole relink in **one** P1 step, across **both** `~/.claude/skills/` and
-`~/.agents/skills/`, and verify at the end with a loop over every entry asserting the link
-resolves to an existing directory containing a `SKILL.md`. A dangling skill link fails silently
-— the skill just stops being offered.
-
-Update `README.md`'s linking guide in the same change.
+`README.md`'s linking guide now uses a loop over `skills/*/` plus a dangling-link check.
 
 ---
 

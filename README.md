@@ -22,22 +22,35 @@ Works through the reviewer feedback on a GitLab MR **you authored**: retrieves t
 
 ### review-mr
 
-Reviews a GitLab MR **someone else authored**, end to end. Optionally generates an explainer first (via `explain-branch`, as a background subagent), seeds findings with `review-branch`, then curates them with you one topic at a time and drafts concise German review comments — which **you** post in the GitLab UI (the skill is read-only against GitLab, so the tone stays yours). It then runs a persistent, multi-day re-review loop: on each check it reconciles the live threads (author replies, resolutions) and branch pushes (by head-SHA delta, so force-pushes are handled), summarizes what the author addressed, offers the per-topic diff (inline or a stable compare URL), and gates every close behind *your* ack — an author resolving a thread never counts as done on its own. All git work happens in a dedicated review worktree, so your current checkout is untouched. glab-only.
+Reviews a GitLab MR **someone else authored**, end to end. Optionally generates an explainer first (via `explain-branch`, as a background subagent), seeds findings with `review-branch`, then curates them with you one topic at a time and drafts concise review comments (in the language configured per repo — German by default) — which **you** post in the GitLab UI (the skill is read-only against GitLab, so the tone stays yours). It then runs a persistent, multi-day re-review loop: on each check it reconciles the live threads (author replies, resolutions) and branch pushes (by head-SHA delta, so force-pushes are handled), summarizes what the author addressed, offers the per-topic diff (inline or a stable compare URL), and gates every close behind *your* ack — an author resolving a thread never counts as done on its own. All git work happens in a dedicated review worktree, so your current checkout is untouched. glab-only.
 
 ## Setup
 
-Symlink whichever skill(s) you want into your Claude Code skills directory:
+Every skill lives in `skills/<name>/`, so you can link them all with one loop:
 
 ```bash
 git clone git@github.com:yogan/agent-skills.git ~/src/agent-skills
-ln -s ~/src/agent-skills/explain-diff ~/.claude/skills/explain-diff
-ln -s ~/src/agent-skills/explain-branch ~/.claude/skills/explain-branch
-ln -s ~/src/agent-skills/review-branch ~/.claude/skills/review-branch
-ln -s ~/src/agent-skills/rework-mr ~/.claude/skills/rework-mr
-ln -s ~/src/agent-skills/review-mr ~/.claude/skills/review-mr
+for s in ~/src/agent-skills/skills/*/; do
+  ln -sfn "${s%/}" ~/.claude/skills/"$(basename "$s")"
+done
 ```
 
-`review-mr` builds on `explain-branch` and `review-branch`, so symlink those too if you use it.
+Or pick individual ones:
+
+```bash
+ln -sfn ~/src/agent-skills/skills/explain-diff ~/.claude/skills/explain-diff
+ln -sfn ~/src/agent-skills/skills/review-mr   ~/.claude/skills/review-mr
+```
+
+`review-mr` builds on `explain-branch` and `review-branch`, so link those too if you use it.
+
+Verify nothing dangles — a broken skill link fails silently, the skill just stops being offered:
+
+```bash
+for d in ~/.claude/skills/*/; do
+  [ -f "$d/SKILL.md" ] || echo "BROKEN: $d"
+done
+```
 
 Requirements:
 
