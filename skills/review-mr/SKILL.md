@@ -1,6 +1,6 @@
 ---
 name: review-mr
-description: Review someone ELSE's GitLab MR end to end — optionally generate an explainer first (explain-branch), seed findings with review-branch, curate them with you one topic at a time, and draft concise German review comments you post yourself. Then run a persistent re-review loop: on each check it reconciles the live threads (author replies, resolutions) and branch pushes, flags what the author addressed, and gates every close behind YOUR ack. Read-only against GitLab — it never posts or resolves; you do that in the UI for full tone control. This is for reviewing another person's MR, NOT reworking your own (use rework-mr for that) and NOT a local-only critique (use review-branch for that). Use when the user says "review MR !123", "review !123", "review this MR", or invokes /review-mr.
+description: Review someone ELSE's GitLab MR end to end — optionally generate an explainer first (explain-branch), seed findings with review-branch, curate them with you one topic at a time, and draft concise review comments you post yourself. Then run a persistent re-review loop: on each check it reconciles the live threads (author replies, resolutions) and branch pushes, flags what the author addressed, and gates every close behind YOUR ack. Read-only against GitLab — it never posts or resolves; you do that in the UI for full tone control. This is for reviewing another person's MR, NOT reworking your own (use rework-mr for that) and NOT a local-only critique (use review-branch for that). Use when the user says "review MR !123", "review !123", "review this MR", or invokes /review-mr.
 ---
 
 # Review MR
@@ -125,8 +125,11 @@ Still **one topic at a time**. The user may want to discuss a finding first — 
 for a concrete example, refine wording — possibly over several turns. Finish the topic
 (draft accepted / self-posted / skipped) **before** moving on.
 
-Draft rules — see [REFERENCE.md](REFERENCE.md). In short: **German, informal *du*, as short
-as possible**; a ```suggestion block for a line-precise fix; identifiers in backticks; no
+Draft rules — see [REFERENCE.md](REFERENCE.md). In short: **write in the language named by
+the `· drafts in <lang>` marker** that every `sync`/`todo`/`present`/`quote` header carries —
+if you cannot see it in the output in front of you, run `python3 $SD/findings.py lang` rather
+than assuming (`de` means informal *du*). **As short as
+possible**; a ```suggestion block for a line-precise fix; identifiers in backticks; no
 headings. Show the draft as GitLab-compatible markdown in your reply (via `quote <t>`, which
 also tells the user **where to open the thread** — `file:line`), and offer the clipboard:
 
