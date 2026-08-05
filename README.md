@@ -52,6 +52,44 @@ for d in ~/.claude/skills/*/; do
 done
 ```
 
+### Required for `rework-mr` and `review-mr`: a `Stop` hook
+
+Both skills print blocks — an overview table, a quoted topic with its code, a drafted
+comment — and instruct the model to paste them verbatim, because **Claude Code collapses
+tool output: the chat message is the user's only window**. The model drops them anyway. It
+runs the command, then answers from its own summary, so the user gets "topic t2 needs you"
+with no table, no `file:line`, no code.
+
+That is not fixable by documentation — it was tried three times in `review-mr` (a rule at
+the top of `SKILL.md`, a single `resume` command so there was no sequence to skip, then an
+explicit rule 0 naming the failure) and the model still paraphrased. Each skill therefore
+ships a `Stop` hook that checks the visible message for the output of any gated command
+that actually ran, and blocks the turn until it is really pasted.
+
+**This needs a manual edit to `~/.claude/settings.json`** — skills cannot register their own
+hooks:
+
+```json
+{
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          { "type": "command",
+            "command": "python3 ~/.claude/skills/rework-mr/scripts/stop-hook.py" },
+          { "type": "command",
+            "command": "python3 ~/.claude/skills/review-mr/scripts/stop-hook.py" }
+        ]
+      }
+    ]
+  }
+}
+```
+
+Use absolute paths if `~` is not expanded in your setup. Both hooks **fail open** — any
+error, or a turn where no gated command ran, allows the stop — so a bug in them can never
+wedge a session, and they never fire outside those skills. Details: `rework-mr/README.md`.
+
 Requirements:
 
 - `python3` (for `render.py` and the `rework-mr` / `review-mr` scripts)
