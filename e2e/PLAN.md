@@ -360,13 +360,13 @@ Each phase ends at a checkpoint that can be verified before moving on.
 
 | Phase | Work | Checkpoint |
 |---|---|---|
-| **P0** infra | `docker-compose.yml`, `/etc/hosts`, omnibus trim, bootstrap script (users, PATs, project) | `glab api user` against `gitlab.test` returns you; project visible in browser |
-| **P1** skill patches + restructure | layered scheme fix in both `_gl.py`; `lang` state + header render + repo-wide `lang` file; move to `skills/`; repoint all links in `~/.claude/skills/` **and** `~/.agents/skills/`; README linking guide | both skills run against `http://gitlab.test` with working URLs; **every** entry under both skill dirs resolves to a dir containing `SKILL.md`; drafts come out English |
-| **P2** MR !1 + planted flaws | replay `e74349ee`, plant 2-3 defects, rehearse the live review | overview contains ≥2 planted findings; drafts are English |
-| **P3** MR !3 | replay `7ddd5c46` as 2-3 commits, seed `reviewer-bot` threads (1 trivial + 1 hard) | `/rework-mr` `sync` shows correct turns; fixup + force-push works; agent `p`-post works |
-| **P4** MR !2 | replay `9aecaf6e`, five-thread matrix, CLI replay, `set-head` ordering, two fix pushes | `sync` shows t1 ◐ needs-ack, `updates` renders 2 compare URLs, t5 adopted as 💬 |
-| **P5** docs + rehearsal | `e2e/README.md` (setup) + run-of-show checklist + kickoff prompt; capture backup artifacts; two full rehearsals | cold `make fixture` → full run-of-show, twice, no surprises |
-| **P6** *(post-talk)* | turn the fixture into asserted E2E tests | CI-able test run |
+| **P0** infra | ✅ done | `docker compose up -d` + `bootstrap.py`, verified idempotent against GitLab 19.2.1 |
+| **P1** skill patches + restructure | ✅ done | layered scheme fix, `lang` (repo-wide + rendered in the header), skills moved to `skills/`, all links repointed and verified |
+| **P2** MR !1 + planted flaws | ✅ built, ⬜ not rehearsed | real `e74349ee` + 2 planted flaws on top of 2 genuine upstream ones; the **live review output is still unrehearsed** |
+| **P3** MR !3 | ✅ done | 2 commits, 3 reviewer threads (trivial / hard / small); `threads.py sync` verified |
+| **P4** MR !2 | ✅ done | 5 threads in 4 states + peer thread, CLI-driven local state, 2 fix pushes; `sync`/`updates`/`diff t1` verified |
+| **P5** docs + rehearsal | ✅ docs, ⬜ rehearsal | README + RUNBOOK written; **two full rehearsals and the backup artefacts are still open** |
+| **P6** *(post-talk)* | ⬜ | turn the fixture into asserted E2E tests |
 
 P2 before P3/P4 deliberately: it is the only phase whose quality depends on **LLM output
 tuning** (do the planted flaws surface well?), so it needs the most iteration time.
