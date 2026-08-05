@@ -2,3 +2,4 @@ __pycache__/
 *.pyc
 e2e/.env.local
 e2e/.cache/
+e2e/backup/
