@@ -1,0 +1,53 @@
+# Local GitLab CE for demo + E2E. arm64-native on Apple Silicon.
+#
+# First boot is 3-5 min. Keep it warm — never `compose down` on talk day.
+services:
+  gitlab:
+    image: gitlab/gitlab-ce:latest
+    container_name: e2e-gitlab
+    hostname: gitlab.test
+    restart: unless-stopped
+    shm_size: 256m
+    ports:
+      - "80:80"
+    environment:
+      # GitLab 19 runs a strength check that rejects dictionary-ish passwords
+      # ("must not contain commonly used combinations of words and letters") and the
+      # seed silently fails to create root. Keep these opaque.
+      GITLAB_ROOT_PASSWORD: Rk8xQ2-mT9zV4-pB6nL1
+      GITLAB_OMNIBUS_CONFIG: |
+        external_url 'http://gitlab.test'
+
+        # -- trim boot time and RAM: none of this is needed for the fixture --
+        # Keep this list conservative. Omnibus *rejects unknown keys and crash-loops*
+        # reconfigure: `grafana`, `mattermost` and `gitlab_ci` were all removed in
+        # 16.x/17.x and each one is a hard boot failure, not a warning.
+        # prometheus_monitoring=false already covers every exporter.
+        registry['enable'] = false
+        registry['nginx']['enable'] = false
+        prometheus_monitoring['enable'] = false
+        gitlab_kas['enable'] = false
+        gitlab_pages['enable'] = false
+
+        puma['worker_processes'] = 2
+        sidekiq['max_concurrency'] = 9
+
+        # Signup off: every account is created by bootstrap.py
+        gitlab_rails['gitlab_signup_enabled'] = false
+    volumes:
+      - gitlab-config:/etc/gitlab
+      - gitlab-logs:/var/log/gitlab
+      - gitlab-data:/var/opt/gitlab
+    healthcheck:
+      # NOT /-/readiness: that endpoint is IP-allowlisted to 127.0.0.1, so anything
+      # arriving via the docker gateway gets a 404 and looks unhealthy forever.
+      test: ["CMD", "curl", "-fsS", "-o", "/dev/null", "http://localhost/users/sign_in"]
+      interval: 15s
+      timeout: 10s
+      retries: 40
+      start_period: 300s
+
+volumes:
+  gitlab-config:
+  gitlab-logs:
+  gitlab-data:
