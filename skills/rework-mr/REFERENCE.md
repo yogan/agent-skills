@@ -57,14 +57,13 @@ the reply (step 10).
    ```
    Never a commit URL — fixup + force-push rewrites commit hashes and rots the link.
 10. Reply — thread + draft + URL are shown via **one** command so none can be dropped:
-   a. Write the reply **body only** (raw, no `>` prefixes) to the draft file with a **quoted
-      heredoc, not the Write tool** (Write can't overwrite a file unread this session → fails on
-      resume). Draft rules (SKILL.md): body in the thread's language, **scaffolding in the
+   a. Store the reply **body only** (raw, no `>` prefixes) in the state file with a **quoted
+      heredoc** — `<<'REPLY_EOF'`, so backticks and `$` in the body are not expanded by the
+      shell. Draft rules (SKILL.md): body in the thread's language, **scaffolding in the
       session language**, and **NEVER an internal topic handle** (`t5`…) in the body — reword
-      (link another thread's URL).
+      (link another thread's URL); `set` refuses it anyway.
       ```bash
-      d=$(dirname "$(python3 $SD/threads.py path --iid <n>)")
-      cat > "$d/reply-<t>.md" <<'REPLY_EOF'
+      python3 $SD/threads.py set <t> --reply - <<'REPLY_EOF'
       <the reply body, verbatim — NO leading "> " on any line>
       REPLY_EOF
       ```
@@ -78,14 +77,17 @@ the reply (step 10).
       if any is missing you dropped it → re-run and paste. Don't replace it with a stub even across topics.
    c. Interpret the user's reply — **`c`** = copy, **`p`** = post, **`n`** = next topic (already
       replied/resolved: `set <t> --state waiting`, move on), **anything else** = discussion (no
-      `d` command: engage with it, refine, rewrite the file, re-run reply-view, paste again):
+      `d` command: engage with it, refine, store it again with `set <t> --reply -`, re-run
+      reply-view, paste again):
    ```bash
-   # c — Copy (guard-reply runs inside clip.sh):
-   $SD/clip.sh "$d/reply-<t>.md"
-   # p — Post: guard, then post (the skill's one allowed write; <discussion_id> = thread_ids[0]):
-   $SD/guard-reply.sh "$d/reply-<t>.md" && \
+   # c — Copy (`reply` guards, and so does clip.sh):
+   python3 $SD/threads.py reply <t> | $SD/clip.sh
+   # p — Post (the skill's one allowed write; <discussion_id> = thread_ids[0]):
+   body=$(python3 $SD/threads.py reply <t>) && printf '%s\n' "$body" | \
    glab api projects/<enc>/merge_requests/<iid>/discussions/<discussion_id>/notes \
-     -X POST -F body=@"$d/reply-<t>.md"
+     -X POST -F body=@-
    ```
+   The `&&` is load-bearing: a draft `reply` refuses (internal topic handle) must not reach
+   `glab` as an empty body.
    After Post (or a confirmed paste) mark it `set <t> --state waiting` → `sync` shows `◐ waiting`.
    Don't resolve the thread yourself — the reviewer resolves it, and then it flips to `done`.

@@ -25,11 +25,12 @@ Subcommands:
   quote <t>   a topic in full: the code the comment is anchored to, then the whole
               thread — original + every reply  (no fetch)
   url <t>     direct URL(s) to the topic's thread (to click & post)  (no fetch)
-  reply-view <t>  thread + your drafted reply (from reply-<t>.md) + URL, one paste  (no fetch)
-  set <t> …   update a topic's fields (summary, decision, plan, start-sha, diff-url)
+  reply-view <t>  code + thread + your drafted reply + URL, one paste  (no fetch)\n  reply <t>   the drafted reply BODY only — the payload for clip.sh / glab\n  set <t> --reply -   store a reply body from stdin (quoted heredoc; never a\n              scratch file — see reply_body())
+  set <t> …   update a topic's fields (summary, decision, plan, start-sha, diff-url, reply)
   merge <into> <o…>   fold other topics' threads into <into>
   path        print the state-file path
-  change-view <t> [file]  render a change illustration (change-preview.sh's body)
+  change-view <t> [file]  render a change illustration — reads the change from stdin
+              (the documented path: no file, so no protected-path prompt) or from FILE
   diff-view <t>   render a working diff read from stdin (diff-view.sh's body)
   check-handles   internal — used by guard-reply.sh, no MR context needed
 """
@@ -552,17 +553,79 @@ def render_url(state, tid):
     return "\n".join(urls)
 
 
+def reply_body(state, tid, legacy_dir=None):
+    """The drafted reply body for a topic — the raw text that gets posted.
+
+    Kept in the state file (`set <t> --reply -`), not in a scratch `reply-<t>.md`: a
+    heredoc into a file under `~/.claude/` trips Claude Code's protected-path prompt on
+    every single topic, the file outlives its use, and a draft is per-topic state like
+    every other field here. This also matches review-mr, where drafts have always lived in
+    the state file.
+
+    Guarded HERE rather than by the caller: an internal topic handle (`t5`) must never
+    reach GitLab, and `reply <t>` is the only way to get the body out — so the check cannot
+    be forgotten or bypassed the way a separate shell guard could be.
+
+    `legacy_dir` reads a pre-existing `reply-<t>.md` when the state carries no draft, so a
+    session already in flight when this changed keeps working.
+    """
+    t = topic_for(state, tid) or die(f"no topic {tid}")
+    body = t.get("reply")
+    if not body and legacy_dir:
+        f = os.path.join(legacy_dir, f"reply-{tid}.md")
+        if os.path.exists(f):
+            with open(f, encoding="utf-8", errors="replace") as fh:
+                body = fh.read()
+    if not body:
+        die(f"no draft for {tid} yet — store one with:\n"
+            f"  python3 threads.py set {tid} --reply - <<'REPLY_EOF'\n"
+            f"  <the reply body>\n  REPLY_EOF")
+    hits = find_handles(body)
+    if hits:
+        die(f"draft has internal topic handle(s): {' '.join(hits)} — reword "
+            f"(link the other thread via `url <other-t>`), then re-run")
+    return body
+
+
+def _quote_draft(body, path=None):
+    """The draft as it should be DISPLAYED: prose blockquoted so it reads as the artefact
+    being posted, fenced blocks left at line start.
+
+    A fence prefixed with `> ` loses its syntax highlighting in most renderers, and the
+    code is usually the point of the reply — the same failure the change illustration had.
+    (review-mr's render_draft applies the same rule for the same reason.)
+    """
+    blocks = []
+    for kind, info, seg in _segments((body or "").rstrip("\n").splitlines()):
+        if kind == "code":
+            content = "\n".join(seg)
+            blocks.append(fence(content, info or ("diff" if looks_like_diff(content)
+                                                  else lang_for(path))))
+            continue
+        # Blank lines at a text segment's edges would render as stray `>` markers hugging
+        # the fence; the blank line between blocks below does that job properly.
+        while seg and not seg[0].strip():
+            seg = seg[1:]
+        while seg and not seg[-1].strip():
+            seg = seg[:-1]
+        if seg:
+            blocks.append("\n".join(f"> {ln}".rstrip() if ln.strip() else ">"
+                                    for ln in seg))
+    return "\n\n".join(blocks)
+
+
 def render_reply_view(state, tid, body):
     """The whole reply block, as ONE paste so none of its parts can be dropped:
-    the full thread (original + every reply), then the drafted body as a `> `
-    blockquote (matches the thread's rendering), then the thread URL, then the
-    c/p/n prompt. `body` is the raw draft (what gets posted); callers guard it
-    for internal topic handles first."""
-    quoted = "\n".join("> " + ln for ln in (body or "").rstrip("\n").splitlines())
+    the code the comment is on, the full thread (original + every reply), then the drafted
+    body as a `> ` blockquote (matches the thread's rendering), then the thread URL, then
+    the c/p/n prompt. `body` comes from `reply_body()`, which guards it."""
+    t = topic_for(state, tid) or die(f"no topic {tid}")
+    path = next((state["threads"].get(th, {}).get("file") for th in t["thread_ids"]
+                 if state["threads"].get(th, {}).get("file")), None)
     return "\n".join([
         render_quote(state, tid),
         "", "**Draft reply:**", "",
-        quoted,
+        _quote_draft(body, path),
         "", f"Thread (to post on): {render_url(state, tid)}",
         "", "**`c`** copy to clipboard · **`p`** post on GitLab · "
         "**`n`** next topic (already replied/resolved) · "
@@ -679,12 +742,17 @@ def main():
     prv = sub.add_parser("reply-view")
     prv.add_argument("topic")
     prv.add_argument("--iid", type=int)
+    pr = sub.add_parser("reply", help="the drafted reply BODY only — the paste/post payload")
+    pr.add_argument("topic")
+    pr.add_argument("--iid", type=int)
     ps = sub.add_parser("set")
     ps.add_argument("topic")
     ps.add_argument("--iid", type=int)
     ps.add_argument("--state", choices=("open", "waiting"))
     for f in ("summary", "decision", "plan", "start-sha", "diff-url"):
         ps.add_argument(f"--{f}")
+    ps.add_argument("--reply", help="the drafted reply body; `-` reads stdin (use a quoted "
+                                    "heredoc for anything multi-line)")
     pm = sub.add_parser("merge")
     pm.add_argument("into")
     pm.add_argument("others", nargs="+")
@@ -717,17 +785,11 @@ def main():
     elif cmd == "url":
         print(render_url(state, args.topic))
     elif cmd == "reply-view":
-        topic_for(state, args.topic) or die(f"no topic {args.topic}")
-        f = os.path.join(os.path.dirname(path), f"reply-{args.topic}.md")
-        if not os.path.exists(f):
-            die(f"no draft yet — write the reply body to {f} first")
-        with open(f) as fh:
-            body = fh.read()
-        hits = find_handles(body)
-        if hits:
-            die(f"draft has internal topic handle(s): {' '.join(hits)} — reword "
-                f"(link the other thread via `url <other-t>`), then re-run")
+        body = reply_body(state, args.topic, os.path.dirname(path))
         print(render_reply_view(state, args.topic, body))
+    elif cmd == "reply":
+        # body only — the payload for the clipboard or `glab api -F body=@-`
+        print(reply_body(state, args.topic, os.path.dirname(path)), end="")
     elif cmd == "present":
         print(render_present(state))
     elif cmd == "bodies":
@@ -742,10 +804,24 @@ def main():
     elif cmd == "set":
         t = topic_for(state, args.topic) or die(f"no topic {args.topic}")
         fld = {"start-sha": "start_sha", "diff-url": "diff_url"}
-        for f in ("summary", "state", "decision", "plan", "start-sha", "diff-url"):
+        for f in ("summary", "state", "decision", "plan", "start-sha", "diff-url",
+                  "reply"):
             v = getattr(args, f.replace("-", "_"))
-            if v is not None:
-                t[fld.get(f, f)] = v
+            if v is None:
+                continue
+            if f == "reply":
+                # `-` means stdin, which is how a multi-line body should arrive: a quoted
+                # heredoc passes backticks, `$` and quotes through untouched, where the
+                # same text in a double-quoted shell argument would be mangled by
+                # expansion (or worse, executed).
+                if v == "-":
+                    v = sys.stdin.read()
+                hits = find_handles(v)
+                if hits:
+                    die(f"draft has internal topic handle(s): {' '.join(hits)} — reword "
+                        f"(link the other thread via `url <other-t>`), then re-run")
+                v = v.rstrip("\n") + "\n"
+            t[fld.get(f, f)] = v
         save(path, state)
     elif cmd == "merge":
         into = topic_for(state, args.into) or die(f"no topic {args.into}")

@@ -16,7 +16,7 @@ Several steps show you something by pasting a script's output into chat: the
 opener's overview table + first topic's comment (`present`), the status-only
 answer (`todo`), the next topic's comment (`quote`), the working diff shown
 before a fixup+push ACK (`diff-view.sh`), the reply block (`reply-view`), and
-a trivial topic's change illustration (`change-preview.sh`). Claude Code
+a trivial topic's change illustration (`change-view`). Claude Code
 **collapses tool output**, so each of these only reaches you if the model
 pastes it — and the model reliably *drops* it: it decides what to paste,
 makes another tool call (research, a `git blame`, a Read) before writing the
@@ -43,19 +43,28 @@ meaning).
 
 - `threads.py` — fetch/reconcile threads, render tables & the reply block. Run
   `threads.py -h` for subcommands
-  (`sync·todo·present·bodies·plans·quote·url·reply-view·set·merge·path·change-view·diff-view`).
+  (`sync·todo·present·bodies·plans·quote·url·reply·reply-view·set·merge·path·change-view·diff-view`).
 - `quote <t>` — a topic in full: the code the reviewer's comment is anchored to (read
   from the exact blob the comment hangs on, so the line numbers are the reviewer's),
   then the whole thread.
-- `reply-view <t>` — the one-paste reply block (thread + code + draft + URL + prompt);
-  also refuses a draft containing an internal topic handle (`t5`…).
-- `change-preview.sh <t> <file> [--for <path>]` — the one-paste trivial-topic change
-  illustration (fenced code + `Agreed?`); the file is the proposed change, not applied.
-  Content that already carries its own ```diff block is passed through rather than
-  wrapped again, so it stays syntax-highlighted.
+- `set <t> --reply -` / `reply <t>` — store a reply body (from a quoted heredoc, so the
+  shell cannot expand it) and print it back. The draft lives in the state file, not in a
+  scratch `reply-<t>.md`: no protected-path write prompt, and the internal-topic-handle
+  guard (`t5`…) sits inside `reply`, so the post path cannot skip it.
+- `reply-view <t>` — the one-paste reply block (code + thread + draft + URL + prompt);
+  the draft's prose is blockquoted, its fenced code left at line start so it keeps its
+  highlighting.
+- `change-view <t>` — the one-paste trivial-topic change illustration (fenced code +
+  `Agreed?`), read from stdin: piped rather than written to a file, since a heredoc into
+  `~/.claude/` trips Claude Code's protected-path prompt on every topic. Content that
+  already carries its own ```diff block is passed through rather than wrapped again, so it
+  stays syntax-highlighted. `change-preview.sh <t> <file> [--for <path>]` renders the same
+  block from a file.
 - `diff-view.sh <t> [-- git-diff-args...]` — the one-paste working diff shown
   before the fixup+push ACK (fenced diff + `ACK to fix up and push?`).
 - `diff-url.py` — stable per-topic diff URL across force-pushes.
 - `clip.sh` — copy a reply body to the clipboard (guards topic handles first).
-- `guard-reply.sh` — the topic-handle gate, reused by `clip.sh` and the post step.
+- `guard-reply.sh` — the topic-handle gate for the clipboard path, reused by `clip.sh`.
+  (`reply` enforces the same rule inside the script, so the post path needs no shell
+  guard at all.)
 - `paste-gates.json` — what the shared Stop hook enforces for this skill.

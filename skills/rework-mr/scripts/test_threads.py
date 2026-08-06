@@ -135,6 +135,70 @@ class TestViews(unittest.TestCase):
         self.assertIn("```diff", out)
 
 
+class TestReplyDraft(unittest.TestCase):
+    """The draft lives in the state file, and `reply` is the only way out of it."""
+
+    def state(self, reply=None):
+        t = {"id": "t1", "summary": "retry unbounded", "thread_ids": ["d1"], "state": None}
+        if reply is not None:
+            t["reply"] = reply
+        return {"iid": 7, "title": "x", "topics": [t], "threads": {"d1": {
+            "author": "Jan", "file": "src/client.py", "line": 88, "body": "unbounded retry",
+            "resolved": False, "note_count": 1, "url": "http://gl/y/1",
+            "notes": [{"author": "Jan", "body": "unbounded retry"}]}}}
+
+    def test_body_round_trips_shell_hazards(self):
+        """A quoted heredoc into stdin is why this text survives at all: as a double-quoted
+        `--reply "…"` argument the backticks would have been executed."""
+        body = 'Gebunden über `MAX_RETRIES`, kostet $0 extra, "wirklich".\n'
+        self.assertEqual(T.reply_body(self.state(body), "t1"), body)
+
+    def test_missing_draft_dies_with_the_command_to_run(self):
+        with self.assertRaises(SystemExit):
+            T.reply_body(self.state(), "t1")
+
+    def test_internal_handle_is_refused(self):
+        """The guard sits in reply_body, so the post path cannot bypass it."""
+        with self.assertRaises(SystemExit):
+            T.reply_body(self.state("Wie in t5 besprochen.\n"), "t1")
+
+    def test_legacy_file_is_still_read(self):
+        """A session already in flight has its draft in reply-<t>.md."""
+        with tempfile.TemporaryDirectory() as d:
+            with open(os.path.join(d, "reply-t1.md"), "w") as f:
+                f.write("Aus der alten Datei.\n")
+            self.assertEqual(T.reply_body(self.state(), "t1", d), "Aus der alten Datei.\n")
+
+    def test_state_wins_over_the_legacy_file(self):
+        with tempfile.TemporaryDirectory() as d:
+            with open(os.path.join(d, "reply-t1.md"), "w") as f:
+                f.write("stale\n")
+            self.assertEqual(T.reply_body(self.state("fresh\n"), "t1", d), "fresh\n")
+
+    def test_prose_is_blockquoted(self):
+        self.assertEqual(T._quote_draft("Kurz.\n"), "> Kurz.")
+
+    def test_fences_stay_at_line_start(self):
+        """`> ```python` loses its highlighting, and the code is the point of the reply."""
+        out = T._quote_draft("Danke:\n\n```python\nx = 1\n```\n\nPasst?\n", "src/a.py")
+        self.assertEqual(out, "> Danke:\n\n```python\nx = 1\n```\n\n> Passt?")
+
+    def test_untagged_draft_fence_gets_the_files_language(self):
+        self.assertIn("```python", T._quote_draft("```\nx = 1\n```\n", "src/a.py"))
+
+    def test_reply_view_carries_every_part(self):
+        out = T.render_reply_view(self.state("Gefixt.\n"), "t1", "Gefixt.\n")
+        for part in ("◈ t1", "src/client.py:88", "http://gl/y/1", "unbounded retry",
+                     "**Draft reply:**", "> Gefixt.", "Thread (to post on):",
+                     "**`c`** copy to clipboard"):
+            self.assertIn(part, out)
+
+    def test_reply_view_signature_matches_the_stop_hook_gate(self):
+        out = T.render_reply_view(self.state("Gefixt.\n"), "t1", "Gefixt.\n")
+        for sig in ("**Draft reply:**", "Thread (to post on):", "**`c`** copy to clipboard"):
+            self.assertIn(sig, out)
+
+
 class TestCodeContext(unittest.TestCase):
     """`render_code_context` reads real git objects, so these run in a throwaway repo."""
 
