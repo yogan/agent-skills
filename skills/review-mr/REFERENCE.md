@@ -91,7 +91,7 @@ A review spans days; the state file persists across sessions. Each check:
    python3 $SD/findings.py updates     # each push since your baseline; paste verbatim
    ```
    Each push is a `- **push N:** <url>` bullet with a nested `  - ` detail line — either a
-   **diffstat** (`2 files, +33 −23`) + **topics touched**, or — when the branch was rebased
+   **diffstat** (`` `+33/−23` · 2 files ``) + **topics touched**, or — when the branch was rebased
    (its base SHA moved) — a rebase classification:
    - **↻ pure rebase** — only the base moved, no author content change; nothing to re-review.
    - **⚠️ rebase + N real change(s) folded in** — the annoying case: someone rebased *and*
@@ -148,14 +148,6 @@ A review spans days; the state file persists across sessions. Each check:
    ```bash
    python3 $SD/findings.py todo        # ✎ still to post + ◐ still needing your ack
    ```
-
-6. **Merge readiness.** `sync`/`present`/`status` fetch approval + `detailed_merge_status` and
-   render an Approvals/Merge footer plus a nudge. When every topic is closed on your side *and*
-   GitLab reports all threads resolved, it nudges to **approve** — on the user's explicit ACK,
-   `glab mr approve <iid>` (from the worktree). If the merge is still blocked afterwards, name
-   the blocker and whose turn (rebase/CI/conflict → author). If a later re-review reopens work
-   after you approved, it offers `glab mr revoke <iid>` (explicit ACK only). Approve/revoke are
-   the *only* GitLab writes — never comment or resolve for the user.
 
 ## Inbound threads (peer reviewers / the author)
 
