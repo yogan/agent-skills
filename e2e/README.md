@@ -13,6 +13,7 @@ Design decisions and rationale: [PLAN.md](PLAN.md). Talk-day checklist and run o
 | `docker-compose.yml` | GitLab CE (arm64-native), `http://gitlab.test`, no CI runner |
 | `bootstrap.py` | one-time: users, deterministic tokens, group, project, `glab` auth |
 | `fixture.py` | resettable: branches, the three MRs, seeded threads, skill state |
+| `tmux-demo.sh` | talk day: verify the rig, reset it only if needed, build the demo tmux session |
 | `patches/` | the frozen MR diffs (`mr1-flaws.patch`, `mr2/`, `mr3/`) |
 | `.env.local` | generated token/host values (gitignored) |
 | `.cache/` | bare upstream mirror + throwaway build tree (gitignored) |

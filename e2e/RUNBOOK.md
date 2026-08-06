@@ -5,15 +5,18 @@
 
 ## T-30 min — pre-flight
 
+One command. It checks the container, waits for GitLab, verifies the fixture through the
+skills' own CLI, runs `fixture.py` **only if** something is off, and builds the tmux session:
+
 ```sh
-docker ps --format '{{.Names}} {{.Status}}'          # e2e-gitlab must be Up (never `compose down`)
-curl -sS -o /dev/null -w '%{http_code}\n' http://gitlab.test/users/sign_in   # want 200
-cd ~/src/agent-skills/e2e && python3 fixture.py      # ~20 s
-glab api user | python3 -c 'import json,sys; print(json.load(sys.stdin)["username"])'   # frank
+cd ~/src/agent-skills/e2e && ./tmux-demo.sh
 ```
 
-Then confirm the fixture really is in the demo state — this is the check that matters,
-because it runs the same code the demo runs:
+A non-zero exit means do not go on stage yet. `--check` verifies and changes nothing;
+`--force` resets the fixture even when it verifies — that is the between-rehearsals reset.
+
+What it asserts, if you want to check by hand. This is the check that matters, because it
+runs the same code the demo runs:
 
 ```sh
 cd ~/src/agent-skills-demo-review
@@ -25,19 +28,23 @@ python3 ~/.claude/skills/rework-mr/scripts/threads.py sync --iid 3
 #   expect: three ○ open topics
 ```
 
+> `glab api user` must run **inside a demo checkout** — glab resolves its host from the git
+> remote, so from `e2e/` (a GitHub remote) it returns `401`, not `frank`.
+
 Browser: log in as `frank` (password in `.env.local`, `E2E_PASSWORD`), open three tabs
 
 1. `http://gitlab.test/demo/bulletproof-react/-/merge_requests/1`
 2. `…/merge_requests/2`
 3. `…/merge_requests/3`
 
-Terminal: 4 tmux windows, one claude session per directory (each skill resolves its
-project from `cwd`, and `review-mr/SKILL.md:42` warns that a bare `glab mr view` in the
-wrong worktree resolves the wrong MR).
+Terminal: the three windows `tmux-demo.sh` creates in session `agentic-review-skills-demo`,
+one claude per segment (each skill resolves its project from `cwd`, and
+`review-mr/SKILL.md:42` warns that a bare `glab mr view` in the wrong worktree resolves the
+wrong MR). Each opens with a one-line banner naming its segment — nothing more, since this is
+on a projector.
 
 | Window | cwd | For |
 |---|---|---|
-| 0 `rig` | `~/src/agent-skills/e2e` | `fixture.py`, spare shell |
 | 1 `review` | `~/src/agent-skills-demo-review` | `/review-mr !1` |
 | 2 `rereview` | `~/src/agent-skills-demo-review` | `/review-mr !2` |
 | 3 `rework` | `~/src/agent-skills-demo` | `/rework-mr` |
@@ -49,8 +56,9 @@ Deck: `cd ~/src/agent-skills-slides && npm run dev`, open **Agentic Code Reviews
 play mode and `P` for the presenter window (notes + elapsed timer). Four pages, **15 `→`
 presses** — the two skill pages reveal their five rows one press at a time.
 
-Start the claude sessions now so the processes are warm, but **do not invoke the skills** —
-typing the command live is part of the show.
+The script types `claude` in each window but deliberately does **not** submit it — press Enter
+in each to warm the processes. Do not invoke the skills: typing the command live is part of
+the show.
 
 ## T-0 — the kickoff, on slide 2
 
@@ -131,7 +139,7 @@ local GitLab in Docker, reset in 20 seconds.
 | a skill resolves the wrong MR | you are in the wrong cwd; always pass `--iid` / `!N` explicitly |
 | **502 on every page** (container "running" but unhealthy) | puma stopped listening while runit still reported it up. `docker exec e2e-gitlab gitlab-ctl restart puma`, wait ~60 s. Seen once with single-mode puma; the compose file now runs one supervised worker instead |
 | GitLab feels slow | it is memory; see README "VM memory". Do not restart it mid-talk |
-| state looks wrong before you start | `python3 fixture.py` — 20 s, and it wipes local skill state too |
+| state looks wrong before you start | `./tmux-demo.sh --force` — resets the fixture (20 s) and wipes local skill state too. Kill the tmux session first if it exists: the re-clone leaves its panes on deleted directories |
 | you are running late | protect the `!2` segment and cut curation depth on `!1`. `!2` is pre-seeded, cheap, and the part nobody else has |
 
 **Never** `docker compose down` on talk day: a cold GitLab boot is 3-5 min.
