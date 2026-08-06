@@ -1,0 +1,66 @@
+{
+  "skill": "review-mr",
+  "note": [
+    "Gate spec for the shared paste-enforcement Stop hook (hooks/paste-gate.py in the",
+    "agent-skills repo, installed as ~/.claude/hooks/paste-gate.py). The engine, the",
+    "failure it guards against and the detection rules are documented there.",
+    "`findings.py sync` is deliberately NOT gated: it is run internally before several",
+    "other commands, so gating it would block turns where it was never meant to be the",
+    "answer."
+  ],
+  "gates": [
+    {
+      "key": "resume",
+      "cmd": "findings\\.py\\s+resume\\b",
+      "signature": ["**MR !", "| State |"],
+      "reason": "You ran `findings.py resume` (the session opener) but your message did not include its output. Tool output is COLLAPSED — the user cannot see it, so a reply that names a topic like `t2` without the table above it tells them nothing. Re-send your message STARTING with the full `resume` output pasted verbatim: the pushes-since-baseline line, the MR header, the overview table, and the topic that needs them. Your own prose comes after it, not instead."
+    },
+    {
+      "key": "present",
+      "cmd": "findings\\.py\\s+present\\b",
+      "signature": ["**MR !", "| State |"],
+      "reason": "You ran `findings.py present` but your message did not include its output. Re-send your message starting with the FULL output pasted verbatim — the MR header, the overview table, and the first topic that needs the user."
+    },
+    {
+      "key": "todo",
+      "cmd": "findings\\.py\\s+todo\\b",
+      "signature": ["**MR !"],
+      "reason": "You ran `findings.py todo` but your message did not include its output. Re-send it with the FULL table pasted verbatim, not a paraphrase."
+    },
+    {
+      "key": "quote",
+      "note": "`set <t> --draft` echoes the refreshed render_quote output, so it produces the same kind of block. Same key on purpose: only the NEWEST such block has to be pasted (the engine reduces per key), and after a draft edit that is set's echo, not the now-stale earlier `quote`.",
+      "cmd": "findings\\.py\\s+quote\\b|findings\\.py\\s+set\\b[^\\n]*--draft",
+      "signature": ["◈"],
+      "reason": "You ran `findings.py quote` but your message did not include its output. Re-send your message starting with the FULL quote block pasted verbatim: the topic header with its `file:line`, the code in question, and the draft or thread notes. Do not lead with your own verdict — the user cannot tell which finding you mean or see the code you are asserting things about."
+    },
+    {
+      "key": "updates",
+      "cmd": "findings\\.py\\s+updates\\b",
+      "signature": ["since your last review"],
+      "reason": "You ran `findings.py updates` but your message did not include its output. Re-send it with the FULL block pasted verbatim — every `- **push N:**` line with its nested detail — then add your one-line summary per push as a further sub-bullet. Do not collapse the pushes into prose."
+    },
+    {
+      "key": "diff",
+      "cmd": "findings\\.py\\s+diff\\b",
+      "signature": ["◈"],
+      "reason": "You ran `findings.py diff` to show what the author changed for this topic, but your message did not include its output. Re-send it with the FULL block pasted verbatim — the compare URL and the fenced diff — so the user can see the change instead of taking your word that it was addressed."
+    }
+  ],
+  "forbidden": [
+    {
+      "key": "raw-suggestion-fence",
+      "note": [
+        "A fence at the START of a line. render_quote re-fences suggestion blocks to the",
+        "file's language for display, so a raw one can only come from the model writing the",
+        "block out itself. (quote's own trailing note mentions ```suggestion mid-sentence,",
+        "which is why this is anchored to a line start.) `[>\\s]*` not `\\s*`: the model wrote",
+        "\"> ```suggestion\" inside a blockquote once, and a whitespace-only prefix class let",
+        "it straight through."
+      ],
+      "text": "^[>\\s]*```suggestion",
+      "flags": "m",
+      "reason": "Your message contains a raw ```suggestion fence, which means you wrote the draft block out yourself instead of pasting the rendered one. That block is shown unhighlighted, and the user cannot read the code they are approving. Re-send your message using the output of `python3 $SD/findings.py quote <t> --iid <n>` pasted verbatim (run it again if you have since changed the draft — `set <t> --draft` also prints the refreshed view). The ```suggestion fence belongs only in the PASTE PAYLOAD from `draft <t>` / the clipboard, never in what you show."
+    }
+  ]
+}

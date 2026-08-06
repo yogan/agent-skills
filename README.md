@@ -62,12 +62,17 @@ with no table, no `file:line`, no code.
 
 That is not fixable by documentation — it was tried three times in `review-mr` (a rule at
 the top of `SKILL.md`, a single `resume` command so there was no sequence to skip, then an
-explicit rule 0 naming the failure) and the model still paraphrased. Each skill therefore
-ships a `Stop` hook that checks the visible message for the output of any gated command
-that actually ran, and blocks the turn until it is really pasted.
+explicit rule 0 naming the failure) and the model still paraphrased. So both skills share a
+`Stop` hook that checks the visible message for the output of any gated command that
+actually ran, and blocks the turn until it is really pasted.
 
 **This needs a manual edit to `~/.claude/settings.json`** — skills cannot register their own
-hooks:
+hooks. Link the engine, then register it with one gate spec per installed skill:
+
+```bash
+mkdir -p ~/.claude/hooks
+ln -sfn ~/src/agent-skills/hooks/paste-gate.py ~/.claude/hooks/paste-gate.py
+```
 
 ```json
 {
@@ -76,9 +81,7 @@ hooks:
       {
         "hooks": [
           { "type": "command",
-            "command": "python3 ~/.claude/skills/rework-mr/scripts/stop-hook.py" },
-          { "type": "command",
-            "command": "python3 ~/.claude/skills/review-mr/scripts/stop-hook.py" }
+            "command": "python3 ~/.claude/hooks/paste-gate.py ~/.claude/skills/review-mr/scripts/paste-gates.json ~/.claude/skills/rework-mr/scripts/paste-gates.json" }
         ]
       }
     ]
@@ -86,13 +89,15 @@ hooks:
 }
 ```
 
-Use absolute paths if `~` is not expanded in your setup. Both hooks **fail open** — any
-error, or a turn where no gated command ran, allows the stop — so a bug in them can never
-wedge a session, and they never fire outside those skills. Details: `rework-mr/README.md`.
+Use absolute paths if `~` is not expanded in your setup. A spec path that does not exist is
+skipped, so both skills stay independently installable with the same hook line. The hook
+**fails open** — any error, or a turn where no gated command ran, allows the stop — so a bug
+in it can never wedge a session, and it never fires outside those skills. Details and the
+gate spec format: [`hooks/README.md`](hooks/README.md).
 
 Requirements:
 
-- `python3` (for `render.py` and the `rework-mr` / `review-mr` scripts)
+- `python3` (for `render.py`, the `rework-mr` / `review-mr` scripts, and the `Stop` hook)
 - [Graphviz](https://graphviz.org/) (`dot` on `PATH`) for diagrams
 - [`glab`](https://gitlab.com/gitlab-org/cli) — authenticated, for `explain-*` `mr:123` targets and all of `rework-mr` / `review-mr`
 - macOS for the `rework-mr` / `review-mr` clipboard copy (`pbcopy`)
