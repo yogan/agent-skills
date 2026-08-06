@@ -50,6 +50,7 @@ about the markers without actually pasting the block.
 import json
 import re
 import sys
+import time
 
 # Every gated command whose output must be pasted verbatim. `cmd_re` matches
 # the literal invocation in a Bash command (not a bare keyword — see module
@@ -157,6 +158,27 @@ def _result_text(b):
     return json.dumps(c) if c else ""
 
 
+def _missing_lines(result, shown):
+    """Lines of `result` that never appear in the visible message.
+
+    Line-based, NOT a contiguous-substring match. The skill asks the model to interleave
+    its own text with pasted output, so requiring one unbroken block flags correct
+    messages: every line is present, just not consecutively. (review-mr's hook had the
+    same check and the same false positives; this is the same fix.)
+
+    Blank and very short lines (table rules, fences, `---`) are ignored: they carry no
+    information and turn up incidentally in unrelated text.
+    """
+    missing = []
+    for line in result.strip().splitlines():
+        stripped = line.strip()
+        if len(stripped) < 8 or set(stripped) <= set("-|` "):
+            continue
+        if stripped not in shown:
+            missing.append(stripped)
+    return missing
+
+
 def _allow():
     sys.exit(0)
 
@@ -166,25 +188,19 @@ def _block(reason):
     sys.exit(0)
 
 
-def main():
-    try:
-        data = json.load(sys.stdin)
-    except Exception:
-        _allow()
-
-    # already inside a hook-forced retry → let it through, never loop
-    if data.get("stop_hook_active"):
-        _allow()
-
-    path = data.get("transcript_path")
-    if not path:
-        _allow()
-
+def _load(path):
     try:
         with open(path) as f:
-            rows = [json.loads(ln) for ln in f if ln.strip()]
-    except Exception:
-        _allow()
+            return [json.loads(ln) for ln in f if ln.strip()]
+    except Exception:                      # noqa: BLE001 — unreadable → fail open
+        return None
+
+
+def _violation(path):
+    """Reason to block, or None. Re-readable so it can be retried — see main()."""
+    rows = _load(path)
+    if rows is None:
+        return None
 
     # Walk the current turn: from the last genuine user prompt to the end.
     # (tool_result messages are role=user too, so a "genuine" prompt is a
@@ -236,6 +252,12 @@ def main():
                 assistant_text.append(b.get("text", "") or "")
 
     shown = "\n".join(assistant_text)
+    if not shown.strip():
+        # No assistant text in this turn yet. Either there is genuinely nothing to
+        # check, or the message has not reached the transcript file — the hook can fire
+        # within ~300 ms of the message being written. Judging now would report every
+        # line as missing.
+        return None
 
     # For every gated command that actually ran and produced real (non-error)
     # output this turn, require ITS OWN output text to reappear verbatim in the
@@ -243,13 +265,53 @@ def main():
     # that only *talks about* the markers without actually pasting the block
     # can't satisfy the check. Only enforce a successful run; an errored one
     # (no matching signature) means the model is mid-fix — leave it alone.
+    # Only the LAST invocation per gate key has to be pasted: a topic legitimately gets
+    # re-rendered inside one turn (present, then a fix, then reply-view), and each
+    # rendering supersedes the previous one. dict preserves transcript order.
+    last_per_key = {}
     for uid, gate in matched.items():
+        last_per_key[gate["key"]] = uid
+    for gate_key, uid in last_per_key.items():
+        gate = matched[uid]
         result = result_by_id.get(uid, "")
         if not all(s in result for s in gate["signature"]):
             continue
-        if result.strip() and result.strip() not in shown:
-            _block(gate["reason"])
+        # One dropped line is tolerated — a message that pastes the whole block but swaps
+        # a leading status line for its own preamble is not the failure this guards
+        # against. Two or more means a section went astray; a paraphrase misses nearly all.
+        if result.strip() and len(_missing_lines(result, shown)) > 1:
+            return gate["reason"]
 
+    _allow()
+
+
+def main():
+    try:
+        data = json.load(sys.stdin)
+    except Exception:
+        _allow()
+
+    # already inside a hook-forced retry → let it through, never loop
+    if data.get("stop_hook_active"):
+        _allow()
+
+    path = data.get("transcript_path")
+    if not path:
+        _allow()
+
+    # Re-read before blocking. The transcript is written asynchronously: a block was
+    # observed 348 ms after a 2384-character message was produced, and replaying that
+    # same transcript afterwards allowed it — the hook had simply read the file before
+    # the message landed. Retry with a widening delay and bail out as soon as it clears;
+    # only a turn that is genuinely about to be blocked ever pays the wait.
+    reason = _violation(path)
+    for delay in (0.25, 0.5, 1.0):
+        if not reason:
+            break
+        time.sleep(delay)
+        reason = _violation(path)
+    if reason:
+        _block(reason)
     _allow()
 
 
