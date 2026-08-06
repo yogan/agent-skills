@@ -89,11 +89,42 @@ ln -sfn ~/src/agent-skills/hooks/paste-gate.py ~/.claude/hooks/paste-gate.py
 }
 ```
 
-Use absolute paths if `~` is not expanded in your setup. A spec path that does not exist is
-skipped, so both skills stay independently installable with the same hook line. The hook
-**fails open** — any error, or a turn where no gated command ran, allows the stop — so a bug
-in it can never wedge a session, and it never fires outside those skills. Details and the
-gate spec format: [`hooks/README.md`](hooks/README.md).
+Use absolute paths if `~` is not expanded in your setup — and don't quote a `~` path, since a
+quoted tilde never expands. A spec path that does not exist is skipped, so both skills stay
+independently installable with the same hook line. The hook **fails open** — any error, or a
+turn where no gated command ran, allows the stop — so a bug in it can never wedge a session,
+and it never fires outside those skills. Details and the gate spec format:
+[`hooks/README.md`](hooks/README.md).
+
+### Recommended: three read permissions
+
+Claude Code guards `~/.claude/**` separately from the normal permission rules — a blanket
+`Read`/`Edit` allow does **not** cover it — so without these you get a prompt every time an
+agent reads a skill file or a per-MR state file, and the dialog's "don't ask again" only
+remembers it for the repo you happened to be in. Add them to `~/.claude/settings.json`:
+
+```json
+{
+  "permissions": {
+    "allow": [
+      "Read(~/.claude/skills/**)",
+      "Read(~/.claude/rework-mr/**)",
+      "Read(~/.claude/review-mr/**)"
+    ]
+  }
+}
+```
+
+The first covers the skills' own files — `SKILL.md` sends the agent to `REFERENCE.md`, and
+the scripts get grepped and executed. The other two cover the per-MR state, which the flow
+reads (the post step takes the discussion id from `topics.json`).
+
+Two things about the syntax: the `~/` prefix is required, because in *user* settings a bare
+`/path` resolves to `~/.claude/path` rather than the filesystem root. And `Read` is enough —
+both skills keep state in those directories, but every write goes through their own scripts
+rather than a shell redirect. Don't reach for `Write(…)`: file permissions are only checked
+against `Read(path)` and `Edit(path)`, so a `Write` path rule is accepted, never consulted,
+and warns at startup.
 
 Requirements:
 

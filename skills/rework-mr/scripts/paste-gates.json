@@ -43,9 +43,9 @@
     },
     {
       "key": "change-preview",
-      "cmd": "change-preview\\.sh\\b",
+      "cmd": "change-preview\\.sh\\b|threads\\.py\\s+change-view\\b",
       "signature": ["**Change (", "```"],
-      "reason": "You ran `change-preview.sh` to illustrate a trivial topic's fix but your message did not include its output. Re-send your message with the FULL change-preview block pasted verbatim — the fenced illustration and the final 'Agreed?' — not a description of the change."
+      "reason": "You ran `change-view` / `change-preview.sh` to illustrate a trivial topic's fix but your message did not include its output. Re-send your message with the FULL change-preview block pasted verbatim — the fenced illustration and the final 'Agreed?' — not a description of the change."
     }
   ],
   "required": [

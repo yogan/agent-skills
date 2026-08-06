@@ -67,17 +67,20 @@ Your reply is built in this exact order:
    Nothing precedes it.
 2. Then, for that one topic only: **2–4 lines** of research (what the code does + the real
    trade-off, citing `file:line`; plain prose, no "Code (…):" prefix).
-3. Then: **trivial** → illustrate the change (**not applying it**) via `change-preview.sh`, same
+3. Then: **trivial** → illustrate the change (**not applying it**) via `change-view`, same
    one-paste discipline as `present`/`quote`/`reply-view` (the repeated bug here was saying
    "Trivial. Change:" and then never actually showing it — a Read or other tool call in between
    pushed it out of mind):
    ```bash
-   d=$(dirname "$(python3 $SD/threads.py path --iid <n>)")
-   cat > "$d/change-<t>.md" <<'CHANGE_EOF'
+   python3 $SD/threads.py change-view <t> <<'CHANGE_EOF'
    <the concrete change, verbatim — a diff or before/after snippet, illustration only>
    CHANGE_EOF
-   $SD/change-preview.sh <t> "$d/change-<t>.md"        # add --for <path> for a non-diff snippet
    ```
+   Piped, **not written to a file**: a heredoc into a file under `~/.claude/` trips Claude
+   Code's protected-path prompt on every topic, and the illustration is one-shot — nothing
+   reads it again. Add `--for <path>` after `<t>` to set the fence language for a snippet
+   that isn't a diff. (`change-preview.sh <t> <file> [--for <path>]` renders the same block
+   from a file, if you ever want one.)
    **Paste its ENTIRE output verbatim as the rest of your message, then STOP** — the fenced
    illustration and the final `Agreed?` are one block; do not describe the change instead of
    showing it, and do not add your own "Agreed?" after it. (A `Stop` hook enforces this — end
@@ -209,11 +212,15 @@ Per topic:
       to the draft file with a **quoted heredoc** (not the Write tool: it can't overwrite a file
       you haven't Read this session, so it fails on resume):
       ```bash
-      d=$(dirname "$(python3 $SD/threads.py path --iid <n>)")
-      cat > "$d/reply-<t>.md" <<'REPLY_EOF'
-      <the reply body, verbatim>
+      python3 $SD/threads.py set <t> --reply - <<'REPLY_EOF'
+      <the reply body, verbatim — NO leading "> " on any line>
       REPLY_EOF
       ```
+      Stored in the state file, not in a scratch `.md`: a heredoc into `~/.claude/` prompts
+      for a protected-path write on every topic, and the draft is per-topic state like the
+      plan. The **quoted** heredoc (`<<'REPLY_EOF'`) is what keeps backticks and `$` in the
+      body from being expanded by the shell — never pass a multi-line body as a
+      `--reply "…"` argument.
    b. Run `threads.py reply-view <t>` and **paste its ENTIRE output verbatim as your whole
       message, then STOP** — it is the whole thread (original + every reply) + your drafted reply
       (blockquoted) + the thread URL + the `c`/`p`/`n` prompt, all in one block. The prompt is the
@@ -232,15 +239,18 @@ Per topic:
       - **`n`** (or "next") → the topic is already handled (they replied by hand, or it's
         resolved): mark it `set <t> --state waiting` and move straight to the next topic.
       - **anything else** → they're discussing. There is no `d` command: treat any non-`c`/`p`/`n`
-        message as feedback — engage with it, refine the draft, rewrite the file, re-run
-        `reply-view`, paste the new block. Never post unprompted.
+        message as feedback — engage with it, refine the draft, store it again with
+        `set <t> --reply -`, re-run `reply-view`, paste the new block. Never post unprompted.
       ```bash
-      $SD/clip.sh "$d/reply-<t>.md"                   # c — Copy (guard-reply runs inside clip.sh)
-      # p — Post: guard, then post (<discussion_id> = the topic's thread_ids[0] in the state file):
-      $SD/guard-reply.sh "$d/reply-<t>.md" && \
+      python3 $SD/threads.py reply <t> | $SD/clip.sh     # c — Copy
+      # p — Post (the one allowed write; <discussion_id> = the topic's thread_ids[0]):
+      body=$(python3 $SD/threads.py reply <t>) && printf '%s\n' "$body" | \
       glab api projects/<enc>/merge_requests/<iid>/discussions/<discussion_id>/notes \
-        -X POST -F body=@"$d/reply-<t>.md"
+        -X POST -F body=@-
       ```
+      `reply` prints the body only and **refuses one carrying an internal topic handle**
+      (`t5`…), so the guard cannot be skipped. The `&&` matters: it stops a refused draft
+      from reaching `glab` with an empty body.
    Only **Post** (or the user confirming they pasted it) counts as addressed — then mark it:
    `set <t> --state waiting` (now genuinely waiting on the reviewer; a later reviewer note
    auto-clears it back to `open`).
@@ -255,9 +265,10 @@ Per topic:
   are the skill's own bookkeeping ids and mean nothing to a GitLab reader. To reference another
   discussion, link its thread URL (`threads.py url <other-t>`) or describe it in plain words
   ("in einem separaten Thread"), never "in t6". **Self-scan before you show the draft:** if the
-  body contains any `t<number>`, rewrite it. This is enforced — `clip.sh` and the post step run
-  `guard-reply.sh`, which hard-refuses a body with a topic handle, so an un-reworded draft
-  cannot be copied or posted.
+  body contains any `t<number>`, rewrite it. This is enforced in three places — `set
+  <t> --reply` refuses to store one, `reply <t>` refuses to print one (so the post pipeline
+  gets nothing), and `clip.sh` runs `guard-reply.sh` — so an un-reworded draft cannot be
+  copied or posted.
 - GitLab markdown, code in fences, identifiers in `backticks`, **no headings**, bullets only if they help. Short but concrete.
 - Fixes: lead with `Fixed: <diff-url>`; explain only when needed (didn't follow exactly / did more / was complex).
 - reply-only / push-back: explain the reasoning. question: answer with a snippet or concrete example.
@@ -265,13 +276,15 @@ Per topic:
 ## Prerequisites
 
 `glab` authenticated; run on (or pass `--iid N` for) the MR branch. `python3`; macOS for `clip.sh`.
-`threads.py` subcommands: sync·todo·present·bodies·plans·quote·url·reply-view·set·merge·path
+`threads.py` subcommands: sync·todo·present·bodies·plans·quote·url·reply·reply-view·set·merge·path
 (plus `change-view`/`diff-view`, the bodies of the two .sh views below).
-`diff-url.py` (baseline·url), `clip.sh` (guards + copies), `guard-reply.sh` (topic-handle gate),
-`change-preview.sh` (trivial-topic change illustration, one paste — write the change with its
-own ```diff fence and it stays highlighted; `--for <path>` sets the language for a non-diff
-snippet), `diff-view.sh` (working diff before the fixup+push ACK, one paste). Run any with `-h`.
-**Setup:** `present`/`todo`/`quote`/`diff-view.sh`/`reply-view`/`change-preview.sh` all need the
+`diff-url.py` (baseline·url), `clip.sh` (guards + copies), `guard-reply.sh` (topic-handle gate
+for the clipboard path),
+`change-view` (trivial-topic change illustration piped in, one paste — write the change with
+its own ```diff fence and it stays highlighted; `--for <path>` sets the language for a non-diff
+snippet; `change-preview.sh` is the same block from a file), `diff-view.sh` (working diff
+before the fixup+push ACK, one paste). Run any with `-h`.
+**Setup:** `present`/`todo`/`quote`/`diff-view.sh`/`reply-view`/`change-view` all need the
 shared `Stop` hook (`hooks/paste-gate.py` + this skill's `scripts/paste-gates.json`) registered
 in `settings.json` — see [README.md](README.md); without it their output often won't reach the
 user.
