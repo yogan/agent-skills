@@ -22,10 +22,14 @@ Subcommands:
   present     overview table + the first open topic's comment  (the opener; no fetch)
   bodies      print each open thread's opening note (to summarize from; no fetch)
   plans       print recorded decisions/plans for open topics  (resume; no fetch)
-  quote <t>   a topic in full: the code the comment is anchored to, then the whole
-              thread — original + every reply  (no fetch)
+  quote <t>   a topic in full: the code the comment is anchored to (the reviewer's own
+              line range when they marked one), then the whole thread — original + every
+              reply  (no fetch)
   url <t>     direct URL(s) to the topic's thread (to click & post)  (no fetch)
-  reply-view <t>  code + thread + your drafted reply + URL, one paste  (no fetch)\n  reply <t>   the drafted reply BODY only — the payload for clip.sh / glab\n  set <t> --reply -   store a reply body from stdin (quoted heredoc; never a\n              scratch file — see reply_body())
+  reply-view <t>  code + thread + your drafted reply + URL, one paste  (no fetch)
+  reply <t>   the drafted reply BODY only — the payload for clip.sh / glab
+  set <t> --reply -   store a reply body from stdin (quoted heredoc; never a
+              scratch file — see reply_body())
   set <t> …   update a topic's fields (summary, decision, plan, start-sha, diff-url, reply)
   merge <into> <o…>   fold other topics' threads into <into>
   path        print the state-file path
@@ -117,6 +121,30 @@ def new_state(ctx, mr):
     }
 
 
+# Keys on a thread record that are OURS and must survive a fetch. Everything else in
+# `state["threads"]` belongs to GitLab and is replaced on every sync (see sync()). Empty
+# today — the local overlay lives on `topics` — but named so the reconcile stays a denylist
+# of local fields rather than an allowlist of fetched ones, which is what rotted before.
+# (review-mr's findings.py has the same constant, for the same reason.)
+LOCAL_THREAD_FIELDS = ()
+
+
+def _range_keys(pos, on_new):
+    """`line_start`/`line_end` from a position's `line_range`, when it carries a usable one.
+
+    Only stored when both ends resolve on the side the comment is on and the span is
+    ordered; a partial or cross-side range is dropped rather than guessed at, and
+    `render_code_context` then falls back to the single anchor line.
+    """
+    lr = pos.get("line_range") or {}
+    key = "new_line" if on_new else "old_line"
+    a = (lr.get("start") or {}).get(key)
+    b = (lr.get("end") or {}).get(key)
+    if not isinstance(a, int) or not isinstance(b, int) or a > b:
+        return {}
+    return {"line_start": a, "line_end": b}
+
+
 def fetch_threads(ctx, iid, me):
     disc = api(f"projects/{ctx['enc']}/merge_requests/{iid}/discussions?per_page=100",
                paginate=True)
@@ -145,6 +173,10 @@ def fetch_threads(ctx, iid, me):
             or pos.get("new_path") or pos.get("old_path"),
             "line": pos.get("new_line") if on_new else pos.get("old_line"),
             "side": "new" if on_new else "old",
+            # GitLab's `line_range` is the reviewer's actual selection ("Comment on lines
+            # +12 to +22"). `new_line` alone is only its END, so a comment marking a whole
+            # function used to render as its closing brace plus whatever followed.
+            **_range_keys(pos, on_new),
             # The exact blobs the position names, so `quote` can show the code the reviewer
             # actually pointed at instead of guessing against a working tree that may have
             # moved on since.
@@ -214,11 +246,21 @@ def topic_status(state, t):
 
 
 def sync(state, live):
-    keep = ("author", "file", "line", "body", "resolved", "url",
-            "note_count", "last_author", "last_body", "awaiting", "notes")
+    """Reconcile the stored threads against what GitLab reports.
+
+    A live thread's record is REPLACED wholesale (bar the local fields above). This was an
+    allowlist of fetched keys to copy over, and it rotted exactly as you'd expect: every
+    field added to `fetch_threads` afterwards — `side`, `head_sha`, `base_sha`, and then the
+    `line_range` keys — reached brand-new threads only, so an ongoing rework kept rendering
+    from the old shape and `quote` fell back to "(working tree)" with no span, session after
+    session. Replacing also drops keys the fetch no longer produces, which an `update()`
+    would leave behind as a stale range.
+    """
     for tid, rec in live.items():
         if tid in state["threads"]:
-            state["threads"][tid].update({k: rec[k] for k in keep})
+            local = {k: v for k, v in state["threads"][tid].items()
+                     if k in LOCAL_THREAD_FIELDS}
+            state["threads"][tid] = {**rec, **local}
         else:
             state["threads"][tid] = rec
             state["topics"].append({
@@ -291,10 +333,121 @@ def render_table(state, scope="all", show_done=False):
     return "\n".join(out + ["", "_" + " · ".join(footer) + "._"])
 
 
-def _note_md(name, body):
-    lines = (body or "").strip().splitlines() or [""]
-    quoted = "\n".join("> " + ln for ln in lines)
-    return f"> **{first_name(name)}**\n>\n{quoted}"
+SUGGESTION_INFO = re.compile(r"^suggestion(?::-(\d+)\+(\d+))?$")
+INDENT_CODE = re.compile(r"^(?: {4,}|\t+)\S")   # markdown counts a tab as 4 spaces
+DEDENT = re.compile(r"^(?: {4}|\t)")
+LIST_ITEM = re.compile(r"^\s*([-*+]|\d+[.)])\s")
+
+
+def _suggestion_caption(info, anchor):
+    """Label for a GitLab ```suggestion block, which loses its marker when re-fenced.
+
+    `suggestion:-A+B` means "replace the A lines above the anchor through the B below", so
+    the caption can name the lines the reviewer wants replaced — the one thing the raw
+    `:-0+0` never told anybody.
+    """
+    m = SUGGESTION_INFO.match(info or "")
+    if not m:
+        return None
+    if anchor is None:
+        return "_suggested replacement:_"
+    try:
+        a = max(1, int(anchor) - int(m.group(1) or 0))
+        b = max(a, int(anchor) + int(m.group(2) or 0))
+    except (TypeError, ValueError):
+        return "_suggested replacement:_"
+    return f"_suggested replacement for {'line' if a == b else 'lines'} " \
+           f"{a if a == b else f'{a}–{b}'}:_"
+
+
+def _indented_runs(seg):
+    """Split a prose run into [(kind, lines)] where kind is "text" or "code".
+
+    A 4-space indented block is markdown's other code block, and reviewers use it as often
+    as a fence. A blank line stays inside the block only when code surrounds it, and a run
+    hanging under a list item is left as prose — that indentation is list continuation, not
+    code.
+    """
+    def before(i):
+        """Index of the nearest non-blank line above `i`, or None."""
+        return next((j for j in range(i - 1, -1, -1) if seg[j].strip()), None)
+
+    code = [bool(INDENT_CODE.match(ln)) for ln in seg]
+    for i, ln in enumerate(seg):                  # blanks: only inside a block
+        if ln.strip():
+            continue
+        nxt = next((j for j in range(i + 1, len(seg)) if seg[j].strip()), None)
+        prev = before(i)
+        code[i] = (prev is not None and nxt is not None and code[prev] and code[nxt])
+    i = 0
+    while i < len(seg):                           # list continuation is not code
+        if not code[i]:
+            i += 1
+            continue
+        start = i
+        while i < len(seg) and code[i]:
+            i += 1
+        prev = before(start)
+        if prev is not None and LIST_ITEM.match(seg[prev]):
+            for j in range(start, i):
+                code[j] = False
+
+    runs, buf, kind = [], [], None
+    for ln, is_code in zip(seg, code):
+        k = "code" if is_code else "text"
+        if buf and k != kind:
+            runs.append((kind, buf))
+            buf = []
+        kind = k
+        buf.append(ln)
+    if buf:
+        runs.append((kind, buf))
+    return [(k, [DEDENT.sub("", ln) if k == "code" else ln for ln in v])
+            for k, v in runs]
+
+
+def _note_md(name, body, path=None, anchor=None):
+    """One thread note: prose blockquoted, its code lifted out of the quote and fenced.
+
+    Reviewers paste code — a ```suggestion block, or an indented snippet. Left
+    inside the `> ` quote both render flat: `> ```suggestion:-0+0` is a fence with an info
+    string no highlighter knows, and an indented block never carries a language at all. That
+    is the reviewer's proposed code rendered as grey text. Lifting it to line start and
+    re-fencing with the file's own language is the whole point of showing the note.
+    """
+    out = [f"> **{first_name(name)}**"]
+
+    def quote(lines):
+        while lines and not lines[0].strip():
+            lines = lines[1:]
+        while lines and not lines[-1].strip():
+            lines = lines[:-1]
+        if lines:
+            # `>` continues the quote we are already in; a blank line separates prose from a
+            # fence we just lifted out of it (a `>` there renders as an empty quoted line).
+            out.append(">" if out[-1].startswith(">") else "")
+            out.extend(f"> {ln}".rstrip() if ln.strip() else ">" for ln in lines)
+
+    def code(content, info):
+        if not content.strip():                   # an empty suggestion is not worth a block
+            return
+        cap = _suggestion_caption(info, anchor)
+        if cap:
+            out.extend(["", cap])
+        lang = info if info and not SUGGESTION_INFO.match(info) else (
+            "diff" if looks_like_diff(content) else lang_for(path))
+        out.extend(["", fence(content, lang)])
+
+    for kind, info, seg in _segments((body or "").strip().splitlines() or [""]):
+        if kind == "code":
+            code("\n".join(seg), info)
+            continue
+        for sub_kind, sub in _indented_runs(seg):
+            if sub_kind == "code":
+                code("\n".join(sub).strip("\n"), "")
+            else:
+                quote(sub)
+    return "\n".join(out)
 
 
 # ------------------------------------------------------- fences & code context
@@ -439,7 +592,34 @@ def _blob_text(sha, path):
     return _git("show", f"{sha}:{path}")
 
 
-def render_code_context(x, context_lines=6):
+COMMENT_LINE = re.compile(r"^\s*(//|/\*|\*|#|--|<!--)")
+MARK_SPAN, MARK_LINE = "┃", "►"
+# One-line anchors get a symmetric window; a range the reviewer selected already IS the
+# region, so it only needs a little air above (the signature or doc comment it hangs off)
+# and almost none below — that trailing context is what turned a comment on one function
+# into a listing of the next declaration.
+CTX_SINGLE, CTX_ABOVE, CTX_BELOW = 6, 3, 1
+DOC_PULL, MAX_BODY = 8, 60
+
+
+def _anchor_span(x, n, last):
+    """(start, end) of the code the comment is about, and whether it is a real span.
+
+    GitLab reports a multi-line comment as `line_range` start→end with `new_line` as the
+    END, so the range is the only way to know the reviewer marked "lines +12 to +22" rather
+    than line 22. The range is sanity-checked before it is trusted: inside the file, and
+    containing the anchor line — if it doesn't, the position and the range disagree and the
+    anchor is the safer of the two.
+    """
+    a, b = x.get("line_start"), x.get("line_end")
+    if not isinstance(a, int) or not isinstance(b, int):
+        return n, n, False
+    if not (1 <= a <= b <= last and a <= n <= b):
+        return n, n, False
+    return a, b, b > a
+
+
+def render_code_context(x):
     """The code the reviewer's comment hangs on, ready to show ABOVE their note.
 
     Without it the user is asked to judge a comment about code they cannot see, and the
@@ -452,6 +632,10 @@ def render_code_context(x, context_lines=6):
     render unrelated lines. When the working tree has since diverged, that is said out
     loud rather than hidden. Falls back to the working tree for threads stored before the
     shas were recorded. None when there is nothing trustworthy to show.
+
+    What gets shown follows the reviewer: their selected range first (marked `┃`), else the
+    single anchor line (marked `►`). The marker is never a `►` on one line of a span — it
+    claimed a precision the position did not have, and pointed at a closing brace.
     """
     path, line = x.get("file"), x.get("line")
     if not path or not line:
@@ -463,10 +647,11 @@ def render_code_context(x, context_lines=6):
     on_new = (x.get("side") or "new") == "new"
     sha = x.get("head_sha") if on_new else x.get("base_sha")
     text, source = _blob_text(sha, path), f"as reviewed, `{(sha or '')[:8]}`"
+    working = _repo_file(path)                     # read once: each call shells out to git
     drift = None
     if text is None:
-        text, source = _repo_file(path), "working tree"
-    elif _repo_file(path) not in (None, text):
+        text, source = working, "working tree"
+    elif working not in (None, text):
         drift = ("_⚠️ the working tree differs from this — you may already have changed "
                  "the file; the lines above are the version the comment is on._")
     if text is None:
@@ -474,12 +659,34 @@ def render_code_context(x, context_lines=6):
     lines = text.splitlines()
     if n > len(lines):
         return None                               # anchor outside the file → show nothing
-    lo, hi = max(1, n - context_lines), min(len(lines), n + context_lines)
+    a, b, span = _anchor_span(x, n, len(lines))
+    above, below = (CTX_ABOVE, CTX_BELOW) if span else (CTX_SINGLE, CTX_SINGLE)
+    lo, hi = max(1, a - above), min(len(lines), b + below)
+    # Grow upward through a doc comment that sits directly on top: `/** … */` or a `#` block
+    # explains the marked code, and stopping one line short of it is the difference between
+    # context and a fragment. A blank line ends the block — that comment belongs to
+    # something else.
+    while lo > 1 and COMMENT_LINE.match(lines[lo - 2]) and a - lo < above + DOC_PULL:
+        lo -= 1
+    body = []
+    for i in range(lo, hi + 1):
+        if hi - lo + 1 > MAX_BODY and lo + MAX_BODY - 10 < i < hi - 8:
+            if body and body[-1] is not None:     # collapse the middle of a huge span once
+                body.append(None)
+            continue
+        body.append(i)
     width = len(str(hi))
-    body = "\n".join(f"{'►' if i == n else ' '} {str(i).rjust(width)} | {lines[i - 1]}"
-                     for i in range(lo, hi + 1))
-    out = [f"_Code the comment is on — `{path}:{n}` ({source}):_", "",
-           fence(body, lang_for(path))]
+    rendered = []
+    for i in body:
+        if i is None:
+            rendered.append(f"  {'…'.rjust(width)} | … {b - a + 1} lines in total …")
+            continue
+        mark = MARK_SPAN if span and a <= i <= b else (MARK_LINE if not span and i == n
+                                                       else " ")
+        rendered.append(f"{mark} {str(i).rjust(width)} | {lines[i - 1]}")
+    where = f"{path}:{a}–{b}" if span else f"{path}:{n}"
+    out = [f"_Code the comment is on — `{where}` ({source}):_", "",
+           fence("\n".join(rendered), lang_for(path))]
     if drift:
         out += ["", drift]
     return "\n".join(out)
@@ -526,17 +733,20 @@ def render_quote(state, tid):
         code = render_code_context(x)
         if code:
             out += ["", code]
+        # The file and anchor let a reviewer's ```suggestion be re-fenced to the file's
+        # language and labelled with the lines it replaces.
+        f, ln = x.get("file"), x.get("line")
         notes = x.get("notes")
         if notes:                               # whole thread, in order
             for n in notes:
-                out += ["", _note_md(n.get("author"), n.get("body"))]
+                out += ["", _note_md(n.get("author"), n.get("body"), f, ln)]
         else:                                   # pre-`notes` state: first + last only
-            out += ["", _note_md(x.get("author"), x.get("body"))]
+            out += ["", _note_md(x.get("author"), x.get("body"), f, ln)]
             if x.get("note_count", 1) > 1:
                 skipped = x["note_count"] - 2
                 if skipped > 0:
                     out += ["", f"_… {skipped} more …_"]
-                out += ["", _note_md(x.get("last_author"), x.get("last_body"))]
+                out += ["", _note_md(x.get("last_author"), x.get("last_body"), f, ln)]
         out.append("")
     return "\n".join(out).strip()
 

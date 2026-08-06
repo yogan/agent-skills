@@ -46,7 +46,11 @@ meaning).
   (`sync·todo·present·bodies·plans·quote·url·reply·reply-view·set·merge·path·change-view·diff-view`).
 - `quote <t>` — a topic in full: the code the reviewer's comment is anchored to (read
   from the exact blob the comment hangs on, so the line numbers are the reviewer's),
-  then the whole thread.
+  then the whole thread. Shows the reviewer's own line range when they marked one —
+  `┃` down the span, plus the doc comment above it — and `►` on the line otherwise. Code
+  the reviewer pasted (a ```suggestion block, an indented snippet) is lifted out of the
+  blockquote and fenced with the file's language, so it renders highlighted instead of as
+  grey prose; a suggestion is captioned with the lines it would replace.
 - `set <t> --reply -` / `reply <t>` — store a reply body (from a quoted heredoc, so the
   shell cannot expand it) and print it back. The draft lives in the state file, not in a
   scratch `reply-<t>.md`: no protected-path write prompt, and the internal-topic-handle

@@ -141,8 +141,12 @@ code the comment is anchored to, then the reviewer's note — not your research 
 with prose, you dropped the comment — redo it. (A `Stop` hook enforces this too.)
 
 `quote` renders the code from the exact blob the comment hangs on, so your research can cite what
-the user is actually looking at. If it says the working tree has since diverged, the lines shown
-are the reviewer's version, not the current file — say so rather than reasoning past it.
+the user is actually looking at. It follows the reviewer's own selection: a multi-line comment
+("lines +12 to +22") shows that whole span marked `┃`, a single-line one shows `►` on the line with
+a wider window around it. Code inside the reviewer's note — a ```suggestion block or an indented
+snippet — is lifted out of the blockquote so it stays highlighted; a suggestion carries a caption
+naming the lines it replaces, which is the offer you are accepting or declining. If it says the working tree has since diverged, the lines shown are the
+reviewer's version, not the current file — say so rather than reasoning past it.
 
 Outcomes: **fix** · **reply-only** (reviewer wrong / no improvement) · **push-back** ·
 **question** (just answer, with a snippet / concrete example). Keep a TODO item per topic.

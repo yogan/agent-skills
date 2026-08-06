@@ -322,10 +322,16 @@ LOCAL_THREAD_FIELDS = ("gone",)
 
 
 def sync(state, live):
+    # A live thread's record is REPLACED, bar the local fields: an `update()` keeps keys the
+    # fetch has stopped producing, which is how a conditional field (a line range that the
+    # reviewer edited away, say) would linger as stale truth. rework-mr's threads.py had the
+    # inverse of this bug — an allowlist of fetched keys, so new fields never reached a
+    # thread already in the state file — and this is the shape that cannot rot either way.
     for tid, rec in live.items():
         if tid in state["threads"]:
-            state["threads"][tid].update(
-                {k: v for k, v in rec.items() if k not in LOCAL_THREAD_FIELDS})
+            local = {k: v for k, v in state["threads"][tid].items()
+                     if k in LOCAL_THREAD_FIELDS}
+            state["threads"][tid] = {**rec, **local}
         else:
             state["threads"][tid] = rec
     for tid in state["threads"]:
