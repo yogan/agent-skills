@@ -63,7 +63,8 @@ python3 $SD/threads.py present      # run LAST — its output must lead your rep
 Your reply is built in this exact order:
 
 1. **The entire `present` output, verbatim, as the very first thing** — MR title line, GFM
-   table, separator, blockquoted comment and all. Nothing precedes it.
+   table, separator, the fenced code the comment sits on, blockquoted comment and all.
+   Nothing precedes it.
 2. Then, for that one topic only: **2–4 lines** of research (what the code does + the real
    trade-off, citing `file:line`; plain prose, no "Code (…):" prefix).
 3. Then: **trivial** → illustrate the change (**not applying it**) via `change-preview.sh`, same
@@ -75,7 +76,7 @@ Your reply is built in this exact order:
    cat > "$d/change-<t>.md" <<'CHANGE_EOF'
    <the concrete change, verbatim — a diff or before/after snippet, illustration only>
    CHANGE_EOF
-   $SD/change-preview.sh <t> "$d/change-<t>.md"
+   $SD/change-preview.sh <t> "$d/change-<t>.md"        # add --for <path> for a non-diff snippet
    ```
    **Paste its ENTIRE output verbatim as the rest of your message, then STOP** — the fenced
    illustration and the final `Agreed?` are one block; do not describe the change instead of
@@ -132,8 +133,13 @@ python3 $SD/threads.py set <t> --decision "…" --plan "…"
 python3 $SD/threads.py quote <next-t>      # run LAST — paste its output verbatim, first thing in your reply
 ```
 
-**Postcondition:** the reply must open with the `quote` comment block, not your research prose.
-If it opens with prose, you dropped the comment — redo it. (A `Stop` hook enforces this too.)
+**Postcondition:** the reply must open with the `quote` block — the topic header, the fenced
+code the comment is anchored to, then the reviewer's note — not your research prose. If it opens
+with prose, you dropped the comment — redo it. (A `Stop` hook enforces this too.)
+
+`quote` renders the code from the exact blob the comment hangs on, so your research can cite what
+the user is actually looking at. If it says the working tree has since diverged, the lines shown
+are the reviewer's version, not the current file — say so rather than reasoning past it.
 
 Outcomes: **fix** · **reply-only** (reviewer wrong / no improvement) · **push-back** ·
 **question** (just answer, with a snippet / concrete example). Keep a TODO item per topic.
@@ -214,8 +220,9 @@ Per topic:
       last line, so **do not** add an `AskUserQuestion` menu or any other prompt — pasting the
       block *is* the ask. It also **refuses a draft with an internal topic handle** (`t<number>`)
       — if it errors, reword per the draft rules and re-run.
-      **Postcondition:** your message *is* the `reply-view` output — it opens with the reviewer's
-      blockquoted note, has the `**Draft reply:**` block, and ends with the `c`/`p`/`n` prompt line.
+      **Postcondition:** your message *is* the `reply-view` output — it opens with the topic
+      header and the fenced code, carries the reviewer's blockquoted note, has the
+      `**Draft reply:**` block, and ends with the `c`/`p`/`n` prompt line.
       If any is missing, you dropped it — re-run and paste. Never replace it with a short stub
       like "t7 — reply ready", even when moving fast across topics. (A `Stop` hook enforces this —
       end the turn without the block and it forces a redo — so just paste it.)
@@ -258,10 +265,12 @@ Per topic:
 ## Prerequisites
 
 `glab` authenticated; run on (or pass `--iid N` for) the MR branch. `python3`; macOS for `clip.sh`.
-`threads.py` subcommands: sync·todo·present·bodies·plans·quote·url·reply-view·set·merge·path.
+`threads.py` subcommands: sync·todo·present·bodies·plans·quote·url·reply-view·set·merge·path
+(plus `change-view`/`diff-view`, the bodies of the two .sh views below).
 `diff-url.py` (baseline·url), `clip.sh` (guards + copies), `guard-reply.sh` (topic-handle gate),
-`change-preview.sh` (trivial-topic change illustration, one paste), `diff-view.sh` (working diff
-before the fixup+push ACK, one paste). Run any with `-h`.
+`change-preview.sh` (trivial-topic change illustration, one paste — write the change with its
+own ```diff fence and it stays highlighted; `--for <path>` sets the language for a non-diff
+snippet), `diff-view.sh` (working diff before the fixup+push ACK, one paste). Run any with `-h`.
 **Setup:** `present`/`todo`/`quote`/`diff-view.sh`/`reply-view`/`change-preview.sh` all need the
 shared `Stop` hook (`hooks/paste-gate.py` + this skill's `scripts/paste-gates.json`) registered
 in `settings.json` — see [README.md](README.md); without it their output often won't reach the

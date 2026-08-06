@@ -69,12 +69,13 @@ the reply (step 10).
       REPLY_EOF
       ```
    b. `python3 $SD/threads.py reply-view <t>` — **paste its ENTIRE output verbatim as your whole
-      message, then STOP**: whole thread (original + every reply) + `**Draft reply:**`
-      (blockquoted) + thread URL + the `c`/`p`/`n` prompt, one block. The prompt is the last line, so
-      **no `AskUserQuestion` menu** — pasting the block is the ask. It **hard-refuses a draft with
-      a topic handle** (`t<number>`) — reword and re-run if it errors. Postcondition: the message
-      *is* that output (reviewer's blockquoted note → `**Draft reply:**` → prompt line); if any is
-      missing you dropped it → re-run and paste. Don't replace it with a stub even across topics.
+      message, then STOP**: the fenced code the comment is anchored to + the whole thread
+      (original + every reply) + `**Draft reply:**` (blockquoted) + thread URL + the `c`/`p`/`n`
+      prompt, one block. The prompt is the last line, so **no `AskUserQuestion` menu** — pasting
+      the block is the ask. It **hard-refuses a draft with a topic handle** (`t<number>`) — reword
+      and re-run if it errors. Postcondition: the message
+      *is* that output (code → reviewer's blockquoted note → `**Draft reply:**` → prompt line);
+      if any is missing you dropped it → re-run and paste. Don't replace it with a stub even across topics.
    c. Interpret the user's reply — **`c`** = copy, **`p`** = post, **`n`** = next topic (already
       replied/resolved: `set <t> --state waiting`, move on), **anything else** = discussion (no
       `d` command: engage with it, refine, rewrite the file, re-run reply-view, paste again):

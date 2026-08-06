@@ -15,7 +15,7 @@
       "key": "present",
       "cmd": "threads\\.py\\s+present\\b",
       "signature": ["**MR !"],
-      "reason": "You ran `threads.py present` (the opener) but your message did not include its output. Tool output is COLLAPSED — the user cannot see it. Re-send your message starting with the FULL `present` output pasted verbatim: the MR title line, the overview table, and (if there is one) the first open topic's blockquoted comment. Do not summarise it or lead with your own research prose."
+      "reason": "You ran `threads.py present` (the opener) but your message did not include its output. Tool output is COLLAPSED — the user cannot see it. Re-send your message starting with the FULL `present` output pasted verbatim: the MR title line, the overview table, and (if there is one) the first open topic's block — the fenced code the comment is anchored to, then the blockquoted comment. Do not summarise it or lead with your own research prose."
     },
     {
       "key": "todo",
@@ -27,7 +27,7 @@
       "key": "quote",
       "cmd": "threads\\.py\\s+quote\\b",
       "signature": ["◈"],
-      "reason": "You ran `threads.py quote` (moving to the next topic) but your message did not include its output. Re-send your message starting with the FULL quoted comment block pasted verbatim, not your own research prose."
+      "reason": "You ran `threads.py quote` (moving to the next topic) but your message did not include its output. Re-send your message starting with the FULL quote block pasted verbatim: the topic header, the fenced code the comment is anchored to, and the reviewer's blockquoted note with every reply. Not your own research prose, and not the note without the code — the user cannot judge a comment about lines they were never shown."
     },
     {
       "key": "diff-view",
@@ -39,7 +39,7 @@
       "key": "reply-view",
       "cmd": "threads\\.py\\s+reply-view\\b",
       "signature": ["**Draft reply:**", "Thread (to post on):", "**`c`** copy to clipboard"],
-      "reason": "You ran `threads.py reply-view` for this reply but your message did not include its output. Tool output is COLLAPSED — the user cannot see it. Re-send your message as the FULL reply-view block pasted verbatim: the thread (reviewer's blockquoted note + every reply), the **Draft reply:** block, the Thread (to post on): URL, and the final c/p/n prompt line. Do not summarise it to just the prompt."
+      "reason": "You ran `threads.py reply-view` for this reply but your message did not include its output. Tool output is COLLAPSED — the user cannot see it. Re-send your message as the FULL reply-view block pasted verbatim: the topic header, the fenced code, the reviewer's blockquoted note + every reply, the **Draft reply:** block, the Thread (to post on): URL, and the final c/p/n prompt line. Do not summarise it to just the prompt."
     },
     {
       "key": "change-preview",
