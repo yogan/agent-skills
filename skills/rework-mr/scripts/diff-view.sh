@@ -7,14 +7,14 @@
 # is written, and that intervening call pushes the diff out of mind — the user
 # ends up ACKing a fixup+push blind.
 #   diff-view.sh <t> [-- <git-diff-args...>]
+#
+# git runs here (the `--` passthrough belongs in the shell); the block is rendered
+# by `threads.py diff-view` (stateless), which also widens the fence when the diff
+# touches a file that itself contains ``` — otherwise those lines close the block
+# and the ACK question ends up inside the diff.
 set -euo pipefail
 t="${1:?usage: diff-view.sh <t> [-- git-diff-args...]}"
 shift
 if [ "${1:-}" = "--" ]; then shift; fi
-echo "**Diff (${t}):**"
-echo
-echo '```diff'
-git diff "$@"
-echo '```'
-echo
-echo "ACK to fix up and push?"
+SD="$(cd "$(dirname "$0")" && pwd)"
+git diff "$@" | python3 "$SD/threads.py" diff-view "$t"

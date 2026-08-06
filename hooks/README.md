@@ -120,6 +120,15 @@ Caveat when hacking on the skills themselves: `forbidden`/`required` patterns ma
 Both current rules are line-anchored so that mid-sentence mentions are fine, but a
 message that reproduces one of those lines verbatim, at a line start, will be blocked.
 
+The same goes for `gates`, one step further: merely reading or grepping a script is safe
+(the gate needs the command's own tool result to carry its output signature), but *running*
+one to see what it prints — developing it, verifying a fix — is indistinguishable from
+running it for the user, so the turn gets blocked for not pasting the output. It happened
+while writing `change-preview.sh`'s new fence handling, and there is deliberately no
+heuristic against it: any rule loose enough to exempt "I was only testing" would be loose
+enough to exempt the real failure. The loop guard makes it cost exactly one retry, so the
+answer is to say what happened and move on, not to contort the message into satisfying it.
+
 ### Adding a skill
 
 Ship a `paste-gates.json` next to its scripts and add the path to the hook command. No

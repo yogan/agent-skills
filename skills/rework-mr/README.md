@@ -42,11 +42,17 @@ meaning).
 ## Scripts
 
 - `threads.py` — fetch/reconcile threads, render tables & the reply block. Run
-  `threads.py -h` for subcommands (`sync·todo·present·bodies·plans·quote·url·reply-view·set·merge·path`).
-- `reply-view <t>` — the one-paste reply block (thread + draft + URL + prompt);
+  `threads.py -h` for subcommands
+  (`sync·todo·present·bodies·plans·quote·url·reply-view·set·merge·path·change-view·diff-view`).
+- `quote <t>` — a topic in full: the code the reviewer's comment is anchored to (read
+  from the exact blob the comment hangs on, so the line numbers are the reviewer's),
+  then the whole thread.
+- `reply-view <t>` — the one-paste reply block (thread + code + draft + URL + prompt);
   also refuses a draft containing an internal topic handle (`t5`…).
-- `change-preview.sh <t> <file>` — the one-paste trivial-topic change illustration
-  (fenced code + `Agreed?`); the file is the proposed change, not applied.
+- `change-preview.sh <t> <file> [--for <path>]` — the one-paste trivial-topic change
+  illustration (fenced code + `Agreed?`); the file is the proposed change, not applied.
+  Content that already carries its own ```diff block is passed through rather than
+  wrapped again, so it stays syntax-highlighted.
 - `diff-view.sh <t> [-- git-diff-args...]` — the one-paste working diff shown
   before the fixup+push ACK (fenced diff + `ACK to fix up and push?`).
 - `diff-url.py` — stable per-topic diff URL across force-pushes.
