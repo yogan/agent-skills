@@ -186,7 +186,8 @@ Per topic:
    just "commit" (that reads as a new commit). (The repeated bug here was showing the diff, then
    blaming/naming targets afterward — the `git blame` call in between pushed the diff out of
    mind by the time the message was written. A `Stop` hook enforces the diff-view block actually
-   reaching the user, the same way it does for `present`/`quote`/`reply-view`/`change-preview`.)
+   reaching the user, the same way it does for `present`/`quote`/`reply-view`/`change-preview` —
+   and it blocks an ACK request that has no `diff-view.sh` run behind it at all.)
 3. On ACK: capture the pre-push baseline (`diff-url.py baseline` → `set <t> --start-sha`),
    then `git commit --fixup=<sha>` for each named target.
 4. `git rebase --autosquash`, **full QA** (hard gate), `git push --force-with-lease --force-if-includes`.
@@ -262,5 +263,6 @@ Per topic:
 `change-preview.sh` (trivial-topic change illustration, one paste), `diff-view.sh` (working diff
 before the fixup+push ACK, one paste). Run any with `-h`.
 **Setup:** `present`/`todo`/`quote`/`diff-view.sh`/`reply-view`/`change-preview.sh` all need the
-`Stop` hook (`scripts/stop-hook.py`) registered in `settings.json` — see
-[README.md](README.md); without it their output often won't reach the user.
+shared `Stop` hook (`hooks/paste-gate.py` + this skill's `scripts/paste-gates.json`) registered
+in `settings.json` — see [README.md](README.md); without it their output often won't reach the
+user.

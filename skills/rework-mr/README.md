@@ -22,54 +22,22 @@ pastes it — and the model reliably *drops* it: it decides what to paste,
 makes another tool call (research, a `git blame`, a Read) before writing the
 message, and that pushes the pasted content out of mind, so the reply starts
 with the model's own prose, or jumps straight to the trailing question/ACK,
-with the promised block never actually shown. `scripts/stop-hook.py` enforces
-the paste for all six: it inspects the finished turn and, if one of them ran
-but its output is missing from the visible message, **blocks the turn and
-makes the model re-send the full block**. (`threads.py sync` is deliberately
-excluded — it also runs as silent, intentionally-unshown prep in the opener,
-so gating it would false-block on that unrelated call; use `todo` for a
-status-only reply instead, which has no such double meaning.)
+with the promised block never actually shown.
 
-Without this hook the skill still works, but on many turns you won't see the
+A `Stop` hook enforces the paste for all six, plus one inverse rule: asking for
+the fixup+push ACK without having run `diff-view.sh` at all is blocked too.
+Without the hook the skill still works, but on many turns you won't see the
 overview, the reviewer's comment, the diff, the draft, or the change before
-choosing an action or ACKing a push. **Install it once:**
+choosing an action or ACKing a push.
 
-Add a `Stop` hook to `~/.claude/settings.json` (merge into any existing `hooks`):
-
-```jsonc
-{
-  "hooks": {
-    "Stop": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "python3 ~/.claude/skills/rework-mr/scripts/stop-hook.py"
-          }
-        ]
-      }
-    ]
-  }
-}
-```
-
-Use the path where this skill is installed (commonly
-`~/.claude/skills/rework-mr/scripts/stop-hook.py`; if the skill lives elsewhere,
-point at that copy). Restart Claude Code so the hook loads.
-
-### How it behaves
-
-- **Scoped:** only acts on a turn where one of the gated commands (`present`,
-  `todo`, `quote`, `diff-view.sh`, `reply-view`, `change-preview.sh`) actually
-  ran and produced real output — every other turn (and every non-rework
-  session) passes straight through.
-- **Loop-safe:** uses `stop_hook_active` to force at most one retry, so it never
-  spins.
-- **Fails open:** any error (bad transcript, parse failure) → allows the stop; it
-  never wedges a session.
-
-It's a good idea to keep the hook narrow: it's harmless globally because it does
-nothing unless one of those blocks is present in the turn.
+The hook is shared with `review-mr` and installed once, outside the skill:
+**[`hooks/README.md`](../../hooks/README.md)** has the install snippet and how it
+behaves. What this skill gates lives in
+[`scripts/paste-gates.json`](scripts/paste-gates.json) — including why
+`threads.py sync` is deliberately *not* gated (it also runs as silent,
+intentionally-unshown prep in the opener, so gating it would false-block on that
+unrelated call; use `todo` for a status-only reply, which has no such double
+meaning).
 
 ## Scripts
 
@@ -84,4 +52,4 @@ nothing unless one of those blocks is present in the turn.
 - `diff-url.py` — stable per-topic diff URL across force-pushes.
 - `clip.sh` — copy a reply body to the clipboard (guards topic handles first).
 - `guard-reply.sh` — the topic-handle gate, reused by `clip.sh` and the post step.
-- `stop-hook.py` — the Stop hook above.
+- `paste-gates.json` — what the shared Stop hook enforces for this skill.

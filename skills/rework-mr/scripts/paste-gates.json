@@ -1,0 +1,75 @@
+{
+  "skill": "rework-mr",
+  "note": [
+    "Gate spec for the shared paste-enforcement Stop hook (hooks/paste-gate.py in the",
+    "agent-skills repo, installed as ~/.claude/hooks/paste-gate.py). The engine, the",
+    "failure it guards against and the detection rules are documented there.",
+    "`threads.py sync` is deliberately NOT gated even though the \"status-only\" doc path",
+    "pastes its output too: the opener also runs `sync` as silent,",
+    "intentionally-unshown prep (identical command text), so gating it would false-block",
+    "every opener turn demanding a redundant paste of that silent prep call. `todo` has no",
+    "such double-duty — it's only ever the user-facing status answer — so it's safe."
+  ],
+  "gates": [
+    {
+      "key": "present",
+      "cmd": "threads\\.py\\s+present\\b",
+      "signature": ["**MR !"],
+      "reason": "You ran `threads.py present` (the opener) but your message did not include its output. Tool output is COLLAPSED — the user cannot see it. Re-send your message starting with the FULL `present` output pasted verbatim: the MR title line, the overview table, and (if there is one) the first open topic's blockquoted comment. Do not summarise it or lead with your own research prose."
+    },
+    {
+      "key": "todo",
+      "cmd": "threads\\.py\\s+todo\\b",
+      "signature": ["**MR !"],
+      "reason": "You ran `threads.py todo` for a status-only request but your message did not include its output. Re-send your message with the FULL table pasted verbatim, not a paraphrase."
+    },
+    {
+      "key": "quote",
+      "cmd": "threads\\.py\\s+quote\\b",
+      "signature": ["◈"],
+      "reason": "You ran `threads.py quote` (moving to the next topic) but your message did not include its output. Re-send your message starting with the FULL quoted comment block pasted verbatim, not your own research prose."
+    },
+    {
+      "key": "diff-view",
+      "cmd": "diff-view\\.sh\\b",
+      "signature": ["**Diff (", "```diff"],
+      "reason": "You ran `diff-view.sh` to show this topic's working diff but your message did not include its output. Re-send your message with the FULL diff-view block pasted verbatim — the fenced diff and the final 'ACK to fix up and push?' — before asking for that ACK any other way. Never commit, push, or ask for the ACK without the diff actually shown."
+    },
+    {
+      "key": "reply-view",
+      "cmd": "threads\\.py\\s+reply-view\\b",
+      "signature": ["**Draft reply:**", "Thread (to post on):", "**`c`** copy to clipboard"],
+      "reason": "You ran `threads.py reply-view` for this reply but your message did not include its output. Tool output is COLLAPSED — the user cannot see it. Re-send your message as the FULL reply-view block pasted verbatim: the thread (reviewer's blockquoted note + every reply), the **Draft reply:** block, the Thread (to post on): URL, and the final c/p/n prompt line. Do not summarise it to just the prompt."
+    },
+    {
+      "key": "change-preview",
+      "cmd": "change-preview\\.sh\\b",
+      "signature": ["**Change (", "```"],
+      "reason": "You ran `change-preview.sh` to illustrate a trivial topic's fix but your message did not include its output. Re-send your message with the FULL change-preview block pasted verbatim — the fenced illustration and the final 'Agreed?' — not a description of the change."
+    }
+  ],
+  "required": [
+    {
+      "key": "fixup-ack",
+      "note": [
+        "The inverse of the diff-view gate: that gate only fires once diff-view.sh has RUN,",
+        "so skipping the script entirely — asking for the ACK straight out of prose — used to",
+        "pass unseen. SKILL.md states it as an absolute: never ask for the ACK without the",
+        "diff actually shown. The phrase is the script's own closing line, so a legitimate",
+        "message containing it has necessarily pasted diff-view's output (and the gate above",
+        "then checks the whole block); a message containing it with no run behind it can only",
+        "have written it out itself.",
+        "Anchored to a line start (with markdown/blockquote prefixes allowed) so that merely",
+        "TALKING about the phrase mid-sentence — editing this skill, quoting SKILL.md — is not",
+        "a hit; only presenting it as the ask is.",
+        "There is deliberately NO equivalent rule for change-preview's 'Agreed?': the",
+        "non-trivial branch ends with a plain discussion question, which can legitimately be",
+        "phrased that way, so it would block correct turns."
+      ],
+      "gate": "diff-view",
+      "text": "^[\\s>*_`]*ACK to fix up and push",
+      "flags": "m",
+      "reason": "You asked for the fixup+push ACK without running `diff-view.sh`, so the user is being asked to approve a fixup and force-push they cannot see. Run `$SD/diff-view.sh <t>` and re-send your message with its FULL output pasted verbatim — the fenced diff and the script's own closing ACK line — as the last thing in the message. Never commit, push, or ask for the ACK without the diff actually shown."
+    }
+  ]
+}

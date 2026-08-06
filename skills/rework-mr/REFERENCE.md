@@ -32,7 +32,8 @@ the reply (step 10).
    instead of showing it, you dropped it — redo it. (The repeated bug was showing the diff, then
    blaming/naming targets afterward — the `git blame` call in between pushed the diff out of mind
    by the time the message was written. A `Stop` hook enforces the diff-view block actually
-   reaching the user, the same way it does for `present`/`quote`/`reply-view`/`change-preview`.)
+   reaching the user, the same way it does for `present`/`quote`/`reply-view`/`change-preview` —
+   and it blocks an ACK request that has no `diff-view.sh` run behind it at all.)
 6. On ACK, **fixup — not a new commit** (the target(s) were already determined in step 4). A
    `fix(...)`/`refactor(...)` commit for code this MR branch introduced is almost always wrong
    (keep history clean for merge):

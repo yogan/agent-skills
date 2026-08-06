@@ -341,8 +341,9 @@ yet. Source: 🤖 llm · 👤 you · 👥 both/merged · 💬 peer reviewer · �
 
 ## Prerequisites
 
-A `Stop` hook (`scripts/stop-hook.py`) registered in `settings.json` — see the repo
-README; without it, pasted blocks get silently paraphrased away.
+The shared `Stop` hook (`hooks/paste-gate.py` + this skill's `scripts/paste-gates.json`)
+registered in `settings.json` — see the repo README; without it, pasted blocks get silently
+paraphrased away.
 `glab` authenticated; a review worktree (or willingness to create one); run inside the target
 repo. `python3`; macOS for `clip.sh`. Build blocks: the `explain-branch` and `review-branch`
 skills installed. `findings.py` subcommands: sync·todo·present·status·updates·bodies·quote·diff·candidates·
