@@ -18,6 +18,7 @@ never needs the network.
 import argparse
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -647,7 +648,12 @@ def seed_mr2(iid):
         json.dump(seed, f)
     out = findings(wt, "import", seed_file, "--iid", str(iid))
     info(out)
-    tids = out.rsplit(":", 1)[1].replace(" ", "").split(",")
+    # Extract the bare handles rather than splitting the string: `import` renders topic
+    # refs for humans (`◈ t1, ◈ t2`), and that decoration is free to change — it did,
+    # and a `.replace(" ", "")` split then produced `◈t1`, which `link` cannot resolve.
+    tids = re.findall(r"t\d+", out.rsplit(":", 1)[1])
+    if len(tids) != len(posted):
+        die(f"import reported {len(tids)} topics, expected {len(posted)}: {out!r}")
     for tid, (_t, did) in zip(tids, posted):
         findings(wt, "link", tid, did, "--iid", str(iid))
     info(f"linked {len(tids)} topics to their threads")
