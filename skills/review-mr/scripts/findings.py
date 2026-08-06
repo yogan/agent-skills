@@ -35,7 +35,6 @@ Subcommands (all read-only against GitLab):
   todo           render only what needs YOU (✎ drafts + ◐ needs-ack)
   present        overview + the first topic that needs you
   resume         the whole resume opener: updates + overview + first topic (one call)
-  status         approval + merge-readiness (detailed_merge_status) + approve/revoke nudge
   updates        pushes since your baseline: compare URLs + diffstats + topics touched
   bodies         first + last note of each posted thread (to judge status)
   quote <t>      render a topic's thread notes verbatim (for a draft: display
@@ -79,23 +78,16 @@ KIND_ICON = {"question": "❓", "praise": "💚"}
 SRC_ICON = {"llm": "🤖", "human": "👤", "both": "👥", "peer": "💬", "author": "🖊️"}
 INBOUND = ("peer", "author")
 
-# detailed_merge_status → (icon, wording, whose turn). Unknown values fall through.
-MERGE_FRIENDLY = {
-    "mergeable": ("✅", "ready to merge", None),
-    "not_approved": ("🔸", "needs approval", None),
-    "discussions_not_resolved": ("⛔", "threads unresolved on GitLab", "resolve"),
-    "need_rebase": ("⚠️", "needs rebase", "author"),
-    "ci_must_pass": ("❌", "CI failing", "author"),
-    "ci_still_running": ("⏳", "CI running", None),
-    "conflict": ("⛔", "merge conflicts", "author"),
-    "draft_status": ("📝", "marked draft", "author"),
-    "requested_changes": ("🔻", "changes requested", None),
-    "blocked_status": ("⛔", "blocked by another MR", None),
-    "checking": ("…", "merge status still checking", None),
-    "unchecked": ("…", "merge status not checked yet", None),
-    "not_open": ("—", "not open", None),
-}
-TURN_TXT = {"author": " — author's turn", "resolve": " — resolve them on GitLab"}
+
+def tref(tid):
+    """A topic id as the user reads it — always carrying the topic icon, so `t3` never
+    turns up bare in rendered output and is never mistaken for a GitLab thread id.
+
+    Deliberately NOT used for: CLI examples (`set t3 --line 9` must stay copy-pasteable),
+    `die()` diagnostics about a topic that does not exist, the bare id `add` prints for
+    capture, and thread/discussion ids — `candidates` lists those, and they are not topics.
+    """
+    return f"{TOPIC_ICON} {tid}"
 
 
 def first_name(name):
@@ -435,7 +427,8 @@ def render_table(state, scope="all"):
         out += ["| State | Topic | Kind | Src | Location | Summary |",
                 "|---|---|---|---|---|---|"]
         for t in shown:
-            s = st[t["id"]]
+            tid = t["id"]
+            s = st[tid]
             summ = short_summary(state, t).replace("|", "\\|")
             if t.get("source") in INBOUND and t.get("by"):
                 summ = f"_{t['by']}:_ {summ}"           # who raised this thread
@@ -443,7 +436,7 @@ def render_table(state, scope="all"):
                            for x in t["thread_ids"])
             mark = " ✓" if resolved and s == "needs_ack" else ""   # GitLab-resolved
             out.append(
-                f"| {GLYPH[s]} {WORD[s]}{mark} | {TOPIC_ICON} **{t['id']}** "
+                f"| {GLYPH[s]} {WORD[s]}{mark} | {tref(f'**{tid}**')} "
                 f"| {kind_icon(t)} | {SRC_ICON.get(t.get('source'), '🤖')} "
                 f"| `{_loc(state, t)}` | {summ} |")
     else:
@@ -459,13 +452,6 @@ def render_table(state, scope="all"):
     if counts["open"]:
         prog.append(f"{counts['open']} awaiting author")
     tail = ["", "**Topics:** " + " · ".join(prog)]
-    r = state.get("readiness")
-    if r:
-        tail += ["", f"**Approvals:** {_approval_line(r)}  |  "
-                 f"**Merge:** {_merge_line(r)}"]
-        adv = _advice(state, st)
-        if adv:
-            tail += ["", adv]
     return "\n".join(out + tail)
 
 
@@ -639,7 +625,7 @@ def render_quote(state, tid):
     summ = t.get("summary") or ""
     out = []
     if not t["thread_ids"]:                       # a draft — show its draft text
-        title = f"**{TOPIC_ICON} {t['id']}" + (f" — {summ}**" if summ else "**")
+        title = f"**{tref(t['id'])}" + (f" — {summ}**" if summ else "**")
         # Meta lines (title + where to open the thread) are for the user's eyes
         # only — NOT part of the comment. The paste payload is the body below,
         # which `draft <t>` emits on its own for the clipboard / posting.
@@ -668,7 +654,7 @@ def render_quote(state, tid):
         x = state["threads"].get(th, {})
         path = f"{x.get('file')}:{x.get('line') or ''}"
         if i == 0:
-            title = f"**{TOPIC_ICON} {t['id']}" + (f" — {summ}**" if summ else "**")
+            title = f"**{tref(t['id'])}" + (f" — {summ}**" if summ else "**")
             out.append(f"{title} · `{path}` · {lang_hint(state)}")
         else:
             out.append(f"`{path}`")
@@ -726,7 +712,7 @@ def render_bodies(state):
             x = state["threads"].get(th, {})
             res = (f", resolved by {first_name(x.get('resolved_by')) or '?'}"
                    if x.get("resolved") else "")
-            out.append(f"[{t['id']}] {os.path.basename(x.get('file') or '')}:"
+            out.append(f"[{tref(t['id'])}] {os.path.basename(x.get('file') or '')}:"
                        f"{x.get('line') or ''}  "
                        f"(last: {first_name(x.get('last_author'))}{res})  {x.get('url')}")
             out.append(f"  {first_name(x.get('author'))}: {(x.get('body') or '').strip()}")
@@ -796,7 +782,12 @@ def _compare(ctx, frm, to):
 def _gl_compare(ctx, frm, to):
     """Server-side diffstat for frm→to via GitLab's compare API. Robust across
     force-push (GitLab keeps every SHA; the local repo prunes old version heads).
-    Returns {'stat': 'N files, +A −D', 'paths': [...]} or None if it can't."""
+    Returns {'stat': '`+A/−D` · N files', 'paths': [...]} or None if it can't.
+
+    The churn leads and is set in code, so the number the eye wants is first and visually
+    separated from the prose that follows; the file count trails it. No colour: the block
+    is pasted by the model into a chat message, so ANSI could not survive the round trip
+    even where the renderer would honour it."""
     diffs = _compare(ctx, frm, to)
     if diffs is None:
         return None
@@ -810,7 +801,7 @@ def _gl_compare(ctx, frm, to):
             elif ln.startswith("-") and not ln.startswith("---"):
                 dele += 1
     nf = len(diffs)
-    return {"stat": f"{nf} {'file' if nf == 1 else 'files'}, +{add} −{dele}",
+    return {"stat": f"`+{add}/−{dele}` · {nf} {'file' if nf == 1 else 'files'}",
             "paths": paths}
 
 
@@ -855,86 +846,6 @@ def _topics_touching(state, files):
         if tf and tf in fs:
             hit.append(t["id"])
     return hit
-
-
-# ---------------------------------------------------------------- readiness
-
-
-def _approvals(ctx, iid):
-    try:
-        return api(f"projects/{ctx['enc']}/merge_requests/{iid}/approvals") or {}
-    except SystemExit:
-        return {}
-
-
-def refresh_readiness(state, ctx, iid, me):
-    """Fetch approval + merge status into state["readiness"] so the renderers (all
-    offline) can show it. Read-only. Called by the fetching commands."""
-    mr = mr_object(ctx, iid)
-    ap = _approvals(ctx, iid)
-    who = ap.get("approved_by") or []
-    users = [(u.get("user") or {}) for u in who]
-    state["readiness"] = {
-        "merge": mr.get("detailed_merge_status") or mr.get("merge_status"),
-        "resolved": mr.get("blocking_discussions_resolved"),
-        "draft": bool(mr.get("draft") or mr.get("work_in_progress")),
-        "req": ap.get("approvals_required"),
-        "you_approved": bool(me) and any(u.get("username") == me for u in users),
-        "approvers": [first_name(u.get("name") or u.get("username")) for u in users],
-    }
-    return state["readiness"]
-
-
-def _merge_line(r):
-    ms = r.get("merge")
-    icon, text, turn = MERGE_FRIENDLY.get(ms, ("•", (ms or "unknown").replace("_", " "), None))
-    return f"{icon} {text}{TURN_TXT.get(turn, '')}"
-
-
-def _approval_line(r):
-    apr = r.get("approvers") or []
-    req = r.get("req")
-    base = str(len(apr)) + (f"/{req}" if req else "")
-    who = f" ({', '.join(apr)})" if apr else ""
-    return f"{base} · you {'✓' if r.get('you_approved') else '✗'}{who}"
-
-
-def _advice(state, st):
-    """The approve/revoke nudge. Nudge to approve only when your review is fully
-    done AND GitLab agrees all threads are resolved (else name the gap). Offer to
-    revoke when a topic needs you again after you'd approved."""
-    r = state.get("readiness")
-    if not r or not state["topics"]:
-        return None
-    open_work = sum(1 for t in state["topics"]
-                    if st[t["id"]] in ("draft", "open", "needs_ack"))
-    if r.get("you_approved"):
-        if open_work:
-            return ("⚠️ you've already approved, but a topic needs you again — "
-                    "**revoke approval?** (I can run `glab mr revoke` on your OK)")
-        return None                              # approved & done; merge line says the rest
-    if open_work:
-        return None                              # review not finished → no approve nudge
-    if r.get("resolved"):
-        return ("✅ all topics closed and GitLab shows every thread resolved — "
-                "**approve?** (I'll run `glab mr approve` on your OK)")
-    return ("you've closed every topic on your side, but GitLab still shows "
-            "unresolved threads — resolve them there first, then approve")
-
-
-def render_status(state):
-    """Compact merge-readiness block for the `status` command."""
-    r = state.get("readiness")
-    if not r:
-        return "(no merge status fetched yet — run `sync`)"
-    st = {t["id"]: topic_status(state, t) for t in state["topics"]}
-    out = [f"**MR !{state['iid']}** — merge readiness",
-           f"**Approvals:** {_approval_line(r)}",
-           f"**Merge:** {_merge_line(r)}"]
-    adv = _advice(state, st)
-    if adv:
-        out += ["", adv]
-    return "\n".join(out)
 
 
 def head_report(state, ctx, iid):
@@ -1001,7 +912,7 @@ def render_updates(state, ctx, iid):
                 touch = _topics_touching(state, cmp["paths"])
                 line = f"  - {cmp['stat']}"
                 if touch:
-                    line += f" · touches {', '.join(touch)}"
+                    line += f" · touches {', '.join(tref(x) for x in touch)}"
                 out.append(line)
             else:
                 out.append("  - (diffstat unavailable — inspect via the URL)")
@@ -1014,17 +925,17 @@ def render_topic_diff(state, ctx, iid, tid, inline_limit=80):
     small (≤ inline_limit lines), else just the compare URL. Always prints the URL."""
     t = topic_for(state, tid) or die(f"no topic {tid}")
     if not t["thread_ids"]:
-        return f"{tid} isn't posted on GitLab yet — nothing the author could change"
+        return f"{tref(tid)} isn't posted on GitLab yet — nothing the author could change"
     start = t.get("start_sha") or state.get("last_reviewed_head")
     if not start:
-        return f"{tid}: no baseline captured — nothing to compare yet"
+        return f"{tref(tid)}: no baseline captured — nothing to compare yet"
     cur = mr_head(ctx, iid)
     file = _loc(state, t, full=True).rsplit(":", 1)[0]
     vs = versions(ctx, iid)
     diff_id = vs[0].get("id") if vs else None
     web = _mr_web(state, ctx, iid)
     url = f"{web}/diffs?diff_id={diff_id}&start_sha={start}"
-    out = [f"**{TOPIC_ICON} {tid}** — author changes since you posted "
+    out = [f"**{tref(tid)}** — author changes since you posted "
            f"(`{start[:12]}` → `{(cur or '')[:12]}`)", url]
     diffs = _compare(ctx, start, cur)
     if diffs is None:
@@ -1122,6 +1033,11 @@ def resolve_state(args):
         iid = mr["iid"]
     path = state_file(ctx["slug"], iid)
     state = load(path)
+    if state:
+        # Dropped with the approval/merge-readiness footer. Popped so an existing review's
+        # state file stops carrying a blob nothing reads (removable once no state predates
+        # the removal — it costs one line and saves a confusing read of findings.json).
+        state.pop("readiness", None)
     # Identity (iid/title/url/author) must come from the MR keyed by `iid`,
     # NEVER from the ambient branch. `mr_view()` reads whatever branch cwd is on,
     # and cwd resets to the main repo (usually YOUR own branch) between shell
@@ -1159,7 +1075,7 @@ def main():
     sub = ap.add_subparsers(dest="cmd")
 
     for name in ("sync", "todo", "present", "resume", "bodies", "candidates",
-                 "head", "set-head", "updates", "status", "path"):
+                 "head", "set-head", "updates", "path"):
         sub.add_parser(name).add_argument("--iid", type=int)
 
     sub.add_parser("worktree").add_argument("--set", dest="set_path")
@@ -1250,24 +1166,17 @@ def main():
         print(path)
     elif cmd == "sync":
         sync(state, fetch_threads(ctx, iid, me, author))
-        refresh_readiness(state, ctx, iid, me)
         save(path, state)
         print(render_table(state, "all"))
         print("\n_" + head_report(state, ctx, iid) + "_")
     elif cmd == "todo":
         sync(state, fetch_threads(ctx, iid, me, author))
-        refresh_readiness(state, ctx, iid, me)
         save(path, state)
         print(render_table(state, "mine"))
     elif cmd == "present":
         sync(state, fetch_threads(ctx, iid, me, author))
-        refresh_readiness(state, ctx, iid, me)
         save(path, state)
         print(render_present(state))
-    elif cmd == "status":
-        refresh_readiness(state, ctx, iid, me)
-        save(path, state)
-        print(render_status(state))
     elif cmd == "bodies":
         print(render_bodies(state))
     elif cmd == "candidates":
@@ -1282,7 +1191,6 @@ def main():
         print(render_topic_diff(state, ctx, iid, args.topic))
     elif cmd == "updates":
         sync(state, fetch_threads(ctx, iid, me, author))
-        refresh_readiness(state, ctx, iid, me)
         save(path, state)
         print(render_updates(state, ctx, iid))
     elif cmd == "resume":
@@ -1292,7 +1200,6 @@ def main():
         # steps the second one gets skipped, and the overview table — the user's only
         # view of where all topics stand — silently goes missing.
         sync(state, fetch_threads(ctx, iid, me, author))
-        refresh_readiness(state, ctx, iid, me)
         save(path, state)
         print(render_updates(state, ctx, iid))
         print("\n---\n")
@@ -1308,7 +1215,8 @@ def main():
             items = json.load(f)
         added = [add_topic(state, **it)["id"] for it in items]
         save(path, state)
-        print(f"added {len(added)} findings: {', '.join(added)}")
+        print(f"added {len(added)} findings: "
+              f"{', '.join(tref(x) for x in added)}")
     elif cmd == "add":
         t = add_topic(state, kind=args.kind, severity=args.severity,
                       source=args.source, summary=args.summary, file=args.file,
@@ -1380,7 +1288,7 @@ def main():
             did = hits[0]
         attach_thread(state, t, did, ctx, iid, args.start_sha)
         save(path, state)
-        print(f"{args.topic} ← {did}")
+        print(f"{tref(args.topic)} ← {did}")
 
 
 if __name__ == "__main__":

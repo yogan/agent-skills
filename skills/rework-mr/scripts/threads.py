@@ -64,6 +64,18 @@ GLYPH = {k: v[1] for k, v in STATUSES.items()}
 WORD = {k: v[2] for k, v in STATUSES.items()}
 
 
+def tref(tid):
+    """A topic id as the user reads it — always carrying the topic icon, so `t3` never
+    turns up bare in rendered output and is never mistaken for a GitLab thread id.
+    (Mirrors review-mr's findings.py.)
+
+    Deliberately NOT used for: CLI examples (`set t3 --state waiting` must stay
+    copy-pasteable), `die()` diagnostics about a topic that does not exist, and
+    thread/discussion ids, which are not topics.
+    """
+    return f"{TOPIC_ICON} {tid}"
+
+
 def first_name(name):
     """'Doe, Jane - AB12345' -> 'Jane'; 'Jane Doe' -> 'Jane'."""
     n = (name or "").strip()
@@ -247,9 +259,10 @@ def render_table(state, scope="all", show_done=False):
     if shown:
         out += ["| Status | Topic | Location | Summary |", "|---|---|---|---|"]
         for t in shown:
-            s = st[t["id"]]
+            tid = t["id"]
+            s = st[tid]
             summ = short_summary(state, t).replace("|", "\\|")
-            out.append(f"| {GLYPH[s]} {WORD[s]} | {TOPIC_ICON} **{t['id']}** "
+            out.append(f"| {GLYPH[s]} {WORD[s]} | {tref(f'**{tid}**')} "
                        f"| `{_loc(state, t)}` | {summ} |")
     else:
         out.append("_✓ nothing needs you — open threads are waiting on the reviewer_"
@@ -276,7 +289,7 @@ def render_quote(state, tid):
         x = state["threads"].get(th, {})
         path = f"{x.get('file')}:{x.get('line') or ''}"
         if i == 0:
-            title = f"**{TOPIC_ICON} {t['id']}" + (f" — {summ}**" if summ else "**")
+            title = f"**{tref(t['id'])}" + (f" — {summ}**" if summ else "**")
             out.append(f"{title} · `{path}`")
         else:
             out.append(f"`{path}`")
@@ -352,7 +365,7 @@ def render_plans(state):
             continue
         stamp = ("  [✎ ALREADY PUSHED — reply pending; do NOT re-implement, "
                  "go to the reply step]" if s == "reply_pending" else "")
-        out.append(f"{TOPIC_ICON} {t['id']} — {t.get('summary') or ''}{stamp}")
+        out.append(f"{tref(t['id'])} — {t.get('summary') or ''}{stamp}")
         if t.get("decision"):
             out.append(f"  decision: {t['decision']}")
         if t.get("plan"):
@@ -372,7 +385,7 @@ def render_bodies(state):
             continue
         for th in t["thread_ids"]:
             x = state["threads"].get(th, {})
-            out.append(f"[{t['id']}] {os.path.basename(x.get('file') or '')}:"
+            out.append(f"[{tref(t['id'])}] {os.path.basename(x.get('file') or '')}:"
                        f"{x.get('line') or ''}  (last spoke: {first_name(x.get('last_author'))})"
                        f"  {x.get('url')}")
             out.append(f"  {first_name(x.get('author'))}: {(x.get('body') or '').strip()}")
