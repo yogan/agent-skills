@@ -42,25 +42,31 @@ wrong worktree resolves the wrong MR).
 | 2 `rereview` | `~/src/agent-skills-demo-review` | `/review-mr !2` |
 | 3 `rework` | `~/src/agent-skills-demo` | `/rework-mr` |
 
-Start the claude sessions now so the processes are warm, but **do not invoke the skills**
-— typing the command live is part of the show.
-
 > Windows 1 and 2 share one worktree (the pointer is repo-wide, one path per project).
 > Run `!1` first, and let `/review-mr` switch the checkout when you move to `!2`.
 
-## T-0 — kick off the slow work before you say a word
+Deck: `cd ~/src/agent-skills-slides && npm run dev`, open **Agentic Code Reviews**, `F` for
+play mode and `P` for the presenter window (notes + elapsed timer). Four pages, **15 `→`
+presses** — the two skill pages reveal their five rows one press at a time.
 
-In window 1, paste this and leave it running. It front-loads every answer so the run is
-genuinely unattended while you do the intro:
+Start the claude sessions now so the processes are warm, but **do not invoke the skills** —
+typing the command live is part of the show.
+
+## T-0 — the kickoff, on slide 2
+
+Slide 2 is the `/review-mr` page. Type this in window 1 **as you land on it**, before you
+start talking through the rows, and leave it running. It front-loads every answer so the run
+is genuinely unattended:
 
 ```
 /review-mr !1 — generate the explainer first, then seed findings with review-branch,
 then show me the overview and stop. Don't ask me anything before the overview.
 ```
 
-By ~4 min you should have the explainer HTML *and* the findings overview parked at the
-first topic. Rehearse the first 30 s at least once: if it stops on a question you did not
-pre-answer, it sits idle while you talk and you arrive at nothing.
+It takes ~4 min, which is what the slide's five rows are there to fill. By the time you
+switch to the terminal, the explainer HTML *and* the findings overview are both parked.
+Rehearse the first 30 s at least once: if it stops on a question you did not pre-answer, it
+sits idle while you talk and you arrive at nothing.
 
 ## Run of show
 
@@ -70,14 +76,22 @@ opened automatically. It produced **7 findings**, critical → low, with both pl
 the list (CORS wildcard+credentials at 🔴 critical, the missing `await` at 🟡 medium) plus four
 it found on its own. No prompt beyond `/review-mr !1` was needed.
 
-| Time | Segment | Beats |
+| Time | Where | Beats |
 |---|---|---|
-| 0-3 | Framing | Why MR review hurts: tone, multi-day loops, "did they actually fix it?" |
-| 3-4 | The rig | tmux + 3 sessions + local GitLab. "All local — I reset the whole thing in 20 seconds" |
-| 4-13 | **`/review-mr` !1** | explainer → **overview table = the money shot** → curate 2 topics → **post a comment of your own in the browser, then `sync`** → draft 1 comment → paste into the UI and post |
-| 13-17 | **`/review-mr` !2** | "a review I started last week" → `sync` → `updates` (2 compare URLs) → `diff t1` → ack t1 → t2 the author's question → t3 claimed-but-not-done |
-| 17-26 | **`/rework-mr` !3** | hat switch → `sync` → t1 trivial (recommendation-first) → t2 hard (grilling, keep it short) → fix → fixup + force-push → `reply-view` → paste one reply, let the agent post the other |
-| 26-30 | Wrap | glab-only, read-only by design, the handle guard, state files. Then the rig — this crowd will want it |
+| 0-3 | **slide 1** — title | Show of hands. Why MR review hurts: tone, multi-day loops, "did they actually fix it?" |
+| 3-7 | **slide 2** — `/review-mr` | **type the kickoff on arrival**, then talk the five rows while it runs: explainer · agent review · human review · drafting · follow-up |
+| 7-14 | terminal — **!1** | explainer → **overview table = the money shot** → curate 2 topics → **post a comment of your own in the browser, then `sync`** → draft 1 comment → paste into the UI and post |
+| 14-18 | terminal — **!2** | "a review I started last week" → `sync` → `updates` (2 compare URLs) → `diff t1` → ack t1 → t2 the author's question → t3 claimed-but-not-done |
+| 18-20 | **slide 3** — `/rework-mr` | hat switch. Five rows: threads · grilling · fixing · pushing · replies |
+| 20-27 | terminal — **!3** | `sync` → t1 trivial (recommendation-first) → t2 hard (grilling, keep it short) → fix → fixup + force-push → `reply-view` → paste one reply, let the agent post the other |
+| 27-30 | **slide 4** — outro | Don't oversell it: `glab`-only, read-only by design, the handle guard, state files. Questions |
+
+Rows 1-4 of slide 2 are the `!1` segment; row 5 (`follow-up`) is `!2`. The slide stays up for
+both, so it is talked once and cashed in twice.
+
+**The rig is deliberately not a segment.** No slide, no tour of tmux or the local GitLab —
+nobody needs the talk's own scaffolding. If it comes up in questions, one sentence: it's a
+local GitLab in Docker, reset in 20 seconds.
 
 ### Things worth saying out loud
 
