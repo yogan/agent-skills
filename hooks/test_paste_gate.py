@@ -243,6 +243,38 @@ class TestGates(HookCase):
             assistant_text("\n".join(body)),
         ])
 
+    def test_collapsed_duplicate_critical_line_blocks(self):
+        """A block can legitimately contain two IDENTICAL critical lines — this is, in
+        fact, exactly the original production report that started this round of fixes: a
+        reviewed file with `app.include_router(config.router)` registered twice by
+        mistake. If the model's paste silently collapses the duplicate down to one
+        occurrence — a very plausible "cleanup" for an LLM to make unprompted — a
+        set-membership check ("is this text present somewhere") is blind to it: the text
+        IS present, just with the wrong multiplicity, so nothing looks missing. Surfaced
+        by a differential fuzz between the pre- and post-difflib-refactor
+        implementations (dev-time only, not a repo dependency) as a genuine improvement,
+        not a behavior change to guard against — difflib's positional alignment catches
+        this where the old set-based check could not."""
+        dup_out = ("**2 push(es) since your last review** (tip `abc123def456`)\n\n"
+                  "**MR !123** — Add rate limiting\n\n"
+                  "| State | Topic | Location |\n"
+                  "|---|---|---|\n"
+                  "| open | duplicate router registration | backend/idp/main.py:44 |\n\n"
+                  "```python\n"
+                  "app.include_router(health.router)\n"
+                  "app.include_router(config.router)\n"
+                  "app.include_router(config.router)\n"
+                  "```")
+        collapsed = dup_out.replace(
+            "app.include_router(config.router)\napp.include_router(config.router)",
+            "app.include_router(config.router)")
+        self.assertBlocked([
+            user_prompt(),
+            bash_call("u1", "python3 $SD/findings.py resume --iid 123"),
+            tool_result("u1", dup_out),
+            assistant_text(collapsed),
+        ], contains="findings.py resume")
+
     def test_two_dropped_lines_block(self):
         kept = [ln for ln in RESUME_OUT.strip().splitlines()
                 if "unbounded retry loop" not in ln and "missing timeout" not in ln]
@@ -569,6 +601,36 @@ class TestBothSkills(HookCase):
         self.assertBlocked([
             user_prompt(),
             bash_call("u1", "$SD/change-preview.sh t9"),
+            tool_result("u1", change_out),
+            assistant_text("\n".join(body)),
+        ], contains="change-preview.sh")
+
+    def test_multiple_embedded_fence_markers_stay_inside_widened_fence(self):
+        """A single fence can legitimately contain more than one embedded backtick run
+        of DIFFERENT widths — two illustrated snippets in one change-preview, say.
+        `fence()` widens to strictly more than the widest of them, so every embedded
+        run, whatever its own width, must fail to close the outer fence — not just the
+        first one encountered. A property-based sweep (Hypothesis, run ad hoc during
+        development, not a repo dependency) explored this dimension at up to 3 embeds
+        per fence with no failure; this pins the two-embed case permanently."""
+        change_out = ("**Change (t11):** show both illustrations\n\n"
+                      "`````python\n"
+                      "# first illustration:\n"
+                      "```\n"
+                      "old snippet\n"
+                      "```\n"
+                      "# second illustration, a bit wider:\n"
+                      "````\n"
+                      "newer snippet\n"
+                      "````\n"
+                      "for _ in range(MAX_RETRIES):\n"
+                      "    resp = self._send(req)\n"
+                      "`````\n\n"
+                      "Agreed?")
+        body = [ln for ln in change_out.splitlines() if "for _ in range" not in ln]
+        self.assertBlocked([
+            user_prompt(),
+            bash_call("u1", "$SD/change-preview.sh t11"),
             tool_result("u1", change_out),
             assistant_text("\n".join(body)),
         ], contains="change-preview.sh")

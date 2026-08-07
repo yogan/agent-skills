@@ -62,6 +62,7 @@ read or grepped (SKILL.md, REFERENCE.md, this file and the specs all mention the
 names and phrases too) — and from false-passing on a message that only talks about the
 markers without actually pasting the block.
 """
+import difflib
 import json
 import re
 import sys
@@ -161,72 +162,87 @@ def _result_text(c):
     return ""
 
 
-def _missing_lines(result, shown):
-    """(missing, corrupted, critical) — three distinct ways a line of `result` can fail
-    to show up intact as its own line in the visible message.
+def _fence_flags(result_lines):
+    """Per line of `result_lines` (already stripped): was this line inside a fenced code
+    block?
 
-    Line-based, NOT a contiguous-substring match over the whole blob. The skills ask the
-    model to interleave its own text with pasted output — `review-mr`'s `updates` block is
-    pasted and then annotated with a summary sub-bullet per push — so requiring one
-    unbroken block flagged correct, fully-pasted messages: every line was present, just
-    not consecutively. Checking membership against the SET of `shown`'s lines (rather than
-    `stripped in shown` as one long string) is what makes "its own line" mean something:
-    a plain substring check also matches a line that is merely a PREFIX of some longer,
-    corrupted line.
-
-    `corrupted` — the original line's text still present, but glued onto the HEAD or TAIL
-    of a different line instead of standing on its own (e.g. the model's own transition
-    sentence spliced onto a fenced code line with no newline in between: the code line
-    becomes a PREFIX of the corrupted one). Checked as `startswith`/`endswith`, not a bare
-    `in`: two independently-pasted, legitimate blocks can coincidentally share an 8+ char
-    substring in the MIDDLE of an unrelated line (a helper name mentioned in prose, say),
-    and that coincidence is not gluing — it would false-block a correct message. Anchoring
-    to the boundary is what tells "spliced onto" apart from "happens to appear inside."
-
-    `critical` — genuinely absent (not even glued elsewhere), but from a part of the block
-    where a silent drop is exactly the failure this hook exists to prevent: a markdown
-    table row (starts with `|` — an entire finding disappearing from the overview) or a
-    line inside a fenced code block (the source the user is meant to judge a finding
-    against). These get no tolerance, unlike a dropped prose line.
-
-    Fence tracking mirrors CommonMark's own rule (and `rework-mr`'s `fence()`, which
-    exploits it on purpose): a fence of N backticks is closed only by a line of AT LEAST N
-    backticks and nothing else. A naive "toggle on any `` ``` `` line" breaks on exactly
-    the case `fence()` widens for — a diff that touches a markdown file, or a quoted
-    ```suggestion, carries its own literal ``` mid-block, and `rework-mr` opens with four
-    backticks (or more) so that inner run does NOT close it early. Toggling on sight would
-    desync there — the tail of a real fenced block would read as "outside" and lose its
-    critical status. Tracking the required close-run-length, not just "was a fence line
-    seen", is what keeps that in sync.
-
-    `missing` — genuinely absent, and not `critical`: a dropped preamble sentence, a
-    swapped-out lead-in. Can be an honest, harmless edit — see `violation()`, which
-    tolerates exactly one of these, but none of `corrupted` or `critical`.
+    Mirrors CommonMark's own rule (and `rework-mr`'s `fence()`, which exploits it on
+    purpose): a fence of N backticks is closed only by a line of AT LEAST N backticks and
+    NOTHING ELSE. A naive "toggle on any `` ``` `` line" breaks on exactly the case
+    `fence()` widens for — a diff that touches a markdown file, or a quoted ```suggestion,
+    carries its own literal ``` mid-block, and `rework-mr` opens with four backticks (or
+    more) so that inner run does NOT close it early. Tracking the required close-run-length,
+    not just "was a fence line seen", is what keeps this in sync with that.
     """
-    shown_lines = [ln.strip() for ln in shown.splitlines()]
-    shown_set = set(shown_lines)
-    missing, corrupted, critical = [], [], []
+    flags = []
     in_fence, fence_len = False, 0
-    for line in result.strip().splitlines():
-        stripped = line.strip()
-        was_in_fence = in_fence
+    for stripped in result_lines:
+        flags.append(in_fence)
         ticks = len(stripped) - len(stripped.lstrip("`"))
         if in_fence:
             if ticks >= fence_len and stripped.lstrip("`").strip() == "":
                 in_fence = False           # a bare run of >= fence_len backticks closes it
         elif ticks >= 3:
             in_fence, fence_len = True, ticks
-        if len(stripped) < 8 or set(stripped) <= set("-|` "):
+    return flags
+
+
+def _missing_lines(result, shown):
+    """(missing, corrupted, critical) — three distinct ways a line of `result` can fail
+    to show up intact in the visible message.
+
+    Alignment is `difflib.SequenceMatcher` over the two LINE sequences, not a
+    contiguous-substring match over the whole blob and not a plain "is this line present
+    anywhere" set check. The skills ask the model to interleave its own text with pasted
+    output — `review-mr`'s `updates` block is pasted and then annotated with a summary
+    sub-bullet per push — so requiring one unbroken block flagged correct, fully-pasted
+    messages: every original line was present, just not consecutively. `get_opcodes()`
+    gives that for free: an untouched original line surfaces as `equal` regardless of how
+    much unrelated `insert`ed commentary surrounds it, so interleaving never has to be
+    special-cased.
+
+    `corrupted` — a `replace` opcode whose original line is a PREFIX or SUFFIX of one of
+    its replacement lines: the model's own transition sentence spliced onto a fenced code
+    line with no newline in between, say, leaving the code line's text glued onto (not
+    replacing) something else. Checked as `startswith`/`endswith` against only the lines
+    difflib itself aligned to this position — not a global scan — which is also what keeps
+    two independently-pasted, legitimate blocks that coincidentally share an 8+ char run
+    in the middle of some unrelated, DISTANT line from being misread as gluing: if nothing
+    aligns there, difflib reports a plain `delete`, not a `replace`.
+
+    `critical` — genuinely absent (`delete`, or a `replace` that isn't a boundary match),
+    from a part of the block where a silent drop is exactly the failure this hook exists to
+    prevent: a markdown table row (starts with `|` — an entire finding disappearing from
+    the overview) or a line inside a fenced code block (the source the user is meant to
+    judge a finding against, per `_fence_flags`). These get no tolerance, unlike a dropped
+    prose line.
+
+    `missing` — genuinely absent, and not `critical`: a dropped preamble sentence, a
+    swapped-out lead-in. Can be an honest, harmless edit — see `violation()`, which
+    tolerates exactly one of these, but none of `corrupted` or `critical`.
+    """
+    result_lines = [ln.strip() for ln in result.strip().splitlines()]
+    shown_lines = [ln.strip() for ln in shown.splitlines()]
+    in_fence = _fence_flags(result_lines)
+
+    missing, corrupted, critical = [], [], []
+    matcher = difflib.SequenceMatcher(None, result_lines, shown_lines, autojunk=False)
+    for tag, i1, i2, j1, j2 in matcher.get_opcodes():
+        if tag in ("equal", "insert"):
             continue
-        if stripped in shown_set:
-            continue
-        if any(ln != stripped and (ln.startswith(stripped) or ln.endswith(stripped))
-               for ln in shown_lines):
-            corrupted.append(stripped)
-        elif was_in_fence or stripped.startswith("|"):
-            critical.append(stripped)
-        else:
-            missing.append(stripped)
+        counterparts = shown_lines[j1:j2]
+        for k in range(i1, i2):
+            stripped = result_lines[k]
+            if len(stripped) < 8 or set(stripped) <= set("-|` "):
+                continue
+            if tag == "replace" and any(
+                    c != stripped and (c.startswith(stripped) or c.endswith(stripped))
+                    for c in counterparts):
+                corrupted.append(stripped)
+            elif in_fence[k] or stripped.startswith("|"):
+                critical.append(stripped)
+            else:
+                missing.append(stripped)
     return missing, corrupted, critical
 
 
