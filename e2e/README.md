@@ -3,8 +3,7 @@
 A local GitLab CE with a seeded project, three MRs and pre-seeded review conversations, for
 demoing and end-to-end testing `review-mr` and `rework-mr` without touching a real instance.
 
-Design decisions and rationale: [PLAN.md](PLAN.md). Talk-day checklist and run of show:
-[RUNBOOK.md](RUNBOOK.md).
+Talk-day checklist and run of show: [RUNBOOK.md](RUNBOOK.md).
 
 ## Layout
 
@@ -17,6 +16,7 @@ Design decisions and rationale: [PLAN.md](PLAN.md). Talk-day checklist and run o
 | `patches/` | the frozen MR diffs (`mr1-flaws.patch`, `mr2/`, `mr3/`) |
 | `.env.local` | generated token/host values (gitignored) |
 | `.cache/` | bare upstream mirror + throwaway build tree (gitignored) |
+| `backup/` | fallback explainer + cached seed for talk day (gitignored, so machine-local) |
 
 ## One-time setup
 
@@ -59,13 +59,15 @@ exactly that, so the fixture exercises the real path.
 ## Reset before every run
 
 ```sh
-python3 fixture.py          # ~20 s, idempotent, offline
+python3 fixture.py          # ~28 s, idempotent, offline
 ```
 
 Deletes and recreates the *project* (that is what restarts MR IIDs at 1), re-pushes branches,
 recreates the MRs, seeds threads and the local review state, re-clones the working copy at
 `~/src/agent-skills-demo` (plus a review worktree beside it), and wipes skill state under
 `~/.claude/review-mr/` and `~/.claude/rework-mr/`.
+
+On talk day use `./tmux-demo.sh` instead — it runs this only if the state does not verify.
 
 ### What it builds
 
@@ -93,10 +95,38 @@ python3 ~/.claude/skills/rework-mr/scripts/threads.py sync --iid 3
 #   three ○ open topics
 ```
 
-## Talk day
+`glab api user` must run **inside a demo checkout** — glab resolves its host from the git
+remote, so from `e2e/` (a GitHub remote) it returns `401`, not `frank`.
 
-Do **not** `docker compose down` — keep the container warm (a cold boot is 3-5 min). Run
-`fixture.py` immediately before the talk. Full checklist: [RUNBOOK.md](RUNBOOK.md).
+## Why it is built this way
+
+Decisions that are expensive to rediscover, and that look like cruft until you know why:
+
+- **`main` is pinned at `74c76128`** (2024-05-03, parent of `e74349ee`). The era matters: the
+  upstream monorepo split lands at `1508d6d`, and everything before it is a flat `src/`.
+- **Only MR !1 is real upstream code**, replayed onto the PR's own base — conflict-free by
+  construction, since that is what happened historically. MRs !2 and !3 are **authored** on the
+  pinned base instead. Measured: 39 commits sit between the candidate bases, including a
+  sweeping camelCase→kebab-case file rename, and cherry-picking any of the chosen upstream
+  commits conflicted in 8-10 files each. Authoring them buys coherent trees, controlled diff
+  size and guaranteed review substance — and it means a reset can never fail on a conflict.
+- **MR !1 cannot target `main`.** PR #175 sits later on upstream master than the base, so a
+  diff against `main` would drag in every unrelated change in between.
+- **`yarn.lock` churn stays in the diff.** Every exclusion manufactures a false finding — drop
+  the lockfile and the agent leads with "lockfile not updated"; drop `package.json` too and it
+  becomes "`js-cookie` isn't declared".
+- **Two bot identities minimum.** `findings.py` derives a thread's turn ("yours" vs "the
+  author's") from author username vs `me`, so a self-reviewing single user collapses the turn
+  model entirely.
+- **MR !3 gets 2 commits, not 1** — `/rework-mr` does fixup + force-push, so there must be
+  commits to squash *into*.
+- **IID == demo step.** Creation order sets the IIDs, which is why a reset recreates the
+  *project* rather than just the branches.
+- **The planted flaws stay a tracked patch** (`patches/mr1-flaws.patch`) even though they are
+  folded into the replayed commits, so the diff looks native on GitLab but is still reviewable
+  when a flaw needs retuning.
+- **`GITLAB_TOKEN` is never exported globally** — glab is host-agnostic, so a global token also
+  hits the corporate instance. It lives in `.env.local` and the fixture script only.
 
 ## Troubleshooting
 
@@ -105,7 +135,7 @@ docker compose logs -f gitlab                    # boot progress
 docker exec e2e-gitlab gitlab-ctl status
 curl -sS -o /dev/null -w '%{http_code}\n' http://gitlab.test/users/sign_in   # want 200
 docker exec e2e-gitlab gitlab-psql -t -c 'select username from users'
-glab api user                                    # should print frank
+cd ~/src/agent-skills-demo && glab api user      # should print frank
 ```
 
 ### Gotchas hit while building this (all fixed in the scripts, kept as a record)
@@ -118,18 +148,12 @@ glab api user                                    # should print frank
 | `users` table empty, `no root user` | the first-boot seed died in that same OOM, and `gitlab-ctl reconfigure` will **not** retry it (its cache says done). Force it: `docker exec -e GITLAB_ROOT_PASSWORD=… e2e-gitlab gitlab-rake db:seed_fu` |
 | seed prints `Password must not contain commonly used combinations of words and letters` | GitLab 19 strength-checks passwords, and the admin seed then **silently** creates no user. Passwords here are deliberately opaque |
 | `Validation failed: Namespace can't be blank` | creating users with `User.new(...).save!` in rails skips personal-namespace creation. Use the REST API, which goes through GitLab's own service |
+| reset dies with `no topic ◈t1` | `fixture.py` parses `findings.py import`'s output for topic handles. Match `t\d+`, never split the decorated string |
 
 ### VM memory
 
 The rig ran in a **6 GB / 2 CPU** Rancher Desktop VM with Kubernetes enabled, but steady-state
-GitLab sits at ~3.1 GiB with only ~1.3 GiB available. That is enough for normal operation
-(git pushes and API calls are cheap; `review-branch` and `explain-branch` run on the host) but
-it leaves no headroom for a rails spike.
-
-For talk-day safety, consider raising the VM to 10-12 GB:
-
-```sh
-rdctl set --virtual-machine.memory-in-gb 12      # restarts the VM
-```
-
-Not done automatically — it restarts the VM and therefore every other container in it.
+GitLab sits at ~3.1 GiB with only ~1.3 GiB available. Enough for normal operation (git pushes
+and API calls are cheap; `review-branch` and `explain-branch` run on the host), but no headroom
+for a rails spike. For talk-day safety consider `rdctl set --virtual-machine.memory-in-gb 12`
+— it restarts the VM and therefore every other container in it, so not done automatically.
