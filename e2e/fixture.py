@@ -339,7 +339,8 @@ def build_mr1():
         r = git("cherry-pick", "--no-commit", sha, cwd=BUILD, check=False)
         if r.returncode != 0:
             die(f"cherry-pick of {sha} conflicted — PR #175 no longer applies to "
-                f"{MR1_PR_BASE}; re-verify PLAN.md §2")
+                f"{MR1_PR_BASE}, which is the PR's own base and should be "
+                f"conflict-free by construction; re-verify the SHAs above")
         subject = git("log", "-1", "--format=%s", sha, cwd=BUILD).stdout.strip()
         if n == len(MR1_PR_COMMITS) - 1:
             apply_patch("mr1-flaws.patch")        # folded in, so it reads as native
@@ -451,8 +452,8 @@ No behaviour change intended.
 
 
 def build_mr3():
-    """Authored on the pinned base (see PLAN.md §2), two commits so /rework-mr has
-    something to fixup into. Pushed as frank — this is *your* MR in the demo."""
+    """Authored on the pinned base (see README, "Why it is built this way"), two commits
+    so /rework-mr has something to fixup into. Pushed as frank — *your* MR in the demo."""
     step("MR !3 — query-key factories (your own MR, for /rework-mr)")
     git("checkout", "--quiet", "-B", MR3_BRANCH, BASE, cwd=BUILD)
     series = sorted(os.listdir(os.path.join(PATCHES, "mr3")))
