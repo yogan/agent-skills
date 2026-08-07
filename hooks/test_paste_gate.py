@@ -182,6 +182,67 @@ class TestGates(HookCase):
             assistant_text("Two pushes since your last look.\n" + "\n".join(body)),
         ])
 
+    def test_prose_glued_onto_code_line_blocks(self):
+        """A sentence spliced onto the tail of a fenced code line, with no newline in
+        between, must not be treated as 'line present' just because the original text is
+        still a contiguous substring of the now-longer corrupted line. Observed in
+        production: the model's own transition sentence ("I dropped t1 since you're
+        accepting that trade-off.") landed mid-fence, glued onto a code line, and the
+        gate — checking substring-of-the-whole-blob rather than exact-line membership —
+        let the garbled paste through uncaught."""
+        corrupted = RESUME_OUT.replace(
+            "    resp = self._send(req)",
+            "    resp = self._send(req)I dropped t1 since you're accepting that trade-off.")
+        self.assertBlocked([
+            user_prompt(),
+            bash_call("u1", "python3 $SD/findings.py resume --iid 123"),
+            tool_result("u1", RESUME_OUT),
+            assistant_text(corrupted),
+        ], contains="findings.py resume")
+
+    def test_one_dropped_table_row_blocks(self):
+        """Unlike a dropped preamble line, a dropped TABLE ROW is exactly the failure this
+        hook exists to prevent: a whole finding silently disappears from the overview,
+        with nothing about the message looking wrong on its own. No tolerance, even though
+        it is only one line."""
+        body = [ln for ln in RESUME_OUT.strip().splitlines()
+                if not ln.startswith("| ○ open |")]
+        self.assertBlocked([
+            user_prompt(),
+            bash_call("u1", "python3 $SD/findings.py resume --iid 123"),
+            tool_result("u1", RESUME_OUT),
+            assistant_text("\n".join(body)),
+        ], contains="findings.py resume")
+
+    def test_one_dropped_code_line_blocks(self):
+        """A single line dropped from inside a fenced code block is the source the user is
+        meant to judge the finding against — no tolerance, same as a table row."""
+        body = [ln for ln in RESUME_OUT.strip().splitlines()
+                if "resp = self._send(req)" not in ln]
+        self.assertBlocked([
+            user_prompt(),
+            bash_call("u1", "python3 $SD/findings.py resume --iid 123"),
+            tool_result("u1", RESUME_OUT),
+            assistant_text("\n".join(body)),
+        ], contains="findings.py resume")
+
+    def test_coincidental_substring_is_not_corruption(self):
+        """The corrupted-line check must be anchored to the boundary (glued onto the head
+        or tail of another line), not a bare substring test: two independently-pasted,
+        fully legitimate blocks can coincidentally share an 8+ char run in the MIDDLE of
+        an unrelated line. That coincidence is not gluing, and must not force a block
+        (dropping one non-critical, non-fenced, non-table prose line is still within the
+        one-line tolerance)."""
+        dropped = "- **push 1:** 3 files, +42/-7"
+        body = [ln for ln in RESUME_OUT.strip().splitlines() if ln != dropped]
+        body.append(f"Summary: {dropped} looks like a safe, small change.")
+        self.assertAllowed([
+            user_prompt(),
+            bash_call("u1", "python3 $SD/findings.py resume --iid 123"),
+            tool_result("u1", RESUME_OUT),
+            assistant_text("\n".join(body)),
+        ])
+
     def test_two_dropped_lines_block(self):
         kept = [ln for ln in RESUME_OUT.strip().splitlines()
                 if "unbounded retry loop" not in ln and "missing timeout" not in ln]
@@ -483,6 +544,35 @@ class TestShippedSpecs(unittest.TestCase):
 
 
 class TestBothSkills(HookCase):
+    def test_dropped_line_inside_widened_fence_blocks(self):
+        """`rework-mr`'s own `fence()` widens a fence to 4+ backticks specifically so an
+        inner literal ``` (an embedded code sample, a diff touching a markdown file)
+        doesn't close it early — its docstring says a naive scan is exactly what used to
+        break `change-preview.sh`. `_missing_lines`'s fence tracking must mirror that: a
+        naive 'toggle on any ``` line' would mistake the inner marker for the real close,
+        and everything after it would read as outside the fence and lose its critical,
+        zero-tolerance status."""
+        change_out = ("**Change (t9):** bound the retry loop\n\n"
+                      "````python\n"
+                      "# before\n"
+                      "while True:\n"
+                      "    resp = self._send(req)\n\n"
+                      "# illustrated fix, add a comment block like:\n"
+                      "```\n"
+                      "retries are now bounded\n"
+                      "```\n"
+                      "for _ in range(MAX_RETRIES):\n"
+                      "    resp = self._send(req)\n"
+                      "````\n\n"
+                      "Agreed?")
+        body = [ln for ln in change_out.splitlines() if "for _ in range" not in ln]
+        self.assertBlocked([
+            user_prompt(),
+            bash_call("u1", "$SD/change-preview.sh t9"),
+            tool_result("u1", change_out),
+            assistant_text("\n".join(body)),
+        ], contains="change-preview.sh")
+
     def test_keys_do_not_collide_across_skills(self):
         """Both skills have a `quote` gate. Namespacing keeps one from superseding the
         other in the per-key reduction."""

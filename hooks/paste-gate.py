@@ -162,24 +162,72 @@ def _result_text(c):
 
 
 def _missing_lines(result, shown):
-    """Lines of `result` that never appear in the visible message.
+    """(missing, corrupted, critical) — three distinct ways a line of `result` can fail
+    to show up intact as its own line in the visible message.
 
-    Line-based, NOT a contiguous-substring match. The skills ask the model to interleave
-    its own text with pasted output — `review-mr`'s `updates` block is pasted and then
-    annotated with a summary sub-bullet per push — so requiring one unbroken block flagged
-    correct, fully-pasted messages: every line was present, just not consecutively.
+    Line-based, NOT a contiguous-substring match over the whole blob. The skills ask the
+    model to interleave its own text with pasted output — `review-mr`'s `updates` block is
+    pasted and then annotated with a summary sub-bullet per push — so requiring one
+    unbroken block flagged correct, fully-pasted messages: every line was present, just
+    not consecutively. Checking membership against the SET of `shown`'s lines (rather than
+    `stripped in shown` as one long string) is what makes "its own line" mean something:
+    a plain substring check also matches a line that is merely a PREFIX of some longer,
+    corrupted line.
 
-    Blank and very short lines (table rules, fences, `---`) are ignored: they carry no
-    information and turn up incidentally in unrelated text.
+    `corrupted` — the original line's text still present, but glued onto the HEAD or TAIL
+    of a different line instead of standing on its own (e.g. the model's own transition
+    sentence spliced onto a fenced code line with no newline in between: the code line
+    becomes a PREFIX of the corrupted one). Checked as `startswith`/`endswith`, not a bare
+    `in`: two independently-pasted, legitimate blocks can coincidentally share an 8+ char
+    substring in the MIDDLE of an unrelated line (a helper name mentioned in prose, say),
+    and that coincidence is not gluing — it would false-block a correct message. Anchoring
+    to the boundary is what tells "spliced onto" apart from "happens to appear inside."
+
+    `critical` — genuinely absent (not even glued elsewhere), but from a part of the block
+    where a silent drop is exactly the failure this hook exists to prevent: a markdown
+    table row (starts with `|` — an entire finding disappearing from the overview) or a
+    line inside a fenced code block (the source the user is meant to judge a finding
+    against). These get no tolerance, unlike a dropped prose line.
+
+    Fence tracking mirrors CommonMark's own rule (and `rework-mr`'s `fence()`, which
+    exploits it on purpose): a fence of N backticks is closed only by a line of AT LEAST N
+    backticks and nothing else. A naive "toggle on any `` ``` `` line" breaks on exactly
+    the case `fence()` widens for — a diff that touches a markdown file, or a quoted
+    ```suggestion, carries its own literal ``` mid-block, and `rework-mr` opens with four
+    backticks (or more) so that inner run does NOT close it early. Toggling on sight would
+    desync there — the tail of a real fenced block would read as "outside" and lose its
+    critical status. Tracking the required close-run-length, not just "was a fence line
+    seen", is what keeps that in sync.
+
+    `missing` — genuinely absent, and not `critical`: a dropped preamble sentence, a
+    swapped-out lead-in. Can be an honest, harmless edit — see `violation()`, which
+    tolerates exactly one of these, but none of `corrupted` or `critical`.
     """
-    missing = []
+    shown_lines = [ln.strip() for ln in shown.splitlines()]
+    shown_set = set(shown_lines)
+    missing, corrupted, critical = [], [], []
+    in_fence, fence_len = False, 0
     for line in result.strip().splitlines():
         stripped = line.strip()
+        was_in_fence = in_fence
+        ticks = len(stripped) - len(stripped.lstrip("`"))
+        if in_fence:
+            if ticks >= fence_len and stripped.lstrip("`").strip() == "":
+                in_fence = False           # a bare run of >= fence_len backticks closes it
+        elif ticks >= 3:
+            in_fence, fence_len = True, ticks
         if len(stripped) < 8 or set(stripped) <= set("-|` "):
             continue
-        if stripped not in shown:
+        if stripped in shown_set:
+            continue
+        if any(ln != stripped and (ln.startswith(stripped) or ln.endswith(stripped))
+               for ln in shown_lines):
+            corrupted.append(stripped)
+        elif was_in_fence or stripped.startswith("|"):
+            critical.append(stripped)
+        else:
             missing.append(stripped)
-    return missing
+    return missing, corrupted, critical
 
 
 def _load(path):
@@ -284,12 +332,17 @@ def violation(path, specs):
         if not all(s in result for s in gate["signature"]):
             continue
         fired.add(gate_key)
-        # Tolerate ONE dropped line. Observed: a message that pasted the whole overview
-        # — table, counts, footer — but swapped the leading status line for its own
-        # preamble. Blocking that is noise. Two or more missing lines still means a
-        # section went astray (a paraphrase misses nearly all of them).
-        if reason is None and result.strip() and len(_missing_lines(result, shown)) > 1:
-            reason = gate["reason"]
+        # Tolerate ONE dropped PROSE line. Observed: a message that pasted the whole
+        # overview — table, counts, footer — but swapped the leading status line for its
+        # own preamble. Blocking that is noise. Two or more missing lines still means a
+        # section went astray (a paraphrase misses nearly all of them). A CORRUPTED line
+        # (glued onto another line instead of dropped outright) or a CRITICAL one (a table
+        # row or fenced-code line dropped outright) gets no such tolerance — one is already
+        # a finding the user never saw, or a fence that broke and let prose bleed into code.
+        if reason is None and result.strip():
+            missing, corrupted, critical = _missing_lines(result, shown)
+            if corrupted or critical or len(missing) > 1:
+                reason = gate["reason"]
     if reason:
         return reason
 
