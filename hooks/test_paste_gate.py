@@ -45,6 +45,14 @@ while True:
 ```
 """
 
+# What findings.py's own render_table/code_snippet would mark critical for RESUME_OUT —
+# the table rows and the one code line, not the header/separator/prose around them.
+RESUME_CRITICAL = [
+    "| ○ open | ◈ **t1** — unbounded retry loop | `src/client.py:88` |",
+    "| ✓ done | ◈ **t2** — missing timeout | `src/client.py:120` |",
+    "resp = self._send(req)",
+]
+
 QUOTE_OUT = """◈ **t4** — swallowed exception hides real failures
 `src/worker.py:210`
 
@@ -78,6 +86,18 @@ DIFF_VIEW_OUT = """**Diff (t3):**
 
 ACK to fix up and push?
 """
+
+
+def with_manifest(text, critical_lines):
+    """`text` with a trailing critical-lines manifest appended, mirroring what
+    findings.py/threads.py actually emit for a gated command (see their `_mark`/
+    `_critical_manifest`). Applied to the RESULT only, and only AFTER any `body`/`shown`
+    variant has already been derived from the manifest-free `text` — several tests build
+    `shown` by filtering `text.splitlines()`, and if the manifest lived inside the shared
+    base constant, those filters could fragment it into `shown` too (or leak its opening
+    marker line through untouched), tripping the "marker must never be visible" check for
+    a reason that has nothing to do with what the test is actually exercising."""
+    return text + "\n\n<!-- paste-gate:critical\n" + json.dumps(critical_lines) + "\n-->"
 
 
 def row(kind, **kw):
@@ -146,6 +166,35 @@ class TestGates(HookCase):
             assistant_text(RESUME_OUT + "\n\nt1 is the one that needs you. Verdict?"),
         ])
 
+    def test_leaked_manifest_marker_blocks(self):
+        """The producer's trailing critical-lines manifest exists purely for this hook to
+        read — it must never reach the user, whatever else is true about the rest of the
+        message. Pasting the tool result raw (rather than the intended verbatim-minus-
+        manifest block) would leak it."""
+        manifest = with_manifest(RESUME_OUT, RESUME_CRITICAL)
+        self.assertBlocked([
+            user_prompt(),
+            bash_call("u1", "python3 $SD/findings.py resume --iid 123"),
+            tool_result("u1", manifest),
+            assistant_text(manifest),
+        ], contains="paste-gate:critical")
+
+    def test_mentioning_the_manifest_marker_in_prose_allows(self):
+        """A mid-sentence, backtick-quoted MENTION of the marker phrase — documentation,
+        or a chat reply explaining this very mechanism — is legitimate prose, not a
+        leaked manifest, and must not be confused with one. Observed in production: the
+        engine's own explanation of the mechanism, describing the marker inline, tripped
+        a bare `MANIFEST_MARKER in shown` substring check. The real leak has an actual
+        JSON payload between the marker and its closing `-->`; a prose mention almost
+        never reproduces that whole shape by accident — this is the same false-positive
+        class the ```suggestion `forbidden` rule already guards against."""
+        self.assertAllowed([
+            user_prompt(),
+            assistant_text("Each gated command appends a trailing "
+                           "`<!-- paste-gate:critical -->` JSON manifest to its stdout, "
+                           "which this hook strips before comparing anything."),
+        ])
+
     def test_paraphrase_blocks(self):
         self.assertBlocked([
             user_prompt(),
@@ -210,7 +259,7 @@ class TestGates(HookCase):
         self.assertBlocked([
             user_prompt(),
             bash_call("u1", "python3 $SD/findings.py resume --iid 123"),
-            tool_result("u1", RESUME_OUT),
+            tool_result("u1", with_manifest(RESUME_OUT, RESUME_CRITICAL)),
             assistant_text("\n".join(body)),
         ], contains="findings.py resume")
 
@@ -222,7 +271,7 @@ class TestGates(HookCase):
         self.assertBlocked([
             user_prompt(),
             bash_call("u1", "python3 $SD/findings.py resume --iid 123"),
-            tool_result("u1", RESUME_OUT),
+            tool_result("u1", with_manifest(RESUME_OUT, RESUME_CRITICAL)),
             assistant_text("\n".join(body)),
         ], contains="findings.py resume")
 
@@ -268,10 +317,15 @@ class TestGates(HookCase):
         collapsed = dup_out.replace(
             "app.include_router(config.router)\napp.include_router(config.router)",
             "app.include_router(config.router)")
+        manifest = with_manifest(dup_out, [
+            "| open | duplicate router registration | backend/idp/main.py:44 |",
+            "app.include_router(health.router)",
+            "app.include_router(config.router)",
+        ])
         self.assertBlocked([
             user_prompt(),
             bash_call("u1", "python3 $SD/findings.py resume --iid 123"),
-            tool_result("u1", dup_out),
+            tool_result("u1", manifest),
             assistant_text(collapsed),
         ], contains="findings.py resume")
 
@@ -469,6 +523,21 @@ class TestFailOpen(HookCase):
             assistant_text("t1 needs you."),
         ], stop_hook_active=True)
 
+    def test_leak_blocks_even_when_stop_hook_active(self):
+        """Observed in production, on a real MR review: the model dropped `present`'s
+        output, got blocked once for THAT (a different violation), and "fixed" it on
+        retry by pasting the raw tool result wholesale — leaking the manifest as a side
+        effect. That retry is exactly the turn where stop_hook_active is true, so the
+        general loop guard would otherwise let this specific, brand-new violation
+        through with no recourse — it was never the thing being retried for."""
+        manifest = with_manifest(RESUME_OUT, RESUME_CRITICAL)
+        self.assertBlocked([
+            user_prompt(),
+            bash_call("u1", "python3 $SD/findings.py resume --iid 123"),
+            tool_result("u1", manifest),
+            assistant_text(manifest),
+        ], contains="paste-gate:critical", stop_hook_active=True)
+
     def test_no_transcript_path_allows(self):
         self.assertAllowed([user_prompt()], transcript=False)
 
@@ -576,14 +645,15 @@ class TestShippedSpecs(unittest.TestCase):
 
 
 class TestBothSkills(HookCase):
-    def test_dropped_line_inside_widened_fence_blocks(self):
-        """`rework-mr`'s own `fence()` widens a fence to 4+ backticks specifically so an
-        inner literal ``` (an embedded code sample, a diff touching a markdown file)
-        doesn't close it early — its docstring says a naive scan is exactly what used to
-        break `change-preview.sh`. `_missing_lines`'s fence tracking must mirror that: a
-        naive 'toggle on any ``` line' would mistake the inner marker for the real close,
-        and everything after it would read as outside the fence and lose its critical,
-        zero-tolerance status."""
+    def test_change_preview_manifest_critical_line_blocks(self):
+        """`rework-mr`'s `change-preview` gate, exercised end to end with a producer
+        manifest: paste-gate.py no longer parses fence widths itself at all (that
+        concern — including `fence()`'s own widening for a fence containing embedded
+        ``` runs, at whatever width — moved entirely to threads.py, see its own
+        `test_diff_view_signature_survives_a_widened_fence` and the multi-embed test
+        added alongside it). All this hook does now is trust the manifest a gated
+        command appends: a line the producer declared critical gets no drop tolerance,
+        however deeply it sat inside a widened fence when threads.py built it."""
         change_out = ("**Change (t9):** bound the retry loop\n\n"
                       "````python\n"
                       "# before\n"
@@ -598,40 +668,14 @@ class TestBothSkills(HookCase):
                       "````\n\n"
                       "Agreed?")
         body = [ln for ln in change_out.splitlines() if "for _ in range" not in ln]
+        manifest = with_manifest(change_out, [
+            "while True:", "resp = self._send(req)", "retries are now bounded",
+            "for _ in range(MAX_RETRIES):",
+        ])
         self.assertBlocked([
             user_prompt(),
             bash_call("u1", "$SD/change-preview.sh t9"),
-            tool_result("u1", change_out),
-            assistant_text("\n".join(body)),
-        ], contains="change-preview.sh")
-
-    def test_multiple_embedded_fence_markers_stay_inside_widened_fence(self):
-        """A single fence can legitimately contain more than one embedded backtick run
-        of DIFFERENT widths — two illustrated snippets in one change-preview, say.
-        `fence()` widens to strictly more than the widest of them, so every embedded
-        run, whatever its own width, must fail to close the outer fence — not just the
-        first one encountered. A property-based sweep (Hypothesis, run ad hoc during
-        development, not a repo dependency) explored this dimension at up to 3 embeds
-        per fence with no failure; this pins the two-embed case permanently."""
-        change_out = ("**Change (t11):** show both illustrations\n\n"
-                      "`````python\n"
-                      "# first illustration:\n"
-                      "```\n"
-                      "old snippet\n"
-                      "```\n"
-                      "# second illustration, a bit wider:\n"
-                      "````\n"
-                      "newer snippet\n"
-                      "````\n"
-                      "for _ in range(MAX_RETRIES):\n"
-                      "    resp = self._send(req)\n"
-                      "`````\n\n"
-                      "Agreed?")
-        body = [ln for ln in change_out.splitlines() if "for _ in range" not in ln]
-        self.assertBlocked([
-            user_prompt(),
-            bash_call("u1", "$SD/change-preview.sh t11"),
-            tool_result("u1", change_out),
+            tool_result("u1", manifest),
             assistant_text("\n".join(body)),
         ], contains="change-preview.sh")
 

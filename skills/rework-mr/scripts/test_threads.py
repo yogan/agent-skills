@@ -135,6 +135,53 @@ class TestViews(unittest.TestCase):
         self.assertIn("```diff", out)
 
 
+class TestCriticalManifest(unittest.TestCase):
+    """paste-gate.py no longer parses fence widths itself — it trusts whatever this
+    script's own `fence()` (the single choke point every code-bearing render routes
+    through) declares critical. This is where that concern actually lives now; see
+    hooks/test_paste_gate.py's own note on why it moved here."""
+
+    def setUp(self):
+        T._reset_critical()
+
+    def test_fence_content_is_marked_critical(self):
+        T.fence("a = 1\nb = 2", "python")
+        self.assertEqual(set(T._critical), {"a = 1", "b = 2"})
+
+    def test_fence_bars_are_not_marked_critical(self):
+        """The opening/closing ``` lines are delimiters, not content the user is meant
+        to judge a finding against — same convention as review-mr's code_snippet."""
+        T.fence("a = 1", "python")
+        self.assertNotIn("```python", T._critical)
+        self.assertNotIn("```", T._critical)
+
+    def test_multiple_embedded_fence_markers_all_stay_critical(self):
+        """A single fence can legitimately contain more than one embedded backtick run
+        of DIFFERENT widths — a diff touching two different markdown snippets, say.
+        `fence()` widens to strictly more than the widest of them, so every line of the
+        content — including the embedded ``` markers themselves, which are DATA here,
+        not delimiters — must still be marked critical, not just the lines before the
+        first embed."""
+        content = ("# first illustration:\n```\nold snippet\n```\n"
+                  "# second illustration, a bit wider:\n````\nnewer snippet\n````\n"
+                  "for _ in range(MAX_RETRIES):\n    resp = self._send(req)")
+        out = T.fence(content, "python")
+        self.assertTrue(out.startswith("`````python\n"))     # widened past the widest embed
+        for line in content.splitlines():
+            self.assertIn(line.strip(), T._critical)
+
+    def test_render_table_marks_rows_not_header(self):
+        state = {"iid": 1, "title": "x", "topics": [
+            {"id": "t1", "thread_ids": ["d1"], "summary": "s", "state": None,
+             "decision": None, "plan": None, "diff_url": None},
+        ], "threads": {"d1": {"file": "a.py", "line": 1, "resolved": False,
+                              "awaiting": "you"}}}
+        out = T.render_table(state)
+        row = next(ln for ln in out.splitlines() if ln.startswith("| ○"))
+        self.assertIn(row, T._critical)
+        self.assertNotIn("| Status | Topic | Location | Summary |", T._critical)
+
+
 class TestNoteRendering(unittest.TestCase):
     """A reviewer's own code has to render as code.
 

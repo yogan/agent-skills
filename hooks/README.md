@@ -64,17 +64,58 @@ the hook loads.
 - **Scoped:** only acts on a turn where a gated command actually ran and produced real
   output, or where a `forbidden`/`required` pattern hits. Every other turn — and every
   session that never touches these skills — passes straight through.
-- **Loop-safe:** `stop_hook_active` forces at most one retry per reply, so it never spins.
+- **Loop-safe:** `stop_hook_active` forces at most one retry per reply, so it never
+  spins — with one deliberate exception: a leaked critical-lines manifest (see below) is
+  checked regardless. It's narrow, deterministic, and trivial for the model to fix,
+  unlike the broader verbatim-paste checks — and it's exactly the kind of thing a retry
+  forced by some OTHER violation can introduce as a side effect ("just paste everything
+  to be safe"), on the one turn the general loop guard would otherwise never look at
+  again. Observed on a real MR review, not theoretical: a dropped `present` output got
+  blocked once, and the fix leaked the manifest as collateral damage.
 - **Fails open:** any error (unreadable transcript, malformed spec, a bug in the engine)
   allows the stop. It can never wedge a session.
-- **Marker-free:** nothing is added to the pasted block, so your reply stays clean. A gate
-  matches a Bash invocation to *its own* paired tool result by `tool_use` id, which is why
-  merely reading or grepping a skill's source — SKILL.md and these specs mention every
-  gated command by name — does not trip it.
+- **Clean reply, not a clean tool result:** nothing is added to what you're asked to
+  paste, so your visible reply stays clean. A gate matches a Bash invocation to *its own*
+  paired tool result by `tool_use` id, which is why merely reading or grepping a skill's
+  source — SKILL.md and these specs mention every gated command by name — does not trip
+  it. The tool result itself does carry one addition: a trailing, non-visible manifest
+  (see below) that must never survive into your reply — enforced unconditionally, not
+  something a spec can opt out of.
 - **Patient:** the transcript is written asynchronously (a block was once observed 348 ms
   after the message was produced), so a turn that looks like a violation is re-read with a
   widening delay before it is blocked. Only turns that are genuinely about to be blocked
   pay the wait.
+
+## The critical-lines manifest
+
+Dropping ONE line is tolerated — a message that pastes the whole block but swaps the
+leading status line for its own preamble is noise, not the failure this hook guards
+against. But that tolerance cannot apply uniformly: dropping one *table row* silently
+disappears a whole finding, and dropping one line inside a *fenced code block* removes
+the source the user is meant to judge a finding against. Those need zero tolerance.
+
+Telling the two apart used to mean re-parsing the rendered Markdown here — tracking fence
+open/close state, checking for a leading `|`. That produced two real bugs (a fence-toggle
+that broke on a nested ``` , then one that broke again on a *widened* fence), because this
+file is not the place that actually knows the answer: `findings.py`/`threads.py` do,
+since they built each line and know exactly what it is. So they say so directly. Every
+gated command appends a trailing, non-visible payload to its own stdout:
+
+```
+<!-- paste-gate:critical
+["| open | some finding | src/x.py:12 |", "the exact code line"]
+-->
+```
+
+`_split_manifest` strips this before anything else happens: the text before it is what
+gets signature-checked and verbatim-compared; the JSON list becomes the set of lines that
+get NO drop tolerance, whatever they look like syntactically. A command that doesn't
+emit one gets an empty critical set — there is no heuristic fallback, on purpose: a
+producer that hasn't been updated should visibly protect nothing, not silently keep
+being guessed at.
+
+The marker must never appear in your reply — checked unconditionally, independent of any
+gate or spec — since it exists purely for this hook to read.
 
 ## Gate specs
 

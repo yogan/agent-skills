@@ -375,6 +375,43 @@ def adopt_inbound(state):
 
 # ---------------------------------------------------------------- render
 
+# Lines this run's render built that the paste-enforcement Stop hook (paste-gate.py)
+# must treat as critical — never silently droppable, whatever the block's tolerance for
+# a harmless dropped preamble line. Populated at the exact point each such line is
+# constructed (a table row, a line inside a fenced code block) instead of being
+# re-derived downstream by re-parsing the rendered markdown: this script is the only
+# place that unambiguously KNOWS which lines are table/code content, since it built
+# them, and re-deriving that fact from text after the fact is exactly the parsing this
+# is meant to avoid (see paste-gate.py's own history of fence-width bugs from doing
+# just that). One list per process is enough — every CLI invocation is a fresh
+# interpreter, so there is no cross-command state to reset between calls.
+_critical = []
+
+
+def _mark(line):
+    _critical.append(line.strip())
+    return line
+
+
+def _reset_critical():
+    """The CLI never needs this — every invocation is a fresh interpreter, so `_critical`
+    starts empty on its own. A test PROCESS calls the render functions many times across
+    many cases, though, and would otherwise see critical lines pile up across unrelated
+    tests. (Mirrors rework-mr's threads.py, for the same reason.)"""
+    _critical.clear()
+
+
+def _critical_manifest():
+    """Trailing, non-visible payload for the gated commands' stdout: paste-gate.py
+    splits this off before checking what the model pasted, so it is never something
+    the model is asked to reproduce. Empty when nothing this run built was critical
+    (a posted-thread `quote`, `updates`, an errored `diff`) — no marker at all beats an
+    empty one, since SKILL.md and paste-gates.json treat a bare mention of the marker
+    text as something that must never reach a visible reply."""
+    if not _critical:
+        return ""
+    return "\n\n<!-- paste-gate:critical\n" + json.dumps(_critical) + "\n-->"
+
 
 def short_summary(state, t, width=64):
     text = t.get("summary")
@@ -441,10 +478,10 @@ def render_table(state, scope="all"):
             resolved = any(state["threads"].get(x, {}).get("resolved")
                            for x in t["thread_ids"])
             mark = " ✓" if resolved and s == "needs_ack" else ""   # GitLab-resolved
-            out.append(
+            out.append(_mark(
                 f"| {GLYPH[s]} {WORD[s]}{mark} | {tref(f'**{tid}**')} "
                 f"| {kind_icon(t)} | {SRC_ICON.get(t.get('source'), '🤖')} "
-                f"| `{_loc(state, t)}` | {summ} |")
+                f"| `{_loc(state, t)}` | {summ} |"))
     else:
         out.append("_✓ nothing needs you right now_" if scope == "mine"
                    else "_no findings yet_")
@@ -515,7 +552,7 @@ def render_draft(body, lang, anchor=None):
             out.append(line)
             continue
         if in_sug:
-            out.append(f"{str(num).rjust(width)} | {line}" if num is not None else line)
+            out.append(_mark(f"{str(num).rjust(width)} | {line}" if num is not None else line))
             if num is not None:
                 num += 1
             continue
@@ -558,7 +595,7 @@ def code_snippet(state, t, context_lines=4):
     body = []
     for i in range(lo, hi + 1):
         mark = "►" if i == n else " "
-        body.append(f"{mark} {str(i).rjust(width)} | {lines[i - 1]}")
+        body.append(_mark(f"{mark} {str(i).rjust(width)} | {lines[i - 1]}"))
     lang = FENCE_BY_EXT.get(os.path.splitext(file)[1], "")
     return f"```{lang}\n" + "\n".join(body) + "\n```"
 
@@ -961,6 +998,8 @@ def render_topic_diff(state, ctx, iid, tid, inline_limit=80):
     text = "\n".join(blocks)
     nlines = text.count("\n") + 1 if text else 0
     if 0 < nlines <= inline_limit:
+        for ln in text.splitlines():
+            _mark(ln)
         out += ["", "```diff", text, "```"]
     elif nlines:
         out.append(f"_(diff is {nlines} lines — too big to inline; open the URL)_")
@@ -1178,11 +1217,11 @@ def main():
     elif cmd == "todo":
         sync(state, fetch_threads(ctx, iid, me, author))
         save(path, state)
-        print(render_table(state, "mine"))
+        print(render_table(state, "mine") + _critical_manifest())
     elif cmd == "present":
         sync(state, fetch_threads(ctx, iid, me, author))
         save(path, state)
-        print(render_present(state))
+        print(render_present(state) + _critical_manifest())
     elif cmd == "bodies":
         print(render_bodies(state))
     elif cmd == "candidates":
@@ -1190,26 +1229,31 @@ def main():
         save(path, state)
         print(render_candidates(state, me))
     elif cmd == "quote":
-        print(render_quote(state, args.topic))
+        print(render_quote(state, args.topic) + _critical_manifest())
     elif cmd == "draft":
         print(draft_body(state, args.topic))
     elif cmd == "diff":
-        print(render_topic_diff(state, ctx, iid, args.topic))
+        print(render_topic_diff(state, ctx, iid, args.topic) + _critical_manifest())
     elif cmd == "updates":
         sync(state, fetch_threads(ctx, iid, me, author))
         save(path, state)
-        print(render_updates(state, ctx, iid))
+        print(render_updates(state, ctx, iid) + _critical_manifest())
     elif cmd == "resume":
         # The complete opener for an in-progress review, in one call: pushes since your
         # baseline THEN the overview table THEN the first topic needing you.
         # Deliberately one command rather than "run updates, then run present": as two
         # steps the second one gets skipped, and the overview table — the user's only
         # view of where all topics stand — silently goes missing.
+        #
+        # A single combined print (not three separate ones) so the ONE trailing
+        # manifest covers everything this command built — updates has no critical
+        # content of its own, but present's table (and first topic's code, if any)
+        # does, and paste-gate.py needs it all in one place to check the whole thing.
         sync(state, fetch_threads(ctx, iid, me, author))
         save(path, state)
-        print(render_updates(state, ctx, iid))
-        print("\n---\n")
-        print(render_present(state))
+        u = render_updates(state, ctx, iid)
+        p = render_present(state)
+        print(f"{u}\n\n---\n\n{p}{_critical_manifest()}")
     elif cmd == "head":
         print(head_report(state, ctx, iid))
     elif cmd == "set-head":
@@ -1255,7 +1299,7 @@ def main():
             # and reconstructing the block by hand reintroduces the raw ```suggestion
             # fence (unhighlighted) that render_quote deliberately re-fences for display.
             # Printing it here means the correct block is already in front of it.
-            print(render_quote(state, args.topic))
+            print(render_quote(state, args.topic) + _critical_manifest())
     elif cmd == "drop":
         t = topic_for(state, args.topic)
         if t and t["thread_ids"]:                 # keep dropped inbound threads dropped

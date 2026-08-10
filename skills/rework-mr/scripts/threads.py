@@ -280,6 +280,36 @@ def sync(state, live):
             t["state"] = None
 
 
+# Lines this run's render built that the paste-enforcement Stop hook (paste-gate.py)
+# must treat as critical — never silently droppable. Populated at the exact point each
+# such line is constructed (a table row, a line inside a fenced code block) rather than
+# re-derived downstream by re-parsing the rendered markdown — this script is the only
+# place that unambiguously KNOWS which lines are table/code content, since it built
+# them. (Mirrors review-mr's findings.py, for the same reason.) One list per process is
+# enough — every CLI invocation is a fresh interpreter.
+_critical = []
+
+
+def _mark(line):
+    _critical.append(line.strip())
+    return line
+
+
+def _reset_critical():
+    """The CLI never needs this — every invocation is a fresh interpreter, so `_critical`
+    starts empty on its own. A test PROCESS calls fence()/render_* many times across many
+    cases, though, and would otherwise see critical lines pile up across unrelated tests."""
+    _critical.clear()
+
+
+def _critical_manifest():
+    """Trailing, non-visible payload for the gated commands' stdout — see
+    review-mr's findings.py, which carries the same mechanism and the same reasoning."""
+    if not _critical:
+        return ""
+    return "\n\n<!-- paste-gate:critical\n" + json.dumps(_critical) + "\n-->"
+
+
 def short_summary(state, t, width=72):
     text = t.get("summary")
     if not text:
@@ -320,8 +350,8 @@ def render_table(state, scope="all", show_done=False):
             tid = t["id"]
             s = st[tid]
             summ = short_summary(state, t).replace("|", "\\|")
-            out.append(f"| {GLYPH[s]} {WORD[s]} | {tref(f'**{tid}**')} "
-                       f"| `{_loc(state, t)}` | {summ} |")
+            out.append(_mark(f"| {GLYPH[s]} {WORD[s]} | {tref(f'**{tid}**')} "
+                             f"| `{_loc(state, t)}` | {summ} |"))
     else:
         out.append("_✓ nothing needs you — open threads are waiting on the reviewer_"
                    if scope == "mine" else "_✓ no open threads_")
@@ -498,6 +528,11 @@ def fence(text, lang=""):
     Backtick runs are measured after LEADING WHITESPACE, not at column 0: inside a diff
     every line carries a ` `/`+`/`-` prefix, so a fence in a diffed markdown file arrives
     as "` ```"` — indented, still a valid closer, and invisible to a `^```` scan.
+
+    Every caller in this file routes fenced content through here — the code the comment
+    is on, a reviewer's own quoted suggestion, a change illustration, a working diff, a
+    drafted reply's code — so marking each content line as critical HERE, once, covers
+    all of them instead of needing the same call at five separate sites.
     """
     runs = []
     for ln in (text or "").splitlines():
@@ -505,6 +540,8 @@ def fence(text, lang=""):
         if s.startswith("```"):
             runs.append(len(s) - len(s.lstrip("`")))
     bar = "`" * max([3] + [r + 1 for r in runs])
+    for ln in (text or "").rstrip(chr(10)).splitlines():
+        _mark(ln)
     return f"{bar}{lang}\n{(text or '').rstrip(chr(10))}\n{bar}"
 
 
@@ -980,10 +1017,10 @@ def main():
                 text = fh.read()
         else:
             text = sys.stdin.read()
-        print(render_change_view(args.topic, text, args.for_path))
+        print(render_change_view(args.topic, text, args.for_path) + _critical_manifest())
         return
     if cmd == "diff-view":
-        print(render_diff_view(args.topic, sys.stdin.read()))
+        print(render_diff_view(args.topic, sys.stdin.read()) + _critical_manifest())
         return
 
     ctx, iid, path, state = resolve_state(args)
@@ -991,17 +1028,17 @@ def main():
     if cmd == "path":
         print(path)
     elif cmd == "quote":
-        print(render_quote(state, args.topic))
+        print(render_quote(state, args.topic) + _critical_manifest())
     elif cmd == "url":
         print(render_url(state, args.topic))
     elif cmd == "reply-view":
         body = reply_body(state, args.topic, os.path.dirname(path))
-        print(render_reply_view(state, args.topic, body))
+        print(render_reply_view(state, args.topic, body) + _critical_manifest())
     elif cmd == "reply":
         # body only — the payload for the clipboard or `glab api -F body=@-`
         print(reply_body(state, args.topic, os.path.dirname(path)), end="")
     elif cmd == "present":
-        print(render_present(state))
+        print(render_present(state) + _critical_manifest())
     elif cmd == "bodies":
         print(render_bodies(state))
     elif cmd == "plans":
@@ -1009,8 +1046,11 @@ def main():
     elif cmd in ("sync", "todo"):
         sync(state, fetch_threads(ctx, iid, current_user()))
         save(path, state)
+        # `sync` isn't gated (see paste-gates.json's note), so the manifest it carries
+        # is simply never read for that command — harmless, and keeping one code path
+        # for both is simpler than branching just to omit it.
         print(render_table(state, "mine" if cmd == "todo" else "all",
-                           show_done=getattr(args, "all", False)))
+                           show_done=getattr(args, "all", False)) + _critical_manifest())
     elif cmd == "set":
         t = topic_for(state, args.topic) or die(f"no topic {args.topic}")
         fld = {"start-sha": "start_sha", "diff-url": "diff_url"}

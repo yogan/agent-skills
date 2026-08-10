@@ -46,21 +46,40 @@ Contract (Claude Code Stop hook):
 It fails OPEN throughout: any error → allow the stop (never wedge a session).
 
 Loop guard: `stop_hook_active` is true when we're already inside a hook-forced
-continuation, so we block at most once per reply and never spin.
+continuation, so we block at most once per reply and never spin — with ONE deliberate
+exception. A leaked critical-lines manifest (see `_leaked_manifest`) is checked
+regardless of `stop_hook_active`: it is narrow, deterministic, and trivial for the model
+to fix, unlike the broader verbatim-paste checks, and a retry forced by some OTHER
+violation can introduce exactly this leak as a side effect ("just paste everything to be
+safe") on the very turn where the general loop guard would otherwise hide it. Observed in
+production on a real MR review, not theoretical.
 
 Scope: only acts on a turn where a gated command actually ran AND produced real output
 (or where a forbidden/required pattern hits) — every other turn, and every session that
 never touches these skills, passes straight through.
 
-Detection is marker-free (nothing extra is added to the pasted block, so the user sees a
-clean reply): a turn qualifies when a gated Bash invocation's OWN paired tool result
-(matched by tool_use id) carries that command's output signature — success, not an error.
-Requiring the literal subcommand/script name in the command text (not just a bare keyword
-anywhere) and then the actual, run-specific output text to reappear verbatim in the
-model's message is what keeps this from false-firing when a skill's own *source* is merely
-read or grepped (SKILL.md, REFERENCE.md, this file and the specs all mention these command
-names and phrases too) — and from false-passing on a message that only talks about the
-markers without actually pasting the block.
+Detection: a turn qualifies when a gated Bash invocation's OWN paired tool result
+(matched by tool_use id) carries that command's output signature — success, not an
+error. Requiring the literal subcommand/script name in the command text (not just a bare
+keyword anywhere) and then the actual, run-specific output text to reappear verbatim in
+the model's message is what keeps this from false-firing when a skill's own *source* is
+merely read or grepped (SKILL.md, REFERENCE.md, this file and the specs all mention these
+command names and phrases too) — and from false-passing on a message that only talks
+about the markers without actually pasting the block.
+
+The pasted block itself is meant to stay clean (no marker the user would see) — but the
+producer's OWN trailing manifest (see `_split_manifest`) is a deliberate exception: each
+gated command appends a machine-readable "these lines are critical" payload after a
+`<!-- paste-gate:critical -->` marker, which this file strips before comparing anything
+and which must never survive into the model's visible reply (enforced unconditionally,
+independent of any spec). Table rows and fenced-code content used to be re-derived here
+by parsing the rendered Markdown (fence-run-length tracking, `startswith("|")`) — the
+producer (findings.py / threads.py) is the only place that unambiguously KNOWS which
+lines are which, since it built them, and re-deriving that fact downstream from text is
+exactly the kind of context-sensitive parsing that kept finding new edge cases (this
+file's own history has two examples: a naive fence toggle, then one that didn't account
+for a WIDENED fence). The manifest replaces that heuristic outright — there is no
+fallback if a producer doesn't emit one, by design; see `_split_manifest`.
 """
 import difflib
 import json
@@ -162,34 +181,47 @@ def _result_text(c):
     return ""
 
 
-def _fence_flags(result_lines):
-    """Per line of `result_lines` (already stripped): was this line inside a fenced code
-    block?
+MANIFEST_MARKER = "<!-- paste-gate:critical"
+_MANIFEST_RE = re.compile(re.escape(MANIFEST_MARKER) + r"\n(.*?)\n-->", re.S)
 
-    Mirrors CommonMark's own rule (and `rework-mr`'s `fence()`, which exploits it on
-    purpose): a fence of N backticks is closed only by a line of AT LEAST N backticks and
-    NOTHING ELSE. A naive "toggle on any `` ``` `` line" breaks on exactly the case
-    `fence()` widens for — a diff that touches a markdown file, or a quoted ```suggestion,
-    carries its own literal ``` mid-block, and `rework-mr` opens with four backticks (or
-    more) so that inner run does NOT close it early. Tracking the required close-run-length,
-    not just "was a fence line seen", is what keeps this in sync with that.
+
+def _split_manifest(result):
+    """(visible, critical) — the human-visible block a gated command printed, and the
+    SET of lines its own producer (findings.py / threads.py) declared critical.
+
+    The producer is the single source of truth for this, not a heuristic re-derived here
+    from the rendered text: it is the only place that unambiguously KNOWS which lines are
+    table rows or fenced code content, since it built them — this hook used to re-parse
+    that fact from Markdown syntax (fence-run-length tracking, `startswith("|")`), which
+    is exactly the kind of context-sensitive parsing regex/string heuristics keep getting
+    subtly wrong at the margins (this file's own history has two examples). The producer
+    appends its manifest as a trailing, non-visible payload; `visible` is everything
+    before it — what a gate's signature check and the verbatim comparison both operate on.
+
+    A missing or malformed manifest yields an EMPTY critical set, not a fallback guess:
+    there is no heuristic left to fall back to, by design (see the commit that removed
+    it) — a producer that doesn't emit one is a producer that hasn't been updated yet,
+    which should be visible as "nothing here is protected", not silently patched over.
     """
-    flags = []
-    in_fence, fence_len = False, 0
-    for stripped in result_lines:
-        flags.append(in_fence)
-        ticks = len(stripped) - len(stripped.lstrip("`"))
-        if in_fence:
-            if ticks >= fence_len and stripped.lstrip("`").strip() == "":
-                in_fence = False           # a bare run of >= fence_len backticks closes it
-        elif ticks >= 3:
-            in_fence, fence_len = True, ticks
-    return flags
+    i = result.find(MANIFEST_MARKER)
+    if i == -1:
+        return result, set()
+    m = _MANIFEST_RE.search(result, i)
+    if not m:
+        return result, set()
+    try:
+        lines = json.loads(m.group(1))
+        critical = {str(x).strip() for x in lines}
+    except Exception:                      # noqa: BLE001 — malformed → no critical lines
+        critical = set()
+    return result[:i].rstrip("\n"), critical
 
 
-def _missing_lines(result, shown):
-    """(missing, corrupted, critical) — three distinct ways a line of `result` can fail
-    to show up intact in the visible message.
+def _missing_lines(result, shown, critical):
+    """(missing, corrupted, critical_out) — three distinct ways a line of `result` can
+    fail to show up intact in the visible message. `result` is the VISIBLE portion only
+    (see `_split_manifest`) and `critical` is the producer-declared set of its lines
+    that must never be silently dropped, whatever else about them.
 
     Alignment is `difflib.SequenceMatcher` over the two LINE sequences, not a
     contiguous-substring match over the whole blob and not a plain "is this line present
@@ -210,22 +242,20 @@ def _missing_lines(result, shown):
     in the middle of some unrelated, DISTANT line from being misread as gluing: if nothing
     aligns there, difflib reports a plain `delete`, not a `replace`.
 
-    `critical` — genuinely absent (`delete`, or a `replace` that isn't a boundary match),
-    from a part of the block where a silent drop is exactly the failure this hook exists to
-    prevent: a markdown table row (starts with `|` — an entire finding disappearing from
-    the overview) or a line inside a fenced code block (the source the user is meant to
-    judge a finding against, per `_fence_flags`). These get no tolerance, unlike a dropped
-    prose line.
+    `critical_out` — genuinely absent (`delete`, or a `replace` that isn't a boundary
+    match) AND a member of `critical`: a part of the block where a silent drop is exactly
+    the failure this hook exists to prevent. These get no tolerance, unlike a dropped
+    prose line — checked BEFORE the length/punctuation filter below, so the producer's own
+    judgement is never second-guessed by a generic "too short to matter" heuristic.
 
-    `missing` — genuinely absent, and not `critical`: a dropped preamble sentence, a
+    `missing` — genuinely absent, and not critical: a dropped preamble sentence, a
     swapped-out lead-in. Can be an honest, harmless edit — see `violation()`, which
-    tolerates exactly one of these, but none of `corrupted` or `critical`.
+    tolerates exactly one of these, but none of `corrupted` or `critical_out`.
     """
     result_lines = [ln.strip() for ln in result.strip().splitlines()]
     shown_lines = [ln.strip() for ln in shown.splitlines()]
-    in_fence = _fence_flags(result_lines)
 
-    missing, corrupted, critical = [], [], []
+    missing, corrupted, critical_out = [], [], []
     matcher = difflib.SequenceMatcher(None, result_lines, shown_lines, autojunk=False)
     for tag, i1, i2, j1, j2 in matcher.get_opcodes():
         if tag in ("equal", "insert"):
@@ -233,17 +263,18 @@ def _missing_lines(result, shown):
         counterparts = shown_lines[j1:j2]
         for k in range(i1, i2):
             stripped = result_lines[k]
-            if len(stripped) < 8 or set(stripped) <= set("-|` "):
+            is_critical = stripped in critical
+            if not is_critical and (len(stripped) < 8 or set(stripped) <= set("-|` ")):
                 continue
             if tag == "replace" and any(
                     c != stripped and (c.startswith(stripped) or c.endswith(stripped))
                     for c in counterparts):
                 corrupted.append(stripped)
-            elif in_fence[k] or stripped.startswith("|"):
-                critical.append(stripped)
+            elif is_critical:
+                critical_out.append(stripped)
             else:
                 missing.append(stripped)
-    return missing, corrupted, critical
+    return missing, corrupted, critical_out
 
 
 def _load(path):
@@ -309,8 +340,51 @@ def _scan_turn(rows, gates):
     return matched, result_by_id, "\n".join(assistant_text)
 
 
+def _leaked_manifest(path):
+    """Reason to block if the producer's own critical-lines manifest leaked into the
+    visible message, or None. Deliberately callable independent of `stop_hook_active`
+    — see `main()` for why this ONE check is exempt from the usual once-per-reply loop
+    guard: it is narrow and deterministic (a fixed structural pattern, not a fuzzy
+    heuristic), and the fix — "don't reproduce this exact marker" — is trivial for the
+    model to make, unlike the broader verbatim-paste checks below, which legitimately
+    need the ceiling to avoid wedging a session on a hard-to-satisfy correction.
+
+    Observed in production, on a real MR review: the model dropped `present`'s output,
+    got blocked once (a DIFFERENT violation), and "fixed" it on retry by pasting the
+    raw tool result wholesale — introducing this leak as a side effect. Because
+    `stop_hook_active` was already true for that retry, a leak check gated the same way
+    as everything else would never have seen it: the one violation the loop guard let
+    through was a brand new one, not the one it was retrying for.
+
+    Matched with the FULL structural pattern (marker, then a newline, then the JSON
+    payload, then a closing "-->"), not a bare `MANIFEST_MARKER in shown` substring
+    check: the latter also fires on a mid-sentence, backtick-quoted MENTION of the
+    marker phrase — e.g. documentation, or a chat reply explaining this very mechanism —
+    which is legitimate prose, not a leaked manifest, and is exactly the false-positive
+    class the `forbidden` rules below already guard against for the raw ```suggestion
+    fence (see their own `m` / mid-sentence tests). An actual leak has real JSON between
+    the marker and the closer; a prose mention almost never reproduces that whole shape
+    by accident.
+    """
+    rows = _load(path)
+    if rows is None:
+        return None
+    _, _, shown = _scan_turn(rows, [])       # gates unused for just computing `shown`
+    if not shown.strip():
+        return None
+    if _MANIFEST_RE.search(shown):
+        return ("Your message contains an internal `<!-- paste-gate:critical -->` "
+                "manifest block. A gated command appends that payload AFTER the "
+                "human-visible block, purely for this hook to read — it must never "
+                "reach the user. Re-send your message with everything from that "
+                "marker onward removed.")
+    return None
+
+
 def violation(path, specs):
-    """Reason to block, or None. Re-readable so it can be retried — see main()."""
+    """Reason to block, or None. Re-readable so it can be retried — see main(). The
+    manifest-leak check lives in `_leaked_manifest`, called separately by `main()` —
+    not duplicated here."""
     rows = _load(path)
     if rows is None:
         return None
@@ -345,7 +419,8 @@ def violation(path, specs):
     for gate_key, uid in last_per_key.items():
         gate = matched[uid]
         result = result_by_id.get(uid, "")
-        if not all(s in result for s in gate["signature"]):
+        visible, critical = _split_manifest(result)
+        if not all(s in visible for s in gate["signature"]):
             continue
         fired.add(gate_key)
         # Tolerate ONE dropped PROSE line. Observed: a message that pasted the whole
@@ -353,11 +428,12 @@ def violation(path, specs):
         # own preamble. Blocking that is noise. Two or more missing lines still means a
         # section went astray (a paraphrase misses nearly all of them). A CORRUPTED line
         # (glued onto another line instead of dropped outright) or a CRITICAL one (a table
-        # row or fenced-code line dropped outright) gets no such tolerance — one is already
-        # a finding the user never saw, or a fence that broke and let prose bleed into code.
-        if reason is None and result.strip():
-            missing, corrupted, critical = _missing_lines(result, shown)
-            if corrupted or critical or len(missing) > 1:
+        # row or fenced-code line dropped outright, per the producer's own manifest) gets
+        # no such tolerance — one is already a finding the user never saw, or a fence that
+        # broke and let prose bleed into code.
+        if reason is None and visible.strip():
+            missing, corrupted, crit_out = _missing_lines(visible, shown, critical)
+            if corrupted or crit_out or len(missing) > 1:
                 reason = gate["reason"]
     if reason:
         return reason
@@ -381,12 +457,28 @@ def main(argv):
     except Exception:
         _allow()
 
-    # already inside a hook-forced retry → let it through, never loop
-    if data.get("stop_hook_active"):
-        _allow()
-
     path = data.get("transcript_path")
     if not path:
+        _allow()
+
+    # The manifest-leak check runs BEFORE the stop_hook_active gate below, and without
+    # requiring any spec to have loaded — it is an engine-level convention, not tied to
+    # a specific skill. See `_leaked_manifest`'s docstring for why this one check must
+    # not wait for a fresh (non-retry) turn: a retry forced by some OTHER violation can
+    # introduce exactly this leak as a side effect of "just paste everything to be
+    # safe", and that is precisely the turn where stop_hook_active is already true.
+    leak = _leaked_manifest(path)
+    for delay in (0.25, 0.5, 1.0):
+        if not leak:
+            break
+        time.sleep(delay)
+        leak = _leaked_manifest(path)
+    if leak:
+        _block(leak)
+
+    # already inside a hook-forced retry → let the REST through, never loop. (The leak
+    # check above ran regardless — that is the one deliberate exception.)
+    if data.get("stop_hook_active"):
         _allow()
 
     specs = load_specs(argv)
