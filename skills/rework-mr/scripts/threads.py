@@ -39,7 +39,6 @@ Subcommands:
   check-handles   internal — used by guard-reply.sh, no MR context needed
 """
 import argparse
-import json
 import os
 import re
 import sys
@@ -54,7 +53,8 @@ if _REPO_ROOT not in sys.path:
 
 from lib import critical_manifest                               # noqa: E402
 from lib.gitlab import api, context, current_user, die, mr_view, run, web_base  # noqa: E402
-from lib.mr_common import first_name, short_summary, state_file, tref  # noqa: E402
+from lib.mr_common import (first_name, load, num, save, short_summary,  # noqa: E402
+                           state_file, topic_for, tref)
 from lib.snippet import MAX_BACKTRACK, open_construct            # noqa: E402
 
 # internal topic handles (t5, t6, t10 …) — must never reach a GitLab comment.
@@ -80,18 +80,6 @@ STATUSES = {
 STATUS_ORDER = {k: v[0] for k, v in STATUSES.items()}
 GLYPH = {k: v[1] for k, v in STATUSES.items()}
 WORD = {k: v[2] for k, v in STATUSES.items()}
-
-
-def load(path):
-    if os.path.exists(path):
-        with open(path) as f:
-            return json.load(f)
-    return None
-
-
-def save(path, data):
-    with open(path, "w") as f:
-        json.dump(data, f, indent=2, ensure_ascii=False)
 
 
 def new_state(ctx, mr):
@@ -177,10 +165,6 @@ def fetch_threads(ctx, iid, me):
                        "body": n.get("body")} for n in notes],
         }
     return out
-
-
-def topic_for(state, tid):
-    return next((t for t in state["topics"] if t["id"] == tid), None)
 
 
 def next_tid(state):
@@ -272,10 +256,6 @@ def sync(state, live):
             t["state"] = None
 
 
-def _num(tid):
-    return int("".join(c for c in tid if c.isdigit()) or 0)
-
-
 def _rows(state, scope, show_done=False):
     """Mirrors review-mr's findings.py's `_rows` — same shape (status/counts/ordering for
     render_table), but the `keep` sets below are this skill's own status vocabulary
@@ -284,7 +264,7 @@ def _rows(state, scope, show_done=False):
     topics = state["topics"]
     st = {t["id"]: topic_status(state, t) for t in topics}
     counts = {s: sum(1 for t in topics if st[t["id"]] == s) for s in GLYPH}
-    ordered = sorted(topics, key=lambda t: (STATUS_ORDER[st[t["id"]]], _num(t["id"])))
+    ordered = sorted(topics, key=lambda t: (STATUS_ORDER[st[t["id"]]], num(t["id"])))
     keep = {"open", "reply_pending"} if scope == "mine" else \
            ({"open", "reply_pending", "waiting"} | ({"done"} if show_done else set()))
     return st, counts, [t for t in ordered if st[t["id"]] in keep]
@@ -851,7 +831,7 @@ def render_reply_view(state, tid, body):
 
 def first_open(state):
     opens = [t for t in state["topics"] if topic_status(state, t) == "open"]
-    return min(opens, key=lambda t: _num(t["id"])) if opens else None
+    return min(opens, key=lambda t: num(t["id"])) if opens else None
 
 
 def render_present(state):
@@ -873,7 +853,7 @@ def render_plans(state):
     """Recorded decisions/plans for the open topics — for resuming after a break
     or a fresh session, so you don't re-grill what's already decided."""
     out = []
-    for t in sorted(state["topics"], key=lambda t: _num(t["id"])):
+    for t in sorted(state["topics"], key=lambda t: num(t["id"])):
         s = topic_status(state, t)
         if s == "done" or not (t.get("decision") or t.get("plan")):
             continue

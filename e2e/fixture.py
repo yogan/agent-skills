@@ -28,6 +28,13 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
+# Repo root, 2 levels up from e2e/fixture.py — needed so `lib/` is importable.
+_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
+if _REPO_ROOT not in sys.path:
+    sys.path.insert(0, _REPO_ROOT)
+
+from lib.cli import die  # noqa: E402
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 ENV_FILE = os.path.join(HERE, ".env.local")
 CACHE = os.path.join(HERE, ".cache", "bulletproof-react.git")
@@ -58,11 +65,6 @@ def step(msg):
 
 def info(msg):
     print(f"    {msg}", flush=True)
-
-
-def die(msg):
-    print(f"error: {msg}", file=sys.stderr)
-    sys.exit(1)
 
 
 def env():

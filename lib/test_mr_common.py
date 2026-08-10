@@ -12,12 +12,42 @@ import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from lib.mr_common import first_name, short_summary, state_file, tref
+from lib.mr_common import first_name, load, num, save, short_summary, state_file, topic_for, tref
 
 
 class TestTref(unittest.TestCase):
     def test_carries_the_topic_icon(self):
         self.assertEqual(tref("t3"), "◈ t3")
+
+
+class TestNum(unittest.TestCase):
+    def test_extracts_the_digits(self):
+        self.assertEqual(num("t3"), 3)
+        self.assertEqual(num("t42"), 42)
+
+    def test_no_digits_is_zero(self):
+        self.assertEqual(num("t"), 0)
+
+
+class TestTopicFor(unittest.TestCase):
+    def test_finds_by_id(self):
+        state = {"topics": [{"id": "t1"}, {"id": "t2"}]}
+        self.assertEqual(topic_for(state, "t2"), {"id": "t2"})
+
+    def test_none_when_absent(self):
+        self.assertIsNone(topic_for({"topics": []}, "t1"))
+
+
+class TestLoadSave(unittest.TestCase):
+    def test_missing_file_loads_as_none(self):
+        with tempfile.TemporaryDirectory() as d:
+            self.assertIsNone(load(os.path.join(d, "nope.json")))
+
+    def test_round_trips_through_save(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "state.json")
+            save(path, {"topics": [{"id": "t1"}], "note": "héllo"})
+            self.assertEqual(load(path), {"topics": [{"id": "t1"}], "note": "héllo"})
 
 
 class TestFirstName(unittest.TestCase):

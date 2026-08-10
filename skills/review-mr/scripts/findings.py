@@ -73,7 +73,8 @@ if _REPO_ROOT not in sys.path:
 from lib import critical_manifest                               # noqa: E402
 from lib.gitlab import (api, context, current_user, die, mr_head,  # noqa: E402
                         mr_object, mr_view, web_base)
-from lib.mr_common import first_name, short_summary, state_file, tref  # noqa: E402
+from lib.mr_common import (first_name, load, num, save, short_summary,  # noqa: E402
+                           state_file, topic_for, tref)
 from lib.snippet import MAX_BACKTRACK, open_construct            # noqa: E402
 
 STATE_ROOT = os.path.expanduser("~/.claude/review-mr")
@@ -120,18 +121,6 @@ def state_dir(slug):
     d = os.path.join(STATE_ROOT, slug)
     os.makedirs(d, exist_ok=True)
     return d
-
-
-def load(path):
-    if os.path.exists(path):
-        with open(path) as f:
-            return json.load(f)
-    return None
-
-
-def save(path, data):
-    with open(path, "w") as f:
-        json.dump(data, f, indent=2, ensure_ascii=False)
 
 
 def mr_author(mr):
@@ -212,10 +201,6 @@ def fetch_threads(ctx, iid, me, author=None):
 
 
 # ---------------------------------------------------------------- topics
-
-
-def topic_for(state, tid):
-    return next((t for t in state["topics"] if t["id"] == tid), None)
 
 
 def next_tid(state):
@@ -372,10 +357,6 @@ def adopt_inbound(state):
 
 # ---------------------------------------------------------------- render
 
-def _num(tid):
-    return int("".join(c for c in tid if c.isdigit()) or 0)
-
-
 def topic_file(state, t):
     """Authoritative (file, line) for a topic. Once it's linked to a GitLab thread,
     the *thread's* position wins — that's where the discussion physically lives, and
@@ -405,7 +386,7 @@ def _rows(state, scope):
     topics = state["topics"]
     st = {t["id"]: topic_status(state, t) for t in topics}
     counts = {s: sum(1 for t in topics if st[t["id"]] == s) for s in GLYPH}
-    ordered = sorted(topics, key=lambda t: (STATUS_ORDER[st[t["id"]]], _num(t["id"])))
+    ordered = sorted(topics, key=lambda t: (STATUS_ORDER[st[t["id"]]], num(t["id"])))
     if scope == "mine":                          # only what needs you
         keep = {"draft", "needs_ack"}
     else:
@@ -704,7 +685,7 @@ def first_todo(state):
     todo = [t for t in state["topics"] if st[t["id"]] in ("needs_ack", "draft")]
     if not todo:
         return None
-    return min(todo, key=lambda t: (STATUS_ORDER[st[t["id"]]], _num(t["id"])))
+    return min(todo, key=lambda t: (STATUS_ORDER[st[t["id"]]], num(t["id"])))
 
 
 def render_present(state):

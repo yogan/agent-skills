@@ -1,10 +1,33 @@
-"""Small rendering/identity helpers shared between review-mr's findings.py and
+"""Small rendering/identity/state helpers shared between review-mr's findings.py and
 rework-mr's threads.py — genuinely identical apart from a trivial parameter, unlike the
 two skills' state machines and rendering logic, which differ for real domain reasons
 and stay duplicated (see CLAUDE.md's "Sharing vs. duplication")."""
+import json
 import os
 
 TOPIC_ICON = "◈"
+
+
+def load(path):
+    if os.path.exists(path):
+        with open(path) as f:
+            return json.load(f)
+    return None
+
+
+def save(path, data):
+    with open(path, "w") as f:
+        json.dump(data, f, indent=2, ensure_ascii=False)
+
+
+def topic_for(state, tid):
+    return next((t for t in state["topics"] if t["id"] == tid), None)
+
+
+def num(tid):
+    """The numeric part of a topic id (`t3` -> 3) — for sorting, and for picking the
+    next free id."""
+    return int("".join(c for c in tid if c.isdigit()) or 0)
 
 
 def tref(tid):

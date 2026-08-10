@@ -53,8 +53,8 @@ Talk-day checklist and run of show: [RUNBOOK.md](RUNBOOK.md).
 | `reviewer-bot` | posts the review threads on MR !3 | fixture only |
 | `peer-bot` | one extra thread on MR !2 | fixture only |
 
-Display names use the enterprise `Last, First - ID` shape on purpose — `findings.py:131` parses
-exactly that, so the fixture exercises the real path.
+Display names use the enterprise `Last, First - ID` shape on purpose — `lib/mr_common.py`'s
+`first_name()` parses exactly that, so the fixture exercises the real path.
 
 ## Reset before every run
 

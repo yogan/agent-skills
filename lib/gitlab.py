@@ -8,17 +8,13 @@ one cohesive concern, not two — see CLAUDE.md's "Sharing vs. duplication".
 """
 import json
 import subprocess
-import sys
 from urllib.parse import quote
+
+from lib.cli import die
 
 
 def run(cmd):
     return subprocess.run(cmd, capture_output=True, text=True)
-
-
-def die(msg):
-    print(f"error: {msg}", file=sys.stderr)
-    sys.exit(1)
 
 
 def remote_url():

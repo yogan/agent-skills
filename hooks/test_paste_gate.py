@@ -90,13 +90,14 @@ ACK to fix up and push?
 
 def with_manifest(text, critical_lines):
     """`text` with a trailing critical-lines manifest appended, mirroring what
-    findings.py/threads.py actually emit for a gated command (see their `_mark`/
-    `_critical_manifest`). Applied to the RESULT only, and only AFTER any `body`/`shown`
-    variant has already been derived from the manifest-free `text` — several tests build
-    `shown` by filtering `text.splitlines()`, and if the manifest lived inside the shared
-    base constant, those filters could fragment it into `shown` too (or leak its opening
-    marker line through untouched), tripping the "marker must never be visible" check for
-    a reason that has nothing to do with what the test is actually exercising."""
+    findings.py/threads.py actually emit for a gated command (see lib/critical_manifest.py's
+    `mark`/`manifest`, which both now share). Applied to the RESULT only, and only AFTER
+    any `body`/`shown` variant has already been derived from the manifest-free `text` —
+    several tests build `shown` by filtering `text.splitlines()`, and if the manifest
+    lived inside the shared base constant, those filters could fragment it into `shown`
+    too (or leak its opening marker line through untouched), tripping the "marker must
+    never be visible" check for a reason that has nothing to do with what the test is
+    actually exercising."""
     return text + "\n\n<!-- paste-gate:critical\n" + json.dumps(critical_lines) + "\n-->"
 
 

@@ -8,8 +8,9 @@ Guidance for working on this repo's own code. Not for a skill's runtime behavior
   `scripts/` holds its Python implementation.
 - `hooks/` — cross-skill runtime infra (the paste-gate Stop hook). See
   [hooks/README.md](hooks/README.md).
-- `lib/` — pure Python shared between skill scripts. Only for logic that's provably
-  identical across skills, modulo a trivial parameter — see below.
+- `lib/` — pure Python shared repo-wide (skill scripts and `e2e/` both import from it).
+  Only for logic that's provably identical across its consumers, modulo a trivial
+  parameter — see below.
 - `e2e/` — local GitLab demo/test rig for `review-mr`/`rework-mr` (see `e2e/README.md`).
 
 ## Sharing vs. duplication

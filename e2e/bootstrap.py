@@ -26,6 +26,13 @@ import time
 import urllib.error
 import urllib.request
 
+# Repo root, 2 levels up from e2e/bootstrap.py — needed so `lib/` is importable.
+_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
+if _REPO_ROOT not in sys.path:
+    sys.path.insert(0, _REPO_ROOT)
+
+from lib.cli import die  # noqa: E402
+
 HOST = "gitlab.test"
 URL = f"http://{HOST}"
 API = f"{URL}/api/v4"
@@ -38,8 +45,8 @@ ROOT_PASSWORD = "Rk8xQ2-mT9zV4-pB6nL1"
 PAT_NAME = "e2e-fixture"
 
 # username -> (display name, project access level). Display names use the enterprise
-# "Last, First - ID" shape on purpose: findings.py:131 has a parser for exactly that,
-# so the fixture exercises the real code path instead of a happy-path name.
+# "Last, First - ID" shape on purpose: lib/mr_common.py's first_name() has a parser for
+# exactly that, so the fixture exercises the real code path instead of a happy-path name.
 # frank needs Maintainer (40) to force-push MR !3's branch, which /rework-mr does on
 # every fixup; the bots only need Developer (30).
 USERS = {
@@ -65,11 +72,6 @@ def expires_at():
 
 def step(msg):
     print(f"==> {msg}", flush=True)
-
-
-def die(msg):
-    print(f"error: {msg}", file=sys.stderr)
-    sys.exit(1)
 
 
 def sh(cmd, **kw):
