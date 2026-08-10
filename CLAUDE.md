@@ -34,3 +34,13 @@ Plain `unittest`, colocated as `test_<module>.py` next to the module it covers. 
 directly, e.g.:
 
     python3 skills/rework-mr/scripts/test_threads.py
+
+To run everything: `python3 run_tests.py` (add `--slow` for the slower files too — see
+below). Don't reach for `python3 -m unittest discover`: it only finds tests under
+directories with an `__init__.py`, which is just `lib/` here, so it silently runs a
+fraction of the suite with no error.
+
+A `test_*.py` file named `*_slow.py` (currently only `hooks/test_paste_gate_slow.py`)
+holds cases that are genuinely slow for a real reason (real `time.sleep()` in a
+subprocess that can't be mocked from the test) and is skipped by `run_tests.py` unless
+you pass `--slow`. Run it directly when you're actually touching that code path.

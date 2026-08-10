@@ -27,12 +27,25 @@ def open_construct(lines, before):
 
     Scanning from the top of the file is the only way to know which reading is right,
     since that state isn't visible from the window alone.
+
+    A backslash always consumes the character after it, whatever it is, so an escaped
+    backtick/quote inside a template literal or string doesn't get misread as its real
+    closer (`` `foo \\` bar` `` is one still-open template literal, not one closed after
+    "foo "). This is still a heuristic scan, not a real lexer: a backtick or quote
+    sitting inside a `${...}` interpolation expression — which can itself contain
+    strings, or even a nested template literal — is out of scope. That needs a real JS
+    parser, which doesn't exist in the stdlib; fully correct handling isn't worth
+    chasing here (see this file's own module docstring on why paste-gate.py stopped
+    doing exactly that kind of re-parsing).
     """
     state = None
     for i in range(before - 1):
         ln = lines[i]
         j = 0
         while j < len(ln):
+            if ln[j] == "\\":
+                j += 2          # skip the escaped character too, whatever it is
+                continue
             if state is None:
                 if ln.startswith('"""', j) or ln.startswith("'''", j):
                     state = (ln[j:j + 3], i + 1)

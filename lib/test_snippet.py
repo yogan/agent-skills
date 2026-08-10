@@ -55,6 +55,26 @@ class TestOpenConstruct(unittest.TestCase):
         self.assertIsNone(open_construct(lines, 1))
         self.assertIsNone(open_construct(lines, 2))
 
+    def test_escaped_backtick_does_not_close_the_template_literal(self):
+        """An escaped backtick inside a JS/TS template literal is a literal character,
+        not the real closer — this used to be misread as the close, which then made the
+        REAL closing backtick on the next real-close line look like a brand new opener."""
+        lines = ['function build() {', r'  const msg = `before \` after',
+                 '  still more template', '  end`;', '  return msg;', '}']
+        self.assertEqual(open_construct(lines, 4), ('`', 2))
+        self.assertIsNone(open_construct(lines, 5))
+
+    def test_escaped_backslash_before_a_real_closer_still_closes(self):
+        """Two backslashes are one literal escaped backslash, not an escape of the
+        backtick that follows — the closer right after it is real."""
+        lines = [r'const a = `text\\`;', 'const b = 1;']
+        self.assertIsNone(open_construct(lines, 2))
+
+    def test_escaped_backtick_with_no_real_close_on_that_line(self):
+        lines = [r'const a = `text\`', 'still open', 'end`;']
+        self.assertEqual(open_construct(lines, 2), ('`', 1))
+        self.assertEqual(open_construct(lines, 3), ('`', 1))
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
