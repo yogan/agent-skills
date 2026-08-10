@@ -113,7 +113,14 @@ for any of that.
   In the spec JSON, write a single backslash (`\n`), NOT `\\n` - `_html_label` splits on an
   actual newline character, so a doubled backslash decodes to a literal two-char `\n` that
   survives untouched into the SVG (shows up as literal "\n" in the rendered diagram).
-  Add `"fail": true` for a red/error-styled node (e.g. a rejected or failing state).
+  Add `"fail": true` for a red/error-styled node (e.g. a rejected or failing state). Add
+  `"decision": true` for a branch point - renders as an outline (unfilled) diamond instead of
+  a rounded box, the standard flowchart convention, still in the same border/font colors. Not
+  limited to a boolean yes/no - any small set of differently-labeled outgoing edges qualifies
+  (e.g. an item count's "0" / "1" / ">1" branches). Reach for it only on an actual branch node,
+  not an ordinary linear step - and keep the label itself short (ideally two short lines): a
+  diamond needs more clearance around its text than a box does, so a long label blows up its
+  footprint disproportionately.
 - "edges": `["from_id", "to_id"]`, or `["from_id", "to_id", "edge label"]` for a labeled arrow.
   Nothing stops a node from having more than one outgoing or incoming edge - it's a real graph,
   not just a linear chain, so branching/merging flows work too, not only straight A→B→C ones.
@@ -761,6 +768,18 @@ def render_diagram(diagram: dict) -> str:
     ]
     for node in diagram["nodes"]:
         attrs = [f'label={_html_label(node["label"])}']
+        if node.get("decision"):
+            # Diamond, the standard flowchart convention for a branch point - distinct from
+            # every other (rounded-box) node's shape, but unfilled (style=solid, not "filled")
+            # and tight-margined: a filled diamond at the default box margin comes out far
+            # wider/heavier than every surrounding node (diamonds need extra room around the
+            # text to keep it clear of the sloped corners) and dominates the whole diagram.
+            # Outline-only, close-cropped reads as a lightweight marker instead, while still
+            # picking up the same border/font colors - and light/dark theme mapping below -
+            # as every other node.
+            attrs.append("shape=diamond")
+            attrs.append('style="solid"')
+            attrs.append('margin="0.05,0.0"')
         if node.get("fail"):
             attrs.append('fillcolor="#fef2f2"')
             attrs.append('color="#b91c1c"')
