@@ -108,6 +108,14 @@ def mr_head(ctx, iid):
     return refs.get("head_sha") or mr.get("sha")
 
 
+def versions(ctx, iid):
+    """MR diff versions, newest first — one per push (survives force-push). Used to
+    derive a stable diff-between-versions URL (see lib/diff_url.py) and, in review-mr's
+    findings.py, to detect a rebase between two of the reviewer's baselines."""
+    return api(f"projects/{ctx['enc']}/merge_requests/{iid}/versions?per_page=100",
+               paginate=True)
+
+
 def current_user():
     """glab-authenticated username — the reviewer in review-mr's flow, the MR
     author in rework-mr's."""

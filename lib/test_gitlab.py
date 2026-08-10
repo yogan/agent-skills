@@ -106,5 +106,20 @@ class TestMrHead(unittest.TestCase):
         self.assertEqual(G.mr_head({}, 1), "old")
 
 
+class TestVersions(unittest.TestCase):
+    def test_hits_the_versions_endpoint_with_pagination(self):
+        seen = {}
+
+        def fake_run(cmd):
+            seen["cmd"] = cmd
+            return fake_result(stdout='[{"id": 2}, {"id": 1}]')
+
+        G.run = fake_run
+        out = G.versions({"enc": "g%2Fp"}, 7)
+        self.assertEqual(out, [{"id": 2}, {"id": 1}])
+        self.assertIn("--paginate", seen["cmd"])
+        self.assertTrue(any("merge_requests/7/versions" in c for c in seen["cmd"]))
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

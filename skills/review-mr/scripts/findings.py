@@ -72,7 +72,7 @@ if _REPO_ROOT not in sys.path:
 
 from lib import critical_manifest                               # noqa: E402
 from lib.gitlab import (api, context, current_user, die, mr_head,  # noqa: E402
-                        mr_object, mr_view, web_base)
+                        mr_object, mr_view, versions, web_base)
 from lib.mr_common import (first_name, load, num, save, short_summary,  # noqa: E402
                            state_file, topic_for, tref)
 from lib.snippet import MAX_BACKTRACK, open_construct            # noqa: E402
@@ -741,12 +741,6 @@ def render_candidates(state, me):
 
 
 # ---------------------------------------------------------------- pushes / diffs
-
-
-def versions(ctx, iid):
-    """MR diff versions, newest first — one per push (survives force-push)."""
-    return api(f"projects/{ctx['enc']}/merge_requests/{iid}/versions?per_page=100",
-               paginate=True)
 
 
 def new_versions(state, vs):
