@@ -104,12 +104,12 @@ for any of that.
   comfortably as a wide-but-short strip - long node labels or more than ~4 nodes tend to force
   either clipping or an awkwardly wide diagram in LR.
 - "nodes": each needs "id" (referenced by edges, not shown) and "label". A `\n` in the label
-  keeps every line the same (normal) size - use it when the lines are one thing (a phrase or
-  identifier wrapped across lines, or two coequal facts, e.g. "validation_results +\ndynamically_required_fields").
-  A `\n\n` (blank line) instead starts a second, smaller-rendered run - use it only when the
-  later line is a genuine subtitle/detail *about* the first, not just a continuation of it
-  (e.g. "class FooBar\n\ndoes foo things"). Don't reach for `\n\n` just because a label got
-  long; reach for it when the second line is subordinate information.
+  keeps every line the same (normal) size - use it for one phrase wrapped across lines (e.g.
+  "exponential backoff,\ncapped at 3 attempts", broken at the natural comma). A `\n\n` (blank
+  line) instead starts a second, smaller-rendered run - use it only when the later line is a
+  genuine subtitle/detail *about* the first, not just a continuation of it (e.g.
+  "RetryPolicy\n\ndefines the backoff strategy"). Don't reach for `\n\n` just because a label
+  got long; reach for it when the second line is subordinate information.
   In the spec JSON, write a single backslash (`\n`), NOT `\\n` - `_html_label` splits on an
   actual newline character, so a doubled backslash decodes to a literal two-char `\n` that
   survives untouched into the SVG (shows up as literal "\n" in the rendered diagram).
@@ -711,13 +711,13 @@ def _format_label_segment(text: str) -> str:
 
 
 def _html_label(text: str) -> str:
-    r"""Graphviz HTML-like label: lines within one `\n`-joined run are all the same size (a
-    single thing wrapped across lines, or two coequal facts - e.g. "validation_results +\n
-    dynamically_required_fields"); a `\n\n` (blank line) starts a second run that renders
-    smaller, for an actual subtitle/detail line that's subordinate to the first (e.g.
-    "class FooBar\n\ndoes foo things"). Don't reach for `\n\n` just because a line got long -
-    only when the second line is genuinely a detail *about* the first, not part of the same
-    phrase/identifier.
+    r"""Graphviz HTML-like label: lines within one `\n`-joined run are all the same size - one
+    phrase wrapped across lines (e.g. "exponential backoff,\ncapped at 3 attempts", broken at
+    the natural comma). A `\n\n` (blank line) starts a second run that renders smaller, for an
+    actual subtitle/detail line that's subordinate to the first (e.g.
+    "RetryPolicy\n\ndefines the backoff strategy"). Don't reach for `\n\n` just because a line
+    got long - only when the second line is genuinely a detail *about* the first, not part of
+    the same phrase.
 
     Built as a borderless TABLE with explicit CELLSPACING rather than `<BR/>`-joined FONT tags -
     `<BR/>` packs lines with no gap, so a line's descenders (g, y, p) touch the next line's
