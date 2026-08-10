@@ -560,6 +560,53 @@ def render_draft(body, lang, anchor=None):
     return "\n".join(out)
 
 
+_ML_MAX_BACKTRACK = 30
+
+
+def _open_construct(lines, before):
+    """(marker, start_line) if line `before` (1-based) opens strictly inside an
+    unterminated triple-quoted string, backtick string (JS/TS template literal, Go raw
+    string), or /* */ block comment carried over from an earlier line, else None.
+
+    `code_snippet` slices a fixed line window with no notion of syntax state. When that
+    window happens to start right after a docstring/comment/template-literal opened above
+    it, the ONLY delimiter inside the window is the (correct) CLOSING one — but a syntax
+    highlighter given just the snippet, with no memory of anything before it, reads that
+    as an OPENING one instead. Everything after it then renders as an unterminated
+    string, and everything before it (still genuinely inside the construct, just not
+    visibly so) renders as if it were top-level code — which is how a docstring sentence
+    containing "and"/"any"/"set" ends up with keywords lit up. Scanning from the top of
+    the file is the only way to know which reading is right, since that state isn't
+    visible from the window alone.
+    """
+    state = None
+    for i in range(before - 1):
+        ln = lines[i]
+        j = 0
+        while j < len(ln):
+            if state is None:
+                if ln.startswith('"""', j) or ln.startswith("'''", j):
+                    state = (ln[j:j + 3], i + 1)
+                    j += 3
+                    continue
+                if ln.startswith("/*", j):
+                    state = ("/*", i + 1)
+                    j += 2
+                    continue
+                if ln.startswith("`", j):
+                    state = ("`", i + 1)
+                    j += 1
+                    continue
+            else:
+                closer = "*/" if state[0] == "/*" else state[0]
+                if ln.startswith(closer, j):
+                    state = None
+                    j += len(closer)
+                    continue
+            j += 1
+    return state
+
+
 def code_snippet(state, t, context_lines=4):
     """The lines under discussion, read from the review worktree.
 
@@ -591,12 +638,22 @@ def code_snippet(state, t, context_lines=4):
         return None
     lo = max(1, n - context_lines)
     hi = min(len(lines), n + context_lines)
+    lang = FENCE_BY_EXT.get(os.path.splitext(file)[1], "")
+    opened = _open_construct(lines, lo)
+    if opened:
+        # Extend back to the real opening delimiter so the highlighter sees the whole
+        # construct — unless that is far enough away to blow up the snippet, in which
+        # case an unhighlighted (but not actively MIS-highlighted) block beats either a
+        # wall of unrelated context or a snippet that reads as broken Python.
+        if lo - opened[1] <= _ML_MAX_BACKTRACK:
+            lo = opened[1]
+        else:
+            lang = ""
     width = len(str(hi))
     body = []
     for i in range(lo, hi + 1):
         mark = "►" if i == n else " "
         body.append(_mark(f"{mark} {str(i).rjust(width)} | {lines[i - 1]}"))
-    lang = FENCE_BY_EXT.get(os.path.splitext(file)[1], "")
     return f"```{lang}\n" + "\n".join(body) + "\n```"
 
 
