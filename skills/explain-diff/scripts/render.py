@@ -103,8 +103,13 @@ for any of that.
   confident the diagram is small/short enough (few nodes, short labels) to actually fit
   comfortably as a wide-but-short strip - long node labels or more than ~4 nodes tend to force
   either clipping or an awkwardly wide diagram in LR.
-- "nodes": each needs "id" (referenced by edges, not shown) and "label" - a `\n` in the label
-  puts the first line at normal size and any further lines smaller, like a title + detail line.
+- "nodes": each needs "id" (referenced by edges, not shown) and "label". A `\n` in the label
+  keeps every line the same (normal) size - use it when the lines are one thing (a phrase or
+  identifier wrapped across lines, or two coequal facts, e.g. "validation_results +\ndynamically_required_fields").
+  A `\n\n` (blank line) instead starts a second, smaller-rendered run - use it only when the
+  later line is a genuine subtitle/detail *about* the first, not just a continuation of it
+  (e.g. "class FooBar\n\ndoes foo things"). Don't reach for `\n\n` just because a label got
+  long; reach for it when the second line is subordinate information.
   In the spec JSON, write a single backslash (`\n`), NOT `\\n` - `_html_label` splits on an
   actual newline character, so a doubled backslash decodes to a literal two-char `\n` that
   survives untouched into the SVG (shows up as literal "\n" in the rendered diagram).
@@ -706,17 +711,39 @@ def _format_label_segment(text: str) -> str:
 
 
 def _html_label(text: str) -> str:
-    """Graphviz HTML-like label: first line at normal size, further lines smaller (subtitle).
+    r"""Graphviz HTML-like label: lines within one `\n`-joined run are all the same size (a
+    single thing wrapped across lines, or two coequal facts - e.g. "validation_results +\n
+    dynamically_required_fields"); a `\n\n` (blank line) starts a second run that renders
+    smaller, for an actual subtitle/detail line that's subordinate to the first (e.g.
+    "class FooBar\n\ndoes foo things"). Don't reach for `\n\n` just because a line got long -
+    only when the second line is genuinely a detail *about* the first, not part of the same
+    phrase/identifier.
 
     Built as a borderless TABLE with explicit CELLSPACING rather than `<BR/>`-joined FONT tags -
     `<BR/>` packs lines with no gap, so a line's descenders (g, y, p) touch the next line's
     ascenders; CELLSPACING gives real breathing room between lines."""
-    lines = text.split("\n")
-    rows = [f'<TR><TD><FONT POINT-SIZE="13">{_format_label_segment(lines[0])}</FONT></TD></TR>']
-    for line in lines[1:]:
-        rows.append(f'<TR><TD><FONT POINT-SIZE="10">{_format_label_segment(line)}</FONT></TD></TR>')
+    primary_text, _, detail_text = text.partition("\n\n")
+    rows = [
+        f'<TR><TD><FONT POINT-SIZE="13">{_format_label_segment(line)}</FONT></TD></TR>'
+        for line in primary_text.split("\n")
+    ]
+    rows += [
+        f'<TR><TD><FONT POINT-SIZE="10">{_format_label_segment(line)}</FONT></TD></TR>'
+        for line in detail_text.split("\n")
+        if detail_text
+    ]
     table = f'<TABLE BORDER="0" CELLBORDER="0" CELLSPACING="3" CELLPADDING="0">{"".join(rows)}</TABLE>'
     return "<" + table + ">"
+
+
+def _edge_label(text: str) -> str:
+    """Graphviz HTML-like edge label, padded via CELLPADDING.
+
+    A bare text/FONT label (no enclosing TABLE) gets centered directly on the edge's own
+    line with zero built-in clearance - the first glyph ends up touching the line. Graphviz
+    computes clearance from the label's own bounding box, so padding has to live *inside*
+    that box (CELLPADDING), not as extra characters around the text."""
+    return f'<TABLE BORDER="0" CELLBORDER="0" CELLPADDING="4"><TR><TD>{_format_label_segment(text)}</TD></TR></TABLE>'
 
 
 def render_diagram(diagram: dict) -> str:
@@ -740,7 +767,7 @@ def render_diagram(diagram: dict) -> str:
         lines.append(f'  "{node["id"]}" [{", ".join(attrs)}];')
     for edge in diagram["edges"]:
         src, dst = edge[0], edge[1]
-        attrs = f' [label=<{_format_label_segment(edge[2])}>]' if len(edge) > 2 and edge[2] else ""
+        attrs = f' [label=<{_edge_label(edge[2])}>]' if len(edge) > 2 and edge[2] else ""
         lines.append(f'  "{src}" -> "{dst}"{attrs};')
     lines.append("}")
     dot_source = "\n".join(lines)
