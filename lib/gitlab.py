@@ -1,8 +1,10 @@
-"""Shared GitLab / glab helpers for the review-mr skill.
+"""Shared GitLab / glab helpers for review-mr and rework-mr.
 
-glab-only: no MCP dependency, so the skill works anywhere glab is set up.
-Read-only against GitLab — review-mr never posts or resolves; you do that in
-the UI. These helpers only fetch.
+glab-only: no MCP dependency, so both skills work anywhere glab is set up. Previously
+duplicated per skill as `_gl.py` — genuinely identical apart from docstring framing
+(each skill emphasized the field it cared about) and `mr_head`, which only review-mr
+used. Folded into lib/ wholesale rather than split, since a "talk to GitLab" module is
+one cohesive concern, not two — see CLAUDE.md's "Sharing vs. duplication".
 """
 import json
 import subprocess
@@ -94,21 +96,11 @@ def mr_view():
     return json.loads(r.stdout)
 
 
-def current_user():
-    """glab-authenticated username (the reviewer — YOU — in this skill's flow;
-    the MR author is someone else)."""
-    r = run(["glab", "api", "user"])
-    if r.returncode != 0:
-        return None
-    try:
-        return json.loads(r.stdout).get("username")
-    except json.JSONDecodeError:
-        return None
-
-
 def mr_object(ctx, iid):
-    """Full MR object — carries diff_refs.head_sha, the branch tip. Used to
-    detect an author push/force-push by comparing to the last-reviewed head."""
+    """Full MR object by iid — carries the authoritative `web_url` and
+    `diff_refs.head_sha` (the branch tip, for detecting an author push/force-push
+    against a stored last-reviewed head). Fetching by iid never misfires on the
+    ambient branch the way `glab mr view` can."""
     return api(f"projects/{ctx['enc']}/merge_requests/{iid}")
 
 
@@ -118,3 +110,15 @@ def mr_head(ctx, iid):
     mr = mr_object(ctx, iid)
     refs = mr.get("diff_refs") or {}
     return refs.get("head_sha") or mr.get("sha")
+
+
+def current_user():
+    """glab-authenticated username — the reviewer in review-mr's flow, the MR
+    author in rework-mr's."""
+    r = run(["glab", "api", "user"])
+    if r.returncode != 0:
+        return None
+    try:
+        return json.loads(r.stdout).get("username")
+    except json.JSONDecodeError:
+        return None

@@ -44,8 +44,6 @@ import os
 import re
 import sys
 
-from _gl import api, context, current_user, die, mr_view, run, web_base
-
 # Repo root, 4 levels up from skills/rework-mr/scripts/threads.py — needed so `lib/`,
 # which lives outside this skill's own directory, is importable regardless of how this
 # script is invoked (direct, or symlinked into ~/.claude/skills/).
@@ -55,6 +53,7 @@ if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
 
 from lib import critical_manifest                               # noqa: E402
+from lib.gitlab import api, context, current_user, die, mr_view, run, web_base  # noqa: E402
 from lib.mr_common import first_name, short_summary, state_file, tref  # noqa: E402
 from lib.snippet import MAX_BACKTRACK, open_construct            # noqa: E402
 

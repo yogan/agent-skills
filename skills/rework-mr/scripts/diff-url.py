@@ -17,8 +17,18 @@ Subcommands:
              (i.e. only the most recent single push).
 """
 import argparse
+import os
+import sys
 
-from _gl import api, context, die, mr_object, mr_view, web_base
+# Repo root, 4 levels up from skills/rework-mr/scripts/diff-url.py — needed so `lib/`,
+# which lives outside this skill's own directory, is importable regardless of how this
+# script is invoked (direct, or symlinked into ~/.claude/skills/).
+_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(
+    os.path.realpath(__file__)))))
+if _REPO_ROOT not in sys.path:
+    sys.path.insert(0, _REPO_ROOT)
+
+from lib.gitlab import api, context, die, mr_object, mr_view, web_base  # noqa: E402
 
 
 def versions(ctx, iid):
