@@ -46,6 +46,18 @@ import sys
 
 from _gl import api, context, current_user, die, mr_view, run, web_base
 
+# Repo root, 4 levels up from skills/rework-mr/scripts/threads.py — needed so `lib/`,
+# which lives outside this skill's own directory, is importable regardless of how this
+# script is invoked (direct, or symlinked into ~/.claude/skills/).
+_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(
+    os.path.realpath(__file__)))))
+if _REPO_ROOT not in sys.path:
+    sys.path.insert(0, _REPO_ROOT)
+
+from lib import critical_manifest                               # noqa: E402
+from lib.mr_common import first_name, short_summary, state_file, tref  # noqa: E402
+from lib.snippet import MAX_BACKTRACK, open_construct            # noqa: E402
+
 # internal topic handles (t5, t6, t10 …) — must never reach a GitLab comment.
 # Single source of truth: guard-reply.sh shells out to `check-handles` below
 # instead of reimplementing this regex in bash, so the two can't drift apart.
@@ -57,7 +69,6 @@ def find_handles(text):
 
 
 STATE_ROOT = os.path.expanduser("~/.claude/rework-mr")
-TOPIC_ICON = "◈"
 # Single source for the three per-status lookups below — this diff previously
 # needed to touch three separate dicts (plus the `keep` sets in `_rows`) just to
 # add one status; keying off one table keeps that to one place.
@@ -70,35 +81,6 @@ STATUSES = {
 STATUS_ORDER = {k: v[0] for k, v in STATUSES.items()}
 GLYPH = {k: v[1] for k, v in STATUSES.items()}
 WORD = {k: v[2] for k, v in STATUSES.items()}
-
-
-def tref(tid):
-    """A topic id as the user reads it — always carrying the topic icon, so `t3` never
-    turns up bare in rendered output and is never mistaken for a GitLab thread id.
-    (Mirrors review-mr's findings.py.)
-
-    Deliberately NOT used for: CLI examples (`set t3 --state waiting` must stay
-    copy-pasteable), `die()` diagnostics about a topic that does not exist, and
-    thread/discussion ids, which are not topics.
-    """
-    return f"{TOPIC_ICON} {tid}"
-
-
-def first_name(name):
-    """'Doe, Jane - AB12345' -> 'Jane'; 'Jane Doe' -> 'Jane'."""
-    n = (name or "").strip()
-    if " - " in n:                      # strip trailing " - <ACCOUNT-ID>"
-        n = n.rsplit(" - ", 1)[0].strip()
-    if "," in n:                        # "Lastname, Firstname"
-        n = n.split(",", 1)[1].strip()
-    parts = n.split()
-    return parts[0] if parts else (name or "")
-
-
-def state_file(slug, iid):
-    d = os.path.join(STATE_ROOT, f"{slug}--mr{iid}")
-    os.makedirs(d, exist_ok=True)
-    return os.path.join(d, "topics.json")
 
 
 def load(path):
@@ -203,6 +185,11 @@ def topic_for(state, tid):
 
 
 def next_tid(state):
+    """review-mr's findings.py has a `next_tid` that looks the same but isn't: it
+    persists a `seq` counter so a topic id is never reused once freed by a drop/merge.
+    This one starts the scan from 1 every time, so a dropped `t3` CAN be reused — a real
+    behavioral gap, not something to silently unify; worth closing here if it's ever
+    seen to bite. See CLAUDE.md's "Sharing vs. duplication"."""
     used = {t["id"] for t in state["topics"]}
     n = 1
     while f"t{n}" in used:
@@ -218,7 +205,13 @@ def topic_status(state, t):
     tell an already-implemented topic from a merely-planned one and re-implements
     it. If YOU spoke last it is ambiguous — you may have fixed it (waiting) or
     merely acknowledged it (still open) — so it defaults to open and only shows
-    'waiting' when semantically classified via `set --state waiting`."""
+    'waiting' when semantically classified via `set --state waiting`.
+
+    review-mr's findings.py's `topic_status` does the equivalent job there, with a
+    genuinely different status vocabulary (no `reply_pending`/`waiting` distinction
+    here has a counterpart in its ack/wontfix overlay). It's the root of why so much
+    downstream rendering (_rows, render_table, render_bodies, render_present) stays
+    duplicated rather than shared — see CLAUDE.md's "Sharing vs. duplication"."""
     thr = [state["threads"].get(x) for x in t["thread_ids"]]
     thr = [x for x in thr if x]
     if not thr:
@@ -280,50 +273,15 @@ def sync(state, live):
             t["state"] = None
 
 
-# Lines this run's render built that the paste-enforcement Stop hook (paste-gate.py)
-# must treat as critical — never silently droppable. Populated at the exact point each
-# such line is constructed (a table row, a line inside a fenced code block) rather than
-# re-derived downstream by re-parsing the rendered markdown — this script is the only
-# place that unambiguously KNOWS which lines are table/code content, since it built
-# them. (Mirrors review-mr's findings.py, for the same reason.) One list per process is
-# enough — every CLI invocation is a fresh interpreter.
-_critical = []
-
-
-def _mark(line):
-    _critical.append(line.strip())
-    return line
-
-
-def _reset_critical():
-    """The CLI never needs this — every invocation is a fresh interpreter, so `_critical`
-    starts empty on its own. A test PROCESS calls fence()/render_* many times across many
-    cases, though, and would otherwise see critical lines pile up across unrelated tests."""
-    _critical.clear()
-
-
-def _critical_manifest():
-    """Trailing, non-visible payload for the gated commands' stdout — see
-    review-mr's findings.py, which carries the same mechanism and the same reasoning."""
-    if not _critical:
-        return ""
-    return "\n\n<!-- paste-gate:critical\n" + json.dumps(_critical) + "\n-->"
-
-
-def short_summary(state, t, width=72):
-    text = t.get("summary")
-    if not text:
-        thr = [state["threads"].get(x, {}) for x in t["thread_ids"]]
-        text = thr[0].get("body") if thr else ""
-    text = " ".join((text or "").split())
-    return text[: width - 1] + "…" if len(text) > width else text
-
-
 def _num(tid):
     return int("".join(c for c in tid if c.isdigit()) or 0)
 
 
 def _rows(state, scope, show_done=False):
+    """Mirrors review-mr's findings.py's `_rows` — same shape (status/counts/ordering for
+    render_table), but the `keep` sets below are this skill's own status vocabulary
+    (open/reply_pending/...), not findings.py's (draft/needs_ack/...). Stays duplicated:
+    see CLAUDE.md's "Sharing vs. duplication"."""
     topics = state["topics"]
     st = {t["id"]: topic_status(state, t) for t in topics}
     counts = {s: sum(1 for t in topics if st[t["id"]] == s) for s in GLYPH}
@@ -349,8 +307,8 @@ def render_table(state, scope="all", show_done=False):
         for t in shown:
             tid = t["id"]
             s = st[tid]
-            summ = short_summary(state, t).replace("|", "\\|")
-            out.append(_mark(f"| {GLYPH[s]} {WORD[s]} | {tref(f'**{tid}**')} "
+            summ = short_summary(state, t, width=72).replace("|", "\\|")
+            out.append(critical_manifest.mark(f"| {GLYPH[s]} {WORD[s]} | {tref(f'**{tid}**')} "
                              f"| `{_loc(state, t)}` | {summ} |"))
     else:
         out.append("_✓ nothing needs you — open threads are waiting on the reviewer_"
@@ -541,7 +499,7 @@ def fence(text, lang=""):
             runs.append(len(s) - len(s.lstrip("`")))
     bar = "`" * max([3] + [r + 1 for r in runs])
     for ln in (text or "").rstrip(chr(10)).splitlines():
-        _mark(ln)
+        critical_manifest.mark(ln)
     return f"{bar}{lang}\n{(text or '').rstrip(chr(10))}\n{bar}"
 
 
@@ -705,6 +663,18 @@ def render_code_context(x):
     # something else.
     while lo > 1 and COMMENT_LINE.match(lines[lo - 2]) and a - lo < above + DOC_PULL:
         lo -= 1
+    # The window above is a fixed line count with no notion of syntax state — see
+    # lib.snippet.open_construct's docstring for what that breaks (a highlighter given
+    # just this window can misread a docstring/comment/template-literal's CLOSING
+    # delimiter as an OPENING one) and review-mr's findings.py's code_snippet, which
+    # has the same hazard and routes through the same shared scanner.
+    lang = lang_for(path)
+    opened = open_construct(lines, lo)
+    if opened:
+        if lo - opened[1] <= MAX_BACKTRACK:
+            lo = opened[1]
+        else:
+            lang = ""
     body = []
     for i in range(lo, hi + 1):
         if hi - lo + 1 > MAX_BODY and lo + MAX_BODY - 10 < i < hi - 8:
@@ -723,7 +693,7 @@ def render_code_context(x):
         rendered.append(f"{mark} {str(i).rjust(width)} | {lines[i - 1]}")
     where = f"{path}:{a}–{b}" if span else f"{path}:{n}"
     out = [f"_Code the comment is on — `{where}` ({source}):_", "",
-           fence("\n".join(rendered), lang_for(path))]
+           fence("\n".join(rendered), lang)]
     if drift:
         out += ["", drift]
     return "\n".join(out)
@@ -887,7 +857,12 @@ def first_open(state):
 
 def render_present(state):
     """The opener the user should see: overview table + the first open topic's
-    reviewer comment, ready to reproduce in one reply."""
+    reviewer comment, ready to reproduce in one reply.
+
+    Mirrors review-mr's findings.py's `render_present` almost exactly — the only real
+    difference is `first_open` vs. its `first_todo`, each picking "the topic that needs
+    you" per this skill's own status vocabulary. Stays duplicated: see CLAUDE.md's
+    "Sharing vs. duplication"."""
     parts = [render_table(state, "all")]
     t = first_open(state)
     if t:
@@ -918,7 +893,12 @@ def render_plans(state):
 
 def render_bodies(state):
     """First + last note of each open thread — enough to write a summary AND
-    judge status (did the author actually address it, or just acknowledge?)."""
+    judge status (did the author actually address it, or just acknowledge?).
+
+    Mirrors review-mr's findings.py's `render_bodies` in structure, but the skip
+    condition (`done` here vs. its acked/wontfix/draft) and its "resolved by"
+    annotation are specific to each skill's own status vocabulary. Stays duplicated:
+    see CLAUDE.md's "Sharing vs. duplication"."""
     out = []
     for t in state["topics"]:
         if topic_status(state, t) == "done":
@@ -943,7 +923,7 @@ def resolve_state(args):
     if iid is None:
         mr = mr_view()
         iid = mr["iid"]
-    path = state_file(ctx["slug"], iid)
+    path = state_file(STATE_ROOT, ctx["slug"], iid, "topics.json")
     state = load(path)
     if state is None:
         mr = mr or mr_view()
@@ -1017,10 +997,10 @@ def main():
                 text = fh.read()
         else:
             text = sys.stdin.read()
-        print(render_change_view(args.topic, text, args.for_path) + _critical_manifest())
+        print(render_change_view(args.topic, text, args.for_path) + critical_manifest.manifest())
         return
     if cmd == "diff-view":
-        print(render_diff_view(args.topic, sys.stdin.read()) + _critical_manifest())
+        print(render_diff_view(args.topic, sys.stdin.read()) + critical_manifest.manifest())
         return
 
     ctx, iid, path, state = resolve_state(args)
@@ -1028,17 +1008,17 @@ def main():
     if cmd == "path":
         print(path)
     elif cmd == "quote":
-        print(render_quote(state, args.topic) + _critical_manifest())
+        print(render_quote(state, args.topic) + critical_manifest.manifest())
     elif cmd == "url":
         print(render_url(state, args.topic))
     elif cmd == "reply-view":
         body = reply_body(state, args.topic, os.path.dirname(path))
-        print(render_reply_view(state, args.topic, body) + _critical_manifest())
+        print(render_reply_view(state, args.topic, body) + critical_manifest.manifest())
     elif cmd == "reply":
         # body only — the payload for the clipboard or `glab api -F body=@-`
         print(reply_body(state, args.topic, os.path.dirname(path)), end="")
     elif cmd == "present":
-        print(render_present(state) + _critical_manifest())
+        print(render_present(state) + critical_manifest.manifest())
     elif cmd == "bodies":
         print(render_bodies(state))
     elif cmd == "plans":
@@ -1050,7 +1030,7 @@ def main():
         # is simply never read for that command — harmless, and keeping one code path
         # for both is simpler than branching just to omit it.
         print(render_table(state, "mine" if cmd == "todo" else "all",
-                           show_done=getattr(args, "all", False)) + _critical_manifest())
+                           show_done=getattr(args, "all", False)) + critical_manifest.manifest())
     elif cmd == "set":
         t = topic_for(state, args.topic) or die(f"no topic {args.topic}")
         fld = {"start-sha": "start_sha", "diff-url": "diff_url"}

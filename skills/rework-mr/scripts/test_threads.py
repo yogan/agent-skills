@@ -17,6 +17,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 
 import threads as T                                   # noqa: E402
+from lib import critical_manifest                     # noqa: E402
 
 
 class TestLooksLikeDiff(unittest.TestCase):
@@ -142,18 +143,18 @@ class TestCriticalManifest(unittest.TestCase):
     hooks/test_paste_gate.py's own note on why it moved here."""
 
     def setUp(self):
-        T._reset_critical()
+        critical_manifest.reset()
 
     def test_fence_content_is_marked_critical(self):
         T.fence("a = 1\nb = 2", "python")
-        self.assertEqual(set(T._critical), {"a = 1", "b = 2"})
+        self.assertEqual(set(critical_manifest.current()), {"a = 1", "b = 2"})
 
     def test_fence_bars_are_not_marked_critical(self):
         """The opening/closing ``` lines are delimiters, not content the user is meant
         to judge a finding against — same convention as review-mr's code_snippet."""
         T.fence("a = 1", "python")
-        self.assertNotIn("```python", T._critical)
-        self.assertNotIn("```", T._critical)
+        self.assertNotIn("```python", critical_manifest.current())
+        self.assertNotIn("```", critical_manifest.current())
 
     def test_multiple_embedded_fence_markers_all_stay_critical(self):
         """A single fence can legitimately contain more than one embedded backtick run
@@ -168,7 +169,7 @@ class TestCriticalManifest(unittest.TestCase):
         out = T.fence(content, "python")
         self.assertTrue(out.startswith("`````python\n"))     # widened past the widest embed
         for line in content.splitlines():
-            self.assertIn(line.strip(), T._critical)
+            self.assertIn(line.strip(), critical_manifest.current())
 
     def test_render_table_marks_rows_not_header(self):
         state = {"iid": 1, "title": "x", "topics": [
@@ -178,8 +179,9 @@ class TestCriticalManifest(unittest.TestCase):
                               "awaiting": "you"}}}
         out = T.render_table(state)
         row = next(ln for ln in out.splitlines() if ln.startswith("| ○"))
-        self.assertIn(row, T._critical)
-        self.assertNotIn("| Status | Topic | Location | Summary |", T._critical)
+        self.assertIn(row, critical_manifest.current())
+        self.assertNotIn("| Status | Topic | Location | Summary |",
+                          critical_manifest.current())
 
 
 class TestNoteRendering(unittest.TestCase):
