@@ -53,7 +53,7 @@ Spec format (JSON):
   "slug": "retry-backoff-refactor",
   "diagrams": {
     "retry-flow": {
-      "direction": "LR",
+      "direction": "TB",
       "nodes": [
         {"id": "a", "label": "Request fails"},
         {"id": "b", "label": "Backoff\nwith jitter"},
@@ -96,8 +96,13 @@ boxes could. Every embedded diagram gets a click-to-enlarge lightbox automatical
 whole card is the click target (not just the svg's own drawn area) - no spec changes needed
 for any of that.
 
-- "direction": "LR" (left-to-right, the default) or "TB" (top-to-bottom) - matches Graphviz's
-  `rankdir`.
+- "direction": "TB" (top-to-bottom, the default) or "LR" (left-to-right) - matches Graphviz's
+  `rankdir`. Prefer "TB" for anything that reads as a flow (a sequence of steps, a
+  request/response path, a state machine) - it reads more naturally top-to-bottom and uses the
+  page's available width better than a wide horizontal strip. Reach for "LR" only when you're
+  confident the diagram is small/short enough (few nodes, short labels) to actually fit
+  comfortably as a wide-but-short strip - long node labels or more than ~4 nodes tend to force
+  either clipping or an awkwardly wide diagram in LR.
 - "nodes": each needs "id" (referenced by edges, not shown) and "label" - a `\n` in the label
   puts the first line at normal size and any further lines smaller, like a title + detail line.
   In the spec JSON, write a single backslash (`\n`), NOT `\\n` - `_html_label` splits on an
@@ -718,7 +723,7 @@ def render_diagram(diagram: dict) -> str:
     """Render a {"direction", "nodes": [{"id","label","fail"?}], "edges": [[from,to,label?]]}
     spec into an inline <svg> fragment via Graphviz `dot` - a real layout engine, so the result
     never clips or wraps unexpectedly the way ad-hoc flexbox boxes could."""
-    direction = diagram.get("direction", "LR")
+    direction = diagram.get("direction", "TB")
     lines = [
         "digraph G {",
         f"  rankdir={direction};",
