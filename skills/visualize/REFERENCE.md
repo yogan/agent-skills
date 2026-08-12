@@ -1,0 +1,234 @@
+# The diagram spec
+
+JSON. One spec is one diagram. See [SKILL.md](SKILL.md) for *which* kind to use and how much
+to put in one — this file is only the field list.
+
+The output is a standalone image, so there is no page furniture: no heading, no caption. What
+the diagram says has to be inside the diagram. The file is named from `title`/`slug`, which is
+how you find it again later.
+
+Validation is strict and the errors are specific, so the fastest way to check a spec is to
+render it. Two things it will refuse, both of which otherwise produce a diagram that looks
+fine and is wrong:
+
+- an edge pointing at an id that does not exist — D2 invents an empty node rather than
+  failing, so the typo ships as a stray blank box;
+- `near` without a `note`, which is almost always a misspelt `note` key and means the callout
+  you wanted is silently missing.
+
+## Common to every kind
+
+| field | | |
+|---|---|---|
+| `kind` | required | `architecture` · `sequence` · `er` · `class` · `state` · `steps` |
+| `title` | optional | names the output file, and the ids inside the SVG |
+| `slug` | optional | same, and wins over `title` when both are set |
+| `direction` | optional | `up` · `down` · `left` · `right`. Leave it out — the default per kind is the measured one. |
+
+### Roles
+
+Every box takes a `role`, which is what it *is*, not what colour you want:
+`client` · `svc` · `store` · `cache` · `ext` · `neutral` (the default).
+
+### Notes
+
+Any box, table or class may carry:
+
+| field | | |
+|---|---|---|
+| `note` | | 2–4 words, becomes a permanently visible callout |
+| `near` | optional | one of `top-left` `top-center` `top-right` `center-left` `center-right` `bottom-left` `bottom-center` `bottom-right` |
+
+**Most diagrams should have no notes at all** — see [SKILL.md](SKILL.md) on when one earns its
+place. Note that no example in this file uses one, deliberately: a callout is the exception, not
+part of the normal shape of a spec.
+
+A note must point at something the reader would otherwise **miss or misread**. It must not
+describe what a box already is:
+
+```json
+{"id": "document_claims", "role": "cache", "note": "leased, expiring"}   // NO — a caption
+{"id": "email_documents", "role": "svc", "note": "join table"}           // NO — the FKs say so
+{"id": "documents", "role": "store", "note": "gains a revision column"}  // yes — a change
+{"id": "sessions", "role": "store", "note": "no index on user_id"}       // yes — a flaw
+```
+
+If the fact is intrinsic to the thing, it belongs in the label or is already visible in the
+columns. If it is a change, a flaw, or the answer to the question that was asked, it is a note.
+
+**Leave `near` out.** The renderer measures all eight positions in a browser and picks the
+one that is not clipped and covers least. A hand-picked anchor is a starting point for that
+search, not an instruction — and hand-picked anchors have measurably lost to it before.
+
+## `architecture`
+
+```json
+{
+  "kind": "architecture",
+  "title": "Presence gateway in context",
+  "nodes": [
+    {"id": "browser", "label": "Browser", "children": [
+      {"id": "editor", "label": "Editor", "role": "client"}
+    ]},
+    {"id": "pg", "label": "PostgreSQL", "role": "store", "shape": "cylinder"},
+    {"id": "idp", "label": "OIDC provider", "role": "ext", "shape": "hexagon"}
+  ],
+  "edges": [
+    {"from": "browser.editor", "to": "pg", "label": "GraphQL"}
+  ]
+}
+```
+
+- **`children` makes a container.** A container is styled as a group and must not also carry a
+  `role`.
+- **Nested ids are addressed by dotted path** — `browser.editor`, `k8s.api.pod`. The bare name
+  is not addressable, which is deliberate: it is how two containers can each hold a `pod`.
+- `shape` (optional, leaf nodes): `rectangle` (default) · `cylinder` · `hexagon` · `queue` ·
+  `document` · `stored_data` · `person` · `diamond` · `oval` · `circle` · `package` · `step` ·
+  `page` · `cloud`. Anything else is rejected; `code` in particular carries its own colour
+  scheme that the theming cannot follow.
+- `edges`: `from`, `to`, optional `label`, optional `dashed`.
+
+## `sequence`
+
+```json
+{
+  "kind": "sequence",
+  "participants": [
+    {"id": "editor", "label": "Editor", "role": "client"},
+    {"id": "gw", "label": "Presence Gateway", "role": "svc"}
+  ],
+  "messages": [
+    {"from": "editor", "to": "gw", "label": "WS upgrade"},
+    {"from": "gw", "to": "gw", "label": "authenticate(token)"}
+  ]
+}
+```
+
+- **Participants become columns, in the order you write them.** Put them in the order the
+  reader should scan, usually outside-in.
+- A message from a participant to itself is fine and renders as a self-call.
+- Participants cannot nest.
+- ≤7 messages. D2 spends a fixed ~86px of height per message and offers no way to tighten it,
+  so this limit is hard arithmetic rather than a style preference.
+
+## `er`
+
+```json
+{
+  "kind": "er",
+  "tables": [
+    {"id": "users", "role": "store", "columns": [
+      {"name": "id", "type": "uuid", "key": "pk"},
+      {"name": "email", "type": "text"}
+    ]},
+    {"id": "documents", "role": "store",
+     "columns": [{"name": "owner_id", "type": "uuid", "key": "fk"}]}
+  ],
+  "edges": [
+    {"from": "documents.owner_id", "to": "users.id", "label": "n docs : 1 owner"}
+  ]
+}
+```
+
+- `key` (optional): `pk` · `fk` · `unique`.
+- **An edge can point at a single column** (`documents.owner_id`) or at the whole table
+  (`documents`). Column-level is usually what you want for a foreign key.
+- **Label every edge with a cardinality that names its entities.** A bare ratio is not enough:
+  `n : 1` makes the reader work out which end is which and then map it back to the table names.
+  Spell it out so the label reads on its own.
+
+  | | |
+  |---|---|
+  | `"n : 1"`, `"1 : 1"`, `"1 : n"` | **no.** Ambiguous without tracing the arrow. |
+  | `"1 doc : n edits"` | yes |
+  | `"1 doc : 0..1 claim"` | yes — and says the 1:1 is optional |
+  | `"n : m via email_documents"` | yes — names the join table |
+
+  The renderer warns you when a label is a bare ratio.
+- `edges` is optional — a single table with no relationships is a legitimate diagram.
+- Show the columns the question is about. Not all of them.
+
+## `class`
+
+```json
+{
+  "kind": "class",
+  "classes": [
+    {"id": "Broadcaster", "role": "ext", "stereotype": "interface",
+     "members": [{"name": "+ publish()", "type": "void"}]},
+    {"id": "RedisFanout", "role": "cache",
+     "members": [{"name": "+ publish()", "type": "void"}]}
+  ],
+  "edges": [
+    {"from": "RedisFanout", "to": "Broadcaster", "label": "implements", "dashed": true}
+  ]
+}
+```
+
+- `members`: `name` is free text — write the signature as a reader expects it
+  (`+ handleUpgrade()`, `- authenticate()`); `type` is the return or field type.
+- `stereotype` (optional, e.g. `interface`) adds a «guillemet» row and a dashed outline.
+- Use `dashed: true` for "implements" / "uses" and a solid edge for ownership.
+- **Edges connect classes, not members.** Unlike `er`, a member is a label rather than an
+  addressable id.
+
+## `state`
+
+```json
+{
+  "kind": "state",
+  "states": [
+    {"id": "live", "role": "store"},
+    {"id": "backoff", "label": "reconnect backoff", "role": "cache"}
+  ],
+  "transitions": [
+    {"from": "live", "to": "backoff", "label": "transport error"}
+  ]
+}
+```
+
+- Label every transition with what causes it. An unlabelled state machine is a shape.
+- ≤6 states. If there are more, the diagram is answering more than one question — split it.
+- States cannot nest.
+
+## `steps` (animated)
+
+One diagram per board, animated in sequence. Only worth it when consecutive boards differ in
+**topology** — "both paths run at once, then the old one is removed" is something no single
+static picture can say. Arrows moving over an unchanging drawing explain nothing.
+
+```json
+{
+  "kind": "steps",
+  "direction": "right",
+  "caption": "phase 1 of 3 — today: polling only",
+  "nodes": [
+    {"id": "editor", "label": "Editor", "role": "client"},
+    {"id": "api", "label": "GraphQL API", "role": "svc"}
+  ],
+  "edges": [{"from": "editor", "to": "api", "label": "poll every 5s"}],
+  "steps": [
+    {"emphasize_edges": [{"from": "editor", "to": "api"}]},
+    {"caption": "phase 2 of 3 — deploy the gateway, no traffic yet",
+     "add_nodes": [{"id": "gw", "label": "Gateway", "role": "svc", "new": true}],
+     "add_edges": [{"from": "gw", "to": "api", "label": "subscribe"}]},
+    {"caption": "phase 3 of 3 — cutover, polling removed",
+     "relabel_edges": [{"from": "gw", "to": "api", "label": "WebSocket 100%"}],
+     "remove_edges": [{"from": "editor", "to": "api"}]}
+  ]
+}
+```
+
+- **`caption` is required** on the base diagram, and each step should set its own. D2 does not
+  render board names into the SVG, so without captions the reader can see the topology change
+  but has no idea which phase they are looking at.
+- Per-step keys: `caption`, `add_nodes`, `add_edges`, `remove_edges`, `relabel_edges`,
+  `emphasize_edges`. All optional.
+- `"new": true` on an added node accents its border. This is the **only** place styling is
+  allowed to carry meaning, because the caption is there to say what it means. Everywhere
+  else, use `note`.
+- A node added by an earlier step can be referenced by a later one.
+- `caption` is a reserved id — do not name a node that.
+- Keep it to ~4 boards. An animation the reader cannot hold in their head explains less than
+  a few well-chosen ones.
