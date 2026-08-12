@@ -69,6 +69,23 @@ Four rules that keep a diagram honest:
 
 - **Show only what you verified.** If you could not work out whether an edge exists, leave it
   out rather than drawing a guess. An absent edge is a gap; a wrong edge is a lie.
+- **Never draw an edge because the tool "usually works that way".** An edge comes from the
+  config, not from your model of the system. The trap is that the invented edge is plausible,
+  so nothing looks wrong — and it also *hides* the advice you would otherwise get, because the
+  "consider splitting this" warning is about how connected the picture is. One speculative arrow
+  can silence it.
+
+  The case that produced this rule: a GitLab CI diagram drew `lint → test → .post: on success`,
+  because stages do run in order — except every job in that repo declares `needs: []`, which
+  opts out of stage ordering entirely and starts the job immediately. The config even said so in
+  a comment. Two edges that the YAML contradicts, and four separate stage graphs merged into one
+  3000px-wide picture. Check for `needs:` before drawing stage order; a DAG pipeline's real
+  edges are the `needs`, and the stages are only grouping.
+- **Say what you read.** Config and a live run answer different questions: a sampled pipeline
+  shows what ran *that time*, so tag-only and conditional jobs are simply absent — one run of
+  this skill lost an entire `.pre` stage that way, having read two live pipelines instead of the
+  configuration. Either is a legitimate source. Which one you used is part of the answer, and
+  belongs in your summary.
 - **In a `sequence`, an arrow means "A calls B" — so if a component *reacts* to state changing
   somewhere else, draw the state.** This is the failure that looks most like success: the
   interesting part of a flow is often "and now the app knows", nothing calls anything to make
@@ -126,6 +143,34 @@ because it is opened full-screen on a landscape monitor. Leave `direction` alone
 
 Split only for an editorial reason: the diagram is answering **two different questions** and
 each deserves its own. "All the tables" is one question, even with nine tables in it.
+
+### The exception: several unrelated graphs in one answer
+
+Sometimes one honest question has an answer made of pieces that do not touch — a CI pipeline
+whose stages share no dependencies, a service with four independent workers. The renderer tells
+you when this happens: *"N disconnected groups of nodes"*. **This is the one oversize you can
+always fix**, because they are already separate pictures. A real pipeline came out 3433×693 —
+aspect 5:1, most of the canvas holding jobs with no edges at all — where the same content as four
+diagrams is 1405×543 at the largest.
+
+Do it only when the diagram is genuinely too wide to read. Three groups in a small diagram is
+fine; leave it alone.
+
+When you do split:
+
+- **One diagram per group, and drop nothing.** Correctness first — a split that loses a node or
+  an edge is worse than a wide picture. Every node ends up in exactly one part.
+- **Number and name every part in its `title`** — `pipeline 2/4 — test stage`. The title is drawn
+  into the image, so a part is not anonymous when it is the only one on screen.
+- **Where the split cuts a link, leave a pointer on both sides.** This is one of the few places a
+  `note` is clearly earned: the reader would otherwise have no way to know the connection exists.
+  Two to four words, naming the other part, with the direction in it — `→ then test stage` on the
+  upstream node, `← after lint stage` on the downstream one. Cut as few links as possible: split
+  between groups that are disjoint, or joined by a single edge.
+- A group with **no edges at all is still a legitimate diagram** — a stage's five independent jobs
+  is a picture of that stage.
+
+Say in your summary that you split it and why, and name the parts.
 
 What is still worth keeping tight, because it is about legibility rather than fitting:
 
@@ -237,8 +282,16 @@ gates, and opens it. Full size, so the reader can zoom; there is no page and no 
 Expect a few seconds per callout: the placement search is the cost, and it is why you never
 position anything by hand. A diagram with no notes skips it entirely and is fast.
 
-If the user asked for several diagrams, render them all with `--no-open`, then open each
-finished one — or just tell them the paths.
+**Several diagrams: render them all with `--no-open`, then open them in ONE command.**
+
+```bash
+open /tmp/…-part1.png /tmp/…-part2.png /tmp/…-part3.png     # macOS; xdg-open elsewhere
+```
+
+One `open` with several files gives a single viewer window with a thumbnail sidebar you can
+scroll through; one call per file gives you a window per file, stacked on top of each other.
+Measured: two files in one call is +1 window, two separate calls is +2. Pass the **PNG** paths —
+the second line each run prints — in the order the reader should see them.
 
 The other modes are for feeding a page rather than a person:
 
@@ -271,4 +324,9 @@ to fit, so "too wide" and "too tall" are not failures and splitting to fix them 
 One or two sentences: what the diagram shows, and the one thing worth noticing in it. If you
 left something out to keep it legible, say so — that is information, not an apology.
 
-If you drew more than one diagram, say what question each one answers.
+If you drew more than one diagram, say what question each one answers — and if you split one
+subject into parts, say that you split it and why.
+
+**Name the file that is actually on screen**, which is the PNG: the run prints `opened: <path>`
+on stderr for exactly this reason. Reporting the SVG path while the viewer shows the PNG has
+already happened once, and it sends anyone who follows the path to a file their viewer may crop.

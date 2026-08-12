@@ -11,7 +11,8 @@ import unittest
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
 from lib.diagram.examples import REFERENCE
-from lib.diagram.spec import SpecError, content_warnings, validate
+from lib.diagram.spec import (SpecError, bridges, components,  # noqa: E501
+                              content_warnings, validate)
 
 
 def arch(**over):
@@ -571,6 +572,83 @@ class TestContentWarnings(unittest.TestCase):
         """A caller may report them; it must not have to guard against an exception."""
         self.assertIsInstance(content_warnings({"kind": "er"}), list)
         self.assertIsInstance(content_warnings({}), list)
+
+
+class TestIslands(unittest.TestCase):
+    """Barely-connected groups are the one oversize an author can always fix — they are nearly
+    separate pictures already, and the layout engine packs them along the cross axis, so the
+    width is the sum of all of them."""
+
+    def stages(self, *edges, jobs=5, names=("lint", "test", "post")):
+        return {"kind": "architecture",
+                "nodes": [{"id": s, "children": [{"id": f"{s}{i}", "role": "svc"}
+                                                 for i in range(jobs)]} for s in names],
+                "edges": list(edges)}
+
+    def test_an_edge_joins_two_names(self):
+        self.assertEqual(components(["a", "b"], [{"from": "a", "to": "b"}]), [["a", "b"]])
+
+    def test_no_edges_means_every_name_is_its_own_island(self):
+        self.assertEqual(components(["a", "b"], []), [["a"], ["b"]])
+
+    def test_direction_does_not_matter(self):
+        self.assertEqual(components(["a", "b"], [{"from": "b", "to": "a"}]), [["a", "b"]])
+
+    def test_a_link_into_a_container_joins_the_whole_container(self):
+        """Only the first path segment counts: a link into `k8s.api.pod` joins `k8s`."""
+        self.assertEqual(components(["browser", "k8s"],
+                                    [{"from": "browser", "to": "k8s.api.pod"}]),
+                         [["browser", "k8s"]])
+
+    def test_an_edge_to_an_unknown_name_is_ignored_rather_than_crashing(self):
+        """content_warnings runs on specs validate() has not necessarily accepted yet."""
+        self.assertEqual(components(["a"], [{"from": "a", "to": "gone"}]), [["a"]])
+
+    def test_every_edge_of_a_chain_is_a_bridge(self):
+        cuts = bridges(["a", "b", "c"], [{"from": "a", "to": "b"}, {"from": "b", "to": "c"}])
+        self.assertEqual(sorted(cuts), [("a", "b"), ("b", "c")])
+
+    def test_a_cycle_has_no_bridges(self):
+        edges = [{"from": "a", "to": "b"}, {"from": "b", "to": "c"}, {"from": "c", "to": "a"}]
+        self.assertEqual(bridges(["a", "b", "c"], edges), [])
+
+    def test_two_parallel_edges_are_neither_a_bridge(self):
+        """Removing one leaves the other, so the graph does not fall apart."""
+        self.assertEqual(bridges(["a", "b"], [{"from": "a", "to": "b"},
+                                              {"from": "b", "to": "a"}]), [])
+
+    def test_four_disconnected_stages_warn_and_name_themselves(self):
+        warnings = content_warnings(self.stages(names=("test", "lint", "post", "pre")))
+        self.assertTrue(any("4 barely-connected groups" in w for w in warnings), warnings)
+        self.assertTrue(any("lint" in w for w in warnings), warnings)
+
+    def test_a_single_speculative_edge_no_longer_hides_the_split(self):
+        """The case that got past the first version: a real pipeline had `stage -> stage: on
+        success` added between otherwise unconnected stages, and two edges were enough to make
+        the whole thing look like one graph."""
+        warnings = content_warnings(self.stages(
+            {"from": "lint", "to": "test", "label": "on success"},
+            {"from": "test", "to": "post", "label": "on success"}))
+        self.assertTrue(any("barely-connected" in w for w in warnings), warnings)
+        self.assertTrue(any("single edge" in w for w in warnings), warnings)
+
+    def test_a_small_chain_is_left_alone_though_every_edge_is_a_bridge(self):
+        """Otherwise `a -> b -> c -> d` reads as four splittable groups, which is absurd."""
+        spec = {"kind": "architecture",
+                "nodes": [{"id": c, "role": "svc"} for c in "abcd"],
+                "edges": [{"from": "a", "to": "b"}, {"from": "b", "to": "c"},
+                          {"from": "c", "to": "d"}]}
+        self.assertEqual([w for w in content_warnings(spec) if "barely-connected" in w], [])
+
+    def test_two_big_groups_are_ordinary(self):
+        spec = self.stages(names=("lint", "test"))
+        self.assertEqual([w for w in content_warnings(spec) if "barely-connected" in w], [])
+
+    def test_an_architecture_with_no_edges_is_valid(self):
+        """A CI stage whose jobs have no dependencies is a picture of that stage. Requiring an
+        edge made splitting a real pipeline impossible."""
+        validate({"kind": "architecture", "title": "lint stage",
+                  "nodes": [{"id": "a", "role": "svc"}, {"id": "b", "role": "svc"}]})
 
 
 if __name__ == "__main__":

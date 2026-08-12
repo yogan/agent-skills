@@ -208,6 +208,19 @@ def to_vars(svg):
     return _sub(svg, lambda entry: f"var({entry[0]})")
 
 
+def for_theme(literal, theme):
+    """One literal's concrete value in one theme — `resolve` for a single colour.
+
+    For chrome the renderer draws itself rather than getting from d2 (the raster's title
+    strip), so it lands on the same value the drawing beside it resolves to instead of a
+    hardcoded near-match.
+    """
+    entry = ALL.get(literal)
+    if not entry:
+        raise KeyError(f"{literal} is not a palette literal")
+    return entry[1 if theme == "light" else 2]
+
+
 def resolve(svg, theme):
     """Concrete colours for one theme, exactly as the browser would compute them.
 

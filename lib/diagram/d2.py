@@ -372,7 +372,7 @@ def emit(spec, background=None, standalone=False):
     if kind in ("architecture", "steps"):
         for node in spec["nodes"]:
             lines += _node(node, allow_new=(kind == "steps"))
-        for edge in spec["edges"]:
+        for edge in spec.get("edges") or []:
             lines.append(_edge(edge))
         if kind == "steps":
             lines += _caption(spec["caption"])

@@ -218,13 +218,18 @@ def main():
         png = None
         if not args.no_png:
             try:
-                png = render.rasterise_standalone(svg, out_path)
+                png = render.rasterise_standalone(
+                    svg, out_path, title=spec.get("title"), theme=args.theme)
                 print(png)
             except render.RenderError as exc:
                 print(f"note: could not rasterise to PNG ({exc}) — opening the SVG instead, "
                       "which some viewers crop", file=sys.stderr)
         if not args.no_open:
-            open_file(png or out_path)
+            opened = png or out_path
+            open_file(opened)
+            # Named on stderr because stdout is paths only, and because the agent relaying
+            # this got it wrong: it reported the SVG while the PNG was on screen.
+            print(f"opened: {opened}", file=sys.stderr)
     else:
         # Saying this every time is deliberate: an SVG that looks broken in a viewer is the
         # single most likely confusion this tool can cause, and the cause is never the SVG.

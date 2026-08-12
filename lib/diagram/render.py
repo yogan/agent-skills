@@ -313,19 +313,36 @@ def standalone(spec, name="diagram", theme="dark", animate_interval=1800, binary
     return _inline_style(svg, STANDALONE_CSS + STANDALONE_CALLOUT[theme])
 
 
-def rasterise_standalone(svg, svg_path):
+# A title strip above the drawing, in the raster only. d2 has no page-title and adding one to
+# the SVG means synthesising a text node and growing the canvas by hand; the rasteriser already
+# builds a page, so the caption costs a line of HTML there. It matters most when one subject was
+# split across several images: without it, part three is anonymous and a cross-reference in a
+# callout points at a name the reader cannot see anywhere.
+TITLE_H = 34
+TITLE_CSS = ("font:600 15px system-ui,-apple-system,'Segoe UI',sans-serif;"
+             "padding:8px 12px 0;letter-spacing:.2px")
+
+
+def rasterise_standalone(svg, svg_path, title=None, theme="dark"):
     """Write `svg` beside `svg_path` as a PNG and return that path.
 
-    The SVG is inlined into a bare page rather than referenced: an `<img src>` would be a
-    second fetch of a file that may not be written yet, and inlining is also what the
-    placement pass measures, so the raster and the measurements agree by construction.
+    The SVG is inlined into the page rather than referenced: an `<img src>` would be a second
+    fetch of a file that may not be written yet, and inlining is also what the placement pass
+    measures, so the raster and the measurements agree by construction.
     """
     width, height = natural_size(svg)
     if not width or not height:
         raise RenderError("the SVG has no natural size to rasterise")
     out = os.path.splitext(str(svg_path))[0] + ".png"
+    fg = palette.for_theme(palette.FG, theme)
+    bg = palette.for_theme(palette.CANVAS, theme)
+    caption = ""
+    if title:
+        caption = (f'<div style="{TITLE_CSS};color:{fg}">'
+                   f"{title.replace('&', '&amp;').replace('<', '&lt;')}</div>")
+        height += TITLE_H
     page = (f'<!DOCTYPE html><meta charset="utf-8"><style>html,body{{margin:0;padding:0}}'
-            f"svg{{display:block}}</style>{svg}")
+            f"body{{background:{bg}}}svg{{display:block}}</style>{caption}{svg}")
     try:
         return browser.rasterise(page, out, width, height)
     except browser.BrowserError as exc:

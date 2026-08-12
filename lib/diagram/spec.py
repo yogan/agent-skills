@@ -79,6 +79,21 @@ MAX_STEPS = 4         # boards in an animation
 # the rest of this file, so being wrong costs a line of output.
 MAX_TRANSITIONS_PER_STATE = 2
 
+# Disconnected components above which a diagram is worth splitting. Two is ordinary — a schema
+# can hold an unrelated table. At three the picture is several unrelated graphs sharing a canvas,
+# and dagre packs them along the CROSS axis, so the width is the sum of all of them and no
+# `direction` fixes it: a real CI pipeline came out 3433x693 (aspect 5.0) as four components,
+# most of the canvas being jobs with no edges at all. Advisory, because sometimes the answer
+# really is "here is everything at once".
+MAX_COMPONENTS = 2
+
+# Boxes below which a barely-connected diagram is left alone. Counting groups is not enough on
+# its own: in any chain every edge is a bridge, so `a → b → c → d` looks like four groups joined
+# by three cuttable edges, and splitting that would be absurd. Width only hurts once there is
+# real content — the pipelines that prompted this carried 18 boxes across their groups, where the
+# reference animation is three. Two full rows' worth (2 x MAX_SIBLINGS) is the line.
+MIN_SPLIT_BOXES = 12
+
 
 class SpecError(ValueError):
     """A spec that cannot be rendered, or would render misleadingly.
@@ -268,7 +283,11 @@ def validate(spec):
 
     if kind in ("architecture", "steps"):
         _check_nodes(_list(spec, "nodes", kind), kind, ids, allow_new=(kind == "steps"))
-        _check_edges(spec, ids, kind)
+        # `edges` is optional, as it is for `er`. Requiring one made a legitimate diagram
+        # unrenderable and only showed up when splitting a real pipeline: a CI stage whose five
+        # jobs have no dependencies between them is a picture of that stage, and refusing it
+        # forced the whole pipeline back into one 3433px-wide canvas.
+        _check_edges(spec, ids, kind, required=False)
         if kind == "steps":
             _check_steps(spec, ids)
     elif kind == "sequence":
@@ -356,6 +375,88 @@ def _names_something(label):
     return any(c not in _RATIO_CHARS for c in label.lower())
 
 
+def components(names, edges):
+    """Group top-level `names` into connected islands, ignoring edge direction.
+
+    An edge endpoint may be a dotted path into a container (`k8s.api.pod`); only its first
+    segment matters here, because a link reaching into a container joins that whole container to
+    whatever it came from — which is what the layout engine packs. Returns one sorted list per
+    island, in the order their first member appears.
+    """
+    parent = {name: name for name in names}
+
+    def find(x):
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+
+    for edge in edges:
+        ends = [str(edge.get(end, "")).split(".", 1)[0] for end in ("from", "to")]
+        if all(end in parent for end in ends):
+            a, b = find(ends[0]), find(ends[1])
+            if a != b:
+                parent[a] = b
+
+    islands = {}
+    for name in names:
+        islands.setdefault(find(name), []).append(name)
+    return [sorted(group) for group in islands.values()]
+
+
+def bridges(names, edges):
+    """Edges whose removal would split the graph — the `(from, to)` pairs, ignoring direction.
+
+    A group joined to the rest by exactly one edge is still a candidate for its own diagram: cut
+    there and one cross-reference replaces the arrow. Without this, a single speculative edge
+    hides every split opportunity in a drawing — which is exactly what happened to a CI pipeline
+    where "stage → stage: on success" was added between four otherwise disjoint stages.
+
+    Standard lowlink search, iterative so a wide graph cannot recurse too deep.
+    """
+    adj = {name: [] for name in names}
+    pairs = []
+    for edge in edges:
+        a, b = (str(edge.get(end, "")).split(".", 1)[0] for end in ("from", "to"))
+        if a in adj and b in adj and a != b:
+            index = len(pairs)
+            pairs.append((a, b))
+            adj[a].append((b, index))
+            adj[b].append((a, index))
+
+    seen, low, disc, found = {}, {}, {}, []
+    timer = 0
+    for root in names:
+        if root in seen:
+            continue
+        stack = [(root, None, iter(adj[root]))]
+        seen[root] = True
+        disc[root] = low[root] = timer
+        timer += 1
+        while stack:
+            node, via, neighbours = stack[-1]
+            advanced = False
+            for nxt, index in neighbours:
+                if index == via:
+                    continue
+                if nxt not in seen:
+                    seen[nxt] = True
+                    disc[nxt] = low[nxt] = timer
+                    timer += 1
+                    stack.append((nxt, index, iter(adj[nxt])))
+                    advanced = True
+                    break
+                low[node] = min(low[node], disc[nxt])
+            if not advanced:
+                stack.pop()
+                if stack:
+                    parent = stack[-1][0]
+                    low[parent] = min(low[parent], low[node])
+                    if low[node] > disc[parent]:
+                        found.append(pairs[via])
+    return found
+
+
 def content_warnings(spec):
     """Advisory limits — a rendering constraint, not an editorial one.
 
@@ -397,6 +498,34 @@ def content_warnings(spec):
                            f"(>{MAX_NOTE_WORDS}): {note!r} — a wide callout has fewer "
                            "places it can sit without being clipped")
 
+    def check_islands(names, edges, what, boxes):
+        """Several barely-related graphs on one canvas is the widest a diagram ever gets, and
+        the one oversize the author can always fix: they are nearly separate pictures already.
+
+        Groups are counted with the single-edge joins cut, not just the absent ones. A first
+        version only looked for fully disconnected groups and a real pipeline slipped straight
+        past it: the author had added `stage → stage: on success` between four otherwise
+        unconnected stages, and two speculative edges were enough to make the whole thing look
+        like one graph.
+        """
+        cuts = bridges(names, edges)
+        held = [e for e in edges
+                if (str(e.get("from", "")).split(".", 1)[0],
+                    str(e.get("to", "")).split(".", 1)[0]) not in cuts
+                and (str(e.get("to", "")).split(".", 1)[0],
+                     str(e.get("from", "")).split(".", 1)[0]) not in cuts]
+        islands = components(names, held)
+        if len(islands) <= MAX_COMPONENTS or boxes < MIN_SPLIT_BOXES:
+            return
+        listed = "; ".join(", ".join(group[:4]) + ("…" if len(group) > 4 else "")
+                           for group in islands)
+        joined = (f" They are held together by {len(cuts)} single edge(s), each of which a "
+                  "cross-reference can replace." if cuts else "")
+        out.append(f"{len(islands)} barely-connected groups of {what} ({listed}) — the layout "
+                   "engine packs them side by side, so the width is the sum of all of them."
+                   f"{joined} Consider one diagram per group, with a `note` pointing at the "
+                   "other part wherever a link is cut")
+
     if kind in ("architecture", "steps"):
         nodes = spec.get("nodes") or []
         if len(nodes) > MAX_SIBLINGS:
@@ -409,6 +538,8 @@ def content_warnings(spec):
         check_labels(flat, "node")
         check_notes(flat, "node")
         check_labels(spec.get("edges") or [], "edge")
+        check_islands([n["id"] for n in nodes], spec.get("edges") or [], "nodes",
+                      sum(1 for _, node in _walk(nodes) if not node.get("children")))
     elif kind == "sequence":
         msgs = spec.get("messages") or []
         if len(msgs) > MAX_MESSAGES:
@@ -457,6 +588,7 @@ def content_warnings(spec):
         check_labels(states, "state")
         check_notes(states, "state")
         check_labels(transitions, "transition")
+        check_islands([s["id"] for s in states], transitions, "states", len(states))
     elif kind in ("er", "class"):
         # A relationship's cardinality is most of what an ER diagram tells a reader, and a bare
         # ratio does not carry it: "n : 1" leaves them working out which end is which and then

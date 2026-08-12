@@ -296,6 +296,22 @@ class TestOpening(unittest.TestCase):
             self.assertEqual(self.opened, [printed[-1]])
             self.assertEqual(printed[0], target)
 
+    def test_the_title_is_drawn_into_the_png_so_a_part_is_not_anonymous(self):
+        """It matters when one subject was split across several images: a cross-reference in a
+        callout otherwise points at a name the reader cannot see anywhere."""
+        if not V.browser.available():
+            self.skipTest("no browser to rasterise with")
+        spec = {"kind": "architecture", "title": "pipeline 2/4 — test stage",
+                "nodes": [{"id": "a", "role": "svc"}, {"id": "b", "role": "svc"}],
+                "edges": [{"from": "a", "to": "b", "label": "needs"}]}
+        drawing = render.standalone(spec, name="t")
+        with tempfile.TemporaryDirectory() as tmp:
+            bare = render.rasterise_standalone(drawing, os.path.join(tmp, "bare.svg"))
+            named = render.rasterise_standalone(drawing, os.path.join(tmp, "named.svg"),
+                                                title=spec["title"])
+            self.assertGreater(os.path.getsize(named), os.path.getsize(bare),
+                               "the titled raster should carry more ink than the bare one")
+
     def test_the_png_is_what_gets_opened_when_a_browser_is_there(self):
         """macOS renders SVG through Quick Look, which crops our canvas square."""
         if not V.browser.available():
