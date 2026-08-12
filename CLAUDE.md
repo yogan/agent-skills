@@ -8,9 +8,13 @@ Guidance for working on this repo's own code. Not for a skill's runtime behavior
   `scripts/` holds its Python implementation.
 - `hooks/` — cross-skill runtime infra (the paste-gate Stop hook). See
   [hooks/README.md](hooks/README.md).
-- `lib/` — pure Python shared repo-wide (skill scripts and `e2e/` both import from it).
+- `lib/` — Python shared repo-wide (skill scripts and `e2e/` both import from it).
   Only for logic that's provably identical across its consumers, modulo a trivial
   parameter — see below.
+- `lib/diagram/` — the diagram renderer (D2), shared by the explainers and `visualize`.
+  The one place in `lib/` that isn't pure Python: `lib/diagram/js/` holds a Node script
+  because measuring a rendered diagram needs a real browser — see that module's docstring
+  for why there's no substitute. The Python side decides; the JS only measures.
 - `e2e/` — local GitLab demo/test rig for `review-mr`/`rework-mr` (see `e2e/README.md`).
 
 ## Sharing vs. duplication
