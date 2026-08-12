@@ -273,6 +273,33 @@ class TestAgainstRealD2(unittest.TestCase):
         self.assertIn(f"stroke-dasharray:{compact.DASH:.6f}", self.out)
         self.assertNotIn("stroke-dasharray:12", self.out)
 
+    def test_d2_really_emits_a_two_line_label_as_two_tspans(self):
+        """`style_detail_lines` rests entirely on this, and the fixture above only asserts my
+        hand-written idea of d2's output. Deriving d2's shape by hand is exactly what produced
+        the mask bug, so the claim is checked against the real thing here.
+        """
+        from lib.diagram import d2, palette
+        spec = {"kind": "sequence",
+                "participants": [{"id": "user", "group": "browser"},
+                                 {"id": "routing", "label": "FE routing", "group": "browser",
+                                  "detail": "AppRoutes / react-router"}],
+                "messages": [{"from": "user", "to": "routing", "label": "navigate()"}]}
+        raw = render.compile_source(d2.emit(spec, background=palette.CANVAS),
+                                    pad=render.STANDALONE_PAD)
+        holder = next(m.group(0) for m in re.finditer(r"<text\b[^>]*>.*?</text>", raw, re.S)
+                      if "AppRoutes" in m.group(0))
+        self.assertEqual(len(re.findall(r"<tspan\b", holder)), 2, holder[:200])
+
+        out = compact.style_detail_lines(raw)
+        styled = next(m.group(0) for m in re.finditer(r"<text\b[^>]*>.*?</text>", out, re.S)
+                      if "AppRoutes" in m.group(0))
+        first, second = re.findall(r"<tspan\b[^>]*>.*?</tspan>", styled, re.S)
+        self.assertIn("FE routing", first)
+        self.assertNotIn(f"font-size:{compact.DETAIL_FONT}px", first)
+        self.assertIn(f"font-size:{compact.DETAIL_FONT}px", second)
+        self.assertIn(palette.MUTED, second)
+        self.assertIn(f'dy="{compact.DETAIL_DY}.000000"', second)
+
     def test_the_arrowhead_marker_is_untouched(self):
         marker = compact.MARKER.search(self.raw)
         self.assertIsNotNone(marker, "d2 no longer inlines a marker — check _shift")

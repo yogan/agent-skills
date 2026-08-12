@@ -171,12 +171,40 @@ def _note(obj, indent):
             f"{pad}tooltip.near: {obj.get('near', 'top-center')}"]
 
 
+# Palette entries a sequence's `group` colours cycle through, in order of a group's first
+# appearance. Groups exist because a per-lane role turns a seven-lane diagram into six colours
+# that each mean something different and none of which the reader needs: what they want to know
+# is which side of the wire a lane is on. Two or three groups is one colour per side, which is
+# the same paint doing useful work.
+#
+# No new colours, and no legend: "these three are the same colour and sit together" needs no
+# key, where "this one is amber" does. That is the line this stays on the right side of — a
+# group says things belong together, it does not claim to say what the group IS. If the reader
+# needs the name, it goes in a label or a `detail`.
+GROUP_CLASSES = ("client", "svc", "store", "cache", "ext")
+
+
 # A `state`'s role names what is being signalled, not what the thing is (see spec.STATE_ROLES),
 # and each one reuses an architectural role's palette entry rather than adding a colour: the
 # reader is decoding green-steady / amber-retrying / red-terminal, which is a convention they
 # already have. Only the *class* is shared — nothing else about `store` follows into `steady`.
 STATE_CLASS = {"working": "client", "steady": "store",
                "transient": "cache", "terminal": "ext"}
+
+
+def group_classes(participants):
+    """`group` name -> palette class, assigned in order of first appearance.
+
+    Order of appearance rather than alphabetical, so the author controls which side gets which
+    colour by ordering their lanes — which they are doing anyway, since lanes read left to right
+    and a group's lanes belong together.
+    """
+    out = {}
+    for participant in participants:
+        name = participant.get("group")
+        if name and name not in out:
+            out[name] = GROUP_CLASSES[len(out) % len(GROUP_CLASSES)]
+    return out
 
 
 def _classes_for(node, allow_new):
@@ -352,7 +380,10 @@ def emit(spec, background=None, standalone=False):
     elif kind == "sequence":
         detailed = any(p.get("detail") for p in spec["participants"])
         height = ACTOR_HEIGHT_DETAIL if detailed else ACTOR_HEIGHT
+        groups = group_classes(spec["participants"])
         for node in spec["participants"]:
+            if node.get("group"):
+                node = dict(node, role=groups[node["group"]])
             # d2 renders a `\n` label as one <text> of two <tspan>s, which is what lets
             # `compact.style_detail_lines` shrink the second one afterwards — d2 itself has no
             # per-line styling. Every box gets the taller height so the row stays even.

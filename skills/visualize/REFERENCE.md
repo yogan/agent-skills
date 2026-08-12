@@ -99,10 +99,10 @@ search, not an instruction — and hand-picked anchors have measurably lost to i
 {
   "kind": "sequence",
   "participants": [
-    {"id": "editor", "label": "Editor", "role": "client"},
-    {"id": "gw", "label": "Presence Gateway", "role": "svc"},
-    {"id": "routing", "label": "FE routing", "role": "svc",
-     "detail": "AppRoutes / react-router"}
+    {"id": "editor", "label": "Editor", "group": "browser"},
+    {"id": "routing", "label": "FE routing", "group": "browser",
+     "detail": "AppRoutes / react-router"},
+    {"id": "gw", "label": "Presence Gateway", "group": "server"}
   ],
   "messages": [
     {"from": "editor", "to": "gw", "label": "WS upgrade"},
@@ -114,6 +114,13 @@ search, not an instruction — and hand-picked anchors have measurably lost to i
 
 - **Participants become columns, in the order you write them.** Put them in the order the
   reader should scan, usually outside-in.
+- `group` (optional, sequence only): which side of the wire this lane is on — `browser` /
+  `server`, `cli` / `daemon`, whatever the system's own division is. Lanes in a group share one
+  colour, assigned in order of first appearance, so you choose which side gets which by ordering
+  your lanes. **Use this instead of `role` here**: per-lane roles make one colour per kind of
+  thing, which is six colours saying nothing a reader of a flow asked about. A lane carrying both
+  is rejected. Keeping a group's lanes adjacent usually reads best; the renderer warns when one is
+  split, but a long arrow can be the worse trade — see SKILL.md.
 - `detail` (optional): a smaller second line under the label. For a lane that is a *subsystem*
   rather than one module — name the lane at the altitude of the question, and put the real
   module names here so the reader can still grep for them. Every participant box grows to the

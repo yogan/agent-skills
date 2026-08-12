@@ -181,6 +181,39 @@ class TestSequence(unittest.TestCase):
     def test_valid_sequence_passes(self):
         validate(self.base())
 
+    def test_a_lane_may_carry_a_group(self):
+        validate(self.base(participants=[{"id": "editor", "group": "browser"},
+                                         {"id": "gw", "group": "server"}]))
+
+    def test_group_and_role_together_are_rejected(self):
+        """Colour says one thing per diagram; with groups it says which side of the wire a
+        lane is on, so a role alongside would silently lose."""
+        with self.assertRaisesRegex(SpecError, "both `group` and `role`"):
+            validate(self.base(participants=[{"id": "editor", "group": "browser"},
+                                             {"id": "gw", "group": "server", "role": "svc"}]))
+
+    def test_a_split_group_warns_but_is_allowed(self):
+        """Advisory on purpose: lanes that talk to each other sitting far apart costs a long
+        arrow, and which is worse depends on the flow."""
+        spec = self.base(participants=[{"id": "a", "group": "browser"},
+                                       {"id": "b", "group": "server"},
+                                       {"id": "c", "group": "browser"}],
+                         messages=[{"from": "a", "to": "c", "label": "x"}])
+        validate(spec)
+        self.assertTrue(any("split across the row" in w for w in content_warnings(spec)))
+
+    def test_a_contiguous_group_is_silent(self):
+        spec = self.base(participants=[{"id": "a", "group": "browser"},
+                                       {"id": "b", "group": "browser"},
+                                       {"id": "c", "group": "server"}],
+                         messages=[{"from": "a", "to": "c", "label": "x"}])
+        self.assertEqual(content_warnings(spec), [])
+
+    def test_half_grouped_lanes_warn(self):
+        spec = self.base(participants=[{"id": "a", "group": "browser"}, {"id": "b"}],
+                         messages=[{"from": "a", "to": "b", "label": "x"}])
+        self.assertTrue(any("some lanes are grouped" in w for w in content_warnings(spec)))
+
     def test_a_message_may_be_a_push(self):
         validate(self.base(messages=[{"from": "gw", "to": "editor", "label": "peer joined",
                                       "push": True}]))

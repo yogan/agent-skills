@@ -150,6 +150,22 @@ Pick a `role` for what a thing *is*, never for the colour you want:
 `client` · `svc` (logic) · `store` (persistent) · `cache` (transient) · `ext` (outside our
 control) · `neutral`
 
+**A `sequence` colours by `group`, not by kind.** Give each lane a group — `browser` and
+`server`, `cli` and `daemon`, `producer` / `broker` / `consumer` — and every lane in it shares one
+colour. A per-lane role turns seven lanes into six colours that each mean a different thing, none
+of which is what a reader of a flow wants to know: they want to see which side of the wire a lane
+is on, and where the crossing happens. Two or three groups is one colour per side, which is the
+same paint doing useful work. Groups take no legend — "these sit together and match" needs no key
+— and a lane may not carry both a `group` and a `role`, because then the colour would be claiming
+two things.
+
+Order the lanes so a group's lanes sit together, *usually*. It is a preference, not a rule, and
+it competes with keeping arrows short: a flow where one lane talks to both sides cannot have both.
+Judge it per diagram — on a login flow, putting the server at the far edge is right even though it
+lengthens two arrows, because those two arrows *are* the network crossing and seeing them span the
+canvas is the point. The renderer warns about a split group so you notice it; ignoring the warning
+is a legitimate answer.
+
 A `state` diagram uses a different set, for the same reason — a state is not a datastore:
 `working` (in progress) · `steady` (settled, the happy resting place) · `transient` (retrying,
 about to move) · `terminal` (the end of the line) · `neutral`. The colours land on the

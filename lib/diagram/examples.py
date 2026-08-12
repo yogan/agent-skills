@@ -58,12 +58,15 @@ ARCHITECTURE = {
 SEQUENCE = {
     "kind": "sequence",
     "title": "Joining a document's presence channel",
+    # Grouped, not roled: four per-lane roles made four colours that each said what a lane
+    # *is*, when what a reader of a flow wants to know is which side of the wire it sits on.
+    # Two groups is two colours, and the browser/server split is then visible at a glance.
     "participants": [
-        {"id": "editor", "label": "Editor", "role": "client"},
-        {"id": "api", "label": "GraphQL API", "role": "svc"},
-        {"id": "gw", "label": "Presence Gateway", "role": "svc",
+        {"id": "editor", "label": "Editor", "group": "browser"},
+        {"id": "api", "label": "GraphQL API", "group": "server"},
+        {"id": "gw", "label": "Presence Gateway", "group": "server",
          "note": "new in this MR", "near": "bottom-right"},
-        {"id": "redis", "label": "Redis", "role": "cache"},
+        {"id": "redis", "label": "Redis", "group": "server"},
     ],
     "messages": [
         {"from": "editor", "to": "api", "label": "mutation joinDocument(id: 42)"},

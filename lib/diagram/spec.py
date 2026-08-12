@@ -277,6 +277,15 @@ def validate(spec):
         _check_flat(_list(spec, "participants", kind), "sequence", "participants")
         _check_nodes(spec["participants"], kind, ids)
         for i, participant in enumerate(spec["participants"]):
+            if "group" in participant:
+                # Colour says one thing per diagram. With groups it says "same side of the
+                # wire"; a `role` alongside would silently lose, and this codebase rejects
+                # rather than ignores — see the container/`role` check above.
+                _str(participant["group"], f"sequence: participants[{i}] group")
+                _require("role" not in participant,
+                         f"sequence: participants[{i}] sets both `group` and `role`. In a "
+                         "sequence the lane colour means the group, so the role would be "
+                         "ignored — drop it.")
             if "detail" in participant:
                 # A lane may be a subsystem rather than one module — see SKILL.md on lane
                 # altitude. `detail` is where the real names go, so the reader can still grep
@@ -412,8 +421,27 @@ def content_warnings(spec):
             out.append(f"{len(msgs)} messages (>{MAX_MESSAGES}) — a sequence past this "
                        "is usually two questions, and reads as neither")
         check_labels(msgs, "message")
-        check_labels(spec.get("participants") or [], "participant")
-        check_notes(spec.get("participants") or [], "participant")
+        participants = spec.get("participants") or []
+        check_labels(participants, "participant")
+        check_notes(participants, "participant")
+        grouped = [p for p in participants if p.get("group")]
+        if grouped and len(grouped) != len(participants):
+            ungrouped = [p["id"] for p in participants if not p.get("group")]
+            out.append(f"some lanes are grouped and some are not ({', '.join(ungrouped)} "
+                       "left out) — a half-coloured row reads as an accident rather than as "
+                       "two sides")
+        seen = []
+        for name in [p.get("group") for p in participants]:
+            if name and (not seen or seen[-1] != name):
+                if name in seen:
+                    # A nudge, not a rule, and deliberately not a gate: a split group costs
+                    # the reader a little reassembly, and lanes that talk to each other
+                    # sitting far apart costs them a long arrow across the whole canvas. Which
+                    # is worse depends on the flow, and only the author can see both.
+                    out.append(f"group {name!r} is split across the row — usually worth "
+                               "reordering so the block reads as one side, unless keeping "
+                               "them apart is what keeps the arrows short")
+                seen.append(name)
     elif kind == "state":
         states = spec.get("states") or []
         transitions = spec.get("transitions") or []

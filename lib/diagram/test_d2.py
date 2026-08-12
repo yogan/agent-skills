@@ -149,6 +149,42 @@ class TestParticipantDetailLine(unittest.TestCase):
         self.assertIn(r'"routing\nAppRoutes"', d2.emit(spec))
 
 
+class TestLaneGroups(unittest.TestCase):
+    """Colour groups lanes by which side of the wire they are on. See d2.GROUP_CLASSES."""
+
+    def spec(self, *groups):
+        return {"kind": "sequence",
+                "participants": [{"id": f"p{i}", "group": g} for i, g in enumerate(groups)],
+                "messages": [{"from": "p0", "to": f"p{len(groups) - 1}", "label": "x"}]}
+
+    def test_lanes_in_one_group_share_a_colour(self):
+        source = d2.emit(self.spec("browser", "browser", "server"))
+        first = d2.GROUP_CLASSES[0]
+        self.assertEqual(source.count(f"class: {first}"), 2)
+        self.assertEqual(source.count(f"class: {d2.GROUP_CLASSES[1]}"), 1)
+
+    def test_colours_are_assigned_in_order_of_first_appearance(self):
+        """So the author picks which side gets which colour by ordering their lanes."""
+        self.assertEqual(d2.group_classes([{"group": "server"}, {"group": "browser"}]),
+                         {"server": d2.GROUP_CLASSES[0], "browser": d2.GROUP_CLASSES[1]})
+
+    def test_more_groups_than_palette_entries_wrap_rather_than_crash(self):
+        many = [{"group": f"g{i}"} for i in range(len(d2.GROUP_CLASSES) + 2)]
+        mapping = d2.group_classes(many)
+        self.assertEqual(len(mapping), len(many))
+        self.assertEqual(mapping["g0"], mapping[f"g{len(d2.GROUP_CLASSES)}"])
+
+    def test_a_group_name_never_reaches_the_d2_source_as_a_class(self):
+        source = d2.emit(self.spec("browser", "server"))
+        self.assertNotIn("class: browser", source)
+        self.assertNotIn("class: server", source)
+
+    def test_the_reference_sequence_uses_two_groups_not_four_roles(self):
+        source = d2.emit(SEQUENCE)
+        used = {c for c in d2.GROUP_CLASSES if f"class: {c}" in source}
+        self.assertEqual(len(used), 2, f"expected two lane colours, got {sorted(used)}")
+
+
 class TestPushMessages(unittest.TestCase):
     def base(self, **over):
         msg = {"from": "gw", "to": "editor", "label": "peer joined"}
