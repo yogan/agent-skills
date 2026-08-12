@@ -182,6 +182,10 @@ def _check_tree(nodes, where, allow_new, roles=ROLES):
             _one_of(node["role"], roles, f"{where}: {nid} role")
         if "shape" in node:
             _one_of(node["shape"], SHAPES, f"{where}: {nid} shape")
+        if "detail" in node:
+            # Smaller lines under the name. On a sequence lane it carries the modules behind an
+            # abstract lane; on an architecture box, the members behind an aggregated area.
+            _str(node["detail"], f"{where}: {nid} detail")
         if node.get("new"):
             # A stroke-only accent says "something here is special" without saying WHAT,
             # and there is no legend to look it up in -- rejected as a general

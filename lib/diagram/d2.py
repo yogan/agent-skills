@@ -260,10 +260,18 @@ def _classes_for(node, allow_new):
 
 
 def _node(node, indent=0, allow_new=False, height=None):
-    """One box, plus its children if it is a container."""
+    """One box, plus its children if it is a container.
+
+    A `detail` becomes extra label lines under the name, which `compact.style_detail_lines`
+    then shrinks and mutes. On a leaf box d2 sizes the shape to its label, so unlike a sequence
+    lane there is no height to compute — the box simply grows.
+    """
     pad = " " * indent
     head = f"{pad}{_q(node['id'])}"
     label = node.get("label")
+    if node.get("detail"):
+        lines = "\n".join(wrap_detail(node["detail"]))
+        label = f"{label or node['id']}\n{lines}"
     if label:
         head += f": {_q(label)}"
     children = node.get("children") or []
@@ -431,9 +439,6 @@ def emit(spec, background=None, standalone=False):
             # d2 renders a `\n` label as one <text> of two <tspan>s, which is what lets
             # `compact.style_detail_lines` shrink the second one afterwards — d2 itself has no
             # per-line styling. Every box gets the taller height so the row stays even.
-            if node.get("detail"):
-                wrapped = "\n".join(wrap_detail(node["detail"]))
-                node = dict(node, label=f"{node.get('label') or node['id']}\n{wrapped}")
             lines += _node(node, height=height)
         for msg in spec["messages"]:
             lines.append(_edge(msg))

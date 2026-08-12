@@ -92,6 +92,9 @@ search, not an instruction — and hand-picked anchors have measurably lost to i
   `page` · `cloud`. Anything else is rejected; `code` in particular carries its own colour
   scheme that the theming cannot follow.
 - `edges`: `from`, `to`, optional `label`, optional `dashed`.
+- `detail` (optional, any box): smaller muted lines under the name. On an architecture box it
+  names what is inside an area that has been collapsed to one node — see `--overview` in
+  SKILL.md, which fills it in for you, most-connected member first and `+N more` for the rest.
 
 ## `sequence`
 

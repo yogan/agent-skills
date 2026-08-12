@@ -39,7 +39,7 @@ _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(
 if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
 
-from lib.diagram import browser, place, render                    # noqa: E402
+from lib.diagram import browser, overview, place, render          # noqa: E402
 from lib.diagram.gates import GateError, clipping, contrast, report, size, theming  # noqa: E402
 from lib.diagram.spec import SpecError, content_warnings, validate  # noqa: E402
 
@@ -140,6 +140,16 @@ def main():
                         help="which theme to bake into a standalone image (default: dark, "
                              "because the PNG is opened in the system image viewer, whose "
                              "chrome follows the OS appearance).")
+    parser.add_argument("--overview", action="store_true",
+                        help="collapse an architecture to one box per area: each container "
+                             "becomes a single node listing its members, and the edges between "
+                             "areas are merged. For \"how do these fit together\" on a spec too "
+                             "big to read — render it twice, once with this and once without.")
+    parser.add_argument("--drop", action="append", default=[], metavar="ID",
+                        help="with --overview: leave this top-level node out entirely. For an "
+                             "entry point that touches every area, where \"everything is "
+                             "reachable from the API\" is a sentence rather than N arrows. "
+                             "Repeatable.")
     parser.add_argument("--no-png", action="store_true",
                         help="write only the SVG, skipping the rasterise (one browser launch). "
                              "The SVG is the artifact; the PNG is what a viewer can show.")
@@ -165,6 +175,14 @@ def main():
         validate(spec)
     except SpecError as exc:
         die(str(exc))
+
+    if args.overview:
+        try:
+            spec = overview.collapse(spec, drop=tuple(args.drop))
+        except (SpecError, ValueError) as exc:
+            die(str(exc))
+    elif args.drop:
+        die("--drop only applies with --overview")
 
     for warning in content_warnings(spec):
         print(f"warning: {warning}", file=sys.stderr)

@@ -217,9 +217,12 @@ def _maybe_compact(raw, spec, name):
     d2 already laid out correctly, so falling back to d2's spacing costs height and nothing
     else — where raising would deny the caller a diagram over cosmetics.
     """
-    if spec.get("kind") != "sequence":
-        return raw
+    # The detail restyle is kind-agnostic: it only touches a <text> that has more than one
+    # <tspan>, which only happens where a label carries a newline. Row compaction is the part
+    # that is sequence-only.
     svg = compact.style_detail_lines(raw)
+    if spec.get("kind") != "sequence":
+        return svg
     try:
         return compact.compact_sequence(svg)
     except compact.CompactError as exc:

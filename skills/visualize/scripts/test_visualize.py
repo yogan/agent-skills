@@ -123,6 +123,42 @@ class TestSpecErrors(unittest.TestCase):
 
 
 @unittest.skipUnless(HAVE_D2, "d2 is not installed (brew install d2)")
+class TestOverviewFlag(unittest.TestCase):
+    """`--overview` renders the same spec one altitude up; see lib/diagram/overview.py."""
+
+    SPEC = {"kind": "architecture", "title": "Backend",
+            "nodes": [{"id": "core", "label": "Core", "children": [
+                          {"id": "hub", "role": "svc"}, {"id": "quiet", "role": "svc"}]},
+                      {"id": "api", "label": "API", "role": "client"}],
+            "edges": [{"from": "api", "to": "core.hub", "label": "CRUD"}]}
+
+    def test_it_collapses_the_containers(self):
+        code, out, err = run("--no-open", "--no-png", "--no-place", "--overview", spec=self.SPEC)
+        self.assertEqual(code, 0, err)
+        svg = read(out.strip())
+        self.assertIn("Core", svg)
+        self.assertIn("hub", svg)          # a member line, not a box of its own
+        self.assertIn("areas", svg)        # the title says which view this is
+
+    def test_drop_removes_an_entry_point(self):
+        code, out, err = run("--no-open", "--no-png", "--no-place", "--overview",
+                             "--drop", "api", spec=self.SPEC)
+        self.assertEqual(code, 0, err)
+        self.assertNotIn("API", read(out.strip()))
+
+    def test_drop_without_overview_is_an_error(self):
+        """It would silently do nothing, and the author would believe the node was gone."""
+        code, _, err = run("--no-open", "--no-png", "--no-place", "--drop", "api", spec=self.SPEC)
+        self.assertNotEqual(code, 0)
+        self.assertIn("only applies with --overview", err)
+
+    def test_a_non_architecture_is_refused_with_a_reason(self):
+        code, _, err = run("--no-open", "--no-png", "--no-place", "--overview", spec=STATE)
+        self.assertNotEqual(code, 0)
+        self.assertIn("only an architecture", err)
+
+
+@unittest.skipUnless(HAVE_D2, "d2 is not installed (brew install d2)")
 class TestStandaloneImage(unittest.TestCase):
     """The default output: a file that works on its own, with no page cooperating."""
 

@@ -144,6 +144,38 @@ because it is opened full-screen on a landscape monitor. Leave `direction` alone
 Split only for an editorial reason: the diagram is answering **two different questions** and
 each deserves its own. "All the tables" is one question, even with nine tables in it.
 
+### Too much to draw: go up an altitude before you give up detail
+
+"How do the backend services work together" on a real repo means 25 boxes and 38 labelled edges,
+and past roughly a dozen boxes that is not a diagram any more — the labels detach from the lines
+they belong to, and no `direction`, colour or compaction step recovers it. Correctness is not the
+problem: every edge can be right and the picture still unreadable.
+
+But that question was asked about **areas**, not about individual classes. Collapse the containers
+and the same content is 11 boxes and 19 edges, on one screen, with every label on its own edge:
+
+```bash
+python3 .../visualize.py spec.json --overview                    # one box per area
+python3 .../visualize.py spec.json --overview --drop api --drop tasks
+python3 .../visualize.py spec.json                              # and the detailed one
+```
+
+`--overview` is mechanical, not a summary you have to write: each container becomes one box that
+**lists its members underneath** — most-connected first, then `+N more` — and the edges between
+areas are merged, keeping the verb when there is one and counting them when there are several.
+
+- **Write the detailed spec anyway.** The overview is derived from it, so you lose nothing by
+  authoring the full thing and rendering it both ways. Offer the detail; lead with the overview.
+- **`--drop` the entry point that touches everything.** In that repo, `API routers` and
+  `Procrastinate tasks` were *half of all 38 edge ends* and neither is a service — dropping them
+  took the overview from 19 edges to 10, and "every service is reachable from the API; lifecycle
+  work runs as tasks" is a sentence you say in your summary. A node adjacent to most areas is
+  costing you the whole layout to tell the reader one thing.
+- **Say which view they are looking at**, and that the other exists.
+
+Do not reach for this on a diagram that already fits. It is for the case where the honest answer
+to a broad question is genuinely too big for one picture.
+
 ### The exception: several unrelated graphs in one answer
 
 Sometimes one honest question has an answer made of pieces that do not touch — a CI pipeline
