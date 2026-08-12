@@ -59,7 +59,7 @@ For the **Background** section you need more than the diff. Read the touched fil
 Write only a small JSON content spec covering these sections, in this order:
 
 - **Background** — Explain the existing system relevant to this change (from Step 3's exploration). Assume the reader's prior knowledge is unknown: include a deep background for beginners (note it can be skipped by the already-familiar), then a narrower background directly relevant to the change.
-- **Intuition** — Explain the core intuition behind the change. Focus on the essence, not every detail. Use concrete examples with toy data. Use figures/diagrams liberally.
+- **Intuition** — Explain the core intuition behind the change. Focus on the essence, not every detail. Use concrete examples with toy data. This is usually where a diagram earns its place, if one does.
 - **Code** — A high-level walkthrough of the changes, grouped/ordered so it reads as a narrative rather than a file-by-file dump.
 - **Quiz** — Five questions that test understanding, medium difficulty (must understand the substance to answer, no gotchas). Give each a `question` and `options` (each `{text, correct}`) — list options in whatever order reads naturally; `render.py` randomizes their displayed order itself, so don't try to fake randomness by hand. `question`/`text` are plain text: wrap identifiers, branch names, function calls, etc. in backticks (e.g. `` `origin/main` ``, `` `HEAD_REF` ``) — the renderer turns those into inline `<code>` automatically.
 
@@ -67,7 +67,7 @@ Content rules for each section's `html` field (raw HTML, not markdown):
 
 - The backtick-to-`<code>` auto-conversion is quiz `question`/`text` and `subtitle` only. Section `html` is raw HTML — write inline identifiers as literal `<code>foo</code>`, never backticks; backticks left in `html` render as literal characters.
 - Write with the clarity and flow of Martin Kleppmann — engaging, classic technical-writing style, smooth transitions between sections.
-- Diagrams: reuse a small number of diagram families throughout (e.g. a simplified UI mock for UI changes, a system/data-flow diagram with example data for backend changes). Define each as a small graph (nodes/edges) in the spec's top-level `"diagrams"` dict, drop it into a section's `html` via a bare `{{diagram:name}}` token. Run `render.py --help` for the exact node/edge JSON shape. Never ASCII art, and don't hand-write flowchart HTML — the diagrams dict is the only path now. Default to `"direction": "TB"` for anything that reads as a flow — it's more legible and uses the page's width better than a wide horizontal strip. Only use `"LR"` when you're confident the diagram is small enough (few nodes, short labels) to fit comfortably as a wide-but-short strip.
+- Diagrams: see [Diagrams](#diagrams--judgement-not-quota) below. Define each in the spec's top-level `"diagrams"` dict and drop it into a section's `html` via a bare `{{diagram:name}}` token. Never ASCII art, and never hand-written flowchart HTML — the diagrams dict is the only path.
 - Code blocks: use `<pre><code class="language-XXX">` for syntax highlighting — `<pre>` alone still works but loses highlighting. For a diff-style snippet, use `language-diff-XXX` so `+`/`-` lines get diff coloring *and* nested syntax highlighting (plain `language-diff` if the language isn't worth specifying); partial/incomplete snippets tokenize fine, no need for valid complete syntax. See `render.py --help` for the full language list and diff-line format.
 - Use `.callout` divs for key concepts, definitions, and important edge cases; plain `<table>` for comparisons.
 - Use a real ellipsis character ("…") wherever one is called for — never three dots ("...").
@@ -77,6 +77,52 @@ Content rules for each section's `html` field (raw HTML, not markdown):
 - Parse Step 2's `git diff --shortstat` line into the spec's top-level `"diffstat"` field (`{"files", "insertions", "deletions"}` — either count can be absent when zero, then omit that key). `render.py` appends it to the end of the subtitle automatically; don't hand-write it into `"subtitle"` yourself.
 
 Dark/light mode is handled entirely by the renderer. No spec fields needed for this.
+
+#### Diagrams — judgement, not quota
+
+**There is no target number of diagrams.** Not "at least one", not "at most four". A one-file
+rename may deserve none; a cross-service refactor may deserve several. Match the shape of the
+change — a quota produces padding on trivial changes and truncation on complex ones, and both
+fail the reader.
+
+Before adding one, it has to pass all three, in this order:
+
+1. **Does it answer a question the prose cannot?** Structure, ordering, relationships and
+   before/after are hard in sentences and easy in a picture. A fact that fits in one clear
+   sentence should stay a sentence.
+2. **Would the reader misunderstand the change without it?** If not, it is decoration.
+3. **Is it a different question from the diagram before it?** Two views of the same thing are
+   worse than one good view. Delete the weaker one.
+
+Then pick the kind by the question being answered — this mapping is the whole game, and the
+common mistake is drawing boxes and arrows for a question about *order* or *state*:
+
+| The reader's question | kind |
+|---|---|
+| What talks to what, and where does this live? | `architecture` |
+| What happens, in what order, across components? | `sequence` |
+| What does the data look like now? | `er` |
+| How do these types relate? | `class` |
+| What states can this be in, and how does it move? | `state` |
+| How did we get from the old design to the new one? | `steps` (animated) |
+
+Two rules that make a set of figures read as one system rather than several unrelated pictures:
+
+- **Reuse a small visual vocabulary.** A `role` (`client` · `svc` · `store` · `cache` · `ext` ·
+  `neutral`) must mean the same thing in every figure of the document.
+- **Mark what this change touched with `note`**, in the reader's words — "new service", "gains a
+  revision column" — not with ad-hoc styling. There is no legend, so a colour or a thick border
+  says "something here is special" without ever saying what. Two to four words.
+
+Content limits (≤6 states, ≤7 sequence messages, only the columns the change is about) are a
+*rendering* constraint, not an editorial one: D2 cannot compact a diagram after the fact. If the
+subject genuinely needs more, **split it into two diagrams that each answer a narrower question**
+rather than shrinking one past legibility. The gates will catch it either way, and they report to
+stderr when you render.
+
+Full field reference, with a worked example of every kind:
+`~/.claude/skills/visualize/REFERENCE.md` (or `skills/visualize/REFERENCE.md` in the repo). You do
+not need the `visualize` skill installed — the renderer is shared code.
 
 ### Step 5 — Render & open
 

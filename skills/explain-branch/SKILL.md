@@ -105,6 +105,15 @@ Leave the spec's top-level `"quiz"` empty — all questions live on their chapte
 Content rules (diagrams, code-block language classes, `.callout`/`.diagram` divs, Kleppmann-ish
 voice) are identical to explain-diff's — see its `SKILL.md` for the full list; not repeated here.
 
+One thing the chapter structure makes worse, so it is worth repeating: **a diagram per chapter is
+not the goal.** Chapters tempt you into one figure each for symmetry, which is exactly the padding
+explain-diff's "judgement, not quota" rule warns about — and consecutive chapters of the same
+feature tend to want the *same* diagram, which fails its "is this a different question?" test.
+Prefer one good diagram in the chapter that introduces a structure, and refer back to it from the
+later ones rather than redrawing a near-copy. If a later chapter genuinely changes the shape of
+something an earlier chapter drew, that is a `steps` diagram's job, or two diagrams that are
+honestly different.
+
 Set `"slug"` to `$LABEL`. Build `"subtitle"` mostly like explain-diff (link the MR via
 `[MR !$MR_NUM: $MR_TITLE]($MR_URL)` when set, backtick the branch), but **drop the trailing
 commit-hash segment entirely** — with chapters in play there's no single commit to name up

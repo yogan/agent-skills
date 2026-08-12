@@ -53,13 +53,17 @@ Spec format (JSON):
   "slug": "retry-backoff-refactor",
   "diagrams": {
     "retry-flow": {
-      "direction": "TB",
-      "nodes": [
-        {"id": "a", "label": "Request fails"},
-        {"id": "b", "label": "Backoff\nwith jitter"},
-        {"id": "c", "label": "Retry"}
+      "kind": "state",
+      "states": [
+        {"id": "failed", "label": "request failed", "role": "ext"},
+        {"id": "backoff", "label": "backoff with jitter", "role": "cache",
+         "note": "new retry path"},
+        {"id": "done", "label": "succeeded", "role": "store"}
       ],
-      "edges": [["a", "b"], ["b", "c", "up to 3x"]]
+      "transitions": [
+        {"from": "failed", "to": "backoff", "label": "5xx"},
+        {"from": "backoff", "to": "done", "label": "retry ok (max 3)"}
+      ]
     }
   },
   "diffstat": {"files": 27, "insertions": 736, "deletions": 19},
@@ -89,47 +93,44 @@ Spec format (JSON):
 Diagrams are defined once in the top-level "diagrams" dict, keyed by name, and dropped into
 any section's "html" via a `{{diagram:name}}` token - it expands into the whole bordered card,
 click-to-enlarge included; don't wrap it in your own `<div class="diagram">`, that would double
-up the border/padding. Each diagram is a small directed graph rendered through Graphviz's `dot`
-CLI (must be on PATH - `brew install graphviz` if it's missing) into an inline, responsive SVG:
-a real layout engine, so diagrams never clip or wrap unexpectedly the way hand-rolled flexbox
-boxes could. Every embedded diagram gets a click-to-enlarge lightbox automatically, and the
-whole card is the click target (not just the svg's own drawn area) - no spec changes needed
-for any of that.
+up the border/padding. Every embedded diagram gets a click-to-enlarge lightbox automatically,
+and the whole card is the click target (not just the svg's own drawn area) - no spec changes
+needed for any of that. A diagram referenced from two sections is rendered once.
 
-- "direction": "TB" (top-to-bottom, the default) or "LR" (left-to-right) - matches Graphviz's
-  `rankdir`. Prefer "TB" for anything that reads as a flow (a sequence of steps, a
-  request/response path, a state machine) - it reads more naturally top-to-bottom and uses the
-  page's available width better than a wide horizontal strip. Reach for "LR" only when you're
-  confident the diagram is small/short enough (few nodes, short labels) to actually fit
-  comfortably as a wide-but-short strip - long node labels or more than ~4 nodes tend to force
-  either clipping or an awkwardly wide diagram in LR.
-- "nodes": each needs "id" (referenced by edges, not shown) and "label". A `\n` in the label
-  keeps every line the same (normal) size - use it for one phrase wrapped across lines (e.g.
-  "exponential backoff,\ncapped at 3 attempts", broken at the natural comma). A `\n\n` (blank
-  line) instead starts a second, smaller-rendered run - use it only when the later line is a
-  genuine subtitle/detail *about* the first, not just a continuation of it (e.g.
-  "RetryPolicy\n\ndefines the backoff strategy"). Don't reach for `\n\n` just because a label
-  got long; reach for it when the second line is subordinate information.
-  In the spec JSON, write a single backslash (`\n`), NOT `\\n` - `_html_label` splits on an
-  actual newline character, so a doubled backslash decodes to a literal two-char `\n` that
-  survives untouched into the SVG (shows up as literal "\n" in the rendered diagram).
-  Add `"fail": true` for a red/error-styled node (e.g. a rejected or failing state). Add
-  `"decision": true` for a branch point - renders as an outline (unfilled) diamond instead of
-  a rounded box, the standard flowchart convention, still in the same border/font colors. Not
-  limited to a boolean yes/no - any small set of differently-labeled outgoing edges qualifies
-  (e.g. an item count's "0" / "1" / ">1" branches). Reach for it only on an actual branch node,
-  not an ordinary linear step - and keep the label itself short (ideally two short lines): a
-  diamond needs more clearance around its text than a box does, so a long label blows up its
-  footprint disproportionately.
-- "edges": `["from_id", "to_id"]`, or `["from_id", "to_id", "edge label"]` for a labeled arrow.
-  Nothing stops a node from having more than one outgoing or incoming edge - it's a real graph,
-  not just a linear chain, so branching/merging flows work too, not only straight A→B→C ones.
+Each diagram is a `lib/diagram` spec, rendered with D2 (`brew install d2`). **The full field
+reference, with a worked example of every kind, is `skills/visualize/REFERENCE.md` - read it
+rather than guessing.** The short version:
 
-Node/edge label text defaults to a proportional font (space-efficient - most of a label is
-prose, not code). Wrap an identifier, path, or literal in backticks (`` `POST /validation` ``)
-to render just that span in monospace, same convention as quiz text. Always use a real ellipsis
-character ("…"), never three dots - diagram labels normalize "..." to "…" automatically as a
-safety net, but write "…" directly rather than relying on it.
+- **"kind" is required** and picks the diagram type by the question it answers:
+  `architecture` (what talks to what) · `sequence` (what happens in what order) ·
+  `er` (what the data looks like) · `class` (how types relate) · `state` (what states it can
+  be in) · `steps` (an animated before/after, where each board differs in topology).
+  A change with an order in it wants a `sequence`, not boxes and arrows: no arrangement of
+  boxes expresses "first, then".
+- **"role" on every box** says what it *is*, never what colour you want: `client` · `svc` ·
+  `store` · `cache` · `ext` · `neutral`. Reuse them identically across every diagram in one
+  document - a colour meaning the same thing everywhere is most of what makes a set of figures
+  read as one system.
+- **Mark what the change touched with "note"** (2-4 words, e.g. "new service", "gains a
+  revision column"). It renders as a callout that is visible without hovering, positioned
+  automatically by measuring every candidate anchor in a headless browser. Leave "near" out and
+  let it be measured; hand-picked anchors have measurably lost to it.
+  Do NOT convey "this is new" with styling instead - there is no legend, so a colour or a
+  border says "something here is special" without ever saying what.
+- **Size is a rendering constraint, not a preference.** D2 offers no way to compact a diagram
+  after the fact, so an oversized one cannot be fixed afterwards, only authored smaller: <=6
+  states, <=7 sequence messages, <=6 boxes per container, and only the columns or members the
+  change is actually about. A too-wide diagram does not overflow - the page scales it down and
+  its text goes grey. Making it wider is never the fix.
+
+The gates (fits a viewport, no glyph below ~11px or above an h2, WCAG AA in both themes,
+nothing clipped, every colour themeable) run on every diagram and report to stderr. They do
+not block the document: fix the offending spec and re-render.
+
+"kind" is required. A spec without one is rejected: there is no second rendering path any more.
+
+Node/edge label text is proportional. Always use a real ellipsis character ("…"), never three
+dots.
 
 A top-level "diffstat" ({"files", "insertions", "deletions"}, all optional except
 "files") renders as a small GitLab-style summary (file count + colored +/-) appended to
@@ -188,15 +189,31 @@ convention for code blocks.
 """
 import argparse
 import datetime
-import functools
 import html
 import json
+import os
 import random
 import re
-import shutil
-import subprocess
 import sys
 from pathlib import Path
+
+# Repo root, 4 levels up from skills/explain-diff/scripts/render.py — needed so `lib/`, which
+# lives outside this skill's own directory, is importable regardless of how this script is
+# invoked (direct, or symlinked into ~/.claude/skills/). Same mechanism as review-mr's
+# findings.py.
+_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(
+    os.path.realpath(__file__)))))
+if _REPO_ROOT not in sys.path:
+    sys.path.insert(0, _REPO_ROOT)
+
+from lib.diagram import browser as _diagram_browser        # noqa: E402
+from lib.diagram import palette as _diagram_palette        # noqa: E402
+from lib.diagram import place as _diagram_place            # noqa: E402
+from lib.diagram import render as _diagram_render          # noqa: E402
+from lib.diagram.gates import GateError                    # noqa: E402
+from lib.diagram.gates import contrast as _gate_contrast   # noqa: E402
+from lib.diagram.gates import size as _gate_size           # noqa: E402
+from lib.diagram.gates import theming as _gate_theming     # noqa: E402
 
 _LIGHT_VARS = """
     --bg: #fafaf8; --fg: #1a1a1a; --accent: #b5541f; --muted: #6b6b6b;
@@ -278,7 +295,7 @@ CSS = (
   .toc ul { margin: .3rem 0; }
   .diagram { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 1.2rem;
     margin: 1.2rem 0; }
-  /* Diagrams are real SVGs laid out by Graphviz (see render_diagram()) - they scale to fit
+  /* Diagrams are real SVGs laid out by D2 (see render_diagram()) - they scale to fit
      their container exactly, no clipping/wrapping possible the way ad-hoc flexbox boxes could. */
   .diagram-embed { position: relative; cursor: zoom-in; }
   /* max-width: 100% (not width: 100%) - a small diagram renders at its natural point size
@@ -305,6 +322,11 @@ CSS = (
      size, which left the diagram tiny in the middle of an otherwise-huge frame. object-fit lets
      it grow to fill the frame on whichever axis binds first, still preserving aspect ratio. */
   .diagram-lightbox-content svg { display: block; width: 100%; height: 100%; object-fit: contain; }
+  /* A D2 diagram's own colours are var(--d-*) references, so it follows this page's light/dark
+     toggle with no redraw. The rest of what lib/diagram appends below is not styling but a
+     requirement: D2 renders a callout's text as HTML in a <foreignObject> and ships no paragraph
+     reset for it, so without that reset the browser default margin pushes the text out of its
+     24px box and only the tops of the glyphs show. See lib/diagram/render.py's HOST_CSS. */
   table { border-collapse: collapse; width: 100%; margin: 1rem 0; font-size: .92rem; }
   th, td { border: 1px solid var(--border); padding: .5rem .7rem; text-align: left; }
   th { background: var(--th-bg); }
@@ -341,7 +363,23 @@ CSS = (
     font-size: 1.1rem; cursor: pointer; display: flex; align-items: center; justify-content: center;
     box-shadow: 0 1px 4px rgba(0,0,0,.15); }
   @media (max-width: 600px) { body { padding: 1rem; } #theme-toggle { top: .5rem; right: .5rem; } }
-"""
+""" + (
+    # lib/diagram's own vars, emitted under the SAME three selectors this page already uses for
+    # its own theme vars. All three are needed: THEME_INIT_JS only sets data-theme when a
+    # preference was *saved*, so a first-time reader on a system-dark machine gets the dark page
+    # through the media query alone — and a diagram themed off [data-theme=dark] only would sit
+    # there in light-mode colours on a dark background.
+    "\n  :root { " + _diagram_palette.declarations("light") + " }\n"
+    "  @media (prefers-color-scheme: dark) {\n"
+    '    :root:not([data-theme="light"]) { ' + _diagram_palette.declarations("dark") + " }\n"
+    "  }\n"
+    '  [data-theme="dark"] { ' + _diagram_palette.declarations("dark") + " }\n"
+    + _diagram_render.HOST_CSS
+    + _diagram_render.callout_dark_css('[data-theme="dark"]')
+    + "  @media (prefers-color-scheme: dark) {\n"
+    + _diagram_render.callout_dark_css(':root:not([data-theme="light"])')
+    + "  }\n"
+)
 
 # Runs in <head>, before first paint, so an explicit saved preference applies
 # immediately instead of flashing the system-preference theme first.
@@ -666,146 +704,69 @@ HIGHLIGHT_JS = """
 """
 
 
-# Literal colors fed to `dot` (it doesn't understand CSS `var()`) mapped back to this page's
-# theme variables after rendering, so the embedded SVG still reacts to the light/dark toggle
-# like everything else on the page. Values must match the light-mode CSS custom properties above.
-_DIAGRAM_COLOR_VARS = [
-    ("#fff4e8", "var(--callout-bg)"),
-    ("#b5541f", "var(--accent)"),
-    ("#1a1a1a", "var(--fg)"),
-    ("#6b6b6b", "var(--muted)"),
-    ("#fef2f2", "var(--feedback-incorrect-bg)"),
-]
+# Every diagram rendered this run, keyed by its serialized spec. A diagram referenced from two
+# sections is rendered once: with D2 the callout placement pass costs seconds, so rendering per
+# token occurrence would pay the placement cost twice over.
+_DIAGRAM_CACHE: dict = {}
 
-@functools.lru_cache(maxsize=1)
-def _dot_path() -> str:
-    found = shutil.which("dot")
-    if not found:
-        raise RuntimeError(
-            "diagram rendering needs Graphviz's `dot` CLI, not found on PATH. "
-            "Install it (e.g. `brew install graphviz`) and retry."
-        )
-    return found
+# Gate problems collected while rendering, reported together at the end. Not fatal: a document
+# with one over-tall diagram is still worth having, and the author needs to be told which one.
+_DIAGRAM_GATE_PROBLEMS: list = []
 
 
-_BACKTICK_RE = re.compile(r"`([^`]+)`")
+def render_d2_diagram(diagram: dict, name: str) -> str:
+    """Render a `lib/diagram` spec (anything with a "kind") through D2.
 
+    This replaced Graphviz. It buys the diagram kinds `dot` could not draw at all — a sequence
+    diagram above all, since `dot` reorders lifeline columns to minimise edge crossings and there
+    is no way to stop it — plus annotation callouts and one shared visual vocabulary across every
+    figure in the document.
 
-def _format_label_segment(text: str) -> str:
-    """Escape one label line for Graphviz's HTML-like label syntax, rendering `` `code` `` spans
-    in monospace and leaving the rest in the node's default (narrower, proportional) font - matches
-    the page's own inline-code convention and keeps labels compact."""
-    text = text.replace("...", "…")  # a real ellipsis character, never three dots
-    parts = []
-    last = 0
-    for m in _BACKTICK_RE.finditer(text):
-        if m.start() > last:
-            parts.append(html.escape(text[last : m.start()]))
-        code = m.group(1)
-        parts.append(f'<FONT FACE="Menlo">{html.escape(code)}</FONT>')
-        last = m.end()
-        # Graphviz's built-in width estimate for a FONT-FACE run tends to come in ~4-5%
-        # narrow versus how the font actually renders (measured via getComputedTextLength()
-        # in a real browser), and that gap scales with the run's own length - so it's not
-        # just tight-touching punctuation (a comma, a period, ...) that can visually overlap
-        # the code span's last glyph, a real following space can be fully swallowed too once
-        # the run is long enough that the deficit exceeds the space glyph's own width (e.g.
-        # "`documents` row" rendering as "documentsrow"). Compensate with thin spaces scaled
-        # to the run's length, unconditionally - not only when no whitespace already follows.
-        parts.append("&#8201;" * max(1, len(code) // 8))
-    parts.append(html.escape(text[last:]))
-    return "".join(parts)
+    Callouts are positioned by measuring all eight candidate anchors in a headless browser. If
+    no browser is available the spec's own `near` values (or the default) are used and a warning
+    is recorded: D2 reserves no canvas space for a callout, so an unmeasured one may be clipped.
+    """
+    if _diagram_browser.available():
+        try:
+            diagram, report = _diagram_place.place(diagram, name=name)
+            for entry in _diagram_place.unplaceable(report):
+                _DIAGRAM_GATE_PROBLEMS.append(
+                    f"{name}: callout {entry['index']} still clips by {entry['clip']:.0f}px — "
+                    "shorten its note text")
+        except _diagram_place.PlacementError as exc:
+            _DIAGRAM_GATE_PROBLEMS.append(f"{name}: callouts not placed automatically ({exc})")
+    elif _diagram_place.note_sites(diagram):
+        _DIAGRAM_GATE_PROBLEMS.append(
+            f"{name}: no browser, so its callouts were not placed by measurement "
+            f"({'; '.join(_diagram_browser.requirements())}) — one may be clipped")
 
+    svg = _diagram_render.render(diagram, name=name)
 
-def _html_label(text: str) -> str:
-    r"""Graphviz HTML-like label: lines within one `\n`-joined run are all the same size - one
-    phrase wrapped across lines (e.g. "exponential backoff,\ncapped at 3 attempts", broken at
-    the natural comma). A `\n\n` (blank line) starts a second run that renders smaller, for an
-    actual subtitle/detail line that's subordinate to the first (e.g.
-    "RetryPolicy\n\ndefines the backoff strategy"). Don't reach for `\n\n` just because a line
-    got long - only when the second line is genuinely a detail *about* the first, not part of
-    the same phrase.
-
-    Built as a borderless TABLE with explicit CELLSPACING rather than `<BR/>`-joined FONT tags -
-    `<BR/>` packs lines with no gap, so a line's descenders (g, y, p) touch the next line's
-    ascenders; CELLSPACING gives real breathing room between lines."""
-    primary_text, _, detail_text = text.partition("\n\n")
-    rows = [
-        f'<TR><TD><FONT POINT-SIZE="13">{_format_label_segment(line)}</FONT></TD></TR>'
-        for line in primary_text.split("\n")
-    ]
-    rows += [
-        f'<TR><TD><FONT POINT-SIZE="10">{_format_label_segment(line)}</FONT></TD></TR>'
-        for line in detail_text.split("\n")
-        if detail_text
-    ]
-    table = f'<TABLE BORDER="0" CELLBORDER="0" CELLSPACING="3" CELLPADDING="0">{"".join(rows)}</TABLE>'
-    return "<" + table + ">"
-
-
-def _edge_label(text: str) -> str:
-    """Graphviz HTML-like edge label, padded via CELLPADDING.
-
-    A bare text/FONT label (no enclosing TABLE) gets centered directly on the edge's own
-    line with zero built-in clearance - the first glyph ends up touching the line. Graphviz
-    computes clearance from the label's own bounding box, so padding has to live *inside*
-    that box (CELLPADDING), not as extra characters around the text."""
-    return f'<TABLE BORDER="0" CELLBORDER="0" CELLPADDING="4"><TR><TD>{_format_label_segment(text)}</TD></TR></TABLE>'
-
-
-def render_diagram(diagram: dict) -> str:
-    """Render a {"direction", "nodes": [{"id","label","fail"?}], "edges": [[from,to,label?]]}
-    spec into an inline <svg> fragment via Graphviz `dot` - a real layout engine, so the result
-    never clips or wraps unexpectedly the way ad-hoc flexbox boxes could."""
-    direction = diagram.get("direction", "TB")
-    lines = [
-        "digraph G {",
-        f"  rankdir={direction};",
-        '  bgcolor="transparent";',
-        '  node [shape=box, style="rounded,filled", fillcolor="#fff4e8", color="#b5541f", '
-        'penwidth=2, fontname="Georgia", fontcolor="#1a1a1a", margin="0.15,0.1"];',
-        '  edge [color="#6b6b6b", penwidth=1.4, arrowsize=0.8, fontname="Georgia", fontsize=10, fontcolor="#6b6b6b"];',
-    ]
-    for node in diagram["nodes"]:
-        attrs = [f'label={_html_label(node["label"])}']
-        if node.get("decision"):
-            # Diamond, the standard flowchart convention for a branch point - distinct from
-            # every other (rounded-box) node's shape, but unfilled (style=solid, not "filled")
-            # and tight-margined: a filled diamond at the default box margin comes out far
-            # wider/heavier than every surrounding node (diamonds need extra room around the
-            # text to keep it clear of the sloped corners) and dominates the whole diagram.
-            # Outline-only, close-cropped reads as a lightweight marker instead, while still
-            # picking up the same border/font colors - and light/dark theme mapping below -
-            # as every other node.
-            attrs.append("shape=diamond")
-            attrs.append('style="solid"')
-            attrs.append('margin="0.05,0.0"')
-        if node.get("fail"):
-            attrs.append('fillcolor="#fef2f2"')
-            attrs.append('color="#b91c1c"')
-        lines.append(f'  "{node["id"]}" [{", ".join(attrs)}];')
-    for edge in diagram["edges"]:
-        src, dst = edge[0], edge[1]
-        attrs = f' [label=<{_edge_label(edge[2])}>]' if len(edge) > 2 and edge[2] else ""
-        lines.append(f'  "{src}" -> "{dst}"{attrs};')
-    lines.append("}")
-    dot_source = "\n".join(lines)
-
-    result = subprocess.run(
-        [_dot_path(), "-Tsvg"], input=dot_source, capture_output=True, text=True, check=False
-    )
-    if result.returncode != 0:
-        raise RuntimeError(f"dot failed to render a diagram: {result.stderr.strip()}")
-
-    svg = result.stdout
-    svg = svg[svg.index("<svg") :]  # drop the XML prolog/DOCTYPE/leading comments
-    svg = re.sub(r"<!--.*?-->", "", svg, flags=re.S)  # per-node/edge comments graphviz adds
-    svg = re.sub(r' id="[^"]*"', "", svg)  # would collide across multiple diagrams on one page
-    # NB: Graphviz's own pt-based width/height attributes are deliberately left in place (not
-    # stripped) - see the CSS comment on `.diagram-embed svg` for why.
-    for literal, var in _DIAGRAM_COLOR_VARS:
-        svg = svg.replace(literal, var)
+    for gate in (_gate_size, _gate_contrast, _gate_theming):
+        try:
+            result = gate.check(svg, name)
+        except GateError as exc:
+            _DIAGRAM_GATE_PROBLEMS.append(f"{name}: {gate.__name__.rsplit('.', 1)[-1]} "
+                                          f"could not run — {exc}")
+            continue
+        for problem in result.problems:
+            _DIAGRAM_GATE_PROBLEMS.append(f"{name}: {problem}")
     return svg
+
+
+def render_diagram(diagram: dict, name: str = "diagram") -> str:
+    """Render one `lib/diagram` spec into an inline <svg> fragment via D2.
+
+    A spec with no "kind" used to fall back to Graphviz. That path is gone: it could not draw a
+    sequence, ER or class diagram at all, and keeping both meant two visual languages, two
+    theming maps and no single source of visual truth — a document mixing them looked mixed.
+    """
+    if "kind" not in diagram:
+        raise KeyError(
+            f"diagram '{name}' has no \"kind\". The Graphviz path has been removed; write a "
+            "lib/diagram spec instead (kind: architecture|sequence|er|class|state|steps — see "
+            "skills/visualize/REFERENCE.md)")
+    return render_d2_diagram(diagram, name)
 
 
 _DIAGRAM_TOKEN_RE = re.compile(r"\{\{diagram:([a-zA-Z0-9_-]+)\}\}")
@@ -827,7 +788,10 @@ def render_diagrams_in_html(html_str: str, diagrams: dict) -> str:
         key = m.group(1)
         if key not in diagrams:
             raise KeyError(f"diagram '{key}' referenced via {{{{diagram:{key}}}}} but not defined in spec['diagrams']")
-        svg = render_diagram(diagrams[key])
+        cache_key = (key, json.dumps(diagrams[key], sort_keys=True))
+        if cache_key not in _DIAGRAM_CACHE:
+            _DIAGRAM_CACHE[cache_key] = render_diagram(diagrams[key], name=key)
+        svg = _DIAGRAM_CACHE[cache_key]
         # "diagram" (bordered card look) and "diagram-embed" (click-to-enlarge) on the SAME div,
         # not diagram-embed nested inside a separately-authored .diagram wrapper - otherwise the
         # clickable area is only the svg's own tight box, leaving the card's border/padding ring
@@ -1044,6 +1008,14 @@ def main():
 
     out_path.write_text(out_html, encoding="utf-8")
     print(str(out_path))
+
+    # Reported after the path, on stderr, and non-fatally: a document with one over-tall diagram
+    # is still worth having, and the author is the only one who can fix it (by cutting content,
+    # not by restyling — the page scales a diagram to fit, so an oversized one just goes grey).
+    if _DIAGRAM_GATE_PROBLEMS:
+        print(f"\n{len(_DIAGRAM_GATE_PROBLEMS)} diagram problem(s):", file=sys.stderr)
+        for problem in _DIAGRAM_GATE_PROBLEMS:
+            print(f"  {problem}", file=sys.stderr)
 
 
 if __name__ == "__main__":

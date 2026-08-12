@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
 """Tests for explain-diff's render.py.
 
-Run: `python3 skills/explain-diff/scripts/test_render.py` (stdlib only; the
-TestRenderDiagram class additionally needs Graphviz's `dot` on PATH and is skipped
-automatically when it isn't).
+Run: `python3 skills/explain-diff/scripts/test_render.py` (stdlib only; the TestD2Diagrams
+class additionally needs `d2` on PATH and is skipped automatically when it isn't).
 
 Regression tests are grounded in real bugs from this file's git history (see each
 docstring for the commit); everything else covers the main documented behavior of the
@@ -18,45 +17,6 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 
 import render as R  # noqa: E402
-
-
-class TestFormatLabelSegment(unittest.TestCase):
-    def test_plain_text_is_just_escaped(self):
-        self.assertEqual(R._format_label_segment("a < b"), "a &lt; b")
-
-    def test_ellipsis_is_normalized(self):
-        self.assertIn("…", R._format_label_segment("wait..."))
-        self.assertNotIn("...", R._format_label_segment("wait..."))
-
-    def test_code_span_gets_menlo_font(self):
-        out = R._format_label_segment("call `foo`")
-        self.assertIn('<FONT FACE="Menlo">foo</FONT>', out)
-
-    def test_code_span_content_is_escaped(self):
-        out = R._format_label_segment("`a<b>`")
-        self.assertIn("a&lt;b&gt;", out)
-
-    def test_tight_punctuation_after_short_code_span_gets_a_spacer(self):
-        """d205803: "`Router`, `Title`, ..." rendered with the punctuation overlapping
-        the code span's last glyph — Graphviz's width estimate for a FONT-FACE run runs
-        narrow. A thin space entity (&#8201;) after the span closes the gap."""
-        out = R._format_label_segment("`Router`, next")
-        self.assertIn("</FONT>&#8201;, next", out)
-
-    def test_long_code_span_before_a_real_space_still_gets_spacers(self):
-        """98ac3f1: the original fix (a single thin space, and only when no whitespace
-        already followed) left long code spans followed by a real space unfixed —
-        "`documents` row" rendered as "documentsrow" once the width underestimate, which
-        scales with run length, exceeded the space glyph's own width. Spacers must be
-        inserted unconditionally, scaled to the code span's length."""
-        out = R._format_label_segment("`documents` row")
-        # scaled: len("documents") // 8 == 1 thin space, still present before "row"
-        self.assertIn("</FONT>&#8201; row", out)
-
-    def test_spacer_count_scales_with_code_span_length(self):
-        short = R._format_label_segment("`ab` x")
-        long = R._format_label_segment("`abcdefghijklmnop` x")
-        self.assertLess(short.count("&#8201;"), long.count("&#8201;"))
 
 
 class TestFormatMeta(unittest.TestCase):
@@ -207,16 +167,20 @@ class TestCheckLengthBias(unittest.TestCase):
 
 
 class TestRenderDiagramsInHtml(unittest.TestCase):
-    """render_diagram (the part that shells out to `dot`) is mocked here so these test
-    the token-substitution/wrapper-collapsing logic in isolation — see TestRenderDiagram
-    for real Graphviz invocation."""
+    """render_diagram (the part that shells out to `d2`) is mocked here so these test the
+    token-substitution/wrapper-collapsing logic in isolation — see TestD2Diagrams for the
+    real thing."""
 
     def setUp(self):
         self._orig = R.render_diagram
-        R.render_diagram = lambda d: f"<svg>{d['nodes'][0]['id']}</svg>"
+        R.render_diagram = lambda d, name="diagram": f"<svg>{d['nodes'][0]['id']}</svg>"
+        # Module-level cache, so it has to be cleared between tests or one test's stubbed
+        # output leaks into the next.
+        R._DIAGRAM_CACHE.clear()
 
     def tearDown(self):
         R.render_diagram = self._orig
+        R._DIAGRAM_CACHE.clear()
 
     def test_replaces_token_with_diagram_div(self):
         out = R.render_diagrams_in_html("<p>{{diagram:flow}}</p>",
@@ -237,25 +201,125 @@ class TestRenderDiagramsInHtml(unittest.TestCase):
         self.assertEqual(out.count('<div class="diagram'), 1)
 
 
-@unittest.skipUnless(shutil.which("dot"), "Graphviz's `dot` is not on PATH")
-class TestRenderDiagram(unittest.TestCase):
-    def test_produces_an_svg_with_the_node_label(self):
-        svg = R.render_diagram({
-            "nodes": [{"id": "a", "label": "Client"}, {"id": "b", "label": "Server"}],
-            "edges": [["a", "b", "request"]],
-        })
-        self.assertTrue(svg.startswith("<svg"))
-        self.assertIn("Client", svg)
-        self.assertIn("Server", svg)
+class TestDiagramRouting(unittest.TestCase):
+    """There is one engine now, and a spec without a "kind" is an error rather than a
+    silent fallback to something that draws a different-looking picture."""
 
-    def test_fail_node_gets_no_special_content_change(self):
-        """A "fail" node only changes fill/border color (asserted structurally elsewhere
-        via CSS); this just confirms the node still renders without erroring."""
-        svg = R.render_diagram({
-            "nodes": [{"id": "a", "label": "Client"}, {"id": "b", "label": "Timeout", "fail": True}],
-            "edges": [["a", "b"]],
-        })
-        self.assertIn("Timeout", svg)
+    def setUp(self):
+        self.calls = []
+        self._d2 = R.render_d2_diagram
+        R.render_d2_diagram = lambda d, name: self.calls.append(("d2", name)) or "<svg/>"
+        R._DIAGRAM_CACHE.clear()
+
+    def tearDown(self):
+        R.render_d2_diagram = self._d2
+        R._DIAGRAM_CACHE.clear()
+
+    def test_a_kind_goes_to_d2(self):
+        R.render_diagram({"kind": "state", "states": [], "transitions": []}, name="s")
+        self.assertEqual(self.calls, [("d2", "s")])
+
+    def test_a_spec_without_a_kind_is_rejected_with_a_pointer_to_the_reference(self):
+        with self.assertRaises(KeyError) as caught:
+            R.render_diagram({"nodes": [{"id": "a"}], "edges": []}, name="legacy")
+        message = str(caught.exception)
+        self.assertIn("Graphviz path has been removed", message)
+        self.assertIn("REFERENCE.md", message)
+
+    def test_the_diagram_key_is_passed_through_as_the_name(self):
+        """It namespaces the SVG's ids, so two diagrams on one page cannot collide."""
+        R.render_diagrams_in_html("{{diagram:handshake}}",
+                                  {"handshake": {"kind": "state", "states": [],
+                                                 "transitions": []}})
+        self.assertEqual(self.calls, [("d2", "handshake")])
+
+    def test_a_diagram_referenced_twice_is_rendered_once(self):
+        """The placement pass costs seconds per callout, so this matters."""
+        spec = {"one": {"kind": "state", "states": [], "transitions": []}}
+        R.render_diagrams_in_html("{{diagram:one}} then {{diagram:one}}", spec)
+        self.assertEqual(len(self.calls), 1)
+
+
+@unittest.skipUnless(shutil.which("d2"), "d2 is not installed (brew install d2)")
+class TestD2Diagrams(unittest.TestCase):
+    """The real D2 path, end to end. Placement is skipped (it needs a browser and seconds);
+    lib/diagram's own tests cover it."""
+
+    SEQUENCE = {
+        "kind": "sequence",
+        "participants": [{"id": "editor", "label": "Editor", "role": "client"},
+                         {"id": "gw", "label": "Gateway", "role": "svc",
+                          "note": "new service", "near": "bottom-right"}],
+        "messages": [{"from": "editor", "to": "gw", "label": "WS upgrade"}],
+    }
+
+    def setUp(self):
+        R._DIAGRAM_GATE_PROBLEMS.clear()
+        R._DIAGRAM_CACHE.clear()
+        self._avail = R._diagram_browser.available
+        R._diagram_browser.available = lambda: False
+
+    def tearDown(self):
+        R._diagram_browser.available = self._avail
+        R._DIAGRAM_GATE_PROBLEMS.clear()
+        R._DIAGRAM_CACHE.clear()
+
+    def test_it_renders_a_kind_dot_could_not_draw_at_all(self):
+        """`dot` reorders lifeline columns to minimise edge crossings; that is why D2 won."""
+        svg = R.render_diagram(self.SEQUENCE, name="seq")
+        self.assertTrue(svg.startswith("<svg"))
+        self.assertIn("Gateway", svg)
+
+    def test_colours_are_css_vars_so_the_diagram_follows_the_page_toggle(self):
+        svg = R.render_diagram(self.SEQUENCE, name="seq")
+        self.assertIn("var(--d-", svg)
+
+    def test_ids_are_namespaced_with_the_diagram_key(self):
+        svg = R.render_diagram(self.SEQUENCE, name="seq")
+        self.assertIn('id="seq-', svg)
+
+    def test_a_note_becomes_a_tagged_callout(self):
+        svg = R.render_diagram(self.SEQUENCE, name="seq")
+        self.assertIn("d2-callout", svg)
+
+    def test_gates_run_and_a_clean_diagram_reports_nothing(self):
+        """No note, so nothing needs placing and nothing should be reported."""
+        plain = {"kind": "state",
+                 "states": [{"id": "live", "role": "store"},
+                            {"id": "closed", "role": "ext"}],
+                 "transitions": [{"from": "live", "to": "closed", "label": "user leaves"}]}
+        R.render_diagram(plain, name="plain")
+        self.assertEqual(R._DIAGRAM_GATE_PROBLEMS, [])
+
+    def test_an_unmeasured_callout_without_a_browser_is_reported(self):
+        """D2 reserves no canvas room for a callout, so an unmeasured anchor may well be
+        clipped. Staying quiet about that would be reporting a pass we did not verify."""
+        R.render_diagram(self.SEQUENCE, name="seq")
+        self.assertTrue(any("no browser" in p for p in R._DIAGRAM_GATE_PROBLEMS),
+                        R._DIAGRAM_GATE_PROBLEMS)
+
+    def test_a_diagram_with_no_notes_needs_no_browser_and_says_nothing_about_one(self):
+        plain = {"kind": "state",
+                 "states": [{"id": "a", "role": "svc"}, {"id": "b", "role": "svc"}],
+                 "transitions": [{"from": "a", "to": "b"}]}
+        R.render_diagram(plain, name="plain")
+        self.assertFalse(any("browser" in p for p in R._DIAGRAM_GATE_PROBLEMS))
+
+    def test_an_oversized_diagram_is_reported_but_still_renders(self):
+        tall = {"kind": "state",
+                "states": [{"id": f"s{i}", "label": f"state number {i}", "role": "svc"}
+                           for i in range(14)],
+                "transitions": [{"from": f"s{i}", "to": f"s{i+1}"} for i in range(13)]}
+        svg = R.render_diagram(tall, name="tall")
+        self.assertTrue(svg.startswith("<svg"))
+        self.assertTrue(any("tall" in p.lower() for p in R._DIAGRAM_GATE_PROBLEMS),
+                        R._DIAGRAM_GATE_PROBLEMS)
+
+    def test_a_bad_spec_raises_rather_than_drawing_a_stray_box(self):
+        from lib.diagram.spec import SpecError
+        with self.assertRaises(SpecError):
+            R.render_diagram({"kind": "state", "states": [{"id": "a", "role": "svc"}],
+                              "transitions": [{"from": "a", "to": "typo"}]}, name="x")
 
 
 class TestRender(unittest.TestCase):

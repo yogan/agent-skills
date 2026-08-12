@@ -6,11 +6,42 @@ A small collection of [Claude Code](https://docs.claude.com/en/docs/claude-code)
 
 ### explain-diff
 
-Generates a rich, interactive, self-contained HTML explanation of a code change — background, intuition, a code walkthrough, and a quiz — then opens it in the browser. Accepts the current branch, a named local/remote branch, a GitLab MR, or just the last commit. Renders diagrams via Graphviz and syntax-highlighted code client-side, with light/dark mode following the OS preference.
+Generates a rich, interactive, self-contained HTML explanation of a code change — background, intuition, a code walkthrough, and a quiz — then opens it in the browser. Accepts the current branch, a named local/remote branch, a GitLab MR, or just the last commit. Renders diagrams via D2 (see `visualize` below — same renderer, same gates) and syntax-highlighted code client-side, with light/dark mode following the OS preference.
 
 ### explain-branch
 
 Same output style as explain-diff, but for a multi-commit branch or MR: structures the page as one chapter per substantial commit, telling the "how the feature was built, step by step" story, with an intro, a summary, and per-chapter mini-quizzes. Falls back to the flat explain-diff format when there's only one commit, or too few substantial ones to justify chapters.
+
+### visualize
+
+Draws one diagram that answers a question about the codebase — a database layout, a request or
+interaction flow, how a set of classes relate, a state machine, an architecture, or an animated
+before/after — then opens it in the browser. It explores the code to get the facts, derives a
+spec, renders it with [D2](https://d2lang.com), positions any annotation callouts by measuring
+every candidate position in a headless browser, and holds the result to objective gates
+(fits a viewport, no glyph below ~11px or above an `h2`, WCAG AA in **both** light and dark,
+nothing clipped, every colour themeable). Diagrams follow the page's light/dark toggle with no
+redraw. The renderer lives in `lib/diagram/`, so the `explain-*` skills produce identical
+figures without this skill being installed.
+
+#### Why D2, and not Graphviz or Mermaid
+
+Decided by prototype rather than preference: one scenario drawn six ways by three engines and
+judged on measurable gates. **Mermaid** was rejected on weight and speed — 405 MB plus a 565 MB
+Chromium, and 3x D2's render time — not on capability. **Graphviz** is excellent at plain graphs,
+needs no post-processing and themes for free, but it cannot draw a sequence diagram at all: `dot`
+reorders lifeline columns to minimise edge crossings, so participants come out in the wrong order
+with sloped arrows. That is structural, not cosmetic. It also has no notion of an annotation
+callout, no native table or class shape, and no animation.
+
+**D2** costs a 35 MB Go binary and needs real post-processing (it bakes in colours, emits no
+intrinsic size, and couples three visual roles of a table to two properties), which is why the
+gates exist: they turn "does this look right" into a test, so undocumented behaviour is safe to
+depend on as long as the version is pinned.
+
+Graphviz was kept alongside D2 for exactly one milestone and then removed. Two engines means two
+visual languages, two theming maps and no single source of visual truth — a document mixing them
+looks mixed.
 
 ### review-branch
 
@@ -40,6 +71,7 @@ Or pick individual ones:
 ```bash
 ln -sfn ~/src/agent-skills/skills/explain-diff ~/.claude/skills/explain-diff
 ln -sfn ~/src/agent-skills/skills/review-mr   ~/.claude/skills/review-mr
+ln -sfn ~/src/agent-skills/skills/visualize   ~/.claude/skills/visualize
 ```
 
 `review-mr` builds on `explain-branch` and `review-branch`, so link those too if you use it.
@@ -129,8 +161,24 @@ and warns at startup.
 Requirements:
 
 - `python3` (for `render.py`, the `rework-mr` / `review-mr` scripts, and the `Stop` hook)
-- [Graphviz](https://graphviz.org/) (`dot` on `PATH`) for diagrams
 - [`glab`](https://gitlab.com/gitlab-org/cli) — authenticated, for `explain-*` `mr:123` targets and all of `rework-mr` / `review-mr`
 - macOS for the `rework-mr` / `review-mr` clipboard copy (`pbcopy`)
+
+For every diagram — `visualize` and the `explain-*` skills alike:
+
+- [D2](https://d2lang.com) — `brew install d2`. A single 35 MB Go binary. **Pin the version**:
+  the renderer depends on a few undocumented D2 behaviours, which is safe only because the gates
+  turn them into tests. `lib/diagram/render.py` records the version it was measured against and a
+  mismatch fails a test rather than silently drifting.
+- `node`, plus `puppeteer-core` — `npm i -g puppeteer-core`. 29 MB, and deliberately *not* the
+  full `puppeteer` package, which downloads its own ~550 MB Chromium; this drives the Chrome,
+  Chromium or Edge you already have. Override discovery with `PUPPETEER_EXECUTABLE_PATH` /
+  `PUPPETEER_CORE`, or `npm i -g puppeteer` if you have no system browser.
+
+  A browser is in the render loop by decision, not convenience: it is the only way to position an
+  annotation callout by measurement, and the only way to see one being clipped — a callout's text
+  is HTML inside the SVG, and a CSS drop-shadow's spread is invisible to every static checker.
+  Without it, `visualize` still renders and still runs the other five gates, but it reports the
+  clipping gate as **unable to run** rather than passing.
 
 Restart Claude Code (or start a new session) after adding the symlinks so it picks up the new skills.
