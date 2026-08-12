@@ -28,6 +28,7 @@ import subprocess
 import sys
 import tempfile
 
+from . import browser
 from . import compact
 from . import d2 as d2mod
 from . import palette
@@ -265,7 +266,7 @@ STANDALONE_CALLOUT = {
 STANDALONE_PAD = 20
 
 
-def standalone(spec, name="diagram", theme="light", animate_interval=1800, binary="d2"):
+def standalone(spec, name="diagram", theme="dark", animate_interval=1800, binary="d2"):
     """Spec -> a self-contained SVG that can be opened on its own.
 
     Three things separate this from `render()`, and all three are what make an SVG file
@@ -282,9 +283,12 @@ def standalone(spec, name="diagram", theme="light", animate_interval=1800, binar
     3. **The CSS travels inside the file**, in a `<style>` element, because a callout's text
        is HTML in a `<foreignObject>` and d2 ships no paragraph reset for it.
 
-    Defaults to light. A file has no toggle, so it has to pick one, and it is viewed inside a
-    frame it cannot paint — a browser's white page, an image viewer's chrome. A dark drawing
-    sits in that frame as a slab that fights its surroundings; a light one blends.
+    Defaults to dark, which reverses an earlier decision. The argument for light was that the
+    file is viewed inside a frame it cannot paint, and that frame was assumed to be a browser's
+    white page. It is not: the output is rasterised and handed to the system image viewer, whose
+    chrome follows the OS appearance, so on a dark desktop a light drawing is the slab that
+    fights its surroundings. A caller that really is embedding into a light page should ask for
+    `theme="light"` — or use `render()`, which follows the page's own toggle.
     """
     if theme not in ("light", "dark"):
         raise RenderError(f"theme must be 'light' or 'dark', not {theme!r}")
@@ -307,6 +311,25 @@ def standalone(spec, name="diagram", theme="light", animate_interval=1800, binar
             "value. Add it to palette.py, or stop using the d2 feature that emits it.")
     svg = palette.resolve(svg, theme)
     return _inline_style(svg, STANDALONE_CSS + STANDALONE_CALLOUT[theme])
+
+
+def rasterise_standalone(svg, svg_path):
+    """Write `svg` beside `svg_path` as a PNG and return that path.
+
+    The SVG is inlined into a bare page rather than referenced: an `<img src>` would be a
+    second fetch of a file that may not be written yet, and inlining is also what the
+    placement pass measures, so the raster and the measurements agree by construction.
+    """
+    width, height = natural_size(svg)
+    if not width or not height:
+        raise RenderError("the SVG has no natural size to rasterise")
+    out = os.path.splitext(str(svg_path))[0] + ".png"
+    page = (f'<!DOCTYPE html><meta charset="utf-8"><style>html,body{{margin:0;padding:0}}'
+            f"svg{{display:block}}</style>{svg}")
+    try:
+        return browser.rasterise(page, out, width, height)
+    except browser.BrowserError as exc:
+        raise RenderError(str(exc))
 
 
 def _inline_style(svg, css):

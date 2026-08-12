@@ -127,7 +127,7 @@ class TestStandaloneImage(unittest.TestCase):
     """The default output: a file that works on its own, with no page cooperating."""
 
     def test_it_writes_and_reports_an_svg(self):
-        code, out, err = run("--no-open", "--no-place", spec=STATE)
+        code, out, err = run("--no-open", "--no-png", "--no-place", spec=STATE)
         path = out.strip()
         self.assertEqual(code, 0, err)
         self.assertTrue(path.endswith(".svg"), path)
@@ -136,7 +136,7 @@ class TestStandaloneImage(unittest.TestCase):
     def test_the_colours_are_baked_not_var_references(self):
         """An undefined custom property makes the browser drop the attribute entirely, so a
         var()-based SVG opened directly renders as unpainted shapes."""
-        _, out, _ = run("--no-open", "--no-place", spec=STATE)
+        _, out, _ = run("--no-open", "--no-png", "--no-place", spec=STATE)
         self.assertNotIn("var(--d-", read(out.strip()))
 
     def canvas_fill(self, svg):
@@ -148,17 +148,17 @@ class TestStandaloneImage(unittest.TestCase):
     def test_the_canvas_is_painted(self):
         """Transparent would composite the drawing onto whatever the viewer uses, leaving the
         muted edge labels without their contrast."""
-        _, out, _ = run("--no-open", "--no-place", spec=STATE)
+        _, out, _ = run("--no-open", "--no-png", "--no-place", spec=STATE)
         self.assertIn(self.canvas_fill(read(out.strip())), ("#ffffff", "#16181d"))
 
     def test_the_light_canvas_is_pure_white_not_the_page_colour(self):
-        """#fafaf8 is the explainer PAGE's colour. A file is not on that page — on a browser's
-        white it reads as a faintly grey slab, which is what prompted this."""
-        _, out, _ = run("--no-open", "--no-place", spec=STATE)
+        """#fafaf8 is the explainer PAGE's colour. A file is not on that page — on a white
+        background it reads as a faintly grey slab, which is what prompted this."""
+        _, out, _ = run("--no-open", "--no-png", "--no-place", "--theme", "light", spec=STATE)
         self.assertEqual(self.canvas_fill(read(out.strip())), "#ffffff")
 
     def test_dark_theme_bakes_the_other_way(self):
-        _, out, _ = run("--no-open", "--no-place", "--theme", "dark", spec=STATE)
+        _, out, _ = run("--no-open", "--no-png", "--no-place", "--theme", "dark", spec=STATE)
         svg = read(out.strip())
         self.assertEqual(self.canvas_fill(svg), "#16181d")
         self.assertNotIn("var(--d-", svg)
@@ -166,12 +166,12 @@ class TestStandaloneImage(unittest.TestCase):
     def test_the_dark_canvas_differs_from_a_table_body(self):
         """#1f2229 is what a table body is filled with; the same value as the canvas would
         swallow every table on the drawing."""
-        _, out, _ = run("--no-open", "--no-place", "--theme", "dark", spec=STATE)
+        _, out, _ = run("--no-open", "--no-png", "--no-place", "--theme", "dark", spec=STATE)
         self.assertNotEqual(self.canvas_fill(read(out.strip())), "#1f2229")
 
     def test_the_callout_css_travels_inside_the_file(self):
         """Callout text is HTML in a foreignObject and d2 ships no paragraph reset for it."""
-        _, out, _ = run("--no-open", "--no-place", spec=STATE)
+        _, out, _ = run("--no-open", "--no-png", "--no-place", spec=STATE)
         svg = read(out.strip())
         self.assertIn("<style>", svg)
         self.assertIn("margin:0", svg)
@@ -179,19 +179,20 @@ class TestStandaloneImage(unittest.TestCase):
     def test_the_inline_style_is_cdata_wrapped(self):
         """A <style> in SVG is XML: a comment mentioning <svg> was enough to make the whole
         file a parse error that every browser reports as a tag mismatch."""
-        _, out, _ = run("--no-open", "--no-place", spec=STATE)
+        _, out, _ = run("--no-open", "--no-png", "--no-place", spec=STATE)
         self.assertIn("<![CDATA[", read(out.strip()))
 
     def test_an_explicit_output_path_is_honoured(self):
         with tempfile.TemporaryDirectory() as tmp:
             target = os.path.join(tmp, "out.svg")
-            code, out, err = run("--no-open", "--no-place", "-o", target, spec=STATE)
+            code, out, err = run("--no-open", "--no-png", "--no-place", "-o", target,
+                                 spec=STATE)
             self.assertEqual(code, 0, err)
             self.assertEqual(out.strip(), target)
 
     def test_the_gate_table_goes_to_stderr_so_stdout_is_just_the_path(self):
         """Callers read stdout for the path; the report must not pollute it."""
-        _, out, err = run("--no-open", "--no-place", spec=STATE)
+        _, out, err = run("--no-open", "--no-png", "--no-place", spec=STATE)
         self.assertEqual(len(out.strip().splitlines()), 1)
         self.assertIn("checks pass", err)
 
@@ -208,16 +209,20 @@ class TestStandaloneImage(unittest.TestCase):
     def test_theming_is_not_gated_on_a_baked_image(self):
         """There are no vars left to follow a toggle; render.standalone checks mappability
         itself, before baking."""
-        _, _, err = run("--no-open", "--no-place", spec=STATE)
+        _, _, err = run("--no-open", "--no-png", "--no-place", spec=STATE)
         self.assertNotIn("theming", err)
 
     def test_contrast_is_checked_for_the_baked_theme_only(self):
         """Checking both would measure dark colours against the light page background and
-        report a confident failure about a combination that cannot occur."""
-        _, _, err = run("--no-open", "--no-place", spec=STATE)
-        row = next(line for line in err.splitlines() if "contrast" in line)
-        self.assertIn("l ", row)
-        self.assertNotIn("d ", row)
+        report a confident failure about a combination that cannot occur. Both themes are
+        exercised so this keeps testing the rule rather than whichever default is current."""
+        for theme, present, absent in (("dark", "d ", "l "), ("light", "l ", "d ")):
+            with self.subTest(theme=theme):
+                _, _, err = run("--no-open", "--no-png", "--no-place", "--theme", theme,
+                                spec=STATE)
+                row = next(line for line in err.splitlines() if "contrast" in line)
+                self.assertIn(present, row)
+                self.assertNotIn(absent, row)
 
     def test_no_gates_skips_them(self):
         _, _, err = run("--no-open", "--no-place", "--no-gates", spec=STATE)
@@ -266,23 +271,52 @@ class TestOpening(unittest.TestCase):
         sys.stdin = self.real_stdin
 
     def call(self, target, *extra):
-        """Run main() reading the spec from stdin, writing to `target`."""
+        """Run main() reading the spec from stdin, writing to `target`.
+
+        Returns (exit code, the paths it printed) — the last of which is the artifact it
+        means the reader to look at.
+        """
         import io
         from contextlib import redirect_stdout
         sys.argv = ["visualize.py", "-", "--no-place", "--no-gates", "-o", target, *extra]
         sys.stdin = io.StringIO(json.dumps(STATE))
-        with redirect_stdout(io.StringIO()):
-            return V.main()
+        out = io.StringIO()
+        with redirect_stdout(out):
+            code = V.main()
+        return code, out.getvalue().split()
 
     def test_a_standalone_run_opens_what_it_made(self):
+        """The PNG, when one could be rendered — asserted against what the run reported
+        rather than against a hardcoded extension, so a machine with no browser (which falls
+        back to the SVG) still tests the invariant rather than failing on it."""
         with tempfile.TemporaryDirectory() as tmp:
             target = os.path.join(tmp, "out.svg")
-            self.assertEqual(self.call(target), 0)
+            code, printed = self.call(target)
+            self.assertEqual(code, 0)
+            self.assertEqual(self.opened, [printed[-1]])
+            self.assertEqual(printed[0], target)
+
+    def test_the_png_is_what_gets_opened_when_a_browser_is_there(self):
+        """macOS renders SVG through Quick Look, which crops our canvas square."""
+        if not V.browser.available():
+            self.skipTest("no browser to rasterise with")
+        with tempfile.TemporaryDirectory() as tmp:
+            target = os.path.join(tmp, "out.svg")
+            self.call(target)
+            self.assertEqual(self.opened, [target[:-4] + ".png"])
+            self.assertGreater(os.path.getsize(target[:-4] + ".png"), 2000)
+
+    def test_no_png_leaves_only_the_svg_and_opens_that(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            target = os.path.join(tmp, "out.svg")
+            code, printed = self.call(target, "--no-png")
+            self.assertEqual(printed, [target])
+            self.assertFalse(os.path.exists(target[:-4] + ".png"))
             self.assertEqual(self.opened, [target])
 
     def test_no_open_suppresses_it(self):
         with tempfile.TemporaryDirectory() as tmp:
-            self.call(os.path.join(tmp, "out.svg"), "--no-open")
+            self.call(os.path.join(tmp, "out.svg"), "--no-open", "--no-png")
             self.assertEqual(self.opened, [])
 
     def test_an_embed_run_never_opens(self):
@@ -295,7 +329,8 @@ class TestOpening(unittest.TestCase):
     def test_the_spec_can_come_from_stdin(self):
         with tempfile.TemporaryDirectory() as tmp:
             target = os.path.join(tmp, "out.svg")
-            self.assertEqual(self.call(target), 0)
+            code, _ = self.call(target, "--no-png")
+            self.assertEqual(code, 0)
             self.assertIn("<svg", read(target))
 
 

@@ -118,3 +118,39 @@ def measure(jobs, viewport=None, shadow=SHADOW_PX, weights=None, timeout=180):
         if result.get("error"):
             raise BrowserError(f"{result.get('key')}: {result['error']}")
     return results
+
+
+# Device pixels per CSS pixel when rasterising. 2 is what a Retina screen shows anyway, and it
+# means the reader can zoom one step into the PNG before it softens. 3 was measurably no better
+# on screen and made the files ~2x larger.
+RASTER_SCALE = 2
+
+
+def rasterise(html, out, width, height, scale=RASTER_SCALE, timeout=180):
+    """Screenshot one page to `out` as a PNG. Returns the path.
+
+    Only the standalone path needs this, and it needs it because macOS cannot render our SVG:
+    Quick Look, which is what Preview uses for SVG, ignores the canvas and crops the drawing
+    square. Handing the default image viewer a PNG we rendered in the same browser the gates
+    measure in is the only way the file the reader opens matches the file they were promised.
+
+    `width`/`height` are CSS px — the diagram's natural size — and the PNG comes out
+    `scale`x that in device pixels.
+    """
+    problems = requirements()
+    if problems:
+        raise BrowserError("; ".join(problems))
+    payload = json.dumps({"jobs": [], "shots": [
+        {"key": "raster", "html": html, "out": str(out),
+         "width": width, "height": height, "scale": scale}]})
+    try:
+        proc = subprocess.run(["node", MEASURE_JS], input=payload, capture_output=True,
+                              text=True, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        raise BrowserError(f"the browser did not rasterise {out} within {timeout}s")
+    if proc.returncode != 0:
+        raise BrowserError(proc.stderr.strip() or
+                           f"node exited {proc.returncode} with no message")
+    if not os.path.exists(out):
+        raise BrowserError(f"the browser reported success but wrote no file at {out}")
+    return out

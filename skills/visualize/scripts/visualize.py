@@ -5,14 +5,16 @@ A thin CLI over `lib/diagram`. Everything interesting — the spec vocabulary, t
 the gates — lives in the library, so the explainer skills get identical output without going
 through this script (and without needing this skill installed).
 
-    python3 visualize.py spec.json                    # -> a standalone SVG, opened
-    python3 visualize.py spec.json --theme dark       # ... baked dark instead of light
+    python3 visualize.py spec.json                    # -> a standalone SVG + PNG, opened
+    python3 visualize.py spec.json --theme light      # ... baked light instead of dark
     python3 visualize.py spec.json --format embed     # -> a themeable SVG for a host page
     python3 visualize.py --format css                 # -> the CSS that page must ship
 
 The default output is a **standalone image**: colours baked to one theme, the page background
-painted, and the CSS a callout's `<foreignObject>` text needs carried inside the file. It is
-opened directly, and that is the end of the run — no HTML wrapper. A page around a single
+painted, and the CSS a callout's `<foreignObject>` text needs carried inside the file. Both an
+SVG and a PNG are written, and the PNG is what gets opened — macOS renders SVG through Quick
+Look, which ignores the canvas and crops the drawing square, so handing a viewer the SVG shows
+the reader something we never rendered. No HTML wrapper either way. A page around a single
 figure is the explainers' format, and wrapping one here would only put the drawing back inside
 a content column it then has to be squeezed into. A file has no width to fit and no theme
 toggle, which is why it is shown at full size and why it has to pick a theme.
@@ -73,7 +75,7 @@ def load_spec(path):
         die(f"the spec is not valid JSON: {exc}")
 
 
-def run_gates(svg, name, standalone=True, theme="light"):
+def run_gates(svg, name, standalone=True, theme="dark"):
     """Every gate that can run, as a list of Results.
 
     The two output modes get genuinely different gate sets, because most of the gates are
@@ -134,10 +136,13 @@ def main():
                         help="svg: a standalone image, opened when it is done (default). "
                              "embed: a themeable SVG for a host page that ships the CSS. "
                              "css: print that CSS.")
-    parser.add_argument("--theme", choices=("light", "dark"), default="light",
-                        help="which theme to bake into a standalone image (default: light, "
-                             "because a file is viewed inside a frame it cannot paint — a "
-                             "browser's white page — and a dark drawing fights it).")
+    parser.add_argument("--theme", choices=("light", "dark"), default="dark",
+                        help="which theme to bake into a standalone image (default: dark, "
+                             "because the PNG is opened in the system image viewer, whose "
+                             "chrome follows the OS appearance).")
+    parser.add_argument("--no-png", action="store_true",
+                        help="write only the SVG, skipping the rasterise (one browser launch). "
+                             "The SVG is the artifact; the PNG is what a viewer can show.")
     parser.add_argument("--no-open", action="store_true",
                         help="write the file without opening it — use this while iterating, "
                              "so only the finished diagram opens")
@@ -206,11 +211,20 @@ def main():
     print(out_path)
 
     if standalone:
-        # The whole point of this mode: the file works by itself, so opening it is the end of
-        # the job. No HTML wrapper — a page around a single figure is the explainers' format,
-        # and here it would only reintroduce a content column to be squeezed into.
+        # The SVG is the artifact; the PNG is what a person can actually be shown. macOS
+        # renders SVG through Quick Look, which ignores our canvas and crops the drawing
+        # square — the reference state machine loses its callout and two of its states — so
+        # handing the default viewer an SVG shows the reader something we never rendered.
+        png = None
+        if not args.no_png:
+            try:
+                png = render.rasterise_standalone(svg, out_path)
+                print(png)
+            except render.RenderError as exc:
+                print(f"note: could not rasterise to PNG ({exc}) — opening the SVG instead, "
+                      "which some viewers crop", file=sys.stderr)
         if not args.no_open:
-            open_file(out_path)
+            open_file(png or out_path)
     else:
         # Saying this every time is deliberate: an SVG that looks broken in a viewer is the
         # single most likely confusion this tool can cause, and the cause is never the SVG.
