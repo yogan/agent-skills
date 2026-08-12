@@ -185,6 +185,53 @@ class TestLaneGroups(unittest.TestCase):
         self.assertEqual(len(used), 2, f"expected two lane colours, got {sorted(used)}")
 
 
+class TestDetailWrapping(unittest.TestCase):
+    """A detail sets the box's width, so left on one line it shoves every other lane sideways.
+    Wrapping trades that width for height, which a sequence diagram has to spare."""
+
+    LONG = "Procrastinate worker: discover→ingest (creates Document)→extract→ocr→enrich"
+
+    def test_a_short_detail_stays_on_one_line(self):
+        self.assertEqual(d2.wrap_detail("Azure AI — OCR"), ["Azure AI — OCR"])
+
+    def test_a_long_detail_wraps_within_the_budget(self):
+        lines = d2.wrap_detail(self.LONG)
+        self.assertGreater(len(lines), 1)
+        for line in lines:
+            self.assertLessEqual(len(line), d2.DETAIL_WRAP, line)
+
+    def test_wrapping_loses_no_words(self):
+        self.assertEqual(" ".join(d2.wrap_detail(self.LONG)).split(), self.LONG.split())
+
+    def test_an_authors_own_newlines_are_kept(self):
+        self.assertEqual(d2.wrap_detail("one\ntwo"), ["one", "two"])
+
+    def test_a_single_over_long_token_is_left_whole(self):
+        """These are module and job names; a name broken in half is worse than a wide box."""
+        token = "x" * (d2.DETAIL_WRAP + 10)
+        self.assertEqual(d2.wrap_detail(token), [token])
+
+    def spec(self, detail):
+        return {"kind": "sequence",
+                "participants": [{"id": "a", "group": "app"},
+                                 {"id": "b", "group": "app", "detail": detail}],
+                "messages": [{"from": "a", "to": "b", "label": "x"}]}
+
+    def test_the_box_grows_a_line_at_a_time_and_every_lane_matches(self):
+        one = d2.emit(self.spec("short one"))
+        three = d2.emit(self.spec(self.LONG))
+        self.assertIn(f"height: {d2.ACTOR_HEIGHT_DETAIL}", one)
+        taller = d2.ACTOR_HEIGHT_DETAIL + 2 * d2.LINE_H          # three detail lines
+        self.assertIn(f"height: {taller}", three)
+        self.assertEqual(three.count(f"height: {taller}"), 2, "the row must stay even")
+
+    def test_the_emitted_label_carries_the_wrapped_form(self):
+        source = d2.emit(self.spec(self.LONG))
+        for line in d2.wrap_detail(self.LONG):
+            self.assertIn(line, source)
+        self.assertNotIn(self.LONG, source)
+
+
 class TestPushMessages(unittest.TestCase):
     def base(self, **over):
         msg = {"from": "gw", "to": "editor", "label": "peer joined"}

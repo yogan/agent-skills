@@ -35,11 +35,24 @@ BASE_FONT = 13
 # a box; the rest of a sequence diagram's dead height is `compact.py`'s job.
 ACTOR_HEIGHT = 34
 
-# The same box when any participant carries a `detail` second line. Applied to EVERY
-# participant in that diagram, not just the ones with a detail: a row of boxes at two
-# different heights reads as an accident. Two lines need ~26px of text (13px + an 11px line
-# 13px below it) and this keeps the same ~9px of air above and under as the one-line box.
+# The same box when any participant carries a `detail`. Applied to EVERY participant in that
+# diagram, not just the ones with a detail: a row of boxes at two different heights reads as an
+# accident. Two lines need ~26px of text (13px + an 11px line 13px below it) and this keeps the
+# same ~9px of air above and under as the one-line box; each further line adds LINE_H.
 ACTOR_HEIGHT_DETAIL = 48
+LINE_H = 14
+
+# Characters per detail line before it wraps. A detail is the real module names behind an
+# abstract lane, and left on one line it sets the box's width: a lane reading
+# "Procrastinate worker: discover→ingest (creates Document)→extract→ocr→enrich" stretched its box
+# to ~450px and shoved every other lane sideways. Wrapping trades that width for height, which a
+# sequence diagram has to spare — d2 sizes a box to its longest line, so the cap is the box.
+DETAIL_WRAP = 34
+
+# Lines a detail may occupy after wrapping — four in the box counting the title. Past this the
+# problem is editorial rather than typographic (spec.py warns): a lane whose subtitle needs five
+# lines is a diagram of its own trying to hide inside a label.
+MAX_DETAIL_LINES = 3
 
 # Default `direction` per kind, as (embedded, standalone). A spec's own `direction` wins over
 # both. The two targets want opposite layouts and only one of them has a width to fit into:
@@ -190,6 +203,37 @@ GROUP_CLASSES = ("client", "svc", "store", "cache", "ext")
 # already have. Only the *class* is shared — nothing else about `store` follows into `steady`.
 STATE_CLASS = {"working": "client", "steady": "store",
                "transient": "cache", "terminal": "ext"}
+
+
+def wrap_detail(text, width=None):
+    """Break a detail into lines of at most `width` characters, greedily.
+
+    `width` defaults to `DETAIL_WRAP` by lookup rather than as a default argument value, which
+    would bind at import and make the constant unpatchable — including from a test.
+
+    The author's own newlines are kept as breaks, so an explicit two-line detail stays as
+    written. A single token longer than `width` is left over-long rather than cut: these are
+    module and job names, and a name broken in half is worse than a wide box.
+    """
+    width = DETAIL_WRAP if width is None else width
+    lines = []
+    for paragraph in str(text).split("\n"):
+        current = ""
+        for word in paragraph.split():
+            candidate = f"{current} {word}".strip()
+            if current and len(candidate) > width:
+                lines.append(current)
+                current = word
+            else:
+                current = candidate
+        lines.append(current)
+    return [line for line in lines if line]
+
+
+def detail_lines(participants):
+    """The most lines any one participant's detail needs — what the row's height must fit."""
+    return max((len(wrap_detail(p["detail"])) for p in participants if p.get("detail")),
+               default=0)
 
 
 def group_classes(participants):
@@ -378,8 +422,8 @@ def emit(spec, background=None, standalone=False):
             lines += _caption(spec["caption"])
             lines += _steps(spec)
     elif kind == "sequence":
-        detailed = any(p.get("detail") for p in spec["participants"])
-        height = ACTOR_HEIGHT_DETAIL if detailed else ACTOR_HEIGHT
+        extra = detail_lines(spec["participants"])
+        height = ACTOR_HEIGHT if not extra else ACTOR_HEIGHT_DETAIL + (extra - 1) * LINE_H
         groups = group_classes(spec["participants"])
         for node in spec["participants"]:
             if node.get("group"):
@@ -388,7 +432,8 @@ def emit(spec, background=None, standalone=False):
             # `compact.style_detail_lines` shrink the second one afterwards — d2 itself has no
             # per-line styling. Every box gets the taller height so the row stays even.
             if node.get("detail"):
-                node = dict(node, label=f"{node.get('label') or node['id']}\n{node['detail']}")
+                wrapped = "\n".join(wrap_detail(node["detail"]))
+                node = dict(node, label=f"{node.get('label') or node['id']}\n{wrapped}")
             lines += _node(node, height=height)
         for msg in spec["messages"]:
             lines.append(_edge(msg))

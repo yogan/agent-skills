@@ -555,6 +555,18 @@ def content_warnings(spec):
         participants = spec.get("participants") or []
         check_labels(participants, "participant")
         check_notes(participants, "participant")
+        for participant in participants:
+            if participant.get("detail"):
+                # Import here: spec.py is the vocabulary and d2.py the recipe, so the wrap width
+                # (a property of how the box is drawn) lives there, not here.
+                from .d2 import MAX_DETAIL_LINES, wrap_detail
+                lines = wrap_detail(participant["detail"])
+                if len(lines) > MAX_DETAIL_LINES:
+                    out.append(
+                        f"participant {participant['id']}'s detail wraps to {len(lines)} lines "
+                        f"(>{MAX_DETAIL_LINES}): {participant['detail']!r} — at that length it "
+                        "is not a subtitle any more. Name the lane and let a `note` or its own "
+                        "diagram carry the rest")
         grouped = [p for p in participants if p.get("group")]
         if grouped and len(grouped) != len(participants):
             ungrouped = [p["id"] for p in participants if not p.get("group")]
