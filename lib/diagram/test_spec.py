@@ -181,6 +181,20 @@ class TestSequence(unittest.TestCase):
     def test_valid_sequence_passes(self):
         validate(self.base())
 
+    def test_a_message_may_be_a_push(self):
+        validate(self.base(messages=[{"from": "gw", "to": "editor", "label": "peer joined",
+                                      "push": True}]))
+
+    def test_push_is_rejected_on_a_non_sequence_edge(self):
+        """An arrow is only a *call* in a sequence, which is what makes "B never asked" a
+        distinction. Elsewhere it is a relationship and `dashed` covers it."""
+        with self.assertRaisesRegex(SpecError, "only meaningful on a sequence message"):
+            validate(arch(edges=[{"from": "browser.editor", "to": "pg", "push": True}]))
+
+    def test_a_non_boolean_push_is_rejected(self):
+        with self.assertRaisesRegex(SpecError, "push must be"):
+            validate(self.base(messages=[{"from": "gw", "to": "editor", "push": "yes"}]))
+
     def test_self_message_is_allowed(self):
         validate(self.base(messages=[{"from": "gw", "to": "gw", "label": "authenticate()"}]))
 

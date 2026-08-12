@@ -21,7 +21,7 @@ import xml.etree.ElementTree as ET
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
-from lib.diagram import compact, render
+from lib.diagram import compact, palette, render
 from lib.diagram.examples import REFERENCE
 
 
@@ -168,6 +168,38 @@ class TestCompaction(unittest.TestCase):
             '<div class="md"><p>new here</p></div></foreignObject></g><g class="l60">')
         out = compact.compact_sequence(svg)
         self.assertIn('<foreignObject x="120" y="60" width="90" height="30">', out)
+
+
+class TestDetailLines(unittest.TestCase):
+    """d2 emits a two-line label as one <text> of two <tspan>s and cannot style them apart."""
+
+    TWO_LINE = ('<text x="90" y="60" class="text" style="font-size:13px">'
+                '<tspan x="90" dy="0.000000">FE routing</tspan>'
+                '<tspan x="90" dy="15.000000">AppRoutes / react-router</tspan></text>')
+    ONE_LINE = ('<text x="20" y="60" class="text" style="font-size:13px">'
+                '<tspan x="20" dy="0.000000">User</tspan></text>')
+
+    def test_the_second_line_shrinks_and_mutes(self):
+        out = compact.style_detail_lines(self.TWO_LINE)
+        second = out[out.index("AppRoutes") - 120:out.index("AppRoutes")]
+        self.assertIn(f"font-size:{compact.DETAIL_FONT}px", second)
+        self.assertIn(palette.MUTED, second)
+
+    def test_the_first_line_is_untouched(self):
+        out = compact.style_detail_lines(self.TWO_LINE)
+        first = out[:out.index("FE routing")]
+        self.assertNotIn(f"font-size:{compact.DETAIL_FONT}px", first)
+        self.assertNotIn(palette.MUTED, first)
+
+    def test_the_baseline_gap_tightens(self):
+        self.assertIn(f'dy="{compact.DETAIL_DY}.000000"',
+                      compact.style_detail_lines(self.TWO_LINE))
+
+    def test_a_single_line_label_is_left_alone(self):
+        self.assertEqual(compact.style_detail_lines(self.ONE_LINE), self.ONE_LINE)
+
+    def test_it_stays_well_formed(self):
+        ET.fromstring(compact.style_detail_lines(self.TWO_LINE))
 
 
 class TestRefusals(unittest.TestCase):

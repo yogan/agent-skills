@@ -100,18 +100,32 @@ search, not an instruction — and hand-picked anchors have measurably lost to i
   "kind": "sequence",
   "participants": [
     {"id": "editor", "label": "Editor", "role": "client"},
-    {"id": "gw", "label": "Presence Gateway", "role": "svc"}
+    {"id": "gw", "label": "Presence Gateway", "role": "svc"},
+    {"id": "routing", "label": "FE routing", "role": "svc",
+     "detail": "AppRoutes / react-router"}
   ],
   "messages": [
     {"from": "editor", "to": "gw", "label": "WS upgrade"},
-    {"from": "gw", "to": "gw", "label": "authenticate(token)"}
+    {"from": "gw", "to": "gw", "label": "authenticate(token)"},
+    {"from": "gw", "to": "editor", "label": "on peer join", "push": true}
   ]
 }
 ```
 
 - **Participants become columns, in the order you write them.** Put them in the order the
   reader should scan, usually outside-in.
+- `detail` (optional): a smaller second line under the label. For a lane that is a *subsystem*
+  rather than one module — name the lane at the altitude of the question, and put the real
+  module names here so the reader can still grep for them. Every participant box grows to the
+  taller size when any one of them has a `detail`, so the row stays even. See SKILL.md on when
+  to raise a lane's altitude, and on the two things never to merge into one.
 - A message from a participant to itself is fine and renders as a self-call.
+- `push` (optional, sequence only): the receiver never asked for this one — a server push, an
+  event, a subscription firing. Renders dashed with an open arrowhead, and its label should say
+  what triggered it. An ordinary call you are waiting on is not a push.
+- **An arrow is a call.** If a participant only *reacts* to state changing elsewhere, put that
+  state in the diagram as a participant — then the write and the read are both real calls. See
+  SKILL.md; this is the most common way a sequence diagram ends up asserting something false.
 - Participants cannot nest.
 - ≤7 messages, and this one is a judgement rather than a size limit: the renderer re-stacks
   the rows after D2 has laid them out, so height is not what a long sequence costs you — the

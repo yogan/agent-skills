@@ -35,6 +35,12 @@ BASE_FONT = 13
 # a box; the rest of a sequence diagram's dead height is `compact.py`'s job.
 ACTOR_HEIGHT = 34
 
+# The same box when any participant carries a `detail` second line. Applied to EVERY
+# participant in that diagram, not just the ones with a detail: a row of boxes at two
+# different heights reads as an accident. Two lines need ~26px of text (13px + an 11px line
+# 13px below it) and this keeps the same ~9px of air above and under as the one-line box.
+ACTOR_HEIGHT_DETAIL = 48
+
 # Default `direction` per kind, as (embedded, standalone). A spec's own `direction` wins over
 # both. The two targets want opposite layouts and only one of them has a width to fit into:
 #
@@ -86,8 +92,13 @@ def _q(text):
     edge index (`("editor" -> "api")[0]`) — so quoting uniformly means a caller's id or
     label can contain a colon, a space or brackets without the emitter having to reason
     about which characters are safe where.
+
+    A newline has to become the two-character escape: d2 rejects a real line break inside a
+    quoted string outright ("double quoted strings must be terminated"), so a multi-line label
+    is a compile error rather than something that renders oddly.
     """
-    return '"' + str(text).replace("\\", "\\\\").replace('"', '\\"') + '"'
+    return ('"' + str(text).replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n")
+            + '"')
 
 
 def _path(ref):
@@ -203,11 +214,22 @@ def _node(node, indent=0, allow_new=False, height=None):
     return [head + " {"] + body + [pad + "}"]
 
 
+# A sequence message the receiver never asked for: dashed line, open arrowhead. This is UML's
+# async-signal mark and the one piece of styling-as-meaning allowed outside `steps`, on the same
+# grounds — the label supplies the words, so the dash is not being asked to say anything on its
+# own. Colour was considered and rejected: there is no legend, and unlike the dash a colour has
+# no convention a reader can decode. Both properties are needed; a dash alone reads as UML's
+# *reply* arrow, which is the opposite of what a push is.
+PUSH_STYLE = "{style.stroke-dash: 4; target-arrowhead.shape: arrow}"
+
+
 def _edge(edge):
     line = f"{_path(edge['from'])} -> {_path(edge['to'])}"
     if edge.get("label"):
         line += f": {_q(edge['label'])}"
-    if edge.get("dashed"):
+    if edge.get("push"):
+        line += f" {PUSH_STYLE}"
+    elif edge.get("dashed"):
         line += " {style.stroke-dash: 3}"
     return line
 
@@ -328,8 +350,15 @@ def emit(spec, background=None, standalone=False):
             lines += _caption(spec["caption"])
             lines += _steps(spec)
     elif kind == "sequence":
+        detailed = any(p.get("detail") for p in spec["participants"])
+        height = ACTOR_HEIGHT_DETAIL if detailed else ACTOR_HEIGHT
         for node in spec["participants"]:
-            lines += _node(node, height=ACTOR_HEIGHT)
+            # d2 renders a `\n` label as one <text> of two <tspan>s, which is what lets
+            # `compact.style_detail_lines` shrink the second one afterwards — d2 itself has no
+            # per-line styling. Every box gets the taller height so the row stays even.
+            if node.get("detail"):
+                node = dict(node, label=f"{node.get('label') or node['id']}\n{node['detail']}")
+            lines += _node(node, height=height)
         for msg in spec["messages"]:
             lines.append(_edge(msg))
     elif kind == "er":

@@ -13,7 +13,7 @@ import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
-from lib.diagram import d2
+from lib.diagram import d2, palette
 from lib.diagram.examples import ARCHITECTURE, CLASS, ER, SEQUENCE, STATE, STEPS
 
 
@@ -114,6 +114,68 @@ class TestTables(unittest.TestCase):
             self.assertIn("direction: up", source)
             self.assertNotIn("direction: down", source)
             self.assertNotIn("direction: right", source)
+
+
+class TestParticipantDetailLine(unittest.TestCase):
+    """A lane may be a subsystem; `detail` carries the real module names under its label."""
+
+    def spec(self, **over):
+        p = {"id": "routing", "label": "FE routing", "role": "svc"}
+        p.update(over)
+        return {"kind": "sequence",
+                "participants": [{"id": "user", "role": "client"}, p],
+                "messages": [{"from": "user", "to": "routing", "label": "navigate()"}]}
+
+    def test_a_newline_in_a_label_is_escaped_not_literal(self):
+        """d2 rejects a real line break inside a quoted string, so this is a compile error
+        rather than something that merely looks wrong."""
+        source = d2.emit(self.spec(detail="AppRoutes / react-router"))
+        self.assertIn(r'"FE routing\nAppRoutes / react-router"', source)
+        self.assertNotIn("FE routing\nAppRoutes", source)
+
+    def test_every_participant_gets_the_taller_box_when_any_has_a_detail(self):
+        """A row of boxes at two different heights reads as an accident."""
+        source = d2.emit(self.spec(detail="AppRoutes / react-router"))
+        self.assertEqual(source.count(f"height: {d2.ACTOR_HEIGHT_DETAIL}"), 2)
+        self.assertNotIn(f"height: {d2.ACTOR_HEIGHT}\n", source)
+
+    def test_without_a_detail_the_boxes_stay_short(self):
+        source = d2.emit(self.spec())
+        self.assertEqual(source.count(f"height: {d2.ACTOR_HEIGHT}"), 2)
+
+    def test_the_id_is_used_when_there_is_no_label(self):
+        spec = self.spec(detail="AppRoutes")
+        del spec["participants"][1]["label"]
+        self.assertIn(r'"routing\nAppRoutes"', d2.emit(spec))
+
+
+class TestPushMessages(unittest.TestCase):
+    def base(self, **over):
+        msg = {"from": "gw", "to": "editor", "label": "peer joined"}
+        msg.update(over)
+        return {"kind": "sequence",
+                "participants": [{"id": "editor", "role": "client"},
+                                 {"id": "gw", "role": "svc"}],
+                "messages": [msg]}
+
+    def test_a_push_is_dashed_with_an_open_arrowhead(self):
+        """Both, not either: a dash alone is UML's *reply* arrow."""
+        source = d2.emit(self.base(push=True))
+        self.assertIn("style.stroke-dash: 4", source)
+        self.assertIn("target-arrowhead.shape: arrow", source)
+
+    def test_an_ordinary_message_gets_neither(self):
+        source = d2.emit(self.base())
+        self.assertNotIn("stroke-dash", source)
+        self.assertNotIn("arrowhead", source)
+
+    def test_push_false_is_an_ordinary_call(self):
+        self.assertNotIn("stroke-dash", d2.emit(self.base(push=False)))
+
+    def test_a_push_carries_no_colour(self):
+        """Colour has no convention a reader can decode, and there is no legend."""
+        source = d2.emit(self.base(push=True))
+        self.assertNotIn(palette.ACCENT, source.split("classes: {")[1].split("}")[-1])
 
 
 class TestStateRoles(unittest.TestCase):

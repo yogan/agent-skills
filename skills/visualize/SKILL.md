@@ -60,15 +60,44 @@ Where to look, by kind:
 | kind | read |
 |---|---|
 | `er` | migrations (the latest state, not the first), schema dumps, ORM model classes, `CREATE TABLE`. Prefer a migration directory's *end state* over a stale `schema.sql`. |
-| `sequence` | the entry point (route, handler, controller, event listener) and then follow the calls. The order is the content, so trace it; do not guess it. |
+| `sequence` | the entry point (route, handler, controller, event listener) and then follow the calls. The order is the content, so trace it; do not guess it. Decide explicitly whether the failure path belongs — for "what happens when X" it usually does, and if you leave it out, say so. |
 | `class` | the type/class declarations themselves, plus what they implement or extend. Method signatures, not bodies. |
 | `state` | the enum or union of states, and every place it is assigned or transitioned. Look for the error and retry paths — they are the ones people forget, and usually the interesting part. |
 | `architecture` | deployment manifests, service definitions, client config, and the calls that cross a process boundary. |
 
-Three rules that keep a diagram honest:
+Four rules that keep a diagram honest:
 
 - **Show only what you verified.** If you could not work out whether an edge exists, leave it
   out rather than drawing a guess. An absent edge is a gap; a wrong edge is a lie.
+- **In a `sequence`, an arrow means "A calls B" — so if a component *reacts* to state changing
+  somewhere else, draw the state.** This is the failure that looks most like success: the
+  interesting part of a flow is often "and now the app knows", nothing calls anything to make
+  that happen, and the tempting fix is an arrow between two things that never speak. Put the
+  medium on the canvas instead — the cache entry, the table row, the queue topic, the file, the
+  flag — and both halves become real calls: whoever wrote it *called* the write, and the
+  reactor *calls* the read. A participant with nothing but a self-call is the symptom of having
+  skipped this.
+
+  What is left over after that is a genuine **push**: the receiver never asked, and there is no
+  medium to point at, because the sender simply sends. Mark it `"push": true` (dashed, open
+  arrowhead) and label it with what triggered it — `on peer join`, `on row change`. Do not use
+  it for an ordinary call you happen to be waiting on.
+
+- **A lane is a role in the interaction, not necessarily one module.** Drawing the medium adds
+  participants, and the ≤7 message budget pushes back — when they collide, raise the *altitude
+  of the lanes* before you drop an edge or split the diagram. Two collaborators that are one
+  subsystem at the level the question is asked belong in one lane, and then the handoff between
+  them is internal: there is no arrow to omit and nothing to invent. Put the real names in
+  `detail`, a smaller second line, so the reader can still grep for something.
+
+  Two things not to merge, because both turn the abstraction into a way of hiding what you did
+  not check:
+
+  - **Never merge across a boundary the question is about.** For "what happens when a user logs
+    in", the internals of the routing layer are not the question but the API boundary is.
+  - **Never merge a medium with its reader or its writer.** The medium earns its own lane
+    precisely because two different parties touch it; fold it in and the reaction stops being a
+    call and goes invisible again — which is the problem you were solving.
 - **Label with the code's own words.** Use the real table, column, class and method names.
   A reader has to be able to grep for what they see.
 - **Label every relationship.** An unlabelled arrow says two things are connected and nothing

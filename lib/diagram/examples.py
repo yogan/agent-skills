@@ -71,7 +71,9 @@ SEQUENCE = {
         {"from": "editor", "to": "gw", "label": "WS upgrade · Bearer …"},
         {"from": "gw", "to": "gw", "label": "authenticate(token)"},
         {"from": "gw", "to": "redis", "label": "SUBSCRIBE doc:42"},
-        {"from": "gw", "to": "editor", "label": "presence.update on peer join"},
+        # A push: the editor subscribed once and is now told about someone else's arrival,
+        # so this is the one message here it did not call for.
+        {"from": "gw", "to": "editor", "label": "presence.update on peer join", "push": True},
     ],
 }
 

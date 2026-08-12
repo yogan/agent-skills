@@ -186,7 +186,7 @@ def _check_tree(nodes, where, allow_new, roles=ROLES):
             _check_tree(children, f"{where}: {nid}", allow_new)
 
 
-def _check_edges(spec, ids, where, key="edges", required=True):
+def _check_edges(spec, ids, where, key="edges", required=True, allow_push=False):
     edges = spec.get(key) or []
     if required:
         _require(isinstance(edges, list) and edges, f"{where} needs a non-empty {key!r} list")
@@ -201,6 +201,17 @@ def _check_edges(spec, ids, where, key="edges", required=True):
                      f"(known: {', '.join(sorted(ids))})")
         if "label" in edge:
             _str(edge["label"], f"{where}: {key}[{i}] label")
+        if "push" in edge:
+            # Only a sequence message can be a push, because only there does an arrow mean
+            # "A called B" in the first place — that is what makes "B never asked" a
+            # distinction worth drawing. On a box-and-arrows diagram an edge is a
+            # relationship, and `dashed` already covers the shades of one.
+            _require(allow_push,
+                     f"{where}: {key}[{i}] sets `push`, which is only meaningful on a "
+                     "sequence message (an arrow there is a call; elsewhere it is a "
+                     "relationship — use `dashed`)")
+            _require(isinstance(edge["push"], bool),
+                     f"{where}: {key}[{i}] push must be true or false")
     return edges
 
 
@@ -265,7 +276,13 @@ def validate(spec):
         # graphviz could not do at all, and the reason d2 is the engine.
         _check_flat(_list(spec, "participants", kind), "sequence", "participants")
         _check_nodes(spec["participants"], kind, ids)
-        _check_edges(spec, ids, kind, key="messages")
+        for i, participant in enumerate(spec["participants"]):
+            if "detail" in participant:
+                # A lane may be a subsystem rather than one module — see SKILL.md on lane
+                # altitude. `detail` is where the real names go, so the reader can still grep
+                # for something after the lane itself has been given an abstract name.
+                _str(participant["detail"], f"sequence: participants[{i}] detail")
+        _check_edges(spec, ids, kind, key="messages", allow_push=True)
     elif kind == "er":
         _check_rows(spec, "tables", kind, ids, "columns", row_extra=(("key", KEYS),))
         _check_edges(spec, ids, kind, required=False)

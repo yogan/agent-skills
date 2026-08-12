@@ -208,20 +208,23 @@ def postprocess(raw, name, theme_vars=True):
 
 
 def _maybe_compact(raw, spec, name):
-    """Close a sequence diagram's dead vertical space; see `compact.py`.
+    """The two things a sequence diagram's SVG needs after d2 has laid it out — closing its
+    dead vertical space, and shrinking the second line of a two-line participant label. Both
+    live in `compact.py`; neither is expressible in d2 source.
 
-    A failure here is reported and swallowed. The compaction is a legibility improvement on
-    output d2 already laid out correctly, so falling back to d2's spacing costs height and
-    nothing else — where raising would deny the caller a diagram over cosmetics.
+    A compaction failure is reported and swallowed. It is a legibility improvement on output
+    d2 already laid out correctly, so falling back to d2's spacing costs height and nothing
+    else — where raising would deny the caller a diagram over cosmetics.
     """
     if spec.get("kind") != "sequence":
         return raw
+    svg = compact.style_detail_lines(raw)
     try:
-        return compact.compact_sequence(raw)
+        return compact.compact_sequence(svg)
     except compact.CompactError as exc:
         print(f"{name}: could not compact the sequence rows ({exc}) — "
               "falling back to d2's spacing", file=sys.stderr)
-        return raw
+        return svg
 
 
 def render(spec, name="diagram", animate_interval=1800, binary="d2", theme_vars=True):

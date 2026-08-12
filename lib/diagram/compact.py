@@ -27,6 +27,8 @@ d2's own spacing.
 import re
 from collections import namedtuple
 
+from . import palette
+
 # One message row: the bounds of its group's contents, that content, and the (top, bottom)
 # of its ink. `start`/`end` exclude the `<g>` tags, so `body` can be rewritten in place.
 Row = namedtuple("Row", "start end extent body")
@@ -44,6 +46,14 @@ MASK_TOLERANCE = 3        # slack when matching a label's mask rect to its basel
 # half that length the same dashes read as a row of strokes rather than as a dashed line. The
 # gap is recomputed the same way d2 does it, so the pattern still ends flush at the foot.
 DASH = 8
+
+# The second line of a participant's label — the real module names behind an abstract lane.
+# 11px is the floor the size gate enforces (`gates/size.MIN_READABLE`), so this is as small as
+# a legible diagram gets; the recession the eye reads comes mostly from the muted colour, not
+# from the two points of size. DETAIL_DY is the baseline gap, down from d2's 15px for two
+# equal lines, because the second line is now shorter than the first.
+DETAIL_FONT = 11
+DETAIL_DY = 13
 
 
 class CompactError(Exception):
@@ -94,6 +104,33 @@ def _path_extent(body):
     if not ys:
         raise CompactError("a message group has no path coordinates")
     return min(ys), max(ys)
+
+
+def style_detail_lines(svg):
+    """Shrink and mute the second line of any two-line participant label.
+
+    d2 emits `"Title\\nDetail"` as a single `<text>` holding one `<tspan>` per line and offers
+    no way to style them differently, so the distinction has to be made here. Every tspan after
+    the first gets `DETAIL_FONT` and the muted foreground — the same colour the edge labels use,
+    so it is already covered by the contrast gate and by the palette's var substitution.
+
+    Untouched when there is no two-line label, which is the normal case.
+    """
+    def restyle(match):
+        head, spans = match.group(1), match.group(2)
+        tspans = re.findall(r"<tspan\b[^>]*>.*?</tspan>", spans, re.S)
+        if len(tspans) < 2:
+            return match.group(0)
+        out = [tspans[0]]
+        for tspan in tspans[1:]:
+            fixed = re.sub(r'\sdy="[\d.-]+"', f' dy="{DETAIL_DY}.000000"', tspan)
+            fixed = fixed.replace("<tspan", f'<tspan fill="{palette.MUTED}" '
+                                            f'style="font-size:{DETAIL_FONT}px"', 1)
+            out.append(fixed)
+        return f"{head}{''.join(out)}</text>"
+
+    return re.sub(r"(<text\b[^>]*>)((?:\s*<tspan\b[^>]*>.*?</tspan>\s*)+)</text>",
+                  restyle, svg, flags=re.S)
 
 
 def compact_sequence(svg):
