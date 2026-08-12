@@ -359,11 +359,14 @@ def content_warnings(spec):
     elif kind == "sequence":
         msgs = spec.get("messages") or []
         if len(msgs) > MAX_MESSAGES:
-            # Row pitch is a hardcoded ~86px per message and font-size barely moves it;
-            # `--dagre-nodesep` and `--layout elk` have zero effect, because sequence
-            # diagrams have their own layout engine. Fewer messages is the only lever.
-            out.append(f"{len(msgs)} messages (>{MAX_MESSAGES}) — d2 spends a fixed "
-                       "~86px of height per message and offers no way to tighten it")
+            # This used to be arithmetic: d2 hardcodes a ~86px row pitch, and nothing it
+            # accepts as input moves it (font-size barely, `--dagre-nodesep` and
+            # `--layout elk` not at all — sequence diagrams have their own layout engine).
+            # compact.py now re-stacks the rows to ~43px in the rendered SVG, so height is
+            # no longer the binding reason and this is an editorial limit: past seven
+            # messages the reader is following a program, not reading a diagram.
+            out.append(f"{len(msgs)} messages (>{MAX_MESSAGES}) — a sequence past this "
+                       "is usually two questions, and reads as neither")
         check_labels(msgs, "message")
         check_labels(spec.get("participants") or [], "participant")
         check_notes(spec.get("participants") or [], "participant")

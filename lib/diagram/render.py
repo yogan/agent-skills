@@ -25,8 +25,10 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 import tempfile
 
+from . import compact
 from . import d2 as d2mod
 from . import palette
 
@@ -205,6 +207,23 @@ def postprocess(raw, name, theme_vars=True):
     return svg
 
 
+def _maybe_compact(raw, spec, name):
+    """Close a sequence diagram's dead vertical space; see `compact.py`.
+
+    A failure here is reported and swallowed. The compaction is a legibility improvement on
+    output d2 already laid out correctly, so falling back to d2's spacing costs height and
+    nothing else — where raising would deny the caller a diagram over cosmetics.
+    """
+    if spec.get("kind") != "sequence":
+        return raw
+    try:
+        return compact.compact_sequence(raw)
+    except compact.CompactError as exc:
+        print(f"{name}: could not compact the sequence rows ({exc}) — "
+              "falling back to d2's spacing", file=sys.stderr)
+        return raw
+
+
 def render(spec, name="diagram", animate_interval=1800, binary="d2", theme_vars=True):
     """Spec -> embeddable SVG, for a host page that ships `page_css()`.
 
@@ -214,7 +233,7 @@ def render(spec, name="diagram", animate_interval=1800, binary="d2", theme_vars=
     source = d2mod.emit(spec)
     interval = animate_interval if d2mod.is_animated(spec) else 0
     raw = compile_source(source, animate_interval=interval, binary=binary)
-    return postprocess(raw, name, theme_vars=theme_vars)
+    return postprocess(_maybe_compact(raw, spec, name), name, theme_vars=theme_vars)
 
 
 # CSS for a standalone image. Not the same as HOST_CSS: the page rules (`max-width:100%`,
@@ -275,7 +294,7 @@ def standalone(spec, name="diagram", theme="light", animate_interval=1800, binar
     # concrete, every one of them is a non-key and `unmapped()` can no longer tell an
     # un-themeable literal from a correctly baked one. So the theming gate has no standalone
     # equivalent — this check replaces it, at the only moment it can run.
-    svg = postprocess(raw, name, theme_vars=True)
+    svg = postprocess(_maybe_compact(raw, spec, name), name, theme_vars=True)
     missing = palette.unmapped(svg)
     if missing:
         listed = ", ".join(f"{colour} x{count}" for colour, count in missing.items())

@@ -348,13 +348,12 @@ class TestContentWarnings(unittest.TestCase):
                 "transitions": [{"from": "s0", "to": "s1"}]}
         self.assertTrue(any("8 states" in w for w in content_warnings(spec)))
 
-    def test_too_many_messages_warns_and_explains_the_fixed_pitch(self):
+    def test_too_many_messages_warns(self):
         spec = {"kind": "sequence",
                 "participants": [{"id": "a", "role": "svc"}, {"id": "b", "role": "svc"}],
                 "messages": [{"from": "a", "to": "b", "label": f"m{i}"} for i in range(9)]}
         warns = content_warnings(spec)
         self.assertTrue(any("9 messages" in w for w in warns))
-        self.assertTrue(any("86px" in w for w in warns))
 
     def test_a_crowded_container_warns(self):
         spec = arch(nodes=[

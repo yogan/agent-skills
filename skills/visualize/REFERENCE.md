@@ -109,8 +109,9 @@ search, not an instruction — and hand-picked anchors have measurably lost to i
   reader should scan, usually outside-in.
 - A message from a participant to itself is fine and renders as a self-call.
 - Participants cannot nest.
-- ≤7 messages. D2 spends a fixed ~86px of height per message and offers no way to tighten it,
-  so this limit is hard arithmetic rather than a style preference.
+- ≤7 messages, and this one is a judgement rather than a size limit: the renderer re-stacks
+  the rows after D2 has laid them out, so height is not what a long sequence costs you — the
+  reader having to hold eight steps in their head is.
 
 ## `er`
 

@@ -23,10 +23,12 @@ from lib.diagram.examples import REFERENCE
 from lib.diagram.gates import contrast, size, theming
 from lib.diagram.spec import content_warnings
 
-# name -> (natural width, natural height), measured in prototypes/diagram-stacks.
+# name -> (natural width, natural height), measured in prototypes/diagram-stacks. `sequence`
+# is the one that has moved since: 668x687 before its participant boxes were given an
+# explicit height and its rows were re-stacked by compact.py.
 MEASURED = {
     "arch": (887, 771),
-    "sequence": (668, 687),
+    "sequence": (663, 420),
     "er": (324, 722),
     "class": (474, 560),
     "state": (375, 796),

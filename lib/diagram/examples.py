@@ -51,8 +51,10 @@ ARCHITECTURE = {
     ],
 }
 
-# Six messages, not seven. A callout costs ~49px of height, which pushed this diagram over
-# the viewport gate at seven -- one message was traded for the annotation.
+# Six messages, not seven: a callout costs ~49px of height, which pushed this diagram over
+# the viewport gate at seven, so one message was traded for the annotation. Row compaction
+# has since bought that height back -- the sixth message stays as the fixture for a
+# self-call sitting under a callout, which is what makes this diagram worth pinning.
 SEQUENCE = {
     "kind": "sequence",
     "title": "Joining a document's presence channel",

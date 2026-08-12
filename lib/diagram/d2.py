@@ -11,9 +11,11 @@ before a page can theme it, are `render.py`'s job.
 
 What is deliberately NOT here:
 
-  * **Sizing.** d2 exposes no `ranksep`, so a diagram that comes out too big cannot be
-    compacted afterwards — only authored smaller. The limits live in `spec.py` as
-    warnings and in `gates/size.py` as a measurement.
+  * **Sizing.** d2 exposes no `ranksep`, so a diagram that comes out too big has to be
+    authored smaller — there is nothing to turn down here. The limits live in `spec.py` as
+    warnings and in `gates/size.py` as a measurement. The exception is a sequence diagram's
+    row pitch, which d2 hardcodes and `compact.py` re-stacks in the rendered SVG afterwards;
+    `ACTOR_HEIGHT` below is the only part of that spacing d2 accepts as input.
   * **Change marking by styling.** A thick accent border says "something here is
     special" and never says what, and there is no legend to look it up in. Changes are
     marked with `note`, which becomes a permanently-visible callout carrying the words.
@@ -26,6 +28,12 @@ from .spec import CAPTION_ID, validate
 # the *node* font instead is self-defeating — a wider diagram is scaled down further, so
 # the text ends up the same size with more whitespace around it.
 BASE_FONT = 13
+
+# Height of a sequence participant's box. d2 defaults it to 62px for a single 13px line —
+# ~45 of them empty — and unlike the row pitch it does honour an explicit `height`, down to
+# well below this. 34 keeps ~9px of air above and under the label, so the box still reads as
+# a box; the rest of a sequence diagram's dead height is `compact.py`'s job.
+ACTOR_HEIGHT = 34
 
 # A table's own base font. d2 renders a sql_table/class header at ~1.3x this and ignores
 # the global `**.style.font-size` for it, so 14 gives 14px rows and an ~18px header —
@@ -136,7 +144,7 @@ def _classes_for(node, allow_new):
     return f"[{'; '.join(names)}]" if len(names) > 1 else names[0]
 
 
-def _node(node, indent=0, allow_new=False):
+def _node(node, indent=0, allow_new=False, height=None):
     """One box, plus its children if it is a container."""
     pad = " " * indent
     head = f"{pad}{_q(node['id'])}"
@@ -145,6 +153,8 @@ def _node(node, indent=0, allow_new=False):
         head += f": {_q(label)}"
     children = node.get("children") or []
     body = []
+    if height:
+        body.append(f"{pad}  height: {height}")
     if children:
         # A node with children is a container and takes the container styling; spec.py
         # rejects a `role` on one so the two cannot silently disagree.
@@ -289,7 +299,7 @@ def emit(spec, background=None):
             lines += _steps(spec)
     elif kind == "sequence":
         for node in spec["participants"]:
-            lines += _node(node)
+            lines += _node(node, height=ACTOR_HEIGHT)
         for msg in spec["messages"]:
             lines.append(_edge(msg))
     elif kind == "er":

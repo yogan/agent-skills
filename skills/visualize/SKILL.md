@@ -99,8 +99,9 @@ What is still worth keeping tight, because it is about legibility rather than fi
 - **Only the columns and members the question is about.** A table has 30 columns; the question
   is about 4. Show 4. This is the single biggest lever you have, and it is about signal, not
   size.
-- **≤6 states, ≤7 sequence messages.** These are real: D2 spends a fixed ~86px of height per
-  sequence message with no way to tighten it, and a state machine past six states is usually
+- **≤6 states, ≤7 sequence messages.** Both are editorial, not arithmetic: the renderer
+  compacts a sequence diagram's rows for you, so a long one is not *tall* — it is just a
+  program the reader has to execute in their head. A state machine past six states is usually
   two questions wearing one coat.
 - **Short edge labels when the diagram also has callouts.** They compete for the same
   whitespace, and D2 reserves no room for a callout, so a long edge label beside one is the
