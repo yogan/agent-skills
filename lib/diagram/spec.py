@@ -369,6 +369,16 @@ def content_warnings(spec):
                 out.append(f"{what} label is {len(text)} chars (>{MAX_LABEL}): {text!r} — "
                            "long labels widen the diagram, which scales it down and "
                            "shrinks every glyph with it")
+            for ascii_arrow in ("->", "=>"):
+                if ascii_arrow in text:
+                    # Everything around it is typeset — italic edge labels, a real arrowhead
+                    # at the end of the line — so an ASCII arrow inside the text reads as
+                    # source code that escaped. `→` is one glyph, renders in d2's default
+                    # font, and measured 4px NARROWER than `->` on the diagram that prompted
+                    # this. Nothing here is wrong, hence a warning.
+                    out.append(f"{what} label writes an arrow as {ascii_arrow!r}: {text!r} — "
+                               "use → , which is one typeset glyph rather than two "
+                               "characters of ASCII")
 
     def check_notes(items, what):
         for item in items:

@@ -424,6 +424,20 @@ class TestContentWarnings(unittest.TestCase):
         this through or it is measuring the wrong thing."""
         self.assertEqual(content_warnings(REFERENCE["state"]), [])
 
+    def test_an_ascii_arrow_in_a_label_warns(self):
+        spec = {"kind": "state",
+                "states": [{"id": "a", "label": "data -> protectedRoutes"}, {"id": "b"}],
+                "transitions": [{"from": "a", "to": "b", "label": "x => y"}]}
+        warnings = content_warnings(spec)
+        self.assertTrue(any("'->'" in w for w in warnings), warnings)
+        self.assertTrue(any("'=>'" in w for w in warnings), warnings)
+
+    def test_a_typeset_arrow_is_silent(self):
+        spec = {"kind": "state",
+                "states": [{"id": "a", "label": "data → protectedRoutes"}, {"id": "b"}],
+                "transitions": [{"from": "a", "to": "b", "label": "x → y"}]}
+        self.assertEqual(content_warnings(spec), [])
+
     def test_too_many_messages_warns(self):
         spec = {"kind": "sequence",
                 "participants": [{"id": "a", "role": "svc"}, {"id": "b", "role": "svc"}],

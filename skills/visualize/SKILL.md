@@ -99,7 +99,9 @@ Four rules that keep a diagram honest:
     precisely because two different parties touch it; fold it in and the reaction stops being a
     call and goes invisible again — which is the problem you were solving.
 - **Label with the code's own words.** Use the real table, column, class and method names.
-  A reader has to be able to grep for what they see.
+  A reader has to be able to grep for what they see. One exception, for punctuation only: write
+  an arrow inside a label as `→`, not `->`. Everything around it is typeset, so ASCII reads as
+  source code that escaped — and the single glyph is narrower. The renderer warns you.
 - **Label every relationship.** An unlabelled arrow says two things are connected and nothing
   about how, which is the least interesting half of the answer. In particular:
   - **`er` edges carry a cardinality that names its entities** — `1 doc : n edits`, `1 doc :
