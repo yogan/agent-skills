@@ -23,12 +23,16 @@ fine and is wrong:
 | `kind` | required | `architecture` · `sequence` · `er` · `class` · `state` · `steps` |
 | `title` | optional | names the output file, and the ids inside the SVG |
 | `slug` | optional | same, and wins over `title` when both are set |
-| `direction` | optional | `up` · `down` · `left` · `right`. Leave it out — the default per kind is the measured one. |
+| `direction` | optional | `up` · `down` · `left` · `right`. **Leave it out.** The renderer picks per kind *and* per target — a standalone image is opened full-screen so `er`, `class` and `state` are laid out wide, while the same diagram embedded in an article is stacked, because landscape gets scaled into the content column until its text is too small to read. Setting this by hand overrides both. |
 
 ### Roles
 
 Every box takes a `role`, which is what it *is*, not what colour you want:
 `client` · `svc` · `store` · `cache` · `ext` · `neutral` (the default).
+
+**A `state` has its own set**, because a state is not a datastore or a cache and tagging it as
+one just picks a colour: `working` · `steady` · `transient` · `terminal` · `neutral`. These are
+rejected on any other kind, and the architectural roles are rejected on a state.
 
 ### Notes
 
@@ -180,17 +184,23 @@ search, not an instruction — and hand-picked anchors have measurably lost to i
 {
   "kind": "state",
   "states": [
-    {"id": "live", "role": "store"},
-    {"id": "backoff", "label": "reconnect backoff", "role": "cache"}
+    {"id": "live", "role": "steady"},
+    {"id": "backoff", "label": "reconnect backoff", "role": "transient"},
+    {"id": "closed", "role": "terminal"}
   ],
   "transitions": [
-    {"from": "live", "to": "backoff", "label": "transport error"}
+    {"from": "live", "to": "backoff", "label": "transport error"},
+    {"from": "backoff", "to": "closed", "label": "max attempts"}
   ]
 }
 ```
 
 - Label every transition with what causes it. An unlabelled state machine is a shape.
 - ≤6 states. If there are more, the diagram is answering more than one question — split it.
+- **Keep transitions to about two per state.** Past that the same trigger is usually drawn
+  several times, and repeated labels are what make a state diagram unreadable — not the number
+  of states. If one state is reachable from everywhere on the same trigger, that is *one* fact:
+  draw the path that matters and put "from any state" in its note.
 - States cannot nest.
 
 ## `steps` (animated)

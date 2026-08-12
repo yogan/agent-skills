@@ -102,15 +102,60 @@ class TestTables(unittest.TestCase):
         self.assertIn('"«interface»": ""', source)
         self.assertIn("stroke-dash: 3", source)
 
-    def test_tables_stack_downward_by_default(self):
+    def test_tables_stack_downward_when_embedded(self):
         """Left-to-right makes three columns, overflowing the 777px content width."""
         self.assertIn("direction: down", d2.emit(ER))
         self.assertIn("direction: down", d2.emit(CLASS))
 
     def test_an_explicit_direction_still_wins(self):
-        spec = dict(ER, direction="right")
-        self.assertIn("direction: right", d2.emit(spec))
-        self.assertNotIn("direction: down", d2.emit(spec))
+        for standalone in (False, True):
+            spec = dict(ER, direction="up")
+            source = d2.emit(spec, standalone=standalone)
+            self.assertIn("direction: up", source)
+            self.assertNotIn("direction: down", source)
+            self.assertNotIn("direction: right", source)
+
+
+class TestStateRoles(unittest.TestCase):
+    """A state's role names what is signalled; it reuses an architectural role's palette
+    entry, so only the emitted *class* is shared. See d2.STATE_CLASS."""
+
+    def test_each_state_role_emits_its_palette_class(self):
+        source = d2.emit(STATE)
+        for role, expected in d2.STATE_CLASS.items():
+            if any(s.get("role") == role for s in STATE["states"]):
+                self.assertIn(f"class: {expected}", source, f"{role} -> {expected}")
+
+    def test_no_state_role_name_reaches_the_d2_source(self):
+        """d2 only knows the six architectural classes — an unmapped name would silently
+        style nothing at all."""
+        source = d2.emit(STATE)
+        for role in d2.STATE_CLASS:
+            self.assertNotIn(f"class: {role}", source)
+
+
+class TestDirectionPerTarget(unittest.TestCase):
+    """One case per cell of `d2.DIRECTION`. The two targets want opposite layouts: embedded
+    is scaled into a content column until its text breaks the 11px floor, standalone is
+    opened full-screen. test_reference.py checks the geometry that follows from this."""
+
+    def test_er_class_and_state_go_wide_standalone_and_down_embedded(self):
+        for name, spec in (("er", ER), ("class", CLASS), ("state", STATE)):
+            with self.subTest(kind=name):
+                self.assertIn("direction: down", d2.emit(spec), f"{name} embedded")
+                self.assertIn("direction: right", d2.emit(spec, standalone=True),
+                              f"{name} standalone")
+
+    def test_architecture_stays_down_for_both(self):
+        """The only kind with containers: dagre packs nested groups differently, and `right`
+        leaves a dead quadrant while crowding the callouts."""
+        self.assertIn("direction: down", d2.emit(ARCHITECTURE))
+        self.assertIn("direction: down", d2.emit(ARCHITECTURE, standalone=True))
+
+    def test_a_sequence_is_never_given_a_direction(self):
+        """d2's sequence engine ignores it, so emitting one would be noise."""
+        for standalone in (False, True):
+            self.assertNotIn("direction:", d2.emit(SEQUENCE, standalone=standalone))
 
 
 class TestSequence(unittest.TestCase):

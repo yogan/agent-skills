@@ -148,12 +148,12 @@ STATE = {
     "kind": "state",
     "title": "The client socket's lifecycle",
     "states": [
-        {"id": "connecting", "role": "client"},
-        {"id": "authenticating", "role": "client"},
-        {"id": "live", "role": "store"},
-        {"id": "backoff", "label": "reconnect backoff", "role": "cache",
+        {"id": "connecting", "role": "working"},
+        {"id": "authenticating", "role": "working"},
+        {"id": "live", "role": "steady"},
+        {"id": "backoff", "label": "reconnect backoff", "role": "transient",
          "note": "new retry path", "near": "bottom-left"},
-        {"id": "closed", "role": "ext"},
+        {"id": "closed", "role": "terminal"},
     ],
     "transitions": [
         {"from": "connecting", "to": "authenticating", "label": "socket open"},

@@ -10,6 +10,7 @@ import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
+from lib.diagram.examples import REFERENCE
 from lib.diagram.spec import SpecError, content_warnings, validate
 
 
@@ -267,15 +268,38 @@ class TestState(unittest.TestCase):
     def test_valid_state_passes(self):
         validate({
             "kind": "state",
-            "states": [{"id": "live", "role": "store"}, {"id": "closed", "role": "ext"}],
+            "states": [{"id": "live", "role": "steady"}, {"id": "closed", "role": "terminal"}],
             "transitions": [{"from": "live", "to": "closed", "label": "user leaves"}],
         })
+
+    def test_a_state_takes_the_state_vocabulary(self):
+        for role in ("working", "steady", "transient", "terminal", "neutral"):
+            with self.subTest(role=role):
+                validate({"kind": "state",
+                          "states": [{"id": "a", "role": role}, {"id": "b"}],
+                          "transitions": [{"from": "a", "to": "b", "label": "x"}]})
+
+    def test_an_architectural_role_on_a_state_is_rejected(self):
+        """`live` was tagged `store` and `backoff` `cache` — which picked the colour and
+        invented a justification. The names now have to mean what they say."""
+        for role in ("client", "svc", "store", "cache", "ext"):
+            with self.subTest(role=role):
+                with self.assertRaisesRegex(SpecError, "role"):
+                    validate({"kind": "state",
+                              "states": [{"id": "a", "role": role}, {"id": "b"}],
+                              "transitions": [{"from": "a", "to": "b", "label": "x"}]})
+
+    def test_a_state_role_on_another_kind_is_rejected(self):
+        with self.assertRaisesRegex(SpecError, "role"):
+            validate({"kind": "architecture",
+                      "nodes": [{"id": "a", "role": "steady"}],
+                      "edges": []})
 
     def test_unknown_transition_endpoint_is_rejected(self):
         with self.assertRaisesRegex(SpecError, "transitions"):
             validate({
                 "kind": "state",
-                "states": [{"id": "live", "role": "store"}],
+                "states": [{"id": "live", "role": "steady"}],
                 "transitions": [{"from": "live", "to": "backoff"}],
             })
 
@@ -344,9 +368,47 @@ class TestContentWarnings(unittest.TestCase):
 
     def test_too_many_states_warns(self):
         spec = {"kind": "state",
-                "states": [{"id": f"s{i}", "role": "svc"} for i in range(8)],
+                "states": [{"id": f"s{i}", "role": "working"} for i in range(8)],
                 "transitions": [{"from": "s0", "to": "s1"}]}
         self.assertTrue(any("8 states" in w for w in content_warnings(spec)))
+
+    def test_many_transitions_per_state_warns_and_names_the_cause(self):
+        """Four states with a terminal reached from all three others: 9/4 = 2.25."""
+        spec = {"kind": "state",
+                "states": [{"id": s} for s in ("open", "pending", "waiting", "done")],
+                "transitions": [
+                    {"from": "open", "to": "pending", "label": "pushed"},
+                    {"from": "open", "to": "waiting", "label": "set waiting"},
+                    {"from": "pending", "to": "waiting", "label": "set waiting"},
+                    {"from": "pending", "to": "open", "label": "reviewer replies"},
+                    {"from": "waiting", "to": "open", "label": "reviewer replies"},
+                    {"from": "open", "to": "done", "label": "resolved"},
+                    {"from": "pending", "to": "done", "label": "resolved"},
+                    {"from": "waiting", "to": "done", "label": "resolved"},
+                    {"from": "done", "to": "open", "label": "reopened"}]}
+        warnings = content_warnings(spec)
+        self.assertTrue(any("9 transitions across 4 states" in w for w in warnings), warnings)
+        self.assertTrue(any("from any state" in w for w in warnings), warnings)
+
+    def test_the_same_machine_with_the_repetition_removed_is_silent(self):
+        """7/4 = 1.75. The fix the warning asks for is what clears it."""
+        spec = {"kind": "state",
+                "states": [{"id": "open"}, {"id": "pending"}, {"id": "waiting"},
+                           {"id": "done", "note": "from any state"}],
+                "transitions": [
+                    {"from": "open", "to": "pending", "label": "pushed"},
+                    {"from": "open", "to": "waiting", "label": "set waiting"},
+                    {"from": "pending", "to": "waiting", "label": "set waiting"},
+                    {"from": "pending", "to": "open", "label": "reviewer replies"},
+                    {"from": "waiting", "to": "open", "label": "reviewer replies"},
+                    {"from": "pending", "to": "done", "label": "resolved"},
+                    {"from": "done", "to": "open", "label": "reopened"}]}
+        self.assertEqual(content_warnings(spec), [])
+
+    def test_the_reference_state_machine_stays_silent(self):
+        """7 transitions / 5 states = 1.4, and it reads cleanly — the threshold has to let
+        this through or it is measuring the wrong thing."""
+        self.assertEqual(content_warnings(REFERENCE["state"]), [])
 
     def test_too_many_messages_warns(self):
         spec = {"kind": "sequence",

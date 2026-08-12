@@ -29,6 +29,14 @@ KINDS = ("architecture", "sequence", "er", "class", "state", "steps")
 # one system rather than six unrelated pictures.
 ROLES = ("client", "svc", "store", "cache", "ext", "neutral")
 
+# A `state` takes its own vocabulary. The architectural roles describe what a thing *is* — a
+# datastore, a cache, something outside our control — and a state is none of them, so tagging
+# `live` as `store` and `backoff` as `cache` (which this corpus did) picks the colour and
+# invents a justification. These four name what is actually being signalled, and they inherit
+# the same palette entries: readers decode green-steady / amber-retrying / red-terminal by
+# convention, without a legend, which is the one case where colour carries meaning here.
+STATE_ROLES = ("working", "steady", "transient", "terminal", "neutral")
+
 # Shapes that survive the literal -> CSS-var substitution, each verified by rendering it
 # and checking for unmapped colour literals (that is the `theming` gate). Adding one
 # means re-running that gate: `shape: code` is excluded because it failed it, bringing
@@ -61,6 +69,15 @@ MAX_ROWS = 8          # columns in a table / members in a class
 MAX_LABEL = 40        # characters
 MAX_NOTE_WORDS = 5    # a callout is a margin note, not a sentence
 MAX_STEPS = 4         # boards in an animation
+
+# Transitions per state, above which a state diagram stops being readable even though every
+# individual state and label is fine. What actually goes wrong is repetition: when one
+# terminal is reachable from everywhere on the same trigger, the same word appears on three
+# edges and the reader can no longer tell which label belongs to which line. Calibrated on
+# two diagrams — the reference socket lifecycle sits at 1.4 and reads cleanly, a derived
+# four-status machine with three `resolved` edges sits at 2.25 and does not. Advisory, like
+# the rest of this file, so being wrong costs a line of output.
+MAX_TRANSITIONS_PER_STATE = 2
 
 
 class SpecError(ValueError):
@@ -121,7 +138,7 @@ def _walk(nodes, prefix=""):
             yield from _walk([child], f"{nid}.")
 
 
-def _check_nodes(nodes, where, ids, allow_new=False):
+def _check_nodes(nodes, where, ids, allow_new=False, roles=ROLES):
     """Validate a node tree and add every node's *fully qualified* id to `ids`.
 
     Only the outermost call populates `ids`, from a single `_walk` of the whole tree.
@@ -130,11 +147,11 @@ def _check_nodes(nodes, where, ids, allow_new=False):
     the unqualified name passed validation and then drew d2's stray blank box — exactly
     the failure this module exists to prevent.
     """
-    _check_tree(nodes, where, allow_new)
+    _check_tree(nodes, where, allow_new, roles)
     ids.update(nid for nid, _ in _walk(nodes))
 
 
-def _check_tree(nodes, where, allow_new):
+def _check_tree(nodes, where, allow_new, roles=ROLES):
     _require(isinstance(nodes, list) and nodes, f"{where} needs a non-empty node list")
     seen_here = set()
     for node in nodes:
@@ -147,7 +164,7 @@ def _check_tree(nodes, where, allow_new):
         if "label" in node:
             _str(node["label"], f"{where}: {nid} label")
         if "role" in node:
-            _one_of(node["role"], ROLES, f"{where}: {nid} role")
+            _one_of(node["role"], roles, f"{where}: {nid} role")
         if "shape" in node:
             _one_of(node["shape"], SHAPES, f"{where}: {nid} shape")
         if node.get("new"):
@@ -257,7 +274,7 @@ def validate(spec):
         _check_edges(spec, ids, kind, required=False)
     elif kind == "state":
         _check_flat(_list(spec, "states", kind), "state", "states")
-        _check_nodes(spec["states"], kind, ids)
+        _check_nodes(spec["states"], kind, ids, roles=STATE_ROLES)
         _check_edges(spec, ids, kind, key="transitions")
     return spec
 
@@ -372,11 +389,19 @@ def content_warnings(spec):
         check_notes(spec.get("participants") or [], "participant")
     elif kind == "state":
         states = spec.get("states") or []
+        transitions = spec.get("transitions") or []
         if len(states) > MAX_STATES:
             out.append(f"{len(states)} states (>{MAX_STATES})")
+        if states and len(transitions) > MAX_TRANSITIONS_PER_STATE * len(states):
+            out.append(
+                f"{len(transitions)} transitions across {len(states)} states "
+                f"(>{MAX_TRANSITIONS_PER_STATE} per state) — check for a trigger you have "
+                "drawn several times. If one state is reachable from everywhere on the same "
+                "trigger, that is one fact, not one edge per source: draw the path that "
+                "matters and put \"from any state\" in its note")
         check_labels(states, "state")
         check_notes(states, "state")
-        check_labels(spec.get("transitions") or [], "transition")
+        check_labels(transitions, "transition")
     elif kind in ("er", "class"):
         # A relationship's cardinality is most of what an ER diagram tells a reader, and a bare
         # ratio does not carry it: "n : 1" leaves them working out which end is which and then

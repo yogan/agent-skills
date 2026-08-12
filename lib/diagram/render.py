@@ -285,7 +285,7 @@ def standalone(spec, name="diagram", theme="light", animate_interval=1800, binar
     """
     if theme not in ("light", "dark"):
         raise RenderError(f"theme must be 'light' or 'dark', not {theme!r}")
-    source = d2mod.emit(spec, background=palette.CANVAS)
+    source = d2mod.emit(spec, background=palette.CANVAS, standalone=True)
     interval = animate_interval if d2mod.is_animated(spec) else 0
     raw = compile_source(source, animate_interval=interval, pad=STANDALONE_PAD,
                          binary=binary)

@@ -71,6 +71,24 @@ class TestReferenceCorpus(unittest.TestCase):
             self.assertAlmostEqual(width, expected_w, delta=1, msg=f"{name} width")
             self.assertAlmostEqual(height, expected_h, delta=1, msg=f"{name} height")
 
+    def test_the_standalone_target_turns_the_layout_landscape(self):
+        """The other half of `d2.DIRECTION`, in geometry rather than emitted source.
+
+        MEASURED above pins the embedded renders, which are portrait because a landscape
+        drawing is scaled into the 777px column until its text drops under 11px. Standalone
+        has no column, so the same three specs come out wide — and `architecture` does not,
+        being the one kind where `right` reads worse.
+        """
+        for name in ("er", "class", "state"):
+            svg = render.standalone(REFERENCE[name], name=f"s--{name}")
+            width, height = render.natural_size(svg)
+            self.assertGreater(width, height, f"{name} standalone should be landscape")
+            self.assertLess(*MEASURED[name], msg=f"{name} embedded should be portrait")
+        arch = render.standalone(REFERENCE["arch"], name="s--arch")
+        width, height = render.natural_size(arch)
+        self.assertAlmostEqual(width / height, MEASURED["arch"][0] / MEASURED["arch"][1],
+                               delta=0.02, msg="architecture should not change with target")
+
     def test_all_six_pass_the_size_gates(self):
         for name, svg in self.svgs.items():
             result = size.check(svg, name)

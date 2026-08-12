@@ -285,8 +285,8 @@ class TestD2Diagrams(unittest.TestCase):
     def test_gates_run_and_a_clean_diagram_reports_nothing(self):
         """No note, so nothing needs placing and nothing should be reported."""
         plain = {"kind": "state",
-                 "states": [{"id": "live", "role": "store"},
-                            {"id": "closed", "role": "ext"}],
+                 "states": [{"id": "live", "role": "steady"},
+                            {"id": "closed", "role": "terminal"}],
                  "transitions": [{"from": "live", "to": "closed", "label": "user leaves"}]}
         R.render_diagram(plain, name="plain")
         self.assertEqual(R._DIAGRAM_GATE_PROBLEMS, [])
@@ -300,14 +300,14 @@ class TestD2Diagrams(unittest.TestCase):
 
     def test_a_diagram_with_no_notes_needs_no_browser_and_says_nothing_about_one(self):
         plain = {"kind": "state",
-                 "states": [{"id": "a", "role": "svc"}, {"id": "b", "role": "svc"}],
+                 "states": [{"id": "a", "role": "working"}, {"id": "b", "role": "working"}],
                  "transitions": [{"from": "a", "to": "b"}]}
         R.render_diagram(plain, name="plain")
         self.assertFalse(any("browser" in p for p in R._DIAGRAM_GATE_PROBLEMS))
 
     def test_an_oversized_diagram_is_reported_but_still_renders(self):
         tall = {"kind": "state",
-                "states": [{"id": f"s{i}", "label": f"state number {i}", "role": "svc"}
+                "states": [{"id": f"s{i}", "label": f"state number {i}", "role": "working"}
                            for i in range(14)],
                 "transitions": [{"from": f"s{i}", "to": f"s{i+1}"} for i in range(13)]}
         svg = R.render_diagram(tall, name="tall")
@@ -318,7 +318,7 @@ class TestD2Diagrams(unittest.TestCase):
     def test_a_bad_spec_raises_rather_than_drawing_a_stray_box(self):
         from lib.diagram.spec import SpecError
         with self.assertRaises(SpecError):
-            R.render_diagram({"kind": "state", "states": [{"id": "a", "role": "svc"}],
+            R.render_diagram({"kind": "state", "states": [{"id": "a", "role": "working"}],
                               "transitions": [{"from": "a", "to": "typo"}]}, name="x")
 
 

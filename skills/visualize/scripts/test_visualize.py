@@ -108,7 +108,7 @@ class TestSpecErrors(unittest.TestCase):
         self.assertIn("could not read", err)
 
     def test_a_dangling_edge_is_rejected_before_any_rendering(self):
-        bad = {"kind": "state", "states": [{"id": "a", "role": "svc"}],
+        bad = {"kind": "state", "states": [{"id": "a", "role": "working"}],
                "transitions": [{"from": "a", "to": "typo"}]}
         code, _, err = run("--no-open", "--no-place", spec=bad)
         self.assertNotEqual(code, 0)

@@ -147,8 +147,8 @@ class TestSearchStrategy(unittest.TestCase):
         """One round of 8 per callout, never 8^n — that grid is unaffordable past two."""
         spec = {
             "kind": "state",
-            "states": [{"id": f"s{i}", "role": "svc", "note": "changed"} for i in range(3)]
-                      + [{"id": "end", "role": "ext"}],
+            "states": [{"id": f"s{i}", "role": "working", "note": "changed"} for i in range(3)]
+                      + [{"id": "end", "role": "terminal"}],
             "transitions": [{"from": "s0", "to": "end"}],
         }
         place.place(spec, name="s")
@@ -159,8 +159,8 @@ class TestSearchStrategy(unittest.TestCase):
     def test_greedy_keeps_earlier_decisions_while_settling_later_ones(self):
         spec = {
             "kind": "state",
-            "states": [{"id": f"s{i}", "role": "svc", "note": "changed"} for i in range(3)]
-                      + [{"id": "end", "role": "ext"}],
+            "states": [{"id": f"s{i}", "role": "working", "note": "changed"} for i in range(3)]
+                      + [{"id": "end", "role": "terminal"}],
             "transitions": [{"from": "s0", "to": "end"}],
         }
         place.place(spec, name="s")
@@ -170,10 +170,10 @@ class TestSearchStrategy(unittest.TestCase):
     def test_greedy_starts_from_an_anchor_the_spec_already_pinned(self):
         spec = {
             "kind": "state",
-            "states": [{"id": "a", "role": "svc", "note": "x", "near": "top-right"},
-                       {"id": "b", "role": "svc", "note": "y", "near": "top-right"},
-                       {"id": "c", "role": "svc", "note": "z", "near": "top-right"},
-                       {"id": "end", "role": "ext"}],
+            "states": [{"id": "a", "role": "working", "note": "x", "near": "top-right"},
+                       {"id": "b", "role": "working", "note": "y", "near": "top-right"},
+                       {"id": "c", "role": "working", "note": "z", "near": "top-right"},
+                       {"id": "end", "role": "terminal"}],
             "transitions": [{"from": "a", "to": "end"}],
         }
         place.place(spec, name="s", joint_max=0)
@@ -261,8 +261,8 @@ class TestJointEscalation(unittest.TestCase):
         """8^3 is 512 candidates; the clip is reported instead of paid for."""
         spec = {
             "kind": "state",
-            "states": [{"id": f"s{i}", "role": "svc", "note": "changed"} for i in range(3)]
-                      + [{"id": "end", "role": "ext"}],
+            "states": [{"id": f"s{i}", "role": "working", "note": "changed"} for i in range(3)]
+                      + [{"id": "end", "role": "terminal"}],
             "transitions": [{"from": "s0", "to": "end"}],
         }
         _, report = place.place(spec, name="s", joint_max=2)

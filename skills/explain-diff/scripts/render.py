@@ -55,10 +55,10 @@ Spec format (JSON):
     "retry-flow": {
       "kind": "state",
       "states": [
-        {"id": "failed", "label": "request failed", "role": "ext"},
-        {"id": "backoff", "label": "backoff with jitter", "role": "cache",
+        {"id": "failed", "label": "request failed", "role": "terminal"},
+        {"id": "backoff", "label": "backoff with jitter", "role": "transient",
          "note": "new retry path"},
-        {"id": "done", "label": "succeeded", "role": "store"}
+        {"id": "done", "label": "succeeded", "role": "steady"}
       ],
       "transitions": [
         {"from": "failed", "to": "backoff", "label": "5xx"},

@@ -35,6 +35,29 @@ BASE_FONT = 13
 # a box; the rest of a sequence diagram's dead height is `compact.py`'s job.
 ACTOR_HEIGHT = 34
 
+# Default `direction` per kind, as (embedded, standalone). A spec's own `direction` wins over
+# both. The two targets want opposite layouts and only one of them has a width to fit into:
+#
+#   Embedded, a landscape drawing is scaled into the ~777px content column until its text
+#   breaks the 11px floor — measured on the reference corpus at `right`: er 9.7px, state
+#   7.6px, architecture 9.1px. So `down` is not a preference there, it is what the size gate
+#   leaves. Standalone has no column and is opened full-screen on a landscape monitor, where
+#   the same three read better wide: an ER diagram runs along its foreign keys instead of
+#   swooping between stacked tables, and a state machine's terminal sits at the end.
+#
+#   `architecture` is the exception, and it is the only kind with containers: dagre packs
+#   nested groups differently, and `right` leaves a dead quadrant while crowding the
+#   callouts. It stays `down` for both.
+#
+# `sequence` is absent because d2's sequence engine ignores `direction` entirely, and `steps`
+# because its boards are authored with a direction in mind.
+DIRECTION = {
+    "er": ("down", "right"),
+    "class": ("down", "right"),
+    "state": ("down", "right"),
+    "architecture": ("down", "down"),
+}
+
 # A table's own base font. d2 renders a sql_table/class header at ~1.3x this and ignores
 # the global `**.style.font-size` for it, so 14 gives 14px rows and an ~18px header —
 # both under the 19px body text. At the global 13 the header lands at 17px, which reads
@@ -137,8 +160,17 @@ def _note(obj, indent):
             f"{pad}tooltip.near: {obj.get('near', 'top-center')}"]
 
 
+# A `state`'s role names what is being signalled, not what the thing is (see spec.STATE_ROLES),
+# and each one reuses an architectural role's palette entry rather than adding a colour: the
+# reader is decoding green-steady / amber-retrying / red-terminal, which is a convention they
+# already have. Only the *class* is shared — nothing else about `store` follows into `steady`.
+STATE_CLASS = {"working": "client", "steady": "store",
+               "transient": "cache", "terminal": "ext"}
+
+
 def _classes_for(node, allow_new):
-    names = [node.get("role", "neutral")]
+    role = node.get("role", "neutral")
+    names = [STATE_CLASS.get(role, role)]
     if allow_new and node.get("new"):
         names.append("new")
     return f"[{'; '.join(names)}]" if len(names) > 1 else names[0]
@@ -263,11 +295,14 @@ def _steps(spec):
     return lines
 
 
-def emit(spec, background=None):
+def emit(spec, background=None, standalone=False):
     """Render `spec` to d2 source. Validates first — see spec.py on why that is loud.
 
     `background` paints the root rather than leaving it transparent; pass the page colour
     when the output is a standalone image. See `_prelude`.
+
+    `standalone` picks the `direction` default out of `DIRECTION` — the two targets want
+    opposite layouts, and only one of them has a width to fit into.
     """
     validate(spec)
     kind = spec["kind"]
@@ -280,12 +315,7 @@ def emit(spec, background=None):
         # tweaking fixes it because it is what `dot` is for.
         lines.append("shape: sequence_diagram")
 
-    direction = spec.get("direction")
-    if kind in ("er", "class") and not direction:
-        # Left to right lays these out in three columns, which overflows the ~777px of
-        # usable page width; the diagram is then scaled down to fit and drags its text
-        # under 11px with it. Stacking them keeps the text at full size.
-        direction = "down"
+    direction = spec.get("direction") or DIRECTION.get(kind, (None, None))[bool(standalone)]
     if direction:
         lines.append(f"direction: {direction}")
 
