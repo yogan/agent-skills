@@ -2,9 +2,16 @@
 """Run every test_*.py in the repo and report one aggregate result.
 
     python3 run_tests.py               # fast tests only (the default), in parallel
+    python3 run_tests.py --changed     # only what your uncommitted edits can affect
     python3 run_tests.py compact spec  # only files whose path contains one of these
-    python3 run_tests.py --slow        # fast + slow. SEVEN MINUTES. See below.
+    python3 run_tests.py --slow        # fast + slow. FOUR MINUTES. See below.
     python3 run_tests.py -j1           # serial, for when a parallel failure is confusing
+
+`--changed` reads the working tree against HEAD, resolves each changed module through the
+repo's own import graph, and runs every test that reaches it transitively. It declines and
+runs everything whenever it cannot map a changed file, because a selector that quietly skips
+the test that would have failed is worse than a slow one. It is for the edit loop; the full
+fast suite is still what you run before committing.
 
 Why this exists: `python3 -m unittest discover` only finds tests under directories that
 have an __init__.py. Only lib/ does — hooks/ and each skill's scripts/ don't, since
@@ -33,6 +40,7 @@ So: iterate with a filter (`run_tests.py compact` is well under a second), run t
 suite before you call something done, and run `--slow` once at the end if you touched what it
 covers. Not in a loop. Ever.
 """
+import ast
 import re
 import subprocess
 import sys
@@ -67,13 +75,153 @@ def run_one(path):
     return path, proc, time.monotonic() - started
 
 
+def _module_index(files):
+    """Every importable name in the repo -> the file it resolves to.
+
+    Two naming schemes, because the repo has two kinds of Python. `lib/` is a package and is
+    imported by its dotted path. A skill's `scripts/` is not a package — those are standalone
+    CLI scripts that import their neighbours by bare name — so a bare name is registered per
+    directory, and resolution prefers the importer's own directory before falling back.
+    """
+    index = {}
+    for path in files:
+        rel = path.relative_to(REPO_ROOT)
+        if rel.parts[0] == "lib":
+            dotted = ".".join(rel.with_suffix("").parts)
+            index[dotted] = path
+            # A package is imported by its directory name, so `lib.diagram.gates` has to
+            # resolve to gates/__init__.py — without this, editing a package's __init__
+            # selected nothing at all.
+            if path.name == "__init__.py":
+                index[dotted.rsplit(".__init__", 1)[0]] = path
+        index[(path.parent, path.stem)] = path
+    return index
+
+
+def _conventional_test(path, files):
+    """The `test_<module>.py` beside `path`, if the repo's naming convention has one.
+
+    Needed because two things break the import graph. A CLI script is named with a hyphen
+    (`paste-gate.py`, `resolve-target.py`) and its test loads it through importlib rather than
+    `import`, so no edge exists to follow; and a module can be exercised by a test that never
+    imports it by name. The convention is what ties them, so the convention is an edge.
+    """
+    candidate = path.with_name("test_" + path.stem.replace("-", "_") + ".py")
+    return candidate if candidate in files else None
+
+
+def _imports(path, index):
+    """The repo files `path` imports directly, resolved through `index`.
+
+    Relative imports have to be handled explicitly, and getting that wrong is not a cosmetic
+    miss: `from . import palette` parses with `module=None`, so skipping those dropped nearly
+    every edge inside `lib/diagram` and the selector silently under-ran. Under-selection is
+    the one failure mode this whole feature must not have.
+    """
+    try:
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+    except (OSError, SyntaxError):
+        return set()
+    out = set()
+
+    def resolve(name, base):
+        # `from lib.diagram import render` arrives as both "lib.diagram" and
+        # "lib.diagram.render"; whichever resolves is the real one, and both are cheap to try.
+        if name in index:
+            out.add(index[name])
+        if (base, name.split(".")[0]) in index:
+            out.add(index[(base, name.split(".")[0])])
+
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom):
+            base = path.parent
+            for _ in range(max(0, node.level - 1)):
+                base = base.parent
+            if node.module:
+                resolve(node.module, base)
+                for alias in node.names:
+                    resolve(f"{node.module}.{alias.name}", base)
+                    if node.level:
+                        # `from .gates import size` -> gates/size.py
+                        sub = base / node.module.replace(".", "/")
+                        resolve_sub = (sub, alias.name)
+                        if resolve_sub in index:
+                            out.add(index[resolve_sub])
+            else:
+                # `from . import palette`
+                for alias in node.names:
+                    resolve(alias.name, base)
+        elif isinstance(node, ast.Import):
+            for alias in node.names:
+                resolve(alias.name, path.parent)
+    return out - {path}
+
+
+def _dependents(changed, files):
+    """Test files that reach any of `changed`, directly or through other repo modules."""
+    index = _module_index(files)
+    deps = {path: _imports(path, index) for path in files}
+    for path in files:
+        own = _conventional_test(path, files)
+        if own:
+            deps[own].add(path)
+
+    reached = set(changed)
+    while True:
+        grown = {p for p, uses in deps.items() if uses & reached} | reached
+        if grown == reached:
+            return {p for p in reached if p.name.startswith("test_")}
+        reached = grown
+
+
+def changed_files():
+    """Everything this working tree has touched relative to HEAD, tracked or not."""
+    out = set()
+    for cmd in (["git", "diff", "--name-only", "HEAD"],
+                ["git", "ls-files", "--others", "--exclude-standard"]):
+        proc = subprocess.run(cmd, capture_output=True, text=True, cwd=REPO_ROOT)
+        if proc.returncode == 0:
+            out.update(line for line in proc.stdout.split("\n") if line.strip())
+    return out
+
+
+def select_changed(files):
+    """(test files to run, note) for `--changed`, or (None, why) to fall back to everything.
+
+    Deliberately conservative: this is a way to make the edit loop cheap, NOT a substitute for
+    the full suite before you commit. Anything it cannot reason about — a changed non-Python
+    file, a changed file it cannot resolve — makes it decline and run everything, because a
+    selector that quietly skips the test that would have failed is worse than a slow one.
+    """
+    raw = changed_files()
+    if not raw:
+        return None, "nothing changed against HEAD"
+    changed, unknown = set(), []
+    for rel in raw:
+        path = (REPO_ROOT / rel).resolve()
+        if path.suffix == ".py" and path in files:
+            changed.add(path)
+        elif path.suffix == ".js" and "diagram" in path.parts:
+            # measure.js is the browser side of the diagram gates; nothing imports it, so
+            # attribute it to the module that shells out to it.
+            browser = REPO_ROOT / "lib" / "diagram" / "browser.py"
+            if browser in files:
+                changed.add(browser)
+        else:
+            unknown.append(rel)
+    if unknown:
+        return None, f"{len(unknown)} changed file(s) it cannot map ({unknown[0]}, ...)"
+    return _dependents(changed, files), f"{len(changed)} changed module(s)"
+
+
 def main():
     args = sys.argv[1:]
     include_slow = "--slow" in args
+    only_changed = "--changed" in args
     workers = 8
     patterns = []
     for arg in args:
-        if arg == "--slow":
+        if arg in ("--slow", "--changed"):
             continue
         if arg.startswith("-j"):
             workers = max(1, int(arg[2:] or 1))
@@ -84,6 +232,19 @@ def main():
     if not files:
         print(f"no test_*.py files matched {patterns or 'anything'}", file=sys.stderr)
         return 1
+
+    if only_changed:
+        every = [p for p in REPO_ROOT.rglob("*.py") if "__pycache__" not in p.parts]
+        selected, note = select_changed(set(every))
+        if selected is None:
+            print(f"--changed: running everything ({note})")
+        else:
+            files = [p for p in files if p in selected]
+            print(f"--changed: {len(files)} of {len(selected)} affected test file(s) "
+                  f"from {note}")
+            if not files:
+                print("nothing to run — but run the full suite before you commit")
+                return 0
 
     # Threads, not processes: each one only waits on a subprocess, so the GIL is never the
     # constraint. Serial, the fast suite is the sum of 26 files; in parallel it is the longest

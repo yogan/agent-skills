@@ -39,11 +39,20 @@ directly, e.g.:
 
     python3 skills/rework-mr/scripts/test_threads.py
 
-To run everything: `python3 run_tests.py` (~30s). Pass a substring to run just what you are
-working on — `python3 run_tests.py compact` is under a second, and that is the loop you want
-while editing. Don't reach for `python3 -m unittest discover`: it only finds tests under
-directories with an `__init__.py`, which is just `lib/` here, so it silently runs a
-fraction of the suite with no error.
+To run everything: `python3 run_tests.py` (~30s). While editing, run less:
+
+- `python3 run_tests.py --changed` — resolves your uncommitted edits through the repo's import
+  graph and runs every test that reaches them. Touching `lib/gitlab.py` runs 4 files in 0.4s;
+  touching `lib/diagram/palette.py` runs 14, because that is genuinely how far it reaches. It
+  **declines and runs everything** whenever it cannot map a changed file, since a selector that
+  quietly skips the failing test is worse than a slow one. `test_run_tests.py` exists to pin
+  that, and every case in it is a real under-selection that was once shipped.
+- `python3 run_tests.py compact` — plain substring filter on the path, when you know what you
+  want.
+
+Neither replaces the full fast suite before you commit. Don't reach for `python3 -m unittest
+discover`: it only finds tests under directories with an `__init__.py`, which is just `lib/`
+here, so it silently runs a fraction of the suite with no error.
 
 **`--slow` costs about four minutes. Do not put it in an edit-test loop.** A `*_slow.py` file
 is one whose cost is irreducible, and there are two, which is the thing to know before typing
