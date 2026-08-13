@@ -28,38 +28,56 @@ HAVE_D2 = render.d2_version() is not None
 
 @unittest.skipUnless(HAVE_D2 and HAVE_BROWSER, "needs d2 and a browser")
 class TestPlacementAgainstRealDiagrams(unittest.TestCase):
+    """The placement pass IS the cost of this file, so it runs once for the whole corpus and
+    the assertions read off the same result.
+
+    Three of these tests used to place all five reference diagrams for themselves — thirteen
+    searches to check five placements, which is most of why this file took six minutes rather
+    than four. Sharing the result loses nothing: `place.place` is deterministic, and the one
+    test that says so is the one test that still calls it twice on purpose.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.placed = {name: place.place(spec, name=name)
+                      for name, spec in REFERENCE.items()}
+
     def test_placement_beats_the_hand_picked_reference_anchors(self):
         """The justification for having a search at all.
 
-        The reference ER diagram's anchors were chosen by eye and looked fine. Measured, they
-        clip against the svg box — and the search does not, on a layout the author never saw:
-        the diagram is laid out by measurement too now, so an anchor picked against one shape
-        is being applied to another. Hand placement is not reliable, which is why this is not
-        left to an author.
+        The reference ER diagram's anchors were chosen by eye and looked fine. The search
+        finds a placement that covers an order of magnitude less of the drawing, on a layout
+        the author never saw — the diagram is laid out by measurement too now, so an anchor
+        picked against one shape is being applied to another. Hand placement is not reliable,
+        which is why this is not left to an author.
 
-        Clipping is the comparison, not overlap. The search refuses to clip before it
-        minimises anything, so a hand pick that clips can still overlap less — and does here.
+        This compared CLIPPING until the day `_score` started measuring against the card
+        rather than the svg box, at which point the hand-picked anchors stopped clipping too:
+        they overhang the canvas, but not the card, so nothing is cut off on the page. That
+        left overlap as the honest comparison — and it is the sharper one anyway, since it is
+        what the reader actually loses.
         """
-        _, report = place.place(ER, name="er")
+        _, report = self.placed["er"]
         self.assertEqual(place.unplaceable(report), [], f"search still clips: {report}")
+        self.assertEqual(max(row["clip"] for row in report), 0)
+        found = sum(row["overlap"] for row in report) / len(report)
 
         by_hand = place._measure_candidates(ER, "er", [("top-left", "top-right")], "light")
-        _, hand_clip, _ = place._score(by_hand[0][1])
-        self.assertGreater(hand_clip, 0, "the reference anchors were expected to clip")
-        self.assertEqual(max(row["clip"] for row in report), 0)
+        _, hand_clip, hand_overlap = place._score(by_hand[0][1])
+        self.assertEqual(hand_clip, 0, "the hand pick overhangs the canvas but not the card")
+        self.assertLess(found, hand_overlap / 2,
+                        f"search {found:.0f} vs hand {hand_overlap:.0f} — the search is "
+                        "supposed to be worth its cost")
 
     def test_every_reference_diagram_places_without_clipping(self):
-        for name, spec in REFERENCE.items():
-            _, report = place.place(spec, name=name)
+        for name, (_placed, report) in self.placed.items():
             self.assertEqual(place.unplaceable(report), [], f"{name}: {report}")
 
     def test_placed_diagrams_pass_the_clipping_gate(self):
         """Placement and the gate use different boundaries on purpose (svg box vs card),
         so agreeing is worth checking rather than assuming."""
-        svgs = {}
-        for name, spec in REFERENCE.items():
-            placed, _ = place.place(spec, name=name)
-            svgs[name] = render.render(placed, name=f"d2--{name}")
+        svgs = {name: render.render(placed, name=f"d2--{name}")
+                for name, (placed, _report) in self.placed.items()}
         bad = [r for r in clipping.check_many(svgs) if not r.ok]
         self.assertEqual(bad, [], f"{[(r.name, r.problems) for r in bad]}")
 

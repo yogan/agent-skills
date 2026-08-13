@@ -22,9 +22,16 @@ from lib.diagram.examples import ARCHITECTURE, CLASS, ER, SEQUENCE, STATE
 from lib.diagram.spec import NEAR
 
 
-def fake_measurement(callouts):
-    """A measurement dict shaped like the browser's, for scoring tests."""
-    return {"callouts": [{"clip": c, "overlap": o} for c, o in callouts],
+def fake_measurement(callouts, svg_clip=None):
+    """A measurement dict shaped like the browser's, for scoring tests.
+
+    `measure.js` reports a callout's overflow against two boundaries and `_score` uses the
+    CARD one, because that is what actually clips on the page and what the clipping gate
+    holds a callout to. So the (clip, overlap) pairs here are card-relative; `svg_clip`
+    supplies the svg-box number for the one test that cares that they can differ.
+    """
+    return {"callouts": [{"clipVsCard": c, "clip": c if svg_clip is None else svg_clip[i],
+                          "overlap": o} for i, (c, o) in enumerate(callouts)],
             "svg": {"width": 100, "height": 100}, "overflow": {}, "offenders": []}
 
 
@@ -94,6 +101,18 @@ class TestScoring(unittest.TestCase):
         self.assertEqual(clip, 5)
         self.assertEqual(overlap, 12)
 
+    def test_overhanging_the_svg_box_is_not_clipping_if_the_card_absorbs_it(self):
+        """The bug this pins: the search scored against the svg box while the clipping gate
+        held callouts to the card, so an anchor that clipped NOTHING on the page lost to one
+        with twice its overlap. On the reference state machine that was `center-left` — 16px
+        past the svg box, 0 past the card, overlap 10488 against the winner's 20104 — and the
+        callout it rejected sat out in an empty margin instead of on top of three arrows.
+        """
+        absorbed = place._score(fake_measurement([(0, 10_000)], svg_clip=[16]))[0]
+        real = place._score(fake_measurement([(16, 10_000)], svg_clip=[16]))[0]
+        self.assertLess(absorbed, real, "an overhang the card absorbs must not be penalised")
+        self.assertEqual(absorbed, 10_000, "it should cost exactly its overlap and no more")
+
     def test_a_diagram_with_no_callouts_scores_zero(self):
         self.assertEqual(place._score(fake_measurement([]))[0], 0)
 
@@ -132,12 +151,13 @@ class TestSearchStrategy(unittest.TestCase):
             out.append((anchors, fake_measurement([(0, overlap)])))
         return out
 
-    def test_greedy_is_the_default_even_for_two_callouts(self):
-        """Measured: greedy reaches the same anchors as 8^n in a third of the time."""
+    def test_two_callouts_are_searched_jointly_in_one_grid(self):
+        """Greedy used to be the default here, on the claim that it reached the same anchors.
+        It does not: settling one callout at a time cannot see a pair that only works
+        together, and on the real ER diagram that cost 5483 overlap against the grid's 216."""
         place.place(ER, name="er")
-        self.assertEqual(len(self.calls), 2)
-        for combos in self.calls:
-            self.assertEqual(len(combos), len(NEAR))
+        self.assertEqual(len(self.calls), 1)
+        self.assertEqual(len(self.calls[0]), len(NEAR) ** 2)
 
     def test_one_callout_tries_every_anchor(self):
         place.place(STATE, name="state")
@@ -189,8 +209,8 @@ class TestSearchStrategy(unittest.TestCase):
 
     def test_the_report_records_the_strategy_and_the_candidate_count(self):
         _, report = place.place(ER, name="er")
-        self.assertEqual(report[0]["strategy"], "greedy")
-        self.assertEqual(report[0]["candidates"], len(NEAR) * 2)
+        self.assertEqual(report[0]["strategy"], "joint")
+        self.assertEqual(report[0]["candidates"], len(NEAR) ** 2)
 
     def test_every_report_entry_carries_the_FINAL_cost(self):
         """Not each greedy round's own cost. Recording that made a finished, clip-free
@@ -250,15 +270,17 @@ class TestJointEscalation(unittest.TestCase):
         self.assertGreater(report[0]["clip"], 0)
         self.assertNotEqual([e["near"] for e in report], list(self.ONLY_GOOD_PAIR))
 
-    def test_it_escalates_to_an_exhaustive_search_when_greedy_still_clips(self):
+    def test_the_joint_search_finds_the_only_workable_pair(self):
         _, report = place.place(ER, name="er", joint_max=2)
         self.assertEqual(report[0]["strategy"], "joint")
         self.assertEqual([e["near"] for e in report], list(self.ONLY_GOOD_PAIR))
         self.assertEqual(report[0]["clip"], 0)
 
-    def test_escalation_costs_the_greedy_rounds_plus_the_full_grid(self):
+    def test_the_joint_search_costs_the_grid_and_nothing_else(self):
+        """It no longer runs greedy first and escalates, so the greedy rounds are not on the
+        bill — affordability is the trigger now, not a clip greedy left behind."""
         _, report = place.place(ER, name="er", joint_max=2)
-        self.assertEqual(report[0]["candidates"], len(NEAR) * 2 + len(NEAR) ** 2)
+        self.assertEqual(report[0]["candidates"], len(NEAR) ** 2)
 
     def test_it_does_not_escalate_when_the_count_is_unaffordable(self):
         """8^3 is 512 candidates; the clip is reported instead of paid for."""

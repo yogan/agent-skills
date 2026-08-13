@@ -79,8 +79,24 @@ def _apply(spec, anchors):
 
 
 def _score(measurement):
-    """Total cost of one candidate: clipping first, then weighted overlap."""
-    clip = sum(c["clip"] for c in measurement["callouts"])
+    """Total cost of one candidate: clipping first, then weighted overlap.
+
+    Clipping is measured against the CARD, not the svg box, and the difference is not
+    academic. `measure.js` reports both, and this used to take the svg-box number on the
+    reasoning that d2 reserves no canvas space for a callout so any overflow is the wrong
+    anchor. But the page gives a callout the card's padding to bleed into — `HOST_CSS` sets
+    `overflow: visible` precisely so a shadow can — and the clipping *gate*, which is what
+    decides whether output is acceptable, holds callouts to the card for that reason. Scoring
+    on the stricter boundary made the search reject anchors that clip nothing:
+
+      the reference state machine, portrait, `center-left` — 16px past the svg box, 0px past
+      the card, and HALF the overlap of the anchor that won (10488 vs 20104). It put the
+      callout out in the empty left margin; the winner sat it on top of three arrows.
+
+    So the two now agree on where the edge is, and the search is free to spend a few px of
+    padding to get a callout out of the drawing.
+    """
+    clip = sum(c["clipVsCard"] for c in measurement["callouts"])
     overlap = sum(c["overlap"] for c in measurement["callouts"])
     return clip * CLIP_PENALTY + overlap, clip, overlap
 
@@ -177,12 +193,19 @@ def place(spec, name="diagram", theme="light", joint_max=JOINT_MAX, anchors=NEAR
           standalone=False):
     """Return `(spec_with_anchors, report)`.
 
-    Greedy first, escalating to an exhaustive search only if greedy leaves a callout
-    clipped and the count is small enough to afford it. Measured on the reference corpus:
-    greedy reaches the same anchors as the exhaustive search on every diagram in about a
-    third of the time, so paying for 8^n up front buys nothing most of the time — but two
-    callouts genuinely can each look fine alone and only fit in one combination, so the
-    fallback has to exist.
+    Exhaustive whenever the callout count can afford it (`joint_max`), greedy above that.
+
+    This used to run greedy first and escalate only when greedy left something CLIPPED, on
+    the measured claim that greedy reached the same anchors anyway. That claim was true only
+    because clipping used to be common: greedy clipped, so it escalated, so it got the right
+    answer for the wrong reason. The moment `_score` started measuring against the card (see
+    there) far fewer candidates clipped, nothing escalated, and greedy's real weakness showed
+    — on the reference ER diagram it returned 5483 total overlap where the joint search finds
+    3123, because settling one callout at a time cannot see a pair that only works together.
+
+    So the trigger is affordability, not clipping. For one callout the two searches are the
+    same 8 candidates, so nothing is lost; for two it is 64 measurements instead of 16, which
+    is the price of not shipping a placement 75% worse than the one available.
 
     `report` describes what was chosen and what it cost, so a caller can surface "this
     callout could not be placed without clipping" instead of silently shipping the
@@ -194,16 +217,9 @@ def place(spec, name="diagram", theme="light", joint_max=JOINT_MAX, anchors=NEAR
     if not sites:
         return spec, []
 
-    chosen, clip, overlap, candidates = _greedy(spec, name, sites, theme, anchors,
-                                               standalone)
-    strategy = "greedy"
-    if clip > 0 and len(sites) <= joint_max:
-        joint = _joint(spec, name, sites, theme, anchors, standalone)
-        if joint[1] < clip:
-            chosen, clip, overlap, extra = joint
-            strategy = "joint"
-            candidates += extra
-
+    search = _joint if len(sites) <= joint_max else _greedy
+    chosen, clip, overlap, candidates = search(spec, name, sites, theme, anchors, standalone)
+    strategy = "joint" if search is _joint else "greedy"
     return _apply(spec, chosen), _report(chosen, clip, overlap, strategy, candidates)
 
 
