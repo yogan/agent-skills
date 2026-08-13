@@ -20,10 +20,10 @@ fine and is wrong:
 
 | field | | |
 |---|---|---|
-| `kind` | required | `architecture` · `sequence` · `er` · `class` · `state` · `steps` |
+| `kind` | required | `architecture` · `sequence` · `er` · `class` · `state` |
 | `title` | optional | names the output file, and the ids inside the SVG |
 | `slug` | optional | same, and wins over `title` when both are set |
-| `direction` | optional | `up` · `down` · `left` · `right`. **Leave it out.** The renderer picks per kind *and* per target — a standalone image is opened full-screen so `er`, `class` and `state` are laid out wide, while the same diagram embedded in an article is stacked, because landscape gets scaled into the content column until its text is too small to read. Setting this by hand overrides both. |
+| `direction` | optional | `up` · `down` · `left` · `right`. **Leave it out.** For an embedded figure the renderer draws it both ways, measures each, and keeps the one that stays legible with less height — wrapping long edge labels if that is what makes the wider layout fit. Setting this by hand turns that off and is nearly always a mistake: which way round a given diagram reads better is a fact about its size, not about its kind. A standalone image is laid out wide by default, having no column to fit into. (`sequence` ignores it entirely — d2's sequence engine has its own layout.) |
 
 ### Roles
 
@@ -36,7 +36,7 @@ rejected on any other kind, and the architectural roles are rejected on a state.
 
 ### Notes
 
-Any box, table or class may carry:
+Any box, table, class or sequence lane may carry:
 
 | field | | |
 |---|---|---|
@@ -226,44 +226,3 @@ search, not an instruction — and hand-picked anchors have measurably lost to i
   of states. If one state is reachable from everywhere on the same trigger, that is *one* fact:
   draw the path that matters and put "from any state" in its note.
 - States cannot nest.
-
-## `steps` (animated)
-
-One diagram per board, animated in sequence. Only worth it when consecutive boards differ in
-**topology** — "both paths run at once, then the old one is removed" is something no single
-static picture can say. Arrows moving over an unchanging drawing explain nothing.
-
-```json
-{
-  "kind": "steps",
-  "direction": "right",
-  "caption": "phase 1 of 3 — today: polling only",
-  "nodes": [
-    {"id": "editor", "label": "Editor", "role": "client"},
-    {"id": "api", "label": "GraphQL API", "role": "svc"}
-  ],
-  "edges": [{"from": "editor", "to": "api", "label": "poll every 5s"}],
-  "steps": [
-    {"emphasize_edges": [{"from": "editor", "to": "api"}]},
-    {"caption": "phase 2 of 3 — deploy the gateway, no traffic yet",
-     "add_nodes": [{"id": "gw", "label": "Gateway", "role": "svc", "new": true}],
-     "add_edges": [{"from": "gw", "to": "api", "label": "subscribe"}]},
-    {"caption": "phase 3 of 3 — cutover, polling removed",
-     "relabel_edges": [{"from": "gw", "to": "api", "label": "WebSocket 100%"}],
-     "remove_edges": [{"from": "editor", "to": "api"}]}
-  ]
-}
-```
-
-- **`caption` is required** on the base diagram, and each step should set its own. D2 does not
-  render board names into the SVG, so without captions the reader can see the topology change
-  but has no idea which phase they are looking at.
-- Per-step keys: `caption`, `add_nodes`, `add_edges`, `remove_edges`, `relabel_edges`,
-  `emphasize_edges`. All optional.
-- `"new": true` on an added node accents its border. This is the **only** place styling is
-  allowed to carry meaning, because the caption is there to say what it means. Everywhere
-  else, use `note`.
-- A node added by an earlier step can be referenced by a later one.
-- `caption` is a reserved id — do not name a node that.
-- Keep it to ~4 boards. An animation the reader cannot hold in their head explains less than
-  a few well-chosen ones.

@@ -31,17 +31,22 @@ class TestPlacementAgainstRealDiagrams(unittest.TestCase):
     def test_placement_beats_the_hand_picked_reference_anchors(self):
         """The justification for having a search at all.
 
-        The reference ER diagram's anchors were chosen by eye and looked fine. Measured,
-        they clip 3px against the svg box and overlap more than the alternative. Hand
-        placement is not reliable, which is why this is not left to an author.
+        The reference ER diagram's anchors were chosen by eye and looked fine. Measured, they
+        clip against the svg box — and the search does not, on a layout the author never saw:
+        the diagram is laid out by measurement too now, so an anchor picked against one shape
+        is being applied to another. Hand placement is not reliable, which is why this is not
+        left to an author.
+
+        Clipping is the comparison, not overlap. The search refuses to clip before it
+        minimises anything, so a hand pick that clips can still overlap less — and does here.
         """
         _, report = place.place(ER, name="er")
         self.assertEqual(place.unplaceable(report), [], f"search still clips: {report}")
 
         by_hand = place._measure_candidates(ER, "er", [("top-left", "top-right")], "light")
-        _, hand_clip, hand_overlap = place._score(by_hand[0][1])
+        _, hand_clip, _ = place._score(by_hand[0][1])
         self.assertGreater(hand_clip, 0, "the reference anchors were expected to clip")
-        self.assertGreater(hand_overlap, report[0]["overlap"])
+        self.assertEqual(max(row["clip"] for row in report), 0)
 
     def test_every_reference_diagram_places_without_clipping(self):
         for name, spec in REFERENCE.items():

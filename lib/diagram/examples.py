@@ -1,10 +1,10 @@
-"""The reference corpus: one MR scenario drawn six ways.
+"""The reference corpus: one MR scenario drawn five ways.
 
 These are the diagrams the engine decision was measured on — a presence/collaboration
 feature added to a document editor (new WebSocket gateway, Redis fan-out, Postgres, k8s).
 Each one is the spec form of a diagram whose rendered size and contrast were measured by
 hand, so they double as the fixtures that prove a change to the emitter has not moved
-anything: `test_reference.py` renders all six and holds them to the gates.
+anything: `test_reference.py` renders all five and holds them to the gates.
 
 They are also the clearest documentation of the spec format there is, which is why they
 live here rather than inside the test file — the `visualize` skill's playbook can point at
@@ -171,44 +171,6 @@ STATE = {
     ],
 }
 
-# Every board is a DIFFERENT topology, which is the only thing that justifies animating:
-# what the reader learns is the ORDER of the migration and what is live at each moment.
-# One static diagram cannot say "both paths run at once, then the old one is removed".
-STEPS = {
-    "kind": "steps",
-    "title": "Zero-downtime cutover to the gateway",
-    "direction": "right",
-    "caption": "phase 1 of 4 — today: polling only",
-    "nodes": [
-        {"id": "editor", "label": "Editor", "role": "client"},
-        {"id": "api", "label": "GraphQL API", "role": "svc"},
-        {"id": "pg", "label": "PostgreSQL", "role": "store", "shape": "cylinder"},
-    ],
-    "edges": [
-        {"from": "editor", "to": "api", "label": "poll every 5s"},
-        {"from": "api", "to": "pg"},
-    ],
-    "steps": [
-        {"emphasize_edges": [{"from": "editor", "to": "api"}]},
-        {"caption": "phase 2 of 4 — deploy gateway, no traffic yet",
-         "add_nodes": [
-             {"id": "gw", "label": "Presence Gateway", "role": "svc", "new": True},
-             {"id": "redis", "label": "Redis", "role": "cache", "shape": "cylinder",
-              "new": True},
-         ],
-         "add_edges": [
-             {"from": "gw", "to": "redis", "label": "subscribe"},
-             {"from": "gw", "to": "pg", "label": "upsert"},
-         ]},
-        {"caption": "phase 3 of 4 — dual-run, 10% of clients on WebSocket",
-         "add_edges": [{"from": "editor", "to": "gw", "label": "WebSocket 10%"}],
-         "emphasize_edges": [{"from": "editor", "to": "gw"}]},
-        {"caption": "phase 4 of 4 — cutover complete, polling path removed",
-         "relabel_edges": [{"from": "editor", "to": "gw", "label": "WebSocket 100%"}],
-         "remove_edges": [{"from": "editor", "to": "api"}]},
-    ],
-}
-
 # Keyed by the name the prototype measured them under, so the numbers in
 # test_reference.py can be traced back to prototypes/diagram-stacks/.
 REFERENCE = {
@@ -217,5 +179,4 @@ REFERENCE = {
     "er": ER,
     "class": CLASS,
     "state": STATE,
-    "animated": STEPS,
 }

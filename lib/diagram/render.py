@@ -120,26 +120,21 @@ def check_toolchain(binary="d2"):
     return []
 
 
-def compile_source(source, animate_interval=0, pad=8, binary="d2"):
+def compile_source(source, pad=8, binary="d2"):
     """d2 source -> raw SVG text.
 
     `--theme 0` is deliberate: the palette is applied by our own literals and by the
     substitution below, so d2's themes would only add colours nothing maps.
 
-    Output goes to a temp file rather than stdout because an animated diagram is
-    "multiboard" output, and d2 refuses to write that to stdout at all
-    ("multiboard output cannot be written to stdout"). Routing every render through a file
-    keeps one code path instead of branching on whether this diagram animates.
+    Output goes to a temp file rather than stdout: it costs a temp dir and it is the one
+    form d2 will write in every case, including outputs it refuses to send to stdout.
     """
     if d2_version(binary) is None:
         raise RenderError(f"d2 not found on PATH "
                           f"(install: brew install d2, pin {PINNED_VERSION})")
     with tempfile.TemporaryDirectory(prefix="lib-diagram-") as tmp:
         target = os.path.join(tmp, "out.svg")
-        cmd = [binary, "--pad", str(pad), "--theme", "0"]
-        if animate_interval:
-            cmd += ["--animate-interval", str(animate_interval)]
-        cmd += ["-", target]
+        cmd = [binary, "--pad", str(pad), "--theme", "0", "-", target]
         proc = subprocess.run(cmd, input=source, capture_output=True, text=True)
         if proc.returncode != 0 or not os.path.exists(target):
             raise RenderError(f"d2 failed to compile the diagram:\n{proc.stderr.strip()}\n"
@@ -231,15 +226,81 @@ def _maybe_compact(raw, spec, name):
         return svg
 
 
-def render(spec, name="diagram", animate_interval=1800, binary="d2", theme_vars=True):
+# The layouts `render()` will try when the spec does not pin one: both orientations, with the
+# edge labels as written and then wrapped progressively harder. Landscape is not a preference
+# — it wins when it wins, on measurement — but it is tried because a small diagram stacked
+# downward leaves most of the content column empty and costs a screen of scrolling for nothing.
+CANDIDATES = tuple((direction, wrap)
+                   for wrap in (None,) + d2mod.EDGE_WRAPS
+                   for direction in ("down", "right"))
+
+# Page height, in px, below which two candidates count as equally tall. Height and glyph size
+# pull against each other — scaling a drawing down makes it physically shorter — so comparing
+# heights exactly rewards shrinking, and the first version of this picked an 848px figure
+# scaled to 0.92 (11.9px text) over the same one wrapped to 722px at full size (13.0px). A
+# hundred px is about a fifth of a viewport: worth trading text size for, but not worth it for
+# the 16px between those two.
+HEIGHT_BUCKET = 100
+
+
+def _pick_layout(spec, name, binary, theme_vars):
+    """Render each candidate layout and keep the one that measures best.
+
+    Choosing between portrait and landscape by kind was a guess that had to be wrong half the
+    time: the reference diagrams are too big to be laid out wide, and a four-box one is too
+    small to be laid out tall. The renderer can simply try both and look, which costs a d2 run
+    each (~40ms) against a placement pass that costs seconds.
+
+    Ranked by: how many size problems it has, then rendered height to the nearest
+    `HEIGHT_BUCKET` — a shorter figure is less to scroll past — then how hard it had to wrap,
+    then the size of its smallest glyph.
+
+    Wrapping ranks above glyph size, which is a judgement and was made twice. Wrapping does buy
+    text size — a figure 848px wide is scaled to 0.92 and its labels render at 11.9px, where the
+    same figure wrapped to 722px is not scaled at all and they render at 13.0px — but a label
+    broken across three lines when the row had horizontal room to spare reads worse than
+    slightly smaller text on one. So a layout wraps only to fit, never to gain a point of size.
+
+    All four are rendered rather than stopping at the first that fits. An early exit was
+    tried and got the case this exists for wrong: a four-box chain fits the column stacked
+    downward at 164x643, so the search stopped and never learned that wrapping its labels
+    fits the same content landscape at 916x93 — seven times shorter.
+    """
+    from .gates import GateError, size as size_gate   # local: gates.clipping imports this
+
+    best = None
+    for direction, wrap in CANDIDATES:
+        variant = dict(spec, direction=direction)
+        raw = compile_source(d2mod.emit(variant, wrap_edges=wrap), binary=binary)
+        svg = postprocess(_maybe_compact(raw, variant, name), name, theme_vars=theme_vars)
+        try:
+            result = size_gate.check(svg, name)
+            metrics = size_gate.analyse(svg)
+        except GateError:
+            # Unmeasurable is not a reason to render nothing; the gates report it later.
+            return svg
+        # Gentler wrapping ranks better only among layouts that read equally well, so a
+        # diagram spends lines when that buys glyph size and not otherwise.
+        rank = (len(result.problems), round(metrics["rend_h"] / HEIGHT_BUCKET),
+                CANDIDATES.index((direction, wrap)), -metrics["fmin"])
+        if best is None or rank < best[0]:
+            best = (rank, svg)
+    return best[1]
+
+
+def render(spec, name="diagram", binary="d2", theme_vars=True):
     """Spec -> embeddable SVG, for a host page that ships `page_css()`.
 
     `name` namespaces the SVG's ids, so it must be unique within a page. For a file to open
     on its own, use `standalone()` instead — this output depends on the page.
+
+    The layout is chosen by measurement unless the spec pins a `direction` — see
+    `_pick_layout`. A `sequence` is exempt: d2's sequence engine ignores `direction`, so
+    there is nothing to choose between.
     """
-    source = d2mod.emit(spec)
-    interval = animate_interval if d2mod.is_animated(spec) else 0
-    raw = compile_source(source, animate_interval=interval, binary=binary)
+    if not spec.get("direction") and spec.get("kind") != "sequence":
+        return _pick_layout(spec, name, binary, theme_vars)
+    raw = compile_source(d2mod.emit(spec), binary=binary)
     return postprocess(_maybe_compact(raw, spec, name), name, theme_vars=theme_vars)
 
 
@@ -269,7 +330,7 @@ STANDALONE_CALLOUT = {
 STANDALONE_PAD = 20
 
 
-def standalone(spec, name="diagram", theme="dark", animate_interval=1800, binary="d2"):
+def standalone(spec, name="diagram", theme="dark", binary="d2"):
     """Spec -> a self-contained SVG that can be opened on its own.
 
     Three things separate this from `render()`, and all three are what make an SVG file
@@ -296,9 +357,7 @@ def standalone(spec, name="diagram", theme="dark", animate_interval=1800, binary
     if theme not in ("light", "dark"):
         raise RenderError(f"theme must be 'light' or 'dark', not {theme!r}")
     source = d2mod.emit(spec, background=palette.CANVAS, standalone=True)
-    interval = animate_interval if d2mod.is_animated(spec) else 0
-    raw = compile_source(source, animate_interval=interval, pad=STANDALONE_PAD,
-                         binary=binary)
+    raw = compile_source(source, pad=STANDALONE_PAD, binary=binary)
     # Substitute to vars first, then resolve them down to one theme. The detour exists so
     # mappability can be checked while it still means something: once the colours are
     # concrete, every one of them is a non-key and `unmapped()` can no longer tell an

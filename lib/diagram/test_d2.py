@@ -14,7 +14,7 @@ import unittest
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
 from lib.diagram import d2, palette
-from lib.diagram.examples import ARCHITECTURE, CLASS, ER, SEQUENCE, STATE, STEPS
+from lib.diagram.examples import ARCHITECTURE, CLASS, ER, SEQUENCE, STATE
 
 
 class TestPrelude(unittest.TestCase):
@@ -147,6 +147,43 @@ class TestParticipantDetailLine(unittest.TestCase):
         spec = self.spec(detail="AppRoutes")
         del spec["participants"][1]["label"]
         self.assertIn(r'"routing\nAppRoutes"', d2.emit(spec))
+
+
+class TestEdgeLabelWrapping(unittest.TestCase):
+    """Wrapping an edge label is the cheapest width in the renderer, so where it breaks
+    matters — each rule here comes from a label that wrapped badly."""
+
+    def test_a_cardinality_breaks_at_its_colon(self):
+        """"1 doc : n sessions" is one fact about docs and one about sessions."""
+        self.assertEqual(d2.wrap_edge_label("1 doc : n sessions", 14), "1 doc :\nn sessions")
+
+    def test_the_colon_survives_the_break(self):
+        """Unlike a stranded separator it is not punctuation between equals — it is the ratio,
+        so dropping it would change what the label says."""
+        self.assertIn(":", d2.wrap_edge_label("1 doc : n sessions", 8))
+
+    def test_a_stranded_separator_is_dropped(self):
+        self.assertEqual(d2.wrap_edge_label("list · read · stat", 8), "list\nread\nstat")
+
+    def test_a_short_word_is_never_left_alone_on_a_line(self):
+        """Even at a width that would strand it: "1 doc :" / "n" / "sessions" puts the whole
+        meaning of the cardinality on a line of its own."""
+        self.assertEqual(d2.wrap_edge_label("1 doc : n sessions", 8), "1 doc :\nn sessions")
+
+    def test_a_trailing_orphan_joins_the_line_above(self):
+        self.assertEqual(d2.wrap_edge_label("belongs to", 8), "belongs to")
+
+    def test_a_short_label_is_left_alone(self):
+        self.assertEqual(d2.wrap_edge_label("GraphQL", 8), "GraphQL")
+
+    def test_an_authored_newline_is_kept(self):
+        self.assertEqual(d2.wrap_edge_label("one\ntwo", 40), "one\ntwo")
+
+    def test_wrapping_is_off_unless_asked_for(self):
+        spec = {"kind": "state", "states": [{"id": "a"}, {"id": "b"}],
+                "transitions": [{"from": "a", "to": "b", "label": "a long label to wrap"}]}
+        self.assertIn('"a long label to wrap"', d2.emit(spec))
+        self.assertIn(r"\n", d2.emit(spec, wrap_edges=8))
 
 
 class TestLaneGroups(unittest.TestCase):
@@ -328,53 +365,20 @@ class TestArchitecture(unittest.TestCase):
         self.assertIn("shape: cylinder", d2.emit(ARCHITECTURE))
         self.assertIn("shape: hexagon", d2.emit(ARCHITECTURE))
 
+    def test_a_leaf_label_is_not_bold(self):
+        """d2 bolds node labels by default. A filled shape with a coloured border already
+        announces itself, and next to a muted subtitle the weight reads as a third signal."""
+        self.assertIn("style.bold: false", d2.emit(ARCHITECTURE))
+
+    def test_a_container_label_keeps_its_own_styling(self):
+        source = d2.emit(ARCHITECTURE)
+        block = source[source.index('"browser"'):source.index('"pg"')]
+        self.assertIn("class: grp", block)
+
     def test_a_leaf_without_a_role_falls_back_to_neutral(self):
         spec = {"kind": "state", "states": [{"id": "a"}, {"id": "b"}],
                 "transitions": [{"from": "a", "to": "b"}]}
         self.assertIn("class: neutral", d2.emit(spec))
-
-
-class TestSteps(unittest.TestCase):
-    def test_a_caption_node_is_emitted_because_d2_omits_board_names(self):
-        source = d2.emit(STEPS)
-        self.assertIn('"caption": "phase 1 of 4 — today: polling only"', source)
-        self.assertIn("near: top-center", source)
-
-    def test_the_caption_is_borderless_so_it_does_not_read_as_a_box(self):
-        self.assertIn("stroke-width: 0; fill: transparent", d2.emit(STEPS))
-
-    def test_each_step_becomes_a_numbered_board(self):
-        source = d2.emit(STEPS)
-        self.assertIn("steps: {", source)
-        for i in ("1", "2", "3", "4"):
-            self.assertIn(f'  "{i}": {{', source)
-
-    def test_a_step_can_relabel_the_caption(self):
-        self.assertIn('"caption".label: "phase 2 of 4 — deploy gateway, no traffic yet"',
-                      d2.emit(STEPS))
-
-    def test_removing_an_edge_uses_the_indexed_null_form(self):
-        self.assertIn('("editor" -> "api")[0]: null', d2.emit(STEPS))
-
-    def test_relabelling_an_edge_uses_the_indexed_label_form(self):
-        self.assertIn('("editor" -> "gw")[0].label: "WebSocket 100%"', d2.emit(STEPS))
-
-    def test_emphasis_uses_stroke_width(self):
-        self.assertIn('("editor" -> "api")[0].style.stroke-width: 3', d2.emit(STEPS))
-
-    def test_a_new_node_composes_the_new_class_with_its_role(self):
-        self.assertIn("class: [svc; new]", d2.emit(STEPS))
-
-    def test_an_added_edge_comes_before_its_emphasis_within_a_step(self):
-        """Emphasising an edge d2 has not seen yet is an error, so order matters."""
-        source = d2.emit(STEPS)
-        step3 = source[source.index('"3": {'):source.index('"4": {')]
-        self.assertLess(step3.index('"editor" -> "gw"'),
-                        step3.index("style.stroke-width: 3"))
-
-    def test_only_a_steps_diagram_is_animated(self):
-        self.assertTrue(d2.is_animated(STEPS))
-        self.assertFalse(d2.is_animated(ARCHITECTURE))
 
 
 class TestEdges(unittest.TestCase):

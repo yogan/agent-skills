@@ -31,8 +31,28 @@ H2_PX = 26.6           # 1.4rem at a 19px root
 BODY_PX = 19.0         # 1rem at a 19px root
 MIN_READABLE = 11.0    # below this, text in body copy is effectively unreadable
 
+# The same floor for a box's subtitle line, which is supplementary by construction: the muted
+# second line under a name, carrying the real module or column names behind an abstract label.
+# Held apart because measuring it with the primary text made it the most expensive text in the
+# diagram — authored AT the floor (compact.DETAIL_FONT), it could not survive any downscale at
+# all, so a figure carrying a subtitle had to fit the column exactly while the same figure
+# without one had 141px of slack. 9 is chosen so it never binds first: 13px primary text hits
+# its own floor at 918px of natural width, where an 11px subtitle is still 9.3px.
+MIN_READABLE_DETAIL = 9.0
+
+# And for an edge label, which is annotation of the same sort: it qualifies a relationship the
+# arrow has already drawn. It matters here because d2 sets edge labels at 13px against a table's
+# 14px rows, so in an `er` or `class` diagram the label is the smallest text and decides the
+# whole layout — on one reference diagram it was the 0.1px between a cardinality reading
+# "1 doc :" / "n sessions" and being folded onto a third line to save nine pixels of width.
+MIN_READABLE_EDGE = 10.0
+
 _FONT_ATTR = re.compile(r'font-size="([\d.]+)')
 _FONT_CSS = re.compile(r"font-size:\s*([\d.]+)px")
+# A subtitle span, tagged by compact.style_detail_lines so the two floors can be told apart.
+_DETAIL_SPAN = re.compile(r'<tspan class="d2-detail"[^>]*font-size:\s*([\d.]+)px')
+# An edge label: d2's own class for one, which the post-processing leaves in place.
+_EDGE_TEXT = re.compile(r'<text[^>]*class="text-italic[^"]*"[^>]*font-size:\s*([\d.]+)px')
 _VIEWBOX = re.compile(r'viewBox="[-\d.]+ [-\d.]+ ([\d.]+) ([\d.]+)"')
 _WIDTH = re.compile(r'\swidth="([\d.]+)(pt|px)?"')
 _HEIGHT = re.compile(r'\sheight="([\d.]+)(pt|px)?"')
@@ -75,12 +95,30 @@ def analyse(svg, avail_w=AVAIL_W, standalone=False):
         # everything; either way the glyph gates below would vacuously pass.
         raise GateError("no font-size declarations found — nothing to check glyph sizes against")
 
-    modal = collections.Counter(fonts).most_common(1)[0][0]
-    rendered = [f * unit * scale for f in fonts]
+    # Subtitles are measured separately, and subtracted from the primary pool by value: the
+    # spans are tagged, but a size only reaches this far as a number, so an 11px subtitle and
+    # an 11px label are indistinguishable here. Removing one occurrence per tagged span is
+    # exact when they agree and conservative when they do not.
+    details = [float(x) for x in _DETAIL_SPAN.findall(svg)]
+    edges = [float(x) for x in _EDGE_TEXT.findall(svg)]
+    primary = list(fonts)
+    for value in details + edges:
+        if value in primary:
+            primary.remove(value)
+    if not primary:                      # a diagram of nothing but subtitles is not a thing
+        primary = list(fonts)
+
+    modal = collections.Counter(primary).most_common(1)[0][0]
+    rendered = [f * unit * scale for f in primary]
+    rendered_details = [f * unit * scale for f in details]
+    rendered_edges = [f * unit * scale for f in edges]
     return {
         "nat_w": nat_w, "nat_h": nat_h, "scale": scale,
         "rend_w": nat_w * scale, "rend_h": nat_h * scale,
-        "fmax": max(rendered), "fmin": min(rendered), "fmodal": modal * unit * scale,
+        "fmax": max(rendered + rendered_edges), "fmin": min(rendered),
+        "fmodal": modal * unit * scale,
+        "fmin_detail": min(rendered_details) if rendered_details else None,
+        "fmin_edge": min(rendered_edges) if rendered_edges else None,
     }
 
 
@@ -102,7 +140,8 @@ def check(svg, name="diagram", avail_w=AVAIL_W, max_h=MAX_H, standalone=False):
     at full size gets chopped into two for no reason at all.
 
     What survives is the one check that is about the drawing itself: nothing may render below
-    ~11px. At natural scale that is a statement about the authored font sizes.
+    ~11px, or ~9px for a subtitle line. At natural scale that is a statement about the authored
+    font sizes.
     """
     m = analyse(svg, avail_w=avail_w, standalone=standalone)
     problems = []
@@ -114,8 +153,29 @@ def check(svg, name="diagram", avail_w=AVAIL_W, max_h=MAX_H, standalone=False):
             problems.append(f"GLYPH {m['fmax']:.1f}px > h2 {H2_PX:.1f}px")
         if m["fmodal"] > BODY_PX:
             problems.append(f"BODY modal glyph {m['fmodal']:.1f}px > body {BODY_PX:.0f}px")
+    def too_small(what, rendered, floor):
+        problem = f"TINY {what}{rendered:.1f}px < {floor:.0f}px"
+        if m["scale"] < 1.0:
+            # Say how much narrower, because "TINY" alone leaves the author guessing whether
+            # the fix is one fewer box, shorter labels or half the diagram — and the numbers
+            # to answer that are right here. Text shrinks in proportion to the width overrun,
+            # so the width that puts the smallest glyph back on the floor is nat_w * fmin/MIN.
+            target = m["nat_w"] * rendered / floor
+            problem += (f" — {m['nat_w']:.0f}px wide, scaled to {m['scale']:.2f} to fit the "
+                        f"{avail_w:.0f}px column. It has to come down to ~{target:.0f}px, i.e. "
+                        f"{100 * (1 - target / m['nat_w']):.0f}% less width: wrapping a long "
+                        "edge label onto two lines is the cheapest width there is, then shorter "
+                        "labels and fewer columns, then one box fewer")
+        return problem
+
     if m["fmin"] < MIN_READABLE:
-        problems.append(f"TINY {m['fmin']:.1f}px < {MIN_READABLE:.0f}px")
+        problems.append(too_small("", m["fmin"], MIN_READABLE))
+    if m["fmin_edge"] is not None and m["fmin_edge"] < MIN_READABLE_EDGE:
+        problems.append(too_small("edge label ", m["fmin_edge"], MIN_READABLE_EDGE))
+    if m["fmin_detail"] is not None and m["fmin_detail"] < MIN_READABLE_DETAIL:
+        problems.append(too_small("subtitle ", m["fmin_detail"], MIN_READABLE_DETAIL))
     detail = (f"{m['nat_w']:.0f}x{m['nat_h']:.0f} @{m['scale']:.2f} "
-              f"modal {m['fmodal']:.1f} range {m['fmin']:.1f}-{m['fmax']:.1f}")
+              f"modal {m['fmodal']:.1f} range {m['fmin']:.1f}-{m['fmax']:.1f}"
+              + (f" edge {m['fmin_edge']:.1f}" if m["fmin_edge"] is not None else "")
+              + (f" subtitle {m['fmin_detail']:.1f}" if m["fmin_detail"] is not None else ""))
     return Result(name, "size", problems, detail)

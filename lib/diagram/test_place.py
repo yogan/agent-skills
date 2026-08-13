@@ -18,7 +18,7 @@ import unittest
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
 from lib.diagram import place
-from lib.diagram.examples import ARCHITECTURE, ER, SEQUENCE, STATE, STEPS
+from lib.diagram.examples import ARCHITECTURE, CLASS, ER, SEQUENCE, STATE
 from lib.diagram.spec import NEAR
 
 
@@ -48,7 +48,8 @@ class TestNoteSites(unittest.TestCase):
                          ["new retry path"])
 
     def test_a_diagram_without_notes_has_no_sites(self):
-        self.assertEqual(place.note_sites(STEPS), [])
+        self.assertEqual(place.note_sites({"kind": "state", "states": [{"id": "a"}],
+                                          "transitions": []}), [])
 
     def test_the_order_is_stable_across_copies(self):
         """The search applies an anchor tuple by index, so the order has to be structural."""
@@ -199,8 +200,10 @@ class TestSearchStrategy(unittest.TestCase):
         self.assertEqual(len({e["overlap"] for e in report}), 1)
 
     def test_a_spec_without_notes_costs_nothing(self):
-        out, report = place.place(STEPS, name="animated")
-        self.assertIs(out, STEPS)
+        plain = {"kind": "state", "states": [{"id": "a"}, {"id": "b"}],
+                 "transitions": [{"from": "a", "to": "b"}]}
+        out, report = place.place(plain, name="plain")
+        self.assertIs(out, plain)
         self.assertEqual(report, [])
         self.assertEqual(self.calls, [])
 

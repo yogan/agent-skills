@@ -70,7 +70,7 @@ def collapse(spec, drop=(), limit=MAX_MEMBERS):
     is reachable from the API" is a sentence, not nineteen arrows. Their edges go with them.
     """
     validate(spec)
-    if spec["kind"] not in ("architecture", "steps"):
+    if spec["kind"] != "architecture":
         raise ValueError(f"only an architecture can be collapsed, not {spec['kind']!r}")
 
     edges = spec.get("edges") or []

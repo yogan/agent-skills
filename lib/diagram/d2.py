@@ -19,9 +19,17 @@ What is deliberately NOT here:
   * **Change marking by styling.** A thick accent border says "something here is
     special" and never says what, and there is no legend to look it up in. Changes are
     marked with `note`, which becomes a permanently-visible callout carrying the words.
+  * **Animation.** d2 can do it — `steps: { "1": { ... } }` declares one board per beat and
+    `--animate-interval` cycles them in the SVG — and this module emitted it until we watched
+    people read the result. Boards that differ in *topology* animate into an unreadable
+    comparison: only one is on screen at a time, so the reader has to hold the previous one in
+    their head, and two independent readers said the same thing unprompted. Before/after is two
+    diagrams side by side. The form that might have earned it — one fixed graph with a
+    highlight walking through it, narrating a flow — has never been the thing anyone asked for
+    here, so the capability is noted rather than built. Do not re-add it without that use case.
 """
 from . import palette
-from .spec import CAPTION_ID, validate
+from .spec import validate
 
 # Base font for ordinary text. Edge labels get the same 13 rather than something smaller:
 # at 11 they were the single cause of every sub-11px glyph in the prototype, and raising
@@ -49,6 +57,15 @@ LINE_H = 14
 # sequence diagram has to spare — d2 sizes a box to its longest line, so the cap is the box.
 DETAIL_WRAP = 34
 
+# Wrap widths for an edge label, gentlest first. An edge label sits in the gap between two
+# boxes, so in a left-to-right layout its full width is added to the diagram's: three labels
+# averaging 17 characters were 300px of the 1160px a four-box chain measured. Wrapped they are
+# 998px at 14 and 912px at 8 — so this is the cheapest width in the renderer, ahead of dropping
+# content, and height is nearly free since the label sits beside a line that is already there.
+# `render._pick_layout` tries them in order and keeps the gentlest one that fits, because each
+# step down buys width by spending lines, and a four-line edge label is its own kind of ugly.
+EDGE_WRAPS = (14, 8)
+
 # Lines a detail may occupy after wrapping — four in the box counting the title. Past this the
 # problem is editorial rather than typographic (spec.py warns): a lane whose subtitle needs five
 # lines is a diagram of its own trying to hide inside a label.
@@ -68,8 +85,7 @@ MAX_DETAIL_LINES = 3
 #   nested groups differently, and `right` leaves a dead quadrant while crowding the
 #   callouts. It stays `down` for both.
 #
-# `sequence` is absent because d2's sequence engine ignores `direction` entirely, and `steps`
-# because its boards are authored with a direction in mind.
+# `sequence` is absent because d2's sequence engine ignores `direction` entirely.
 DIRECTION = {
     "er": ("down", "right"),
     "class": ("down", "right"),
@@ -152,12 +168,6 @@ def _prelude(background=None):
     grp_fill, grp_stroke = palette.vars_for("neutral")
     lines.append(f'  grp: {{ style: {{ fill: "{grp_fill}"; stroke: "{grp_stroke}"; '
                  f'stroke-width: 2; font-color: "{palette.ACCENT}" }} }}')
-    # Stroke-only so it composes with any role class (`class: [svc; new]`). Only reachable
-    # from a `steps` diagram, where the caption says what the emphasis means -- see
-    # spec.py's check on the `new` flag. Note d2 rejects `double-border` on
-    # sql_table/class shapes, and `new` cannot be used on a table at all, because there
-    # `stroke` is the body fill rather than the border.
-    lines.append(f'  new: {{ style: {{ stroke: "{palette.ACCENT}"; stroke-width: 4 }} }}')
     lines.append("}")
     return lines
 
@@ -251,15 +261,14 @@ def group_classes(participants):
     return out
 
 
-def _classes_for(node, allow_new):
+def _classes_for(node):
+    """The d2 class carrying this box's colour. A `state`'s role names what is being
+    signalled and reuses an architectural role's palette entry — see STATE_CLASS."""
     role = node.get("role", "neutral")
-    names = [STATE_CLASS.get(role, role)]
-    if allow_new and node.get("new"):
-        names.append("new")
-    return f"[{'; '.join(names)}]" if len(names) > 1 else names[0]
+    return STATE_CLASS.get(role, role)
 
 
-def _node(node, indent=0, allow_new=False, height=None):
+def _node(node, indent=0, height=None):
     """One box, plus its children if it is a container.
 
     A `detail` becomes extra label lines under the name, which `compact.style_detail_lines`
@@ -283,30 +292,109 @@ def _node(node, indent=0, allow_new=False, height=None):
         # rejects a `role` on one so the two cannot silently disagree.
         body.append(f"{pad}  class: grp")
     else:
-        body.append(f"{pad}  class: {_classes_for(node, allow_new)}")
+        body.append(f"{pad}  class: {_classes_for(node)}")
+        # d2 sets node labels bold. Turned off because a box already announces itself with a
+        # filled shape and a coloured border, so the weight is a third signal saying the same
+        # thing — and next to it a muted subtitle reads as a different class of text rather
+        # than as the same text made quieter.
+        body.append(f"{pad}  style.bold: false")
     if node.get("shape"):
         body.append(f"{pad}  shape: {node['shape']}")
     body += _note(node, indent + 2)
     for child in children:
-        body += _node(child, indent + 2, allow_new)
+        body += _node(child, indent + 2)
     if not body:
         return [head]
     return [head + " {"] + body + [pad + "}"]
 
 
 # A sequence message the receiver never asked for: dashed line, open arrowhead. This is UML's
-# async-signal mark and the one piece of styling-as-meaning allowed outside `steps`, on the same
-# grounds — the label supplies the words, so the dash is not being asked to say anything on its
-# own. Colour was considered and rejected: there is no legend, and unlike the dash a colour has
+# async-signal mark and the one piece of styling that is allowed to carry meaning, on the
+# grounds that the label supplies the words — the dash is not being asked to say anything on
+# its own. Colour was considered and rejected: there is no legend, and unlike the dash a colour has
 # no convention a reader can decode. Both properties are needed; a dash alone reads as UML's
 # *reply* arrow, which is the opposite of what a push is.
 PUSH_STYLE = "{style.stroke-dash: 4; target-arrowhead.shape: arrow}"
 
 
-def _edge(edge):
+def wrap_edge_label(text, width=EDGE_WRAPS[0]):
+    """Break a long edge label onto several lines, at the places a reader already sees.
+
+    Three rules, each from a label that wrapped badly:
+
+    * **Break after a `:` first.** A cardinality is two halves either side of it — "1 doc : n
+      sessions" says one thing about docs and one about sessions — so that is where the reader
+      would fold it. The colon stays on the first line and is never dropped: unlike the dots in
+      "list · read · stat" it is not punctuation between equals, it *is* the ratio.
+    * **Never strand a separator.** A `·`, `,` or `-` left at the end of a line separates a word
+      from a line break rather than from the next word, so it reads as debris and costs width.
+    * **Never leave a one- or two-character word alone on a line.** "1 doc :" / "n" / "sessions"
+      puts the whole meaning of the cardinality on a line by itself; it joins its neighbour even
+      when that overruns the target width, which is a smaller cost than the orphan.
+
+    The author's own newlines are kept as written.
+    """
+    out = []
+    for paragraph in str(text).split("\n"):
+        words = paragraph.split()
+        head, rest = _split_at_colon(words)
+        lines = [" ".join(head)] if head else []
+        current = ""
+        for word in rest:
+            candidate = f"{current} {word}".strip()
+            if current and len(candidate) > width:
+                lines.append(current)
+                current = word
+            else:
+                current = candidate
+        if current:
+            lines.append(current)
+        out += _tidy(lines)
+    return "\n".join(out)
+
+
+# Words no longer than this are never left alone on a line — see wrap_edge_label.
+ORPHAN = 2
+
+
+def _split_at_colon(words):
+    """`["1", "doc", ":", "n", "sessions"]` -> `(["1", "doc", ":"], ["n", "sessions"])`.
+
+    Only a colon with something on both sides splits: a label that opens or closes with one has
+    no two halves to separate, and would just get a blank line out of it.
+    """
+    for i, word in enumerate(words):
+        if word.endswith(":") and 0 < i < len(words) - 1:
+            return words[:i + 1], words[i + 1:]
+    return [], words
+
+
+def _tidy(lines):
+    """Drop stranded separators, then pull orphaned short words back into a neighbour."""
+    lines = [line.rstrip(" ·,-") if i < len(lines) - 1 else line
+             for i, line in enumerate(lines)]
+    lines = [line for line in lines if line.strip(" ·,-")]
+    out, i = [], 0
+    while i < len(lines):
+        line = lines[i]
+        orphan = len(line) <= ORPHAN and " " not in line
+        if orphan and i + 1 < len(lines):
+            # Down, not up: the line above may be the half ending in the colon, and pulling
+            # "n" onto it would put "1 doc : n" / "sessions" back.
+            lines[i + 1] = f"{line} {lines[i + 1]}"
+        elif orphan and out:
+            out[-1] = f"{out[-1]} {line}"
+        else:
+            out.append(line)
+        i += 1
+    return out
+
+
+def _edge(edge, wrap=None):
     line = f"{_path(edge['from'])} -> {_path(edge['to'])}"
     if edge.get("label"):
-        line += f": {_q(edge['label'])}"
+        label = wrap_edge_label(edge["label"], wrap) if wrap else edge["label"]
+        line += f": {_q(label)}"
     if edge.get("push"):
         line += f" {PUSH_STYLE}"
     elif edge.get("dashed"):
@@ -351,53 +439,7 @@ def _table(item, row_key, indent=0):
     return [head + " {"] + body + [pad + "}"]
 
 
-def _caption(text):
-    """The phase label for a `steps` diagram.
-
-    d2 does not render board names into the SVG, so without this the reader can see the
-    topology change but not what phase they are looking at. A borderless, fill-free node
-    relabelled per step supplies the text; `near: top-center` keeps it out of the layout.
-    """
-    return [
-        f"{_q(CAPTION_ID)}: {_q(text)} {{",
-        "  near: top-center",
-        f'  style: {{ stroke-width: 0; fill: transparent; font-size: 15; '
-        f'font-color: "{palette.ACCENT}"; bold: true }}',
-        "}",
-    ]
-
-
-def _steps(spec):
-    """Per-step deltas, each its own d2 board.
-
-    The animation earns its place only when consecutive boards differ in topology — "both
-    paths run at once, then the old one is removed" is something no single static picture
-    can say. Flowing arrows over an unchanging drawing explain nothing.
-    """
-    lines = ["steps: {"]
-    for i, step in enumerate(spec["steps"], start=1):
-        lines.append(f"  {_q(str(i))}: {{")
-        if step.get("caption"):
-            lines.append(f"    {_q(CAPTION_ID)}.label: {_q(step['caption'])}")
-        for node in step.get("add_nodes") or []:
-            lines += _node(node, 4, allow_new=True)
-        for edge in step.get("add_edges") or []:
-            lines.append("    " + _edge(edge))
-        for edge in step.get("relabel_edges") or []:
-            lines.append(f"    ({_path(edge['from'])} -> {_path(edge['to'])})[0].label: "
-                         f"{_q(edge['label'])}")
-        for edge in step.get("emphasize_edges") or []:
-            lines.append(f"    ({_path(edge['from'])} -> {_path(edge['to'])})[0]"
-                         ".style.stroke-width: 3")
-        for edge in step.get("remove_edges") or []:
-            # `: null` deletes the edge on this board and every later one.
-            lines.append(f"    ({_path(edge['from'])} -> {_path(edge['to'])})[0]: null")
-        lines.append("  }")
-    lines.append("}")
-    return lines
-
-
-def emit(spec, background=None, standalone=False):
+def emit(spec, background=None, standalone=False, wrap_edges=None):
     """Render `spec` to d2 source. Validates first — see spec.py on why that is loud.
 
     `background` paints the root rather than leaving it transparent; pass the page colour
@@ -405,6 +447,11 @@ def emit(spec, background=None, standalone=False):
 
     `standalone` picks the `direction` default out of `DIRECTION` — the two targets want
     opposite layouts, and only one of them has a width to fit into.
+
+    `wrap_edges` is the character width to wrap long edge labels to, or None to leave them
+    as written. Off by default because it is not free — a wrapped label is taller and reads a
+    beat slower — and `render.render()` turns it on only for the layout candidates that need
+    the width to fit the column.
     """
     validate(spec)
     kind = spec["kind"]
@@ -421,14 +468,11 @@ def emit(spec, background=None, standalone=False):
     if direction:
         lines.append(f"direction: {direction}")
 
-    if kind in ("architecture", "steps"):
+    if kind == "architecture":
         for node in spec["nodes"]:
-            lines += _node(node, allow_new=(kind == "steps"))
+            lines += _node(node)
         for edge in spec.get("edges") or []:
-            lines.append(_edge(edge))
-        if kind == "steps":
-            lines += _caption(spec["caption"])
-            lines += _steps(spec)
+            lines.append(_edge(edge, wrap=wrap_edges))
     elif kind == "sequence":
         extra = detail_lines(spec["participants"])
         height = ACTOR_HEIGHT if not extra else ACTOR_HEIGHT_DETAIL + (extra - 1) * LINE_H
@@ -446,21 +490,18 @@ def emit(spec, background=None, standalone=False):
         for table in spec["tables"]:
             lines += _table(table, "columns")
         for edge in spec.get("edges") or []:
-            lines.append(_edge(edge))
+            lines.append(_edge(edge, wrap=wrap_edges))
     elif kind == "class":
         for item in spec["classes"]:
             lines += _table(item, "members")
         for edge in spec.get("edges") or []:
-            lines.append(_edge(edge))
+            lines.append(_edge(edge, wrap=wrap_edges))
     elif kind == "state":
         for node in spec["states"]:
             lines += _node(node)
         for edge in spec["transitions"]:
-            lines.append(_edge(edge))
+            lines.append(_edge(edge, wrap=wrap_edges))
 
     return "\n".join(lines) + "\n"
 
 
-def is_animated(spec):
-    """Whether `render.py` must pass d2 an `--animate-interval`."""
-    return spec.get("kind") == "steps"

@@ -164,6 +164,83 @@ class TestHostCss(unittest.TestCase):
         self.assertIn(".d2-callout", css)
 
 
+class TestLayoutChoice(unittest.TestCase):
+    """`render()` measures both orientations and keeps the better one. Choosing by kind was
+    a guess that had to be wrong half the time: the reference diagrams are too big to lay out
+    wide, a four-box one is too small to lay out tall."""
+
+    def setUp(self):
+        self.calls = []
+        self._compile = render.compile_source
+        self._post = render.postprocess
+
+        def compile_source(source, pad=8, binary="d2"):
+            self.calls.append(source)
+            # Landscape comes out wide and short, portrait tall and narrow — enough for the
+            # ranking to have something to prefer. `self.natural` scales both, so a test can
+            # make every candidate fail the column.
+            w, h = (600, 300) if "direction: right" in source else (300, 600)
+            w, h = w * self.natural, h * self.natural
+            return (f'<svg width="{w}" height="{h}" viewBox="0 0 {w} {h}">'
+                    '<text font-size="13">x</text></svg>')
+
+        self.natural = 1
+
+        render.compile_source = compile_source
+        render.postprocess = lambda svg, name, theme_vars=True: svg
+
+    def tearDown(self):
+        render.compile_source = self._compile
+        render.postprocess = self._post
+
+    ARCH = {"kind": "architecture", "nodes": [{"id": "a", "role": "svc"}], "edges": []}
+
+    def test_an_explicit_direction_is_honoured_without_a_search(self):
+        render.render(dict(self.ARCH, direction="up"), name="x")
+        self.assertEqual(len(self.calls), 1)
+        self.assertIn("direction: up", self.calls[0])
+
+    def test_a_sequence_is_not_searched_because_d2_ignores_its_direction(self):
+        render.render({"kind": "sequence", "participants": [{"id": "a"}, {"id": "b"}],
+                       "messages": [{"from": "a", "to": "b", "label": "x"}]}, name="x")
+        self.assertEqual(len(self.calls), 1)
+
+    def test_both_orientations_are_tried(self):
+        render.render(self.ARCH, name="x")
+        directions = {"down" if "direction: down" in c else "right" for c in self.calls}
+        self.assertEqual(directions, {"down", "right"})
+
+    def test_the_shorter_layout_wins(self):
+        svg = render.render(self.ARCH, name="x")
+        self.assertIn('height="300"', svg)      # the landscape stub
+
+    def test_heights_within_a_bucket_are_decided_by_glyph_size(self):
+        """Scaling a drawing down makes it physically shorter, so comparing heights exactly
+        rewards shrinking: an 848px figure at 0.92 (11.9px text) beat the same one wrapped to
+        722px at full size (13.0px). Only a real difference in height should outrank text."""
+        self.assertEqual(render.HEIGHT_BUCKET, 100)
+        near = [round(h / render.HEIGHT_BUCKET) for h in (186, 202)]
+        self.assertEqual(near[0], near[1], "16px apart should tie on height")
+        far = [round(h / render.HEIGHT_BUCKET) for h in (93, 643)]
+        self.assertLess(far[0], far[1], "a 550px difference should not tie")
+
+    def test_a_diagram_that_fits_keeps_its_labels_as_written(self):
+        """Wrapping is a width lever, not an improvement: it is the last tie-break, so an
+        equally good layout with the author's own labels wins."""
+        spec = {"kind": "architecture",
+                "nodes": [{"id": "a", "role": "svc"}, {"id": "b", "role": "svc"}],
+                "edges": [{"from": "a", "to": "b", "label": "a rather long edge label"}]}
+        svg = render.render(spec, name="x")
+        self.assertEqual(len(self.calls), len(render.CANDIDATES))
+        self.assertIn('height="300"', svg)       # landscape, unwrapped
+
+    def test_every_candidate_is_measured_rather_than_stopping_at_the_first_that_fits(self):
+        """An early exit got this exactly wrong once: a four-box chain fits stacked downward,
+        so the search stopped and never found that wrapping fits it landscape and 7x shorter."""
+        render.render(self.ARCH, name="x")
+        self.assertEqual(len(self.calls), len(render.CANDIDATES))
+
+
 class TestToolchain(unittest.TestCase):
     def test_a_missing_binary_is_reported_not_raised(self):
         problems = render.check_toolchain(binary="d2-does-not-exist")

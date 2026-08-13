@@ -22,7 +22,7 @@ size gate is the real authority on that.
 
 # The kinds map 1:1 onto the reader's question — see skills/visualize/SKILL.md for which
 # question each one answers. That mapping is the playbook; this is just the vocabulary.
-KINDS = ("architecture", "sequence", "er", "class", "state", "steps")
+KINDS = ("architecture", "sequence", "er", "class", "state")
 
 # A role is what a box *is*, not what colour it is. The same role must mean the same
 # thing in every figure of a document, which is most of why a set of diagrams reads as
@@ -68,7 +68,6 @@ MAX_SIBLINGS = 6      # direct children of one container, or of the diagram root
 MAX_ROWS = 8          # columns in a table / members in a class
 MAX_LABEL = 40        # characters
 MAX_NOTE_WORDS = 5    # a callout is a margin note, not a sentence
-MAX_STEPS = 4         # boards in an animation
 
 # Transitions per state, above which a state diagram stops being readable even though every
 # individual state and label is fine. What actually goes wrong is repetition: when one
@@ -91,7 +90,8 @@ MAX_COMPONENTS = 2
 # its own: in any chain every edge is a bridge, so `a → b → c → d` looks like four groups joined
 # by three cuttable edges, and splitting that would be absurd. Width only hurts once there is
 # real content — the pipelines that prompted this carried 18 boxes across their groups, where the
-# reference animation is three. Two full rows' worth (2 x MAX_SIBLINGS) is the line.
+# reference architecture holds three per area. Two full rows' worth (2 x MAX_SIBLINGS) is
+# the line.
 MIN_SPLIT_BOXES = 12
 
 
@@ -153,7 +153,7 @@ def _walk(nodes, prefix=""):
             yield from _walk([child], f"{nid}.")
 
 
-def _check_nodes(nodes, where, ids, allow_new=False, roles=ROLES):
+def _check_nodes(nodes, where, ids, roles=ROLES):
     """Validate a node tree and add every node's *fully qualified* id to `ids`.
 
     Only the outermost call populates `ids`, from a single `_walk` of the whole tree.
@@ -162,11 +162,11 @@ def _check_nodes(nodes, where, ids, allow_new=False, roles=ROLES):
     the unqualified name passed validation and then drew d2's stray blank box — exactly
     the failure this module exists to prevent.
     """
-    _check_tree(nodes, where, allow_new, roles)
+    _check_tree(nodes, where, roles)
     ids.update(nid for nid, _ in _walk(nodes))
 
 
-def _check_tree(nodes, where, allow_new, roles=ROLES):
+def _check_tree(nodes, where, roles=ROLES):
     _require(isinstance(nodes, list) and nodes, f"{where} needs a non-empty node list")
     seen_here = set()
     for node in nodes:
@@ -186,14 +186,10 @@ def _check_tree(nodes, where, allow_new, roles=ROLES):
             # Smaller lines under the name. On a sequence lane it carries the modules behind an
             # abstract lane; on an architecture box, the members behind an aggregated area.
             _str(node["detail"], f"{where}: {nid} detail")
-        if node.get("new"):
-            # A stroke-only accent says "something here is special" without saying WHAT,
-            # and there is no legend to look it up in -- rejected as a general
-            # change-marker in favour of `note` callouts, which say it in words. It stays
-            # legal inside `steps`, where the per-step caption supplies the meaning.
-            _require(allow_new, f"{where}: {nid} sets `new`, which is only meaningful in a "
-                                "'steps' diagram (its caption says what changed). "
-                                "Elsewhere use `note` to name the change in words.")
+        _require("new" not in node,
+                 f"{where}: {nid} sets `new`. A stroke-only accent says \"something here is "
+                 "special\" without saying what, and there is no legend to look it up in — "
+                 "use a `note` to name the change in words.")
         _check_note(node, f"{where}: {nid}")
         children = node.get("children")
         if children is not None:
@@ -202,7 +198,7 @@ def _check_tree(nodes, where, allow_new, roles=ROLES):
             _require("role" not in node,
                      f"{where}: {nid} has children, so it is a container and takes the "
                      "container styling; remove its `role`")
-            _check_tree(children, f"{where}: {nid}", allow_new)
+            _check_tree(children, f"{where}: {nid}")
 
 
 def _check_edges(spec, ids, where, key="edges", required=True, allow_push=False):
@@ -250,8 +246,15 @@ def _check_rows(spec, key, where, ids, row_key, row_extra=(), addressable=True):
         _one_of(item.get("role", "neutral"), ROLES, f"{where}: {tid} role")
         _check_note(item, f"{where}: {tid}")
         rows = item.get(row_key)
+        # An empty box draws as a bare header with a zero-height body, which reads as a
+        # rendering fault rather than as "this type has nothing worth showing". The case
+        # that hits it is a base class drawn only so something can point at it, and the
+        # answer there is the one member that says why it is being pointed at.
         _require(isinstance(rows, list) and rows,
-                 f"{where}: {tid} needs a non-empty {row_key!r} list")
+                 f"{where}: {tid} needs a non-empty {row_key!r} list — for a base class you "
+                 f"are only drawing so another box can point at it, give it the one member "
+                 f"that earns it a place (`status = 400`), or drop the box and say "
+                 f"\"extends X\" in the other one's label")
         seen = set()
         for row in rows:
             _require(isinstance(row, dict), f"{where}: {tid} {row_key} entries must be dicts")
@@ -271,9 +274,6 @@ def _check_rows(spec, key, where, ids, row_key, row_extra=(), addressable=True):
 
 KEYS = ("pk", "fk", "unique")
 
-# Node id the `steps` emitter claims for the caption box — see _check_steps.
-CAPTION_ID = "caption"
-
 
 def validate(spec):
     """Raise SpecError unless `spec` describes a renderable diagram. Returns the spec."""
@@ -285,15 +285,13 @@ def validate(spec):
         _str(spec["title"], "title")
     ids = set()
 
-    if kind in ("architecture", "steps"):
-        _check_nodes(_list(spec, "nodes", kind), kind, ids, allow_new=(kind == "steps"))
+    if kind == "architecture":
+        _check_nodes(_list(spec, "nodes", kind), kind, ids)
         # `edges` is optional, as it is for `er`. Requiring one made a legitimate diagram
         # unrenderable and only showed up when splitting a real pipeline: a CI stage whose five
         # jobs have no dependencies between them is a picture of that stage, and refusing it
         # forced the whole pipeline back into one 3433px-wide canvas.
         _check_edges(spec, ids, kind, required=False)
-        if kind == "steps":
-            _check_steps(spec, ids)
     elif kind == "sequence":
         # Participants are columns and d2 orders them as written -- the one thing
         # graphviz could not do at all, and the reason d2 is the engine.
@@ -335,37 +333,6 @@ def _check_flat(nodes, kind, key):
     for i, node in enumerate(nodes):
         if isinstance(node, dict):
             _require("children" not in node, f"{kind}: {key}[{i}] cannot have children")
-
-
-def _check_steps(spec, ids):
-    """The `steps` kind: a base diagram plus per-step deltas.
-
-    Each step is a separate d2 board, and d2 animates between them. It earns its keep
-    only when consecutive boards differ in *topology* — "both paths run at once, then
-    the old one is removed" is a thing no single static diagram can say. d2 does not
-    render board names into the SVG, so a caption is required: without it the reader
-    cannot tell which phase is on screen.
-    """
-    steps = _list(spec, "steps", "steps")
-    _str(spec.get("caption"), "steps: the base diagram needs a `caption` (phase 1's text)")
-    # The emitter adds a borderless node called `caption` to carry the phase text, because
-    # d2 does not render board names into the SVG. A node of the same name would be
-    # silently merged into it and inherit its invisible styling.
-    _require(CAPTION_ID not in ids,
-             f"steps: {CAPTION_ID!r} is reserved — the renderer uses a node of that name "
-             "to display the per-step caption. Rename the node.")
-    known = set(ids)
-    for i, step in enumerate(steps):
-        where = f"steps: steps[{i}]"
-        _require(isinstance(step, dict), f"{where} must be a dict")
-        if "caption" in step:
-            _str(step["caption"], f"{where}: caption")
-        if step.get("add_nodes"):
-            _check_nodes(step["add_nodes"], where, known, allow_new=True)
-        for key in ("add_edges", "remove_edges", "relabel_edges", "emphasize_edges"):
-            _check_edges(step, known, where, key=key, required=False)
-        for edge in step.get("relabel_edges") or []:
-            _str(edge.get("label"), f"{where}: relabel_edges needs a `label`")
 
 
 # The cardinality vocabulary itself: digits, punctuation, and the n/m that stand for "many".
@@ -530,7 +497,7 @@ def content_warnings(spec):
                    f"{joined} Consider one diagram per group, with a `note` pointing at the "
                    "other part wherever a link is cut")
 
-    if kind in ("architecture", "steps"):
+    if kind == "architecture":
         nodes = spec.get("nodes") or []
         if len(nodes) > MAX_SIBLINGS:
             out.append(f"{len(nodes)} top-level nodes (>{MAX_SIBLINGS})")
@@ -632,7 +599,4 @@ def content_warnings(spec):
         check_notes(items, noun)
         check_labels(spec.get("edges") or [], "edge")
 
-    if kind == "steps" and len(spec.get("steps") or []) > MAX_STEPS:
-        out.append(f"{len(spec['steps'])} steps (>{MAX_STEPS}) — an animation the reader "
-                   "cannot hold in their head explains less than a few well-chosen boards")
     return out

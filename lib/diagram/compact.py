@@ -47,13 +47,20 @@ MASK_TOLERANCE = 3        # slack when matching a label's mask rect to its basel
 # gap is recomputed the same way d2 does it, so the pattern still ends flush at the foot.
 DASH = 8
 
-# The second line of a participant's label — the real module names behind an abstract lane.
-# 11px is the floor the size gate enforces (`gates/size.MIN_READABLE`), so this is as small as
-# a legible diagram gets; the recession the eye reads comes mostly from the muted colour, not
-# from the two points of size. DETAIL_DY is the baseline gap, down from d2's 15px for two
-# equal lines, because the second line is now shorter than the first.
+# The second line of a box's label — the real module names behind an abstract lane, the
+# columns behind a collapsed area. 11px, and the recession the eye reads comes mostly from
+# the muted colour rather than from the two points of size. DETAIL_DY is the baseline gap,
+# down from d2's 15px for two equal lines, because the second line is now shorter.
+#
+# It is deliberately AT the primary legibility floor rather than under it, and `DETAIL_CLASS`
+# is what lets the size gate hold it to its own, lower floor (`gates/size.MIN_READABLE_DETAIL`).
+# Without that tag the two were measured together, which made a subtitle the most expensive
+# text in the diagram: at 11px it could not survive any downscale at all, so a figure carrying
+# one had to fit the content column exactly while the same figure without one had 141px of
+# slack. A subtitle is supplementary by construction — it may ride a little smaller.
 DETAIL_FONT = 11
 DETAIL_DY = 13
+DETAIL_CLASS = "d2-detail"
 
 
 class CompactError(Exception):
@@ -107,24 +114,34 @@ def _path_extent(body):
 
 
 def style_detail_lines(svg):
-    """Shrink and mute the second line of any two-line participant label.
+    """Shrink and mute the second line of any two-line *box* label.
 
     d2 emits `"Title\\nDetail"` as a single `<text>` holding one `<tspan>` per line and offers
     no way to style them differently, so the distinction has to be made here. Every tspan after
     the first gets `DETAIL_FONT` and the muted foreground — the same colour the edge labels use,
     so it is already covered by the contrast gate and by the palette's var substitution.
 
+    An **edge** label is left alone, and that exclusion is load-bearing rather than tidiness.
+    A two-line edge label is one phrase that wrapped, not a subtitle, so shrinking its
+    continuation both misreads it and costs the whole diagram its headroom: DETAIL_FONT is the
+    legibility floor, so a diagram containing one cannot be scaled down at all. Wrapping a long
+    edge label is the cheapest width there is — it took a four-column architecture from 1159px
+    to 842px — and that lever only works if the wrapped line stays the size it was.
+
     Untouched when there is no two-line label, which is the normal case.
     """
     def restyle(match):
         head, spans = match.group(1), match.group(2)
+        if "text-italic" in head:      # d2's class for an edge label
+            return match.group(0)
         tspans = re.findall(r"<tspan\b[^>]*>.*?</tspan>", spans, re.S)
         if len(tspans) < 2:
             return match.group(0)
         out = [tspans[0]]
         for tspan in tspans[1:]:
             fixed = re.sub(r'\sdy="[\d.-]+"', f' dy="{DETAIL_DY}.000000"', tspan)
-            fixed = fixed.replace("<tspan", f'<tspan fill="{palette.MUTED}" '
+            fixed = fixed.replace("<tspan", f'<tspan class="{DETAIL_CLASS}" '
+                                            f'fill="{palette.MUTED}" '
                                             f'style="font-size:{DETAIL_FONT}px"', 1)
             out.append(fixed)
         return f"{head}{''.join(out)}</text>"

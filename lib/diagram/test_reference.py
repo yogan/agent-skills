@@ -29,10 +29,14 @@ from lib.diagram.spec import content_warnings
 MEASURED = {
     "arch": (887, 771),
     "sequence": (663, 420),
-    "er": (324, 722),
-    "class": (474, 560),
+    # `er` and `class` are landscape, chosen by measurement rather than by kind — see
+    # render._pick_layout. Portrait was 324x722 and 474x560: legible at scale 1.0, but most of
+    # the content column empty and nearly a full viewport tall. Wrapping the `er` diagram's
+    # cardinality labels at their colon is what buys it the width. These are the two reference
+    # diagrams small enough to be laid out wide, which a per-kind default could not express.
+    "er": (935, 285),
+    "class": (899, 357),
     "state": (375, 796),
-    "animated": (763, 390),
 }
 
 HAVE_D2 = render.d2_version() is not None
@@ -74,16 +78,20 @@ class TestReferenceCorpus(unittest.TestCase):
     def test_the_standalone_target_turns_the_layout_landscape(self):
         """The other half of `d2.DIRECTION`, in geometry rather than emitted source.
 
-        MEASURED above pins the embedded renders, which are portrait because a landscape
-        drawing is scaled into the 777px column until its text drops under 11px. Standalone
-        has no column, so the same three specs come out wide — and `architecture` does not,
-        being the one kind where `right` reads worse.
+        Standalone has no content column to fit into, so `er`, `class` and `state` are laid
+        out wide — and `architecture` is not, being the one kind where `right` reads worse.
+        Embedded, the layout is not a per-kind default at all any more: `render._pick_layout`
+        measures both and keeps the better one, which is why `class` is landscape there too
+        while `er` and `state` are the portrait their size forces.
         """
         for name in ("er", "class", "state"):
             svg = render.standalone(REFERENCE[name], name=f"s--{name}")
             width, height = render.natural_size(svg)
             self.assertGreater(width, height, f"{name} standalone should be landscape")
-            self.assertLess(*MEASURED[name], msg=f"{name} embedded should be portrait")
+        self.assertLess(*MEASURED["state"], msg="state embedded should be portrait")
+        for name in ("er", "class"):
+            self.assertGreater(*MEASURED[name],
+                               msg=f"{name} is small enough to be laid out wide in the column")
         arch = render.standalone(REFERENCE["arch"], name="s--arch")
         width, height = render.natural_size(arch)
         self.assertAlmostEqual(width / height, MEASURED["arch"][0] / MEASURED["arch"][1],
@@ -137,10 +145,6 @@ class TestReferenceCorpus(unittest.TestCase):
             self.assertIn("d2-callout", svg, f"{name} callout was not tagged")
             self.assertNotIn(render.CALLOUT_ATTRS, svg,
                              f"{name} still carries d2's own callout paint")
-
-    def test_the_animated_diagram_really_animates(self):
-        """A steps diagram must come out as multiboard output with CSS animation."""
-        self.assertIn("animation", self.svgs["animated"])
 
     def test_every_annotated_diagram_has_a_visible_callout_not_just_a_title(self):
         """`tooltip` alone is a hover-only <title>; only `tooltip.near` is visible."""

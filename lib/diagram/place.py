@@ -60,7 +60,6 @@ def note_sites(spec):
                 found.append(node)
             walk_nodes(node.get("children"))
 
-    kind = spec.get("kind")
     walk_nodes(spec.get("nodes"))
     walk_nodes(spec.get("participants"))
     walk_nodes(spec.get("states"))
@@ -68,9 +67,6 @@ def note_sites(spec):
         for item in spec.get(key) or []:
             if "note" in item:
                 found.append(item)
-    if kind == "steps":
-        for step in spec.get("steps") or []:
-            walk_nodes(step.get("add_nodes"))
     return found
 
 

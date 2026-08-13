@@ -154,18 +154,16 @@ class TestNotes(unittest.TestCase):
             validate(spec)
 
 
-class TestNewFlagIsStepsOnly(unittest.TestCase):
-    """A stroke-only accent has no legend, so it cannot say WHAT changed — rejected
-    everywhere except `steps`, where the caption carries that meaning."""
+class TestNewFlagIsRejected(unittest.TestCase):
+    """A stroke-only accent has no legend, so it cannot say WHAT changed. It survived for a
+    while inside the animated `steps` kind, whose per-board caption supplied the words; that
+    kind is gone, and with it the flag."""
 
     def test_new_is_rejected_on_an_architecture_node(self):
         spec = arch()
         spec["nodes"][1]["new"] = True
-        with self.assertRaisesRegex(SpecError, "only meaningful in a 'steps' diagram"):
+        with self.assertRaisesRegex(SpecError, "sets `new`"):
             validate(spec)
-
-    def test_new_is_allowed_on_a_step_added_node(self):
-        validate(steps())
 
 
 class TestSequence(unittest.TestCase):
@@ -352,67 +350,11 @@ class TestState(unittest.TestCase):
             })
 
 
-def steps(**over):
-    spec = {
-        "kind": "steps",
-        "direction": "right",
-        "caption": "phase 1 of 4 — today: polling only",
-        "nodes": [{"id": "editor", "label": "Editor", "role": "client"},
-                  {"id": "api", "label": "GraphQL API", "role": "svc"}],
-        "edges": [{"from": "editor", "to": "api", "label": "poll every 5s"}],
-        "steps": [
-            {"emphasize_edges": [{"from": "editor", "to": "api"}]},
-            {"caption": "phase 2 — deploy gateway",
-             "add_nodes": [{"id": "gw", "label": "Presence Gateway", "role": "svc", "new": True}],
-             "add_edges": [{"from": "gw", "to": "api", "label": "subscribe"}]},
-            {"caption": "phase 3 — cutover",
-             "remove_edges": [{"from": "editor", "to": "api"}],
-             "relabel_edges": [{"from": "gw", "to": "api", "label": "WebSocket 100%"}]},
-        ],
-    }
-    spec.update(over)
-    return spec
-
-
-class TestSteps(unittest.TestCase):
-    def test_valid_steps_passes(self):
-        validate(steps())
-
-    def test_a_caption_is_required_because_d2_omits_board_names(self):
-        spec = steps()
-        del spec["caption"]
-        with self.assertRaisesRegex(SpecError, "caption"):
-            validate(spec)
-
-    def test_a_node_added_in_an_earlier_step_is_addressable_later(self):
-        """`gw` appears in step 2 and is relabelled in step 3 — that must resolve."""
-        validate(steps())
-
-    def test_an_edge_to_a_node_that_no_step_adds_is_rejected(self):
-        spec = steps()
-        spec["steps"][1]["add_edges"] = [{"from": "gw", "to": "redis"}]
-        with self.assertRaisesRegex(SpecError, "redis"):
-            validate(spec)
-
-    def test_relabel_without_a_label_is_rejected(self):
-        spec = steps()
-        spec["steps"][2]["relabel_edges"] = [{"from": "gw", "to": "api"}]
-        with self.assertRaisesRegex(SpecError, "label"):
-            validate(spec)
-
-    def test_steps_list_is_required(self):
-        spec = steps()
-        del spec["steps"]
-        with self.assertRaisesRegex(SpecError, "steps"):
-            validate(spec)
-
-
 class TestContentWarnings(unittest.TestCase):
     """Advisory, not fatal: they predict a size-gate failure with a better message."""
 
     def test_a_disciplined_diagram_warns_about_nothing(self):
         self.assertEqual(content_warnings(arch()), [])
-        self.assertEqual(content_warnings(steps()), [])
 
     def test_too_many_states_warns(self):
         spec = {"kind": "state",
@@ -509,11 +451,6 @@ class TestContentWarnings(unittest.TestCase):
         warns = content_warnings(spec)
         self.assertTrue(any("10 members" in w for w in warns), warns)
         self.assertTrue(any(w.startswith("class label is") for w in warns), warns)
-
-    def test_too_many_animation_steps_warns(self):
-        spec = steps()
-        spec["steps"] = spec["steps"] + [{"caption": "phase 5"}, {"caption": "phase 6"}]
-        self.assertTrue(any("5 steps" in w for w in content_warnings(spec)))
 
     def test_a_bare_ratio_er_label_warns(self):
         """`n : 1` makes the reader work out which end is which; observed in a real run."""

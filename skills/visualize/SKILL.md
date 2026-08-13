@@ -28,7 +28,7 @@ wants to know, then read it off this table:
 | What does the data look like? | `er` |
 | How do these types relate? | `class` |
 | What states can this be in, and how does it move between them? | `state` |
-| How did we get from the old design to the new one? | `steps` (animated) |
+| How did we get from the old design to the new one? | **two** diagrams, before and after |
 
 Read the user's words for the giveaways:
 
@@ -38,8 +38,10 @@ Read the user's words for the giveaways:
 - "lifecycle", "can it be in", "transitions", "retry", "states" → **state**.
 - "classes", "interfaces", "types", "who implements" → **class**.
 - "architecture", "overview", "how it fits together", "where does X run" → **architecture**.
-- "migration", "cutover", "before and after" → **steps**, but only if consecutive boards
-  differ in *topology*. If nothing moves, a static diagram says it better.
+- "migration", "cutover", "before and after" → **two diagrams of the same kind**, one per
+  state of the world, rendered together and opened in one viewer window. There is no animated
+  kind: boards that replace each other on screen make the reader hold the previous one in
+  their head, which is exactly the comparison they wanted to see side by side.
 
 If the request genuinely spans two questions ("show me the schema and how a write flows
 through it"), draw **two diagrams**, each answering one. Do not merge them: a diagram that

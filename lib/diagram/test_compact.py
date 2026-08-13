@@ -198,6 +198,15 @@ class TestDetailLines(unittest.TestCase):
     def test_a_single_line_label_is_left_alone(self):
         self.assertEqual(compact.style_detail_lines(self.ONE_LINE), self.ONE_LINE)
 
+    def test_a_wrapped_edge_label_keeps_its_size(self):
+        """It is one phrase that wrapped, not a subtitle — and shrinking it to the legibility
+        floor would cost the whole diagram its downscale headroom, which is exactly what
+        wrapping a long edge label is meant to buy."""
+        wrapped = ('<text x="90" y="60" class="text-italic" style="font-size:13px">'
+                   '<tspan x="90" dy="0.000000">plain</tspan>'
+                   '<tspan x="90" dy="15.000000">filesystem</tspan></text>')
+        self.assertEqual(compact.style_detail_lines(wrapped), wrapped)
+
     def test_it_stays_well_formed(self):
         ET.fromstring(compact.style_detail_lines(self.TWO_LINE))
 
