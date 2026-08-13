@@ -10,8 +10,10 @@ The subprocess tests need d2; they skip visibly without it.
 
 Run: `python3 skills/visualize/scripts/test_visualize.py`
 """
+import hashlib
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -36,8 +38,49 @@ def read(path):
         return handle.read()
 
 
-def run(*args, spec=None):
-    """Run the CLI in a subprocess; returns (returncode, stdout, stderr)."""
+# Where `run` sends each invocation's output, and what it has already run. Both are
+# module-level because they are shared across every test in the file; see `run`.
+_WORKSPACE = None
+_RUNS = {}
+
+
+def setUpModule():
+    global _WORKSPACE
+    _WORKSPACE = tempfile.mkdtemp(prefix="test-visualize-")
+
+
+def tearDownModule():
+    shutil.rmtree(_WORKSPACE, ignore_errors=True)
+
+
+def run(*args, spec=None, own_output=True):
+    """Run the CLI in a subprocess; returns (returncode, stdout, stderr).
+
+    Two things happen here that are worth the words, and they depend on each other.
+
+    **Each run gets its own `-o`.** Left to itself the CLI writes to
+    `/tmp/<date>-diagram-<slug>.svg` — a path derived only from the date and the spec's
+    title, so every test rendering the same reference spec writes to the SAME file. That was
+    survivable only because each test read the file immediately after its own write; the
+    tests were coupled through /tmp and got away with it on ordering. Giving each invocation
+    its own path in a workspace removes the coupling outright.
+
+    **Identical invocations run once.** Seven tests ask for `--no-open --no-png --no-place`
+    on the reference state machine and then assert seven different things about that one
+    output. Each run is a d2 compile plus a browser pass, so repeating it was 10 of this
+    file's 28 subprocesses for no extra coverage — the second run of an identical command can
+    only tell you what the first already did.
+
+    The order matters: caching is ONLY sound because of the isolation above. A cached value
+    is a path, and a path is not a value — it points at mutable state. Cache first and a hit
+    skips the write, so the test reads whatever the last run left there, which is exactly how
+    this failed when it was tried the other way round: the light and dark theme assertions
+    came back with each other's colours. Hence `own_output=False` is never cached — it is for
+    the one test that checks the default path, and that run writes where others can reach.
+    """
+    key = (args, json.dumps(spec, sort_keys=True) if spec is not None else None)
+    if own_output and key in _RUNS:
+        return _RUNS[key]
     with tempfile.TemporaryDirectory() as tmp:
         argv = [sys.executable, SCRIPT]
         if spec is not None:
@@ -46,8 +89,14 @@ def run(*args, spec=None):
                 json.dump(spec, handle)
             argv.append(path)
         argv += list(args)
+        if own_output and spec is not None and not {"-o", "--output"} & set(args):
+            stem = hashlib.sha1(repr(key).encode()).hexdigest()[:12]
+            argv += ["-o", os.path.join(_WORKSPACE, f"{stem}.svg")]
         proc = subprocess.run(argv, capture_output=True, text=True, timeout=300)
-        return proc.returncode, proc.stdout, proc.stderr
+        result = (proc.returncode, proc.stdout, proc.stderr)
+        if own_output:
+            _RUNS[key] = result
+        return result
 
 
 class TestSlugify(unittest.TestCase):
@@ -225,6 +274,19 @@ class TestStandaloneImage(unittest.TestCase):
                                  spec=STATE)
             self.assertEqual(code, 0, err)
             self.assertEqual(out.strip(), target)
+
+    def test_the_default_path_is_dated_and_named_after_the_spec(self):
+        """`own_output=False` — the one run in this file that uses the real default. Every
+        other test passes its own `-o` so they cannot overwrite each other's output, which
+        left this behaviour covered only by accident until it was written down."""
+        import datetime
+
+        code, out, err = run("--no-open", "--no-png", "--no-place", spec=STATE,
+                             own_output=False)
+        self.assertEqual(code, 0, err)
+        today = datetime.date.today().strftime("%Y-%m-%d")
+        self.assertEqual(out.strip(),
+                         f"/tmp/{today}-diagram-{V.slugify(STATE['title'])}.svg")
 
     def test_the_gate_table_goes_to_stderr_so_stdout_is_just_the_path(self):
         """Callers read stdout for the path; the report must not pollute it."""
