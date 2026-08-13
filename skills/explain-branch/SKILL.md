@@ -90,7 +90,12 @@ Structure the spec's `"sections"` as:
    branch-wide one below. Only set `"url"` when `MR_URL` is set (an MR-context run) — strip
    the trailing `/-/merge_requests/$MR_NUM` off `MR_URL` to get the project's base URL, then
    `url = "<project-base>/-/commit/<full-sha>"` (full SHA, from `git log --format='%H %s'`).
-   For a plain branch (no MR), omit `"url"` — the subject renders as plain text.
+   For a plain branch, there is still a commit page whenever `git remote get-url origin` is a
+   GitLab/GitHub remote — normalise it (`git@host:group/repo.git` → `https://host/group/repo`,
+   drop a trailing `.git`) and build `<base>/-/commit/<full-sha>` for GitLab, `<base>/commit/
+   <full-sha>` for GitHub. Losing every per-chapter link because there is no MR is an
+   oversight, not a rule. Omit `"url"` only when the remote is missing or not http-resolvable;
+   the subject then renders as plain text.
    Each chapter's `html` covers that commit's own intuition + a code walkthrough of *its* diff
    only (use `git diff <hash>^..<hash>` to get exactly that commit's change) — do not re-explain
    ground already covered by an earlier chapter.
@@ -111,8 +116,9 @@ explain-diff's "judgement, not quota" rule warns about — and consecutive chapt
 feature tend to want the *same* diagram, which fails its "is this a different question?" test.
 Prefer one good diagram in the chapter that introduces a structure, and refer back to it from the
 later ones rather than redrawing a near-copy. If a later chapter genuinely changes the shape of
-something an earlier chapter drew, that is a `steps` diagram's job, or two diagrams that are
-honestly different.
+something an earlier chapter drew, redraw it there as a before/after pair — same ids, same
+roles, the two tokens adjacent — rather than as a near-copy several chapters apart, which the
+reader cannot compare at all.
 
 Set `"slug"` to `$LABEL`. Build `"subtitle"` mostly like explain-diff (link the MR via
 `[MR !$MR_NUM: $MR_TITLE]($MR_URL)` when set, backtick the branch), but **drop the trailing

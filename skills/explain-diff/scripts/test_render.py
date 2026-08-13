@@ -8,6 +8,8 @@ Regression tests are grounded in real bugs from this file's git history (see eac
 docstring for the commit); everything else covers the main documented behavior of the
 pure formatting functions and the top-level render() assembly.
 """
+import contextlib
+import io
 import os
 import shutil
 import sys
@@ -131,15 +133,23 @@ class TestCollectAllQuizQuestions(unittest.TestCase):
                 {"id": "b"},
             ],
         }
-        questions = R.collect_all_quiz_questions(spec)
-        self.assertEqual([q["question"] for q in questions], ["top", "sec-a"])
+        pairs = R.collect_all_quiz_questions(spec)
+        self.assertEqual([q["question"] for _, q in pairs], ["top", "sec-a"])
+
+    def test_each_question_is_paired_with_where_it_lives(self):
+        """So the length-bias error can say `chapter-3 #2` instead of a document-wide index
+        that has to be counted back by hand across four sections' arrays."""
+        spec = {"quiz": [{"question": "top"}],
+                "sections": [{"id": "chapter-3", "quiz": [{"question": "c"}]}]}
+        self.assertEqual([where for where, _ in R.collect_all_quiz_questions(spec)],
+                         ["quiz", "chapter-3"])
 
     def test_empty_spec_yields_no_questions(self):
         self.assertEqual(R.collect_all_quiz_questions({}), [])
 
 
 class TestCheckLengthBias(unittest.TestCase):
-    def _quiz(self, n, biased):
+    def _quiz(self, n, biased, where="quiz"):
         """`n` questions; `biased` of them have the correct option uniquely longest."""
         quiz = []
         for i in range(n):
@@ -149,7 +159,7 @@ class TestCheckLengthBias(unittest.TestCase):
             else:
                 options = [{"text": "same len a", "correct": False},
                           {"text": "same len b", "correct": True}]
-            quiz.append({"question": f"q{i}", "options": options})
+            quiz.append((where, {"question": f"q{i}", "options": options}))
         return quiz
 
     def test_empty_quiz_passes(self):
@@ -164,6 +174,13 @@ class TestCheckLengthBias(unittest.TestCase):
     def test_bias_beyond_the_allowance_exits(self):
         with self.assertRaises(SystemExit):
             R.check_length_bias(self._quiz(6, biased=3))
+
+    def test_the_error_names_the_section_and_the_index_within_it(self):
+        quiz = self._quiz(3, biased=3, where="chapter-2") + self._quiz(3, 0, where="chapter-3")
+        with self.assertRaises(SystemExit):
+            with contextlib.redirect_stderr(io.StringIO()) as err:
+                R.check_length_bias(quiz)
+        self.assertIn("chapter-2 #1, chapter-2 #2, chapter-2 #3", err.getvalue())
 
 
 class TestRenderDiagramsInHtml(unittest.TestCase):
@@ -320,6 +337,72 @@ class TestD2Diagrams(unittest.TestCase):
         with self.assertRaises(SpecError):
             R.render_diagram({"kind": "state", "states": [{"id": "a", "role": "working"}],
                               "transitions": [{"from": "a", "to": "typo"}]}, name="x")
+
+
+class TestDiagramAdvice(unittest.TestCase):
+    """`lib.diagram.spec.content_warnings` is how the author finds out that a spec is
+    editorially off — a bare ER ratio, eight sequence steps, an ASCII arrow in a label. It
+    used to be collected by the visualize CLI only, so an explainer's diagrams were never
+    advised at all."""
+
+    def setUp(self):
+        R._DIAGRAM_ADVICE.clear()
+        R._DIAGRAM_GATE_PROBLEMS.clear()
+        R._DIAGRAM_CACHE.clear()
+        self._render = R._diagram_render.render
+        self._avail = R._diagram_browser.available
+        # The advice is computed from the spec, so neither d2 nor a browser is involved.
+        R._diagram_render.render = lambda spec, name="diagram", **kw: "<svg/>"
+        R._diagram_browser.available = lambda: False
+
+    def tearDown(self):
+        R._diagram_render.render = self._render
+        R._diagram_browser.available = self._avail
+        R._DIAGRAM_ADVICE.clear()
+        R._DIAGRAM_GATE_PROBLEMS.clear()
+        R._DIAGRAM_CACHE.clear()
+
+    def test_a_bare_er_ratio_is_advised_against(self):
+        R.render_diagram({
+            "kind": "er",
+            "tables": [{"id": "users", "role": "store",
+                        "columns": [{"name": "id", "type": "uuid", "key": "pk"}]},
+                       {"id": "docs", "role": "store",
+                        "columns": [{"name": "owner_id", "type": "uuid", "key": "fk"}]}],
+            "edges": [{"from": "docs.owner_id", "to": "users.id", "label": "n : 1"}],
+        }, name="schema")
+        self.assertTrue(any("name the entities" in a for a in R._DIAGRAM_ADVICE),
+                        R._DIAGRAM_ADVICE)
+        self.assertTrue(all(a.startswith("schema: ") for a in R._DIAGRAM_ADVICE),
+                        R._DIAGRAM_ADVICE)
+
+    def test_advice_is_kept_apart_from_the_gate_problems(self):
+        """One list would make "wide" read as loudly as "clipped"."""
+        R.render_diagram({
+            "kind": "state",
+            "states": [{"id": f"s{i}", "role": "working"} for i in range(8)],
+            "transitions": [{"from": f"s{i}", "to": f"s{i + 1}", "label": "next"}
+                            for i in range(7)],
+        }, name="lifecycle")
+        self.assertTrue(any("8 states" in a for a in R._DIAGRAM_ADVICE), R._DIAGRAM_ADVICE)
+        self.assertFalse(any("8 states" in p for p in R._DIAGRAM_GATE_PROBLEMS),
+                         R._DIAGRAM_GATE_PROBLEMS)
+
+    def test_a_clean_spec_says_nothing(self):
+        R.render_diagram({
+            "kind": "state",
+            "states": [{"id": "live", "role": "steady"}, {"id": "closed", "role": "terminal"}],
+            "transitions": [{"from": "live", "to": "closed", "label": "user leaves"}],
+        }, name="plain")
+        self.assertEqual(R._DIAGRAM_ADVICE, [])
+
+    def test_a_malformed_spec_raises_a_spec_error_not_a_key_error(self):
+        """content_warnings() indexes fields it has not checked, so validating first is what
+        makes the message say which field is wrong."""
+        from lib.diagram.spec import SpecError
+        with self.assertRaises(SpecError):
+            R.render_diagram({"kind": "state", "states": [{"role": "working"}],
+                              "transitions": []}, name="nameless")
 
 
 class TestRender(unittest.TestCase):

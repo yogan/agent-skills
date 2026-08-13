@@ -16,8 +16,10 @@ takes a small JSON spec with just the content and renders the final page.
 Usage:
     python render.py spec.json [-o output.html]
 
-If -o is omitted, writes to <dir-of-spec>/YYYY-MM-DD-<slug>.html (matching the
-skill's filename convention), where <slug> comes from the spec's "slug" field.
+If -o is omitted, writes to /tmp/YYYY-MM-DD-explanation-<slug>.html, where <slug>
+comes from the spec's "slug" field (falling back to a slugified "title"). The page is
+a throwaway artifact, so it lands in /tmp rather than anywhere near the repo being
+explained; pass -o if you want it somewhere else.
 
 Code blocks get client-side syntax highlighting (hand-rolled, no CDN dependency —
 the highlighter is inlined in the page, see HIGHLIGHT_JS below). Tag a code
@@ -55,14 +57,16 @@ Spec format (JSON):
     "retry-flow": {
       "kind": "state",
       "states": [
-        {"id": "failed", "label": "request failed", "role": "terminal"},
+        {"id": "inflight", "label": "request in flight", "role": "working"},
         {"id": "backoff", "label": "backoff with jitter", "role": "transient",
          "note": "new retry path"},
-        {"id": "done", "label": "succeeded", "role": "steady"}
+        {"id": "done", "label": "succeeded", "role": "steady"},
+        {"id": "gave_up", "label": "gave up", "role": "terminal"}
       ],
       "transitions": [
-        {"from": "failed", "to": "backoff", "label": "5xx"},
-        {"from": "backoff", "to": "done", "label": "retry ok (max 3)"}
+        {"from": "inflight", "to": "backoff", "label": "5xx"},
+        {"from": "backoff", "to": "done", "label": "retry ok"},
+        {"from": "backoff", "to": "gave_up", "label": "3 attempts"}
       ]
     }
   },
@@ -104,28 +108,40 @@ rather than guessing.** The short version:
 - **"kind" is required** and picks the diagram type by the question it answers:
   `architecture` (what talks to what) · `sequence` (what happens in what order) ·
   `er` (what the data looks like) · `class` (how types relate) · `state` (what states it can
-  be in) · `steps` (an animated before/after, where each board differs in topology).
-  A change with an order in it wants a `sequence`, not boxes and arrows: no arrangement of
-  boxes expresses "first, then".
-- **"role" on every box** says what it *is*, never what colour you want: `client` · `svc` ·
-  `store` · `cache` · `ext` · `neutral`. Reuse them identically across every diagram in one
-  document - a colour meaning the same thing everywhere is most of what makes a set of figures
-  read as one system.
+  be in). A change with an order in it wants a `sequence`, not boxes and arrows: no
+  arrangement of boxes expresses "first, then"; a before/after is two diagrams, one each.
+- **The colour vocabulary is per kind, and enforced.** A box in an `architecture`, `er` or
+  `class` diagram carries a "role" for what it *is*, never for the colour you want: `client` ·
+  `svc` · `store` · `cache` · `ext` · `neutral`. A `state` has its own set - `working` · `steady`
+  · `transient` · `terminal` · `neutral` - and mixing the two sets is rejected outright. A
+  `sequence` colours by "group" instead (which side of the wire a lane is on: `browser`/`server`,
+  `cli`/`daemon`); a lane carrying both a "group" and a "role" is rejected. Reuse whichever set
+  identically across every diagram in one document.
 - **Mark what the change touched with "note"** (2-4 words, e.g. "new service", "gains a
   revision column"). It renders as a callout that is visible without hovering, positioned
   automatically by measuring every candidate anchor in a headless browser. Leave "near" out and
   let it be measured; hand-picked anchors have measurably lost to it.
   Do NOT convey "this is new" with styling instead - there is no legend, so a colour or a
   border says "something here is special" without ever saying what.
-- **Size is a rendering constraint, not a preference.** D2 offers no way to compact a diagram
-  after the fact, so an oversized one cannot be fixed afterwards, only authored smaller: <=6
-  states, <=7 sequence messages, <=6 boxes per container, and only the columns or members the
-  change is actually about. A too-wide diagram does not overflow - the page scales it down and
-  its text goes grey. Making it wider is never the fix.
+- **A diagram here is embedded in a page, so width is a hard constraint.** The article gives it
+  a 777px column and scales anything wider down, every glyph with it; past roughly 900px of
+  natural canvas the text drops under 11px and the size gate says TINY. Leave "direction" out
+  (the renderer already stacks an embedded figure) and buy space by drawing less: <=6 states,
+  <=7 sequence messages, <=6 boxes per container, and only the columns or members the change is
+  actually about. Making it wider is never the fix. Note that the standalone `visualize` skill
+  says the opposite about width - it opens files in a viewer, this renders into a column.
 
-The gates (fits a viewport, no glyph below ~11px or above an h2, WCAG AA in both themes,
-nothing clipped, every colour themeable) run on every diagram and report to stderr. They do
-not block the document: fix the offending spec and re-render.
+Two channels of feedback, both on stderr, neither fatal:
+
+- **problems** - the gates, measured on the drawn SVG: fits a viewport, no glyph below ~11px or
+  above an h2, WCAG AA in both themes, nothing clipped, every colour themeable.
+- **advisories** - `lib.diagram.spec.content_warnings`, read off the spec as authored: a bare ER
+  ratio, an eighth sequence message, an ASCII `->` in a label, transitions per state, groups
+  barely connected enough to be worth two diagrams, an over-long "detail".
+
+Fix the offending spec and re-render. Hard errors (an edge pointing at an id that does not
+exist, a role a kind does not have) raise instead, because each of them otherwise ships a
+diagram that looks fine and is wrong.
 
 "kind" is required. A spec without one is rejected: there is no second rendering path any more.
 
@@ -142,6 +158,9 @@ page, e.g. no MR context - it then renders as plain text), and "diffstat" (same 
 the top-level one) is appended after an em dash. Used by the explain-branch skill to cite
 each chapter's own commit - don't hand-write this line into a section's "html" instead,
 the styling/linking/diffstat formatting is centralized here so it stays consistent.
+A flat explain-diff document has no per-section commit to cite (the subtitle already names
+the one commit or branch), so leave "commit" out there - setting it renders the same hash
+and the same diffstat twice on one page.
 
 A section may carry its own "quiz" array (same question/options shape as the
 top-level one). When present, it renders as a "Check your understanding"
@@ -188,6 +207,7 @@ Run `python3 render.py --help` for the language-class / diff-highlighting
 convention for code blocks.
 """
 import argparse
+import collections
 import datetime
 import html
 import json
@@ -210,6 +230,7 @@ from lib.diagram import browser as _diagram_browser        # noqa: E402
 from lib.diagram import palette as _diagram_palette        # noqa: E402
 from lib.diagram import place as _diagram_place            # noqa: E402
 from lib.diagram import render as _diagram_render          # noqa: E402
+from lib.diagram import spec as _diagram_spec              # noqa: E402
 from lib.diagram.gates import GateError                    # noqa: E402
 from lib.diagram.gates import contrast as _gate_contrast   # noqa: E402
 from lib.diagram.gates import size as _gate_size           # noqa: E402
@@ -713,6 +734,13 @@ _DIAGRAM_CACHE: dict = {}
 # with one over-tall diagram is still worth having, and the author needs to be told which one.
 _DIAGRAM_GATE_PROBLEMS: list = []
 
+# Advice about the spec as authored (lib.diagram.spec.content_warnings), kept apart from the
+# gate problems above because it is a different claim: a gate measured the drawn SVG and found
+# something wrong with it, while these are editorial — a bare ER ratio, eight sequence steps, a
+# group worth splitting. Nothing here means the page is broken, and reporting them in one list
+# would make "wide" read as loudly as "clipped".
+_DIAGRAM_ADVICE: list = []
+
 
 def render_d2_diagram(diagram: dict, name: str) -> str:
     """Render a `lib/diagram` spec (anything with a "kind") through D2.
@@ -726,6 +754,17 @@ def render_d2_diagram(diagram: dict, name: str) -> str:
     no browser is available the spec's own `near` values (or the default) are used and a warning
     is recorded: D2 reserves no canvas space for a callout, so an unmeasured one may be clipped.
     """
+    # Validate here rather than leaving it to the render below, because content_warnings() reads
+    # fields (a state's `id`, an edge's ends) without checking them: on a malformed spec it would
+    # raise a bare KeyError before the SpecError that actually says what is wrong.
+    _diagram_spec.validate(diagram)
+
+    # On the spec as authored, before placement rewrites its `near` values — the advice is about
+    # what was written. The hard errors (a dangling edge, a role a kind does not have) are the
+    # SpecError above and stop the page; these only inform the author.
+    for advice in _diagram_spec.content_warnings(diagram):
+        _DIAGRAM_ADVICE.append(f"{name}: {advice}")
+
     if _diagram_browser.available():
         try:
             diagram, report = _diagram_place.place(diagram, name=name)
@@ -764,7 +803,7 @@ def render_diagram(diagram: dict, name: str = "diagram") -> str:
     if "kind" not in diagram:
         raise KeyError(
             f"diagram '{name}' has no \"kind\". The Graphviz path has been removed; write a "
-            "lib/diagram spec instead (kind: architecture|sequence|er|class|state|steps — see "
+            "lib/diagram spec instead (kind: architecture|sequence|er|class|state — see "
             "skills/visualize/REFERENCE.md)")
     return render_d2_diagram(diagram, name)
 
@@ -856,11 +895,18 @@ def format_commit_byline(commit: dict) -> str:
 
 
 def collect_all_quiz_questions(spec: dict) -> list:
-    """Every quiz question in the spec: the top-level "quiz" plus each section's own "quiz"."""
-    questions = list(spec.get("quiz", []))
+    """Every quiz question in the spec, as (where, question) pairs: the top-level "quiz" plus
+    each section's own "quiz".
+
+    The pairs exist for the length-bias error. Numbering the questions 1..n across the whole
+    document is unusable in an explain-branch spec, where they live in four separate sections'
+    arrays and "#6" has to be counted back by hand; `chapter-3 #2` points straight at one.
+    """
+    pairs = [("quiz", q) for q in spec.get("quiz", [])]
     for s in spec.get("sections", []):
-        questions.extend(s.get("quiz", []))
-    return questions
+        pairs.extend((s.get("id") or s.get("heading") or "section", q)
+                     for q in s.get("quiz", []))
+    return pairs
 
 
 def render_quiz_blocks(quiz: list) -> str:
@@ -881,19 +927,29 @@ def check_length_bias(quiz: list) -> None:
     """Fail if the correct option is the (uniquely) longest, or the (uniquely) shortest,
     one in too many questions — both are well-known tells that let readers guess without
     understanding the content. Each direction is allowed in up to 1/3 of questions
-    (fine for a couple to shake out that way, just not most)."""
+    (fine for a couple to shake out that way, just not most).
+
+    `quiz` is the (where, question) pairs from collect_all_quiz_questions; each offender is
+    reported as `<where> #<n>`, n counting within that section, so the author can find it.
+    Length is measured in characters of the option's plain text, backticks included.
+    """
     if not quiz:
         return
 
     allowed = len(quiz) // 3
+    seen = collections.Counter()
+    positions = []
+    for where, _ in quiz:
+        seen[where] += 1
+        positions.append(f"{where} #{seen[where]}")
 
     def offenders_for(extreme):
         result = []
-        for i, q in enumerate(quiz):
+        for i, (_, q) in enumerate(quiz):
             lengths = [len(o["text"]) for o in q["options"]]
             correct_len = next(len(o["text"]) for o in q["options"] if o["correct"])
             if correct_len == extreme(lengths) and lengths.count(correct_len) == 1:
-                result.append(i + 1)
+                result.append(positions[i])
         return result
 
     for label, extreme in (("longest", max), ("shortest", min)):
@@ -901,11 +957,12 @@ def check_length_bias(quiz: list) -> None:
         if len(offenders) > allowed:
             print(
                 f"ERROR: quiz length bias — the correct option is the {label} one in "
-                f"{len(offenders)}/{len(quiz)} questions (#{', #'.join(map(str, offenders))}), "
+                f"{len(offenders)}/{len(quiz)} questions ({', '.join(offenders)}), "
                 f"but at most {allowed} of {len(quiz)} may have that shape. Readers can pick "
                 f"correct answers by guessing '{label} = right' without understanding anything. "
-                f"Rewrite the flagged questions so length stops correlating with correctness "
-                f"(adjust the correct option's and/or a distractor's length).",
+                f"Rewrite the flagged questions so length stops correlating with correctness — "
+                f"by trimming the correct option, not by padding a distractor, which trades one "
+                f"tell for worse writing.",
                 file=sys.stderr,
             )
             sys.exit(1)
@@ -1016,6 +1073,14 @@ def main():
         print(f"\n{len(_DIAGRAM_GATE_PROBLEMS)} diagram problem(s):", file=sys.stderr)
         for problem in _DIAGRAM_GATE_PROBLEMS:
             print(f"  {problem}", file=sys.stderr)
+
+    # Second, and separately labelled, so the two are not read as one severity.
+    if _DIAGRAM_ADVICE:
+        noun = "advisory" if len(_DIAGRAM_ADVICE) == 1 else "advisories"
+        print(f"\n{len(_DIAGRAM_ADVICE)} diagram {noun} (editorial, the page is fine):",
+              file=sys.stderr)
+        for advice in _DIAGRAM_ADVICE:
+            print(f"  {advice}", file=sys.stderr)
 
 
 if __name__ == "__main__":
