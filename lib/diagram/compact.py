@@ -24,6 +24,7 @@ a silently mangled diagram is worse than an uncompacted one, and the caller can 
 d2's own spacing.
 """
 
+import base64
 import re
 from collections import namedtuple
 
@@ -66,20 +67,50 @@ DETAIL_CLASS = "d2-detail"
 # is, and how loud. Lane colour says which side of the wire a lane is on and nothing says what
 # the colours mean — there is no legend anywhere else in this renderer, and a reader of the
 # first real figure guessed "probably FE/BE". The rule spans exactly the lanes in its group,
-# which is what ties the name to them; it is 2px at 55% because at full strength it read as
-# part of the drawing rather than as an annotation of it.
+# which is what ties the name to them; it is a 2px rounded rule at a third opacity because at
+# full strength it read as part of the drawing rather than as an annotation of it.
+#
+# The rule and the name take DIFFERENT colours, which looks like a fussy distinction and is
+# not: the rule takes the lane's border colour, because matching the boxes it spans is the
+# whole point of it, while the name is text and takes the text-grade colour. Painting a name
+# in a border colour is what a two-group figure never caught — the third group is green
+# (#3f9142) and lands at 3.76:1 on white, under the 4.5:1 the contrast gate demands. Muting
+# the rule further therefore costs nothing: the name is what has to stay readable.
 LEGEND_BAND = 22
 LEGEND_RULE = 2
-LEGEND_OPACITY = 0.55
+LEGEND_OPACITY = 0.22
 LEGEND_FONT = 12
 LEGEND_GAP = 5            # lifeline feet -> rule
 LEGEND_BASELINE = 19      # lifeline feet -> the name's baseline
 
-# d2's own `--pad`, which render.compile_source passes: the margin between the drawing and the
-# canvas edge, and therefore the offset between the viewBox's bottom and the lifeline feet.
-# Duplicated rather than imported to keep this module free of the render pipeline; the tests
-# pin both, so a change to one fails loudly.
-PAD_BOTTOM = 8
+# The dot a state machine begins at — UML's start marker, which is the one thing a reader of
+# the reference state diagram could not find: being the top node is implicit, and any state
+# with no incoming transition looks the same.
+#
+# It is drawn into the finished SVG rather than declared as a node in the d2 source, because as
+# a node it costs a whole rank: 796px -> 910px on the reference machine, 114px of canvas for a
+# 14px dot. Drawn here it goes in the margin the drawing already has, and which side has the
+# margin depends on the layout:
+#
+#   * laid out DOWNWARD the first state is one box in a rank of its own, with empty margin
+#     either side of it, and the canvas usually does not grow at all.
+#   * laid out to the RIGHT the first state is flush with the left edge and every px of width
+#     is scaled away in the content column, so the marker goes ABOVE it instead — height is
+#     what a landscape figure has to spare.
+#
+# The stem is long because a short one reads as a bullet stuck to the box rather than as an
+# arrow arriving from outside the machine.
+START_R = 7               # dot radius; 14px across reads at the size of a glyph
+START_ARROW = 60          # dot edge -> the box's side, laid out downward
+START_ARROW_ABOVE = 40    # the same, laid out to the right, where the stem is vertical
+START_HEAD = 6            # arrowhead length
+START_HALF = 4            # arrowhead half-width
+
+# d2's own `--pad`, which render.compile_source passes: the margin between the drawing and
+# every canvas edge, and therefore the offset between the viewBox and the drawing. Duplicated
+# rather than imported to keep this module free of the render pipeline; the tests pin both, so
+# a change to one fails loudly.
+D2_PAD = 8
 
 
 class CompactError(Exception):
@@ -169,116 +200,267 @@ def style_detail_lines(svg):
                   restyle, svg, flags=re.S)
 
 
-def _lane_rects(svg, body_start):
-    """(x, width) per actor box, in document order — the lanes the legend spans."""
+def _shape_rects(svg, body_start):
+    """(x, y, width, height) per drawn box, in document order.
+
+    Every top-level group holding a `class="shape"` — sequence lanes for the legend, states
+    for the start marker, and for either one the boxes an annotation must not land on.
+    """
     out = []
     for start, end in _top_level_groups(svg, body_start):
-        body = svg[start:end]
-        if 'class="shape"' not in body:
-            continue
-        rect = re.search(r"<rect\b[^>]*>", body)
-        if not rect:
-            continue
-        x = re.search(r'\sx="([\d.-]+)"', rect.group(0))
-        w = re.search(r'\swidth="([\d.-]+)"', rect.group(0))
-        if not (x and w):
-            raise CompactError("an actor box has no x/width to hang a legend under")
-        out.append((float(x.group(1)), float(w.group(1))))
+        rect = _rect_in(svg[start:end])
+        if rect:
+            out.append(rect)
     return out
 
 
+def _rect_in(body):
+    """One group's box as (x, y, width, height), or None if it draws no shape."""
+    if 'class="shape"' not in body:
+        return None
+    rect = re.search(r"<rect\b[^>]*>", body)
+    if not rect:
+        return None
+    got = [re.search(rf'\s{attr}="([\d.-]+)"', rect.group(0))
+           for attr in ("x", "y", "width", "height")]
+    if not all(got):
+        raise CompactError("a box has no x/y/width/height to measure")
+    return tuple(float(m.group(1)) for m in got)
+
+
 def _runs(lanes):
-    """Consecutive lanes sharing a group -> [(group, colour, first, last)].
+    """Consecutive lanes sharing a group -> [(group, rule colour, name colour, first, last)].
 
     Consecutive rather than "all lanes with this group": a split group is drawn as two spans,
     which is honest — the rule marks where those lanes actually are. spec.py already advises
     against splitting one.
     """
     out = []
-    for i, (group, colour) in enumerate(lanes):
+    for i, (group, rule, name) in enumerate(lanes):
         if not group:
             continue
-        if out and out[-1][0] == group and out[-1][3] == i - 1:
-            out[-1] = (group, colour, out[-1][2], i)
+        if out and out[-1][0] == group and out[-1][4] == i - 1:
+            out[-1] = (group, rule, name, out[-1][3], i)
         else:
-            out.append((group, colour, i, i))
+            out.append((group, rule, name, i, i))
     return out
 
 
-def add_group_legend(svg, lanes):
+def add_group_legend(svg, lanes, pad=D2_PAD):
     """Name each lane group under the diagram, in its own colour.
 
-    `lanes` is (group name or None, colour) per participant, in order. Returns the SVG
-    unchanged when there is nothing to explain: fewer than two groups means the colours are
-    not distinguishing anything.
+    `lanes` is (group name or None, rule colour, name colour) per participant, in order. Two
+    colours because the rule matches the boxes it spans and the name has to be readable as
+    text — see the LEGEND_* constants.
+
+    Returns the SVG unchanged when there is nothing to explain, which is two cases:
+
+    * **fewer than two groups.** One colour is not distinguishing anything.
+    * **no group covering more than one lane.** A group of one lane is not grouping: its rule
+      is an underline under a single box, and its name is a second name for something already
+      named. Three lanes reading Reviewer / Backend / Postgres do not need to be told they are
+      browser / server / db.
 
     The band is added INSIDE the inner `<svg>`, whose viewBox is the coordinate system the
     drawing is laid out in — the outer one is offset from it, and a legend placed there lands
     a padding's worth out of position. Both grow, or the drawing is cropped.
     """
     runs = _runs(lanes)
-    if len(runs) < 2:
+    if len(runs) < 2 or not any(last > first for _g, _r, _n, first, last in runs):
         return svg
 
-    # Both <svg> tags are located by search rather than by position: at this point in the
-    # pipeline the document still opens with d2's XML declaration, and taking the first tag
-    # blindly grew that instead.
-    outer_at = svg.find("<svg")
-    inner_at = svg.find("<svg", outer_at + 1) if outer_at >= 0 else -1
-    if outer_at < 0 or inner_at < 0:
-        raise CompactError("expected an outer and an inner <svg> to place a legend in")
-    outer_tag = svg[outer_at:svg.index(">", outer_at) + 1]
-    inner_tag = svg[inner_at:svg.index(">", inner_at) + 1]
-    box = re.search(r'viewBox="([-\d.]+) ([-\d.]+) ([\d.]+) ([\d.]+)"', inner_tag)
-    if not box:
-        raise CompactError("the inner <svg> has no viewBox to measure from")
-    _vx, vy, _vw, vh = (float(v) for v in box.groups())
-
-    rects = _lane_rects(svg, svg.index(">", inner_at) + 1)
+    outer_tag, inner_tag = _svg_tags(svg)
+    _vx, vy, _vw, vh = _viewbox(inner_tag)
+    rects = _shape_rects(svg, svg.index(">", svg.find("<svg", svg.find("<svg") + 1)) + 1)
     if len(rects) < len(lanes):
         raise CompactError(f"{len(lanes)} lanes but {len(rects)} actor boxes")
 
-    foot = vy + vh - PAD_BOTTOM
+    foot = vy + vh - pad
     marks = []
-    for group, colour, first, last in runs:
+    for group, rule, name, first, last in runs:
         x0 = rects[first][0]
-        x1 = rects[last][0] + rects[last][1]
+        x1 = rects[last][0] + rects[last][2]
         marks.append(
             f'<rect x="{x0:.1f}" y="{foot + LEGEND_GAP:.1f}" width="{x1 - x0:.1f}" '
-            f'height="{LEGEND_RULE}" fill="{colour}" fill-opacity="{LEGEND_OPACITY}"/>'
-            f'<text x="{(x0 + x1) / 2:.1f}" y="{foot + LEGEND_BASELINE:.1f}" fill="{colour}" '
+            f'height="{LEGEND_RULE}" rx="{LEGEND_RULE / 2:g}" fill="{rule}" '
+            f'fill-opacity="{LEGEND_OPACITY}"/>'
+            f'<text x="{(x0 + x1) / 2:.1f}" y="{foot + LEGEND_BASELINE:.1f}" fill="{name}" '
             f'style="text-anchor:middle;font-size:{LEGEND_FONT}px">{_escape(group)}</text>')
 
-    svg = svg.replace(inner_tag, _grown(inner_tag), 1)
-    svg = svg.replace(outer_tag, _grown(outer_tag), 1)
-    close = svg.rindex("</svg></svg>")
-    return svg[:close] + "".join(marks) + svg[close:]
+    return _append(_grown(svg, bottom=LEGEND_BAND), marks)
+
+
+def add_start_marker(svg, state_id, colour, vertical=False, pad=D2_PAD):
+    """Draw UML's start dot next to `state_id`, with an arrow into it.
+
+    `vertical` puts the dot ABOVE the box instead of beside it, falling back to below — for a
+    landscape layout, where width is the scarce axis. Beside comes first otherwise, falling
+    back to the box's right. See the START_* constants for why either beats declaring the dot
+    as a node in the d2 source.
+
+    The only thing that can be in the way is another box: the start state is a source, so the
+    rank it shares holds other sources and nothing else. Both sides blocked is a diagram this
+    cannot annotate, and raises.
+
+    The canvas grows only by however much of the marker falls outside it, plus d2's own pad so
+    the dot keeps the same margin as the drawing. Laid out downward that is usually nothing.
+    """
+    _outer_tag, inner_tag = _svg_tags(svg)
+    vx, vy, vw, vh = _viewbox(inner_tag)
+    body_start = svg.index(">", svg.find("<svg", svg.find("<svg") + 1)) + 1
+    rects = _shape_rects(svg, body_start)
+    box = _rect_for(svg, body_start, state_id)
+
+    x, y, w, h = box
+    stem = START_ARROW_ABOVE if vertical else START_ARROW
+    span = stem + 2 * START_R
+    for side in (-1, 1):
+        # `edge` is the box side the arrow lands on, `far` the dot's outer edge; the two
+        # bracket the strip the marker needs. `across` is the strip's other axis, which is
+        # just the dot's width centred on the box.
+        edge = (y if side < 0 else y + h) if vertical else (x if side < 0 else x + w)
+        far = edge + side * span
+        near, off = min(edge, far), max(edge, far)
+        mid = (x + w / 2) if vertical else (y + h / 2)
+        lo, hi = mid - START_R, mid + START_R
+        blocked = any(
+            r is not box
+            and (r[1] < off and r[1] + r[3] > near and r[0] < hi and r[0] + r[2] > lo
+                 if vertical else
+                 r[0] < off and r[0] + r[2] > near and r[1] < hi and r[1] + r[3] > lo)
+            for r in rects)
+        if blocked:
+            continue
+        centre = edge + side * (stem + START_R)   # the dot's centre, on the marker's axis
+        tip = edge - side * 1                     # a hair inside the box's stroke
+        head = tip + side * START_HEAD
+        stem_end = centre - side * START_R        # the dot's edge, where the stem starts
+        if vertical:
+            marks = [
+                f'<circle cx="{mid:.1f}" cy="{centre:.1f}" r="{START_R}" fill="{colour}"/>',
+                f'<path d="M{mid:.1f} {stem_end:.1f} V{head:.1f}" stroke="{colour}" '
+                'stroke-width="2" fill="none"/>',
+                f'<path d="M{mid:.1f} {tip:.1f} L{mid - START_HALF:.1f} {head:.1f} '
+                f'L{mid + START_HALF:.1f} {head:.1f} Z" fill="{colour}"/>',
+            ]
+            grow = {"top": max(0, vy - (near - pad)),
+                    "bottom": max(0, (off + pad) - (vy + vh))}
+        else:
+            marks = [
+                f'<circle cx="{centre:.1f}" cy="{mid:.1f}" r="{START_R}" fill="{colour}"/>',
+                f'<path d="M{stem_end:.1f} {mid:.1f} H{head:.1f}" stroke="{colour}" '
+                'stroke-width="2" fill="none"/>',
+                f'<path d="M{tip:.1f} {mid:.1f} L{head:.1f} {mid - START_HALF:.1f} '
+                f'L{head:.1f} {mid + START_HALF:.1f} Z" fill="{colour}"/>',
+            ]
+            grow = {"left": max(0, vx - (near - pad)),
+                    "right": max(0, (off + pad) - (vx + vw))}
+        return _append(_grown(svg, **grow), marks)
+    raise CompactError(f"no room {'above or below' if vertical else 'beside'} {state_id!r} "
+                       "for a start marker — a box sits on both sides of it")
+
+
+def _rect_for(svg, body_start, node_id):
+    """The (x, y, width, height) of one node's box, found by the id d2 tags its group with.
+
+    d2 emits `<g class="<base64 of the node id> <role>">` per node and offers no other handle
+    on which box is which — no id attribute, no data-*. That is undocumented and load-bearing
+    here, so it fails loudly rather than annotating the wrong box.
+    """
+    tag = base64.b64encode(str(node_id).encode()).decode()
+    at = svg.find(f'<g class="{tag} ', body_start)
+    if at < 0:
+        at = svg.find(f'<g class="{tag}"', body_start)
+    if at < 0:
+        raise CompactError(f"no box tagged {node_id!r} in the rendered diagram")
+    # `_top_level_groups` reports each group's CONTENTS, so the group opened at `at` is the
+    # one whose contents begin just past that tag's `>`.
+    opens = svg.index(">", at) + 1
+    for start, end in _top_level_groups(svg, body_start):
+        if start == opens:
+            rect = _rect_in(svg[start:end])
+            if rect:
+                return rect
+            break
+    raise CompactError(f"the box tagged {node_id!r} has no shape to measure")
 
 
 def _escape(text):
     return (str(text).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;"))
 
 
-def _grown(tag):
-    """One <svg> tag with `LEGEND_BAND` more height, in its viewBox and, if it has one, its
-    height attribute.
+def _svg_tags(svg):
+    """The outer and inner `<svg …>` tags, as text.
+
+    Both are located by search rather than by position: at this point in the pipeline the
+    document still opens with d2's XML declaration, and taking the first tag blindly grew that
+    instead.
+    """
+    outer_at = svg.find("<svg")
+    inner_at = svg.find("<svg", outer_at + 1) if outer_at >= 0 else -1
+    if outer_at < 0 or inner_at < 0:
+        raise CompactError("expected an outer and an inner <svg> to annotate")
+    return (svg[outer_at:svg.index(">", outer_at) + 1],
+            svg[inner_at:svg.index(">", inner_at) + 1])
+
+
+def _viewbox(tag):
+    box = re.search(r'viewBox="([-\d.]+) ([-\d.]+) ([\d.]+) ([\d.]+)"', tag)
+    if not box:
+        raise CompactError("an <svg> tag has no viewBox to measure from")
+    return tuple(float(v) for v in box.groups())
+
+
+def _append(svg, marks):
+    """Put `marks` last inside the inner <svg>, so they paint over the drawing."""
+    close = svg.rindex("</svg></svg>")
+    return svg[:close] + "".join(marks) + svg[close:]
+
+
+def _grown(svg, left=0, right=0, top=0, bottom=0):
+    """The SVG with more canvas on the given sides — both `<svg>` tags and the backdrop.
+
+    The backdrop is the transparent rect d2 lays under the drawing, which `render.standalone`
+    has painted with the page colour: left un-grown, a standalone image gets an unpainted strip
+    exactly where the annotation is.
 
     The outer tag has no height at this point in the pipeline — d2 emits a viewBox alone and
     `render.pin_intrinsic` writes the size on afterwards, from the viewBox this just grew. The
-    inner tag does have one, and a stale value there would crop the legend.
+    inner tag does have one, and stale values there would crop the annotation.
     """
-    box = re.search(r'viewBox="([-\d.]+) ([-\d.]+) ([\d.]+) ([\d.]+)"', tag)
-    if not box:
-        raise CompactError("an <svg> tag has no viewBox to grow")
-    out = tag
-    height = re.search(r'\sheight="([\d.]+)"', out)
-    if height:
-        out = (out[:height.start()] + f' height="{float(height.group(1)) + LEGEND_BAND:g}"'
-               + out[height.end():])
-    box = re.search(r'viewBox="([-\d.]+) ([-\d.]+) ([\d.]+) ([\d.]+)"', out)
-    bx, by, bw, bh = (float(v) for v in box.groups())
-    return (out[:box.start()] + f'viewBox="{bx:g} {by:g} {bw:g} {bh + LEGEND_BAND:g}"'
-            + out[box.end():])
+    if not (left or right or top or bottom):
+        return svg
+    for tag in _svg_tags(svg):
+        out = tag
+        for attr, delta in (("width", left + right), ("height", top + bottom)):
+            found = re.search(rf'\s{attr}="([\d.]+)"', out)
+            if found and delta:
+                out = (out[:found.start()] + f' {attr}="{float(found.group(1)) + delta:g}"'
+                       + out[found.end():])
+        box = re.search(r'viewBox="([-\d.]+) ([-\d.]+) ([\d.]+) ([\d.]+)"', out)
+        bx, by, bw, bh = (float(v) for v in box.groups())
+        out = (out[:box.start()]
+               + f'viewBox="{bx - left:g} {by - top:g} {bw + left + right:g} '
+                 f'{bh + top + bottom:g}"' + out[box.end():])
+        svg = svg.replace(tag, out, 1)
+
+    # The backdrop is d2's first <rect>, immediately after the inner <svg> tag.
+    inner_end = svg.index(">", svg.find("<svg", svg.find("<svg") + 1)) + 1
+    back = re.compile(r"<rect\b[^>]*>").search(svg, inner_end)
+    if back:
+        rect = back.group(0)
+        got = {a: re.search(rf'\s{a}="([\d.-]+)"', rect)
+               for a in ("x", "y", "width", "height")}
+        if all(got.values()):
+            grown = rect
+            for attr, value in (("x", float(got["x"].group(1)) - left),
+                                ("y", float(got["y"].group(1)) - top),
+                                ("width", float(got["width"].group(1)) + left + right),
+                                ("height", float(got["height"].group(1)) + top + bottom)):
+                grown = re.sub(rf'\s{attr}="[\d.-]+"', f' {attr}="{value:.6f}"', grown,
+                               count=1)
+            svg = svg[:back.start()] + grown + svg[back.end():]
+    return svg
 
 
 def compact_sequence(svg):

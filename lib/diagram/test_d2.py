@@ -343,6 +343,26 @@ class TestStateRoles(unittest.TestCase):
         for role in d2.STATE_CLASS:
             self.assertNotIn(f"class: {role}", source)
 
+    def test_every_state_role_gets_a_colour_of_its_own(self):
+        """The vocabulary exists so a diagram cannot paint two meanings the same colour. Two
+        roles sharing a palette entry would put that back — which is the bug `stuck` fixed,
+        where "deferred" and "imported, still there" were both `transient`."""
+        classes = list(d2.STATE_CLASS.values())
+        self.assertEqual(len(classes), len(set(classes)), d2.STATE_CLASS)
+
+    def test_every_role_in_the_vocabulary_has_a_class(self):
+        """`neutral` is the one that maps to itself; the rest must be in STATE_CLASS or they
+        reach d2 as an unknown class name and style nothing."""
+        from lib.diagram.spec import STATE_ROLES
+        self.assertEqual(set(STATE_ROLES) - set(d2.STATE_CLASS), {"neutral"})
+
+    def test_a_stuck_state_emits_the_one_class_no_other_state_role_uses(self):
+        source = d2.emit({"kind": "state",
+                          "states": [{"id": "a", "role": "stuck", "start": True},
+                                     {"id": "b", "role": "terminal"}],
+                          "transitions": [{"from": "a", "to": "b", "label": "cleaned up"}]})
+        self.assertIn("class: svc", source)
+
 
 class TestDirectionPerTarget(unittest.TestCase):
     """One case per cell of `d2.DIRECTION`. The two targets want opposite layouts: embedded

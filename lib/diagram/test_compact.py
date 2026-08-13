@@ -215,66 +215,191 @@ class TestGroupLegend(unittest.TestCase):
     """Lane colour says which side of the wire a lane is on, and nothing said what the colours
     meant — the first reader of a real figure guessed "probably FE/BE"."""
 
-    def svg(self, lanes=2):
+    # One lane of `browser`, then two of `server` — the smallest arrangement in which a group
+    # is actually grouping something. Two groups of one lane each draws nothing; see below.
+    LANES = [("browser", "#3b6fd4", "#27548f"),
+             ("server", "#7c4dbd", "#6a3fa8"), ("server", "#7c4dbd", "#6a3fa8")]
+
+    def svg(self, lanes=3):
         boxes = "".join(
             f'<g><rect x="{i * 200}" y="43" width="120" height="48" class="shape"/></g>'
             for i in range(lanes))
         return ('<?xml version="1.0"?>'
                 '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 626 339">'
                 '<svg class="d2-1" width="626" height="339" viewBox="3 43 626 339">'
+                f'<rect x="3" y="43" width="626" height="339" fill="transparent"/>'
                 f"{boxes}</svg></svg>")
 
     def test_two_groups_get_a_rule_and_a_name_each(self):
-        out = compact.add_group_legend(self.svg(), [("browser", "#3b6fd4"),
-                                                    ("server", "#7c4dbd")])
+        out = compact.add_group_legend(self.svg(), self.LANES)
         self.assertIn(">browser</text>", out)
         self.assertIn(">server</text>", out)
         self.assertEqual(out.count(f'fill-opacity="{compact.LEGEND_OPACITY}"'), 2)
 
+    def test_the_rule_takes_the_border_colour_and_the_name_the_text_colour(self):
+        """A border colour painting a name is what a two-group figure never caught: the third
+        group is green, and #3f9142 is 3.76:1 on white."""
+        out = compact.add_group_legend(self.svg(), self.LANES)
+        self.assertIn('fill="#3b6fd4" fill-opacity=', out)      # rule: the lane's border
+        self.assertIn('fill="#27548f" style="text-anchor', out)  # name: text-grade
+
+    def test_the_rule_has_rounded_ends(self):
+        out = compact.add_group_legend(self.svg(), self.LANES)
+        self.assertIn(f'rx="{compact.LEGEND_RULE / 2:g}"', out)
+
     def test_one_group_explains_nothing_and_is_left_alone(self):
         svg = self.svg()
-        self.assertEqual(compact.add_group_legend(svg, [("server", "#7c4dbd")] * 2), svg)
+        self.assertEqual(compact.add_group_legend(svg, [self.LANES[1]] * 3), svg)
+
+    def test_a_group_of_one_lane_is_not_grouping_and_draws_nothing(self):
+        """Three lanes reading Reviewer / Backend / Postgres do not need to be told they are
+        browser / server / db: the rule would be an underline under a single box, and the name
+        a second name for something already named."""
+        svg = self.svg()
+        one_each = [("a", "#111111", "#111111"), ("b", "#222222", "#222222"),
+                    ("c", "#333333", "#333333")]
+        self.assertEqual(compact.add_group_legend(svg, one_each), svg)
 
     def test_ungrouped_lanes_are_left_alone(self):
         svg = self.svg()
-        self.assertEqual(compact.add_group_legend(svg, [(None, None), (None, None)]), svg)
+        self.assertEqual(compact.add_group_legend(svg, [(None, None, None)] * 3), svg)
 
     def test_the_canvas_grows_so_the_band_is_not_cropped(self):
-        out = compact.add_group_legend(self.svg(), [("browser", "#3b6fd4"),
-                                                    ("server", "#7c4dbd")])
+        out = compact.add_group_legend(self.svg(), self.LANES)
         self.assertIn(f'viewBox="0 0 626 {339 + compact.LEGEND_BAND}"', out)
         self.assertIn(f'viewBox="3 43 626 {339 + compact.LEGEND_BAND}"', out)
         self.assertIn(f'height="{339 + compact.LEGEND_BAND}"', out)
 
+    def test_the_backdrop_grows_too_so_a_standalone_image_paints_the_band(self):
+        """render.standalone fills that rect with the page colour; left un-grown, the legend
+        sits on an unpainted strip."""
+        out = compact.add_group_legend(self.svg(), self.LANES)
+        self.assertIn(f'height="{339 + compact.LEGEND_BAND:.6f}" fill="transparent"', out)
+
     def test_a_split_group_is_drawn_as_two_spans(self):
         """Honest: the rule marks where those lanes actually are. spec.py already advises
         against splitting one."""
-        out = compact.add_group_legend(self.svg(3), [("a", "#111111"), ("b", "#222222"),
-                                                     ("a", "#111111")])
+        a, b = ("a", "#111111", "#111111"), ("b", "#222222", "#222222")
+        out = compact.add_group_legend(self.svg(4), [a, a, b, a])
         self.assertEqual(out.count(">a</text>"), 2)
 
     def test_a_group_name_is_escaped(self):
-        out = compact.add_group_legend(self.svg(), [("a<b", "#111111"), ("c&d", "#222222")])
+        out = compact.add_group_legend(self.svg(), [("a<b", "#111111", "#111111"),
+                                                    ("c&d", "#222222", "#222222"),
+                                                    ("c&d", "#222222", "#222222")])
         self.assertIn(">a&lt;b</text>", out)
         self.assertIn(">c&amp;d</text>", out)
 
     def test_more_lanes_than_actor_boxes_raises(self):
         with self.assertRaises(compact.CompactError):
-            compact.add_group_legend(self.svg(1), [("a", "#111111"), ("b", "#222222")])
+            compact.add_group_legend(self.svg(1), self.LANES)
 
     def test_a_missing_viewbox_raises_rather_than_cropping_the_band(self):
         svg = self.svg().replace(' viewBox="3 43 626 339"', "")
         with self.assertRaises(compact.CompactError):
-            compact.add_group_legend(svg, [("a", "#111111"), ("b", "#222222")])
+            compact.add_group_legend(svg, self.LANES)
 
     def test_the_pad_matches_the_one_the_renderer_asks_d2_for(self):
-        """The band is placed relative to the canvas edge, so a change to d2's --pad without a
-        change here would leave it floating."""
+        """Both annotations are placed relative to the canvas edge, so a change to d2's --pad
+        without a change here would leave them floating."""
         import inspect
 
         from lib.diagram import render
-        self.assertEqual(compact.PAD_BOTTOM,
+        self.assertEqual(compact.D2_PAD,
                          inspect.signature(render.compile_source).parameters["pad"].default)
+
+
+class TestStartMarker(unittest.TestCase):
+    """A reader could not tell where the machine begins: being the top node is implicit, and a
+    state with no incoming transition looks like every other state."""
+
+    GREY = "#6b6b6b"
+
+    def svg(self, boxes=((200, 100, 109, 62),), ids=("connecting",)):
+        """A d2-shaped state diagram. d2 tags each node's group with base64 of its id and
+        offers no other handle on which box is which."""
+        import base64
+
+        body = "".join(
+            f'<g class="{base64.b64encode(i.encode()).decode()} client">'
+            f'<g class="shape"><rect x="{b[0]}" y="{b[1]}" width="{b[2]}" '
+            f'height="{b[3]}"/></g></g>'
+            for i, b in zip(ids, boxes))
+        return ('<?xml version="1.0"?>'
+                '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 500 400">'
+                '<svg class="d2-1" width="500" height="400" viewBox="-8 -9 500 400">'
+                '<rect x="-8" y="-9" width="500" height="400" fill="transparent"/>'
+                f"{body}</svg></svg>")
+
+    def test_the_dot_lands_left_of_the_box_at_its_middle(self):
+        out = compact.add_start_marker(self.svg(), "connecting", self.GREY)
+        cx = 200 - compact.START_ARROW - compact.START_R
+        self.assertIn(f'<circle cx="{cx:.1f}" cy="131.0" r="{compact.START_R}"', out)
+
+    def test_a_margin_wide_enough_costs_no_canvas_at_all(self):
+        """The whole reason it goes beside the box rather than above: a rank of canvas is
+        114px on the reference machine, and the margin beside the top box is already there."""
+        out = compact.add_start_marker(self.svg(boxes=((200, 100, 109, 62),)), "connecting",
+                                       self.GREY)
+        self.assertIn('viewBox="0 0 500 400"', out)
+        self.assertIn('viewBox="-8 -9 500 400"', out)
+
+    def test_a_box_flush_with_the_canvas_edge_grows_it_by_the_deficit(self):
+        out = compact.add_start_marker(self.svg(boxes=((0, 100, 109, 62),)), "connecting",
+                                       self.GREY)
+        grew = compact.START_ARROW + 2 * compact.START_R + compact.D2_PAD - 8
+        self.assertIn(f'viewBox="{-grew:g} 0 {500 + grew:g} 400"', out)
+        self.assertIn(f'viewBox="{-8 - grew:g} -9 {500 + grew:g} 400"', out)
+
+    def test_a_box_on_the_left_pushes_the_marker_to_the_right(self):
+        out = compact.add_start_marker(
+            self.svg(boxes=((200, 100, 109, 62), (100, 100, 109, 62)),
+                     ids=("connecting", "other")), "connecting", self.GREY)
+        cx = 200 + 109 + compact.START_ARROW + compact.START_R
+        self.assertIn(f'<circle cx="{cx:.1f}"', out)
+
+    def test_boxes_on_both_sides_raise_rather_than_draw_over_one(self):
+        with self.assertRaises(compact.CompactError):
+            compact.add_start_marker(
+                self.svg(boxes=((200, 100, 109, 62), (100, 100, 109, 62),
+                                (320, 100, 109, 62)),
+                         ids=("connecting", "left", "right")), "connecting", self.GREY)
+
+    def test_a_box_beside_but_not_level_is_not_in_the_way(self):
+        """The strip only matters at the dot's own height — a box two ranks down and to the
+        left shares an x range with the marker and nothing else."""
+        out = compact.add_start_marker(
+            self.svg(boxes=((200, 100, 109, 62), (100, 300, 109, 62)),
+                     ids=("connecting", "other")), "connecting", self.GREY)
+        self.assertIn(f'<circle cx="{200 - compact.START_ARROW - compact.START_R:.1f}"', out)
+
+    def test_vertical_puts_the_dot_above_the_box_centred_on_it(self):
+        """Laid out to the right, every px of width is scaled away in the content column, so
+        the marker spends height instead."""
+        out = compact.add_start_marker(self.svg(boxes=((200, 100, 109, 62),)), "connecting",
+                                       self.GREY, vertical=True)
+        cy = 100 - compact.START_ARROW_ABOVE - compact.START_R
+        self.assertIn(f'<circle cx="254.5" cy="{cy:.1f}" r="{compact.START_R}"', out)
+
+    def test_vertical_grows_the_top_of_the_canvas_not_its_width(self):
+        """A box flush with the top of the drawing, which is where a `right` layout puts the
+        first state. Width is untouched — that is the whole point of going this way."""
+        out = compact.add_start_marker(self.svg(boxes=((200, 0, 109, 62),)), "connecting",
+                                       self.GREY, vertical=True)
+        grew = compact.START_ARROW_ABOVE + 2 * compact.START_R + compact.D2_PAD - 9
+        self.assertIn(f'viewBox="0 {-grew:g} 500 {400 + grew:g}"', out)
+        self.assertIn(f'viewBox="-8 {-9 - grew:g} 500 {400 + grew:g}"', out)
+
+    def test_vertical_falls_back_below_when_a_box_sits_above(self):
+        out = compact.add_start_marker(
+            self.svg(boxes=((200, 100, 109, 62), (200, 0, 109, 62)),
+                     ids=("connecting", "other")), "connecting", self.GREY, vertical=True)
+        cy = 162 + compact.START_ARROW_ABOVE + compact.START_R
+        self.assertIn(f'<circle cx="254.5" cy="{cy:.1f}"', out)
+
+    def test_an_unknown_state_raises(self):
+        with self.assertRaises(compact.CompactError):
+            compact.add_start_marker(self.svg(), "nosuchstate", self.GREY)
 
 
 class TestRefusals(unittest.TestCase):

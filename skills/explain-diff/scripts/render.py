@@ -113,7 +113,9 @@ rather than guessing.** The short version:
 - **The colour vocabulary is per kind, and enforced.** A box in an `architecture`, `er` or
   `class` diagram carries a "role" for what it *is*, never for the colour you want: `client` ·
   `svc` · `store` · `cache` · `ext` · `neutral`. A `state` has its own set - `working` · `steady`
-  · `transient` · `terminal` · `neutral` - and mixing the two sets is rejected outright. A
+  · `transient` · `stuck` (somewhere it should not be, and not the end) · `terminal` · `neutral`
+  - and mixing the two sets is rejected outright. One role means one thing per diagram: two
+  states the reader must tell apart cannot share one, which is what `stuck` is for. A
   `sequence` colours by "group" instead (which side of the wire a lane is on: `browser`/`server`,
   `cli`/`daemon`); a lane carrying both a "group" and a "role" is rejected. Reuse whichever set
   identically across every diagram in one document.

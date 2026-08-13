@@ -203,7 +203,7 @@ def postprocess(raw, name, theme_vars=True):
     return svg
 
 
-def _maybe_compact(raw, spec, name):
+def _maybe_compact(raw, spec, name, standalone=False):
     """The two things a sequence diagram's SVG needs after d2 has laid it out — closing its
     dead vertical space, and shrinking the second line of a two-line participant label. Both
     live in `compact.py`; neither is expressible in d2 source.
@@ -215,7 +215,12 @@ def _maybe_compact(raw, spec, name):
     # The detail restyle is kind-agnostic: it only touches a <text> that has more than one
     # <tspan>, which only happens where a label carries a newline. Row compaction is the part
     # that is sequence-only.
+    # Both annotations are placed against the canvas edge, so they need the pad d2 was
+    # actually run with — which is not the same on the two targets.
+    pad = STANDALONE_PAD if standalone else compact.D2_PAD
     svg = compact.style_detail_lines(raw)
+    if spec.get("kind") == "state":
+        return _maybe_mark_start(svg, spec, name, standalone, pad)
     if spec.get("kind") != "sequence":
         return svg
     try:
@@ -224,7 +229,7 @@ def _maybe_compact(raw, spec, name):
         print(f"{name}: could not compact the sequence rows ({exc}) — "
               "falling back to d2's spacing", file=sys.stderr)
     try:
-        return compact.add_group_legend(svg, _lane_colours(spec["participants"]))
+        return compact.add_group_legend(svg, _lane_colours(spec["participants"]), pad=pad)
     except compact.CompactError as exc:
         print(f"{name}: could not add the group legend ({exc}) — the lane colours are "
               "unexplained, so say what they mean in the prose", file=sys.stderr)
@@ -232,11 +237,40 @@ def _maybe_compact(raw, spec, name):
 
 
 def _lane_colours(participants):
-    """(group name or None, its colour) per lane, for the legend under a sequence."""
+    """(group name or None, rule colour, name colour) per lane, for the legend.
+
+    Two colours from the one palette entry: the rule takes the lane's border so it reads as
+    belonging to those boxes, the name takes the text-grade colour so it is legible as text.
+    """
     classes = d2mod.group_classes(participants)
     return [(p.get("group"),
-             palette.vars_for(classes[p["group"]])[1] if p.get("group") else None)
+             palette.vars_for(classes[p["group"]])[1] if p.get("group") else None,
+             palette.vars_for(classes[p["group"]], table=True) if p.get("group") else None)
             for p in participants]
+
+
+def _maybe_mark_start(svg, spec, name, standalone, pad):
+    """Draw the start dot beside the state carrying `start: true`, if one does.
+
+    Swallowed like the other annotations: a state diagram with no room for the marker is still
+    the diagram, and refusing to render it over an annotation would be the wrong trade. The
+    warning says what the reader loses, so the prose can cover it.
+    """
+    start = next((s["id"] for s in spec["states"] if s.get("start")), None)
+    if not start:
+        return svg
+    try:
+        # Laid out to the right, the dot goes above the first state instead of beside it:
+        # that layout is already scaled down to fit the content column, so width is the one
+        # axis that costs glyph size — see compact's START_* constants. The direction comes
+        # from d2, not from the spec, because the standalone target's is a default there.
+        return compact.add_start_marker(
+            svg, start, palette.MUTED, pad=pad,
+            vertical=d2mod.effective_direction(spec, standalone) == "right")
+    except compact.CompactError as exc:
+        print(f"{name}: could not mark the start state ({exc}) — say where the machine "
+              "begins in the prose", file=sys.stderr)
+        return svg
 
 
 # The layouts `render()` will try when the spec does not pin one: both orientations, with the
@@ -376,7 +410,7 @@ def standalone(spec, name="diagram", theme="dark", binary="d2"):
     # concrete, every one of them is a non-key and `unmapped()` can no longer tell an
     # un-themeable literal from a correctly baked one. So the theming gate has no standalone
     # equivalent — this check replaces it, at the only moment it can run.
-    svg = postprocess(_maybe_compact(raw, spec, name), name, theme_vars=True)
+    svg = postprocess(_maybe_compact(raw, spec, name, standalone=True), name, theme_vars=True)
     missing = palette.unmapped(svg)
     if missing:
         listed = ", ".join(f"{colour} x{count}" for colour, count in missing.items())

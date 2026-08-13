@@ -32,10 +32,21 @@ ROLES = ("client", "svc", "store", "cache", "ext", "neutral")
 # A `state` takes its own vocabulary. The architectural roles describe what a thing *is* — a
 # datastore, a cache, something outside our control — and a state is none of them, so tagging
 # `live` as `store` and `backoff` as `cache` (which this corpus did) picks the colour and
-# invents a justification. These four name what is actually being signalled, and they inherit
-# the same palette entries: readers decode green-steady / amber-retrying / red-terminal by
+# invents a justification. These name what is actually being signalled, and they inherit the
+# same palette entries: readers decode green-steady / amber-retrying / red-terminal by
 # convention, without a legend, which is the one case where colour carries meaning here.
-STATE_ROLES = ("working", "steady", "transient", "terminal", "neutral")
+#
+# `stuck` is the exception and was added after a real figure failed on it. A file-journey
+# machine had "deferred" (waiting out a grace window, returns by itself) and "imported, still
+# there" (the delete failed, the next scan has to clean it up) both tagged `transient`, and the
+# first reader asked why two states that mean such different things were the same colour. They
+# are not the same kind of state: one is on its way, the other is somewhere it should not be.
+#
+# It takes purple, the one palette entry no state role had claimed. Purple carries no
+# convention — which is the honest description of what it says: "a different kind of state from
+# the ones around it", and no more. So the LABEL has to name the problem, the way `deferred`
+# and `imported, still there` already do. A `stuck` state called `state_4` says nothing at all.
+STATE_ROLES = ("working", "steady", "transient", "stuck", "terminal", "neutral")
 
 # Shapes that survive the literal -> CSS-var substitution, each verified by rendering it
 # and checking for unmapped colour literals (that is the `theming` gate). Adding one
@@ -354,8 +365,28 @@ def validate(spec):
     elif kind == "state":
         _check_flat(_list(spec, "states", kind), "state", "states")
         _check_nodes(spec["states"], kind, ids, roles=STATE_ROLES)
+        _check_start(spec["states"])
         _check_edges(spec, ids, kind, key="transitions")
     return spec
+
+
+def _check_start(states):
+    """`start: true` marks where the machine begins, and exactly one state may claim it.
+
+    A reader cannot otherwise tell: being written first, or drawn at the top, is an accident of
+    layout, and a state with no incoming transition looks like every other state. Two starts is
+    a hard error rather than a "first one wins", because a machine with two entry points is
+    either two machines or a spec that was edited without reading — and the renderer can only
+    draw one dot.
+    """
+    marked = [s["id"] for s in states if s.get("start")]
+    for state in states:
+        if "start" in state:
+            _require(isinstance(state["start"], bool),
+                     f"state: {state['id']} `start` must be true or false")
+    _require(len(marked) < 2,
+             f"state: {' and '.join(repr(m) for m in marked)} both set `start`. A machine has "
+             "one place it begins; if this really has two entry points, they are two diagrams.")
 
 
 def _check_flat(nodes, kind, key):
@@ -600,6 +631,10 @@ def content_warnings(spec):
                 "drawn several times. If one state is reachable from everywhere on the same "
                 "trigger, that is one fact, not one edge per source: draw the path that "
                 "matters and put \"from any state\" in its note")
+        if states and not any(s.get("start") for s in states):
+            out.append("no state is marked `start: true`, so nothing says where the machine "
+                       "begins — the reader is left inferring it from the layout, which is "
+                       "the one thing the layout does not mean")
         check_labels(states, "state")
         check_notes(states, "state")
         check_labels(transitions, "transition")

@@ -172,8 +172,16 @@ everywhere is most of what makes a set of figures read as one system.
   wrong home for the box the change *added*. If nothing in the list fits that box, it is usually
   a `svc`: the thing that does the work.
 - **A `state` has its own set**, because a state is not a datastore: `working` (in progress) ·
-  `steady` (settled) · `transient` (retrying, about to move) · `terminal` · `neutral`. **The
+  `steady` (settled) · `transient` (retrying, about to move) · `stuck` (somewhere it should not
+  be, and not the end) · `terminal` · `neutral`. **The
   architectural roles are rejected on a state and vice versa** — this is a hard error, not advice.
+  **One role means one thing per diagram**: two states the reader must tell apart cannot share
+  one. A real machine drew "deferred" and "imported, still there" both `transient` and the first
+  reader asked why they were the same colour — the second is `stuck`. That role's purple carries
+  no convention on purpose, so its label has to name the problem.
+  Mark where the machine begins with **`start: true`** on one state: the renderer draws UML's
+  filled dot beside it, and without one nothing says where to start reading — top-of-the-diagram
+  is where the layout put it, not a claim about the machine.
 - **A `sequence` colours by `group`, not by role.** Give each lane the side of the wire it is on
   — `browser`/`server`, `cli`/`daemon`, `browser`/`server`/`db` — and every lane in that group
   shares one colour, so the reader sees where the crossing happens. Group names are free text;

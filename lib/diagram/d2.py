@@ -216,8 +216,14 @@ GROUP_CLASSES = ("client", "svc", "store", "cache", "ext")
 # and each one reuses an architectural role's palette entry rather than adding a colour: the
 # reader is decoding green-steady / amber-retrying / red-terminal, which is a convention they
 # already have. Only the *class* is shared — nothing else about `store` follows into `steady`.
-STATE_CLASS = {"working": "client", "steady": "store",
-               "transient": "cache", "terminal": "ext"}
+#
+# `stuck` takes `svc`, the one entry the other four left unused, and it is the one state colour
+# with no convention behind it — see spec.STATE_ROLES for why that is the point rather than a
+# compromise. It also means the five are mutually distinguishable, which is what the whole
+# vocabulary is for: a diagram cannot now paint two different meanings the same colour without
+# the author having written the same role twice.
+STATE_CLASS = {"working": "client", "steady": "store", "transient": "cache",
+               "stuck": "svc", "terminal": "ext"}
 
 
 def wrap_detail(text, width=None):
@@ -464,6 +470,19 @@ def _table(item, row_key, indent=0):
     return [head + " {"] + body + [pad + "}"]
 
 
+def effective_direction(spec, standalone=False):
+    """The `direction` this spec will actually be laid out with, or None if the kind has no
+    default (`sequence`, whose engine ignores it).
+
+    Exposed because the post-processing in `compact.py` has to know which way the drawing
+    runs — a state machine's start marker goes beside the first state laid out downward and
+    above it laid out to the right — and the standalone target's direction is NOT in the spec:
+    it comes out of `DIRECTION` here. Reading `spec["direction"]` there silently got it wrong
+    in the one case it mattered, and the clipping gate is what caught it.
+    """
+    return spec.get("direction") or DIRECTION.get(spec["kind"], (None, None))[bool(standalone)]
+
+
 def emit(spec, background=None, standalone=False, wrap_edges=None):
     """Render `spec` to d2 source. Validates first — see spec.py on why that is loud.
 
@@ -489,7 +508,7 @@ def emit(spec, background=None, standalone=False, wrap_edges=None):
         # tweaking fixes it because it is what `dot` is for.
         lines.append("shape: sequence_diagram")
 
-    direction = spec.get("direction") or DIRECTION.get(kind, (None, None))[bool(standalone)]
+    direction = effective_direction(spec, standalone)
     if direction:
         lines.append(f"direction: {direction}")
 

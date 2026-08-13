@@ -99,6 +99,21 @@ class TestReferenceCorpus(unittest.TestCase):
         self.assertAlmostEqual(width / height, MEASURED["arch"][0] / MEASURED["arch"][1],
                                delta=0.02, msg="architecture should not change with target")
 
+    def test_the_standalone_start_marker_spends_height_not_width(self):
+        """The standalone target's direction is a default in `d2.DIRECTION`, not a key in the
+        spec — so reading `spec["direction"]` here put the dot beside the first state on a
+        landscape drawing, added 61px of width, and pushed a callout off the canvas. The
+        clipping gate caught it; this pins the geometry so it cannot come back quietly.
+        """
+        import copy
+
+        plain = copy.deepcopy(REFERENCE["state"])
+        self.assertTrue(plain["states"][0].pop("start"), "the reference marks its start")
+        before = render.natural_size(render.standalone(plain, name="s--nostart"))
+        after = render.natural_size(render.standalone(REFERENCE["state"], name="s--start"))
+        self.assertEqual(before[0], after[0], "the marker must not widen a landscape drawing")
+        self.assertGreater(after[1], before[1], "it goes above, so height is what it costs")
+
     def test_all_six_pass_the_size_gates(self):
         for name, svg in self.svgs.items():
             result = size.check(svg, name)

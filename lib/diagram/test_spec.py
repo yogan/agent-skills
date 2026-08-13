@@ -348,7 +348,7 @@ class TestState(unittest.TestCase):
         })
 
     def test_a_state_takes_the_state_vocabulary(self):
-        for role in ("working", "steady", "transient", "terminal", "neutral"):
+        for role in ("working", "steady", "transient", "stuck", "terminal", "neutral"):
             with self.subTest(role=role):
                 validate({"kind": "state",
                           "states": [{"id": "a", "role": role}, {"id": "b"}],
@@ -369,6 +369,34 @@ class TestState(unittest.TestCase):
             validate({"kind": "architecture",
                       "nodes": [{"id": "a", "role": "steady"}],
                       "edges": []})
+
+    def test_one_state_may_mark_itself_the_start(self):
+        validate({"kind": "state",
+                  "states": [{"id": "a", "start": True}, {"id": "b"}],
+                  "transitions": [{"from": "a", "to": "b", "label": "x"}]})
+
+    def test_two_starts_are_rejected_and_both_are_named(self):
+        """A machine with two entry points is either two machines or a spec edited without
+        reading — and the renderer can only draw one dot."""
+        with self.assertRaisesRegex(SpecError, "'a' and 'b'"):
+            validate({"kind": "state",
+                      "states": [{"id": "a", "start": True}, {"id": "b", "start": True}],
+                      "transitions": [{"from": "a", "to": "b", "label": "x"}]})
+
+    def test_a_non_boolean_start_is_rejected(self):
+        with self.assertRaisesRegex(SpecError, "`start`"):
+            validate({"kind": "state",
+                      "states": [{"id": "a", "start": "yes"}, {"id": "b"}],
+                      "transitions": [{"from": "a", "to": "b", "label": "x"}]})
+
+    def test_marking_no_start_renders_but_advises(self):
+        """Advisory, not fatal: a machine drawn without one is still the machine, and this
+        codebase warns where it can rather than refusing."""
+        spec = {"kind": "state",
+                "states": [{"id": "a"}, {"id": "b"}],
+                "transitions": [{"from": "a", "to": "b", "label": "x"}]}
+        validate(spec)
+        self.assertTrue(any("start" in w for w in content_warnings(spec)))
 
     def test_unknown_transition_endpoint_is_rejected(self):
         with self.assertRaisesRegex(SpecError, "transitions"):
@@ -412,8 +440,8 @@ class TestContentWarnings(unittest.TestCase):
     def test_the_same_machine_with_the_repetition_removed_is_silent(self):
         """7/4 = 1.75. The fix the warning asks for is what clears it."""
         spec = {"kind": "state",
-                "states": [{"id": "open"}, {"id": "pending"}, {"id": "waiting"},
-                           {"id": "done", "note": "from any state"}],
+                "states": [{"id": "open", "start": True}, {"id": "pending"},
+                           {"id": "waiting"}, {"id": "done", "note": "from any state"}],
                 "transitions": [
                     {"from": "open", "to": "pending", "label": "pushed"},
                     {"from": "open", "to": "waiting", "label": "set waiting"},
@@ -439,7 +467,8 @@ class TestContentWarnings(unittest.TestCase):
 
     def test_a_typeset_arrow_is_silent(self):
         spec = {"kind": "state",
-                "states": [{"id": "a", "label": "data → protectedRoutes"}, {"id": "b"}],
+                "states": [{"id": "a", "label": "data → protectedRoutes", "start": True},
+                           {"id": "b"}],
                 "transitions": [{"from": "a", "to": "b", "label": "x → y"}]}
         self.assertEqual(content_warnings(spec), [])
 

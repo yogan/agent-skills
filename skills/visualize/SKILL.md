@@ -247,9 +247,17 @@ is a legitimate answer.
 
 A `state` diagram uses a different set, for the same reason — a state is not a datastore:
 `working` (in progress) · `steady` (settled, the happy resting place) · `transient` (retrying,
-about to move) · `terminal` (the end of the line) · `neutral`. The colours land on the
-traffic-light reading a reader already has, which is the one place colour carries meaning here
-without a legend.
+about to move) · `stuck` (somewhere it should not be, and not the end) · `terminal` (the end of
+the line) · `neutral`. The first three and `terminal` land on the traffic-light reading a reader
+already has, which is the one place colour carries meaning here without a legend. `stuck` is
+purple and lands on nothing — it says "a different kind of state from the ones around it" and
+leaves the label to say which, so give a `stuck` state a label that names the problem.
+
+**One role means one thing per diagram.** Two states the reader must tell apart cannot share a
+role: a file-journey machine drew "deferred" (waiting out a grace window) and "imported, still
+there" (the delete failed) both `transient`, and the first reader's question was why two states
+that mean such different things were the same colour. If two states collide, one of them is
+mis-roled — that is what `stuck` exists for.
 
 The point is consistency: if `store` means Postgres in one diagram, it must not mean "the
 important one" in the next. When you draw several diagrams for one request, reuse the roles

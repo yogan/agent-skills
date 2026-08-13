@@ -153,7 +153,7 @@ STATE = {
     "kind": "state",
     "title": "The client socket's lifecycle",
     "states": [
-        {"id": "connecting", "role": "working"},
+        {"id": "connecting", "role": "working", "start": True},
         {"id": "authenticating", "role": "working"},
         {"id": "live", "role": "steady"},
         {"id": "backoff", "label": "reconnect backoff", "role": "transient",

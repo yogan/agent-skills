@@ -31,8 +31,11 @@ Every box takes a `role`, which is what it *is*, not what colour you want:
 `client` · `svc` · `store` · `cache` · `ext` · `neutral` (the default).
 
 **A `state` has its own set**, because a state is not a datastore or a cache and tagging it as
-one just picks a colour: `working` · `steady` · `transient` · `terminal` · `neutral`. These are
-rejected on any other kind, and the architectural roles are rejected on a state.
+one just picks a colour: `working` · `steady` · `transient` · `stuck` · `terminal` · `neutral`.
+These are rejected on any other kind, and the architectural roles are rejected on a state.
+`stuck` is for a state something ended up in that it should not be in, and which is not the end
+— the one whose colour (purple) has no convention behind it, so its **label** has to name the
+problem. Use it when two states would otherwise share a role the reader must tell apart.
 
 ### Notes
 
@@ -217,7 +220,7 @@ search, not an instruction — and hand-picked anchors have measurably lost to i
 {
   "kind": "state",
   "states": [
-    {"id": "live", "role": "steady"},
+    {"id": "live", "role": "steady", "start": true},
     {"id": "backoff", "label": "reconnect backoff", "role": "transient"},
     {"id": "closed", "role": "terminal"}
   ],
@@ -228,6 +231,12 @@ search, not an instruction — and hand-picked anchors have measurably lost to i
 }
 ```
 
+- **`start: true` on the state the machine begins in**, which the renderer draws as UML's
+  filled dot with an arrow into that state. Mark one — nothing else says where to start
+  reading: being written first, or being drawn at the top, is an accident of layout, and a
+  state with no incoming transition looks like every other state. At most one per diagram
+  (two is a hard error); none is an advisory, not a refusal. The dot goes in the margin
+  *beside* the state and normally costs no canvas at all.
 - Label every transition with what causes it. An unlabelled state machine is a shape.
 - ≤6 states. If there are more, the diagram is answering more than one question — split it.
 - **Keep transitions to about two per state.** Past that the same trigger is usually drawn

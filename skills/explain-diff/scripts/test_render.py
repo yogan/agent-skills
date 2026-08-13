@@ -391,7 +391,8 @@ class TestDiagramAdvice(unittest.TestCase):
     def test_a_clean_spec_says_nothing(self):
         R.render_diagram({
             "kind": "state",
-            "states": [{"id": "live", "role": "steady"}, {"id": "closed", "role": "terminal"}],
+            "states": [{"id": "live", "role": "steady", "start": True},
+                       {"id": "closed", "role": "terminal"}],
             "transitions": [{"from": "live", "to": "closed", "label": "user leaves"}],
         }, name="plain")
         self.assertEqual(R._DIAGRAM_ADVICE, [])
