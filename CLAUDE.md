@@ -54,6 +54,26 @@ Neither replaces the full fast suite before you commit. Don't reach for `python3
 discover`: it only finds tests under directories with an `__init__.py`, which is just `lib/`
 here, so it silently runs a fraction of the suite with no error.
 
+### What a test may do to the filesystem
+
+Some tests here write real files, and that is not a smell: `test_visualize.py` covers a CLI
+whose whole contract is "write a file and print its path". Every *library* unit test writes
+nothing at all, which is why they run in tenths of a second. The rule is not "don't write",
+it is:
+
+> a test removes exactly the files it created, and never a pattern.
+
+Both halves have been broken. `test_findings.py` called `tempfile.mkdtemp()` and removed
+nothing, leaking three directories per suite run until 460 had accumulated. And the tempting
+fix for the other half — sweeping `/tmp/*diagram*` — would delete real `visualize.py` output,
+since the CLI writes there by design and its files are indistinguishable from a test's unless
+the test gives itself a name of its own. That is why the one test covering the default output
+path uses a title no real diagram would have: the file it deletes is provably its own.
+
+Real skill runs are NOT tidied up. `/tmp/<date>-diagram-<slug>.svg` is somebody's diagram.
+
+`test_repo_hygiene.py` enforces both halves, statically and by measuring.
+
 **`--slow` costs about four minutes. Do not put it in an edit-test loop.** A `*_slow.py` file
 is one whose cost is irreducible, and there are two, which is the thing to know before typing
 the flag:

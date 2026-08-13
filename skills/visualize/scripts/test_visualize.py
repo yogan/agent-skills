@@ -276,17 +276,30 @@ class TestStandaloneImage(unittest.TestCase):
             self.assertEqual(out.strip(), target)
 
     def test_the_default_path_is_dated_and_named_after_the_spec(self):
-        """`own_output=False` — the one run in this file that uses the real default. Every
-        other test passes its own `-o` so they cannot overwrite each other's output, which
-        left this behaviour covered only by accident until it was written down."""
+        """`own_output=False` — the one run in this file that uses the real default path.
+        Every other test passes its own `-o`, which left this behaviour covered only by
+        implication until it was written down.
+
+        The spec carries a title no real diagram would: the default path is derived from the
+        title, so a title of its own is what makes the resulting file provably THIS test's.
+        With the reference spec it would land on
+        `/tmp/<date>-diagram-the-client-socket-s-lifecycle.svg` — the exact path a real
+        `visualize.py` run writes — and cleaning that up would delete somebody's actual
+        diagram. Tests remove their own files; they do not tidy /tmp.
+        """
         import datetime
 
-        code, out, err = run("--no-open", "--no-png", "--no-place", spec=STATE,
+        spec = dict(STATE, title="visualize test default path probe")
+        expected = (f"/tmp/{datetime.date.today():%Y-%m-%d}"
+                    f"-diagram-{V.slugify(spec['title'])}.svg")
+        # Registered before the run, so an assertion failure cannot leave the file behind.
+        self.addCleanup(lambda: os.path.exists(expected) and os.unlink(expected))
+
+        code, out, err = run("--no-open", "--no-png", "--no-place", spec=spec,
                              own_output=False)
         self.assertEqual(code, 0, err)
-        today = datetime.date.today().strftime("%Y-%m-%d")
-        self.assertEqual(out.strip(),
-                         f"/tmp/{today}-diagram-{V.slugify(STATE['title'])}.svg")
+        self.assertEqual(out.strip(), expected)
+        self.assertTrue(os.path.exists(expected))
 
     def test_the_gate_table_goes_to_stderr_so_stdout_is_just_the_path(self):
         """Callers read stdout for the path; the report must not pollute it."""

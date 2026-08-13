@@ -5,6 +5,7 @@ table, topic status derivation, and thread reconciliation.
 Run: `python3 skills/review-mr/scripts/test_findings.py` (stdlib only).
 """
 import os
+import shutil
 import sys
 import tempfile
 import unittest
@@ -32,13 +33,34 @@ def add_linked_topic(state, thread_id, **fields):
     return t
 
 
-class TestCodeSnippet(unittest.TestCase):
+class Throwaway:
+    """A temp directory that removes itself when the test ends.
+
+    These tests need a real directory on disk because `code_snippet` reads real files
+    through a worktree path. `tempfile.mkdtemp()` gave them one and nothing ever removed it,
+    which leaked three directories per suite run — 460 of them had accumulated before anyone
+    counted.
+
+    It deletes ONLY what it made: `mkdtemp` returns a freshly created, uniquely named
+    directory that belongs to this test and cannot be anything else. Nothing here globs, and
+    nothing here removes a path it did not create — a cleanup that swept a *pattern* would
+    eventually match a file some real run had written, which is a far worse bug than the leak
+    it fixed.
+    """
+
+    def _throwaway_dir(self):
+        path = tempfile.mkdtemp(prefix="test-findings-")
+        self.addCleanup(shutil.rmtree, path, ignore_errors=True)
+        return path
+
+
+class TestCodeSnippet(Throwaway, unittest.TestCase):
     """code_snippet's fixed line window has no notion of syntax state — see
     lib.snippet.open_construct, and threads.py's render_code_context, which has the
     same hazard and is covered by its own equivalent tests."""
 
     def _worktree_with(self, rel_path, content):
-        wt = tempfile.mkdtemp()
+        wt = self._throwaway_dir()
         full = os.path.join(wt, rel_path)
         os.makedirs(os.path.dirname(full), exist_ok=True)
         with open(full, "w") as f:
@@ -72,12 +94,12 @@ class TestCodeSnippet(unittest.TestCase):
         self.assertIn("► 10 | x10 = 10", out)
 
 
-class TestCriticalManifest(unittest.TestCase):
+class TestCriticalManifest(Throwaway, unittest.TestCase):
     def setUp(self):
         critical_manifest.reset()
 
     def test_code_snippet_marks_every_body_line(self):
-        wt = tempfile.mkdtemp()
+        wt = self._throwaway_dir()
         full = os.path.join(wt, "a.py")
         with open(full, "w") as f:
             f.write("a = 1\nb = 2\nc = 3\n")
