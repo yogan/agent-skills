@@ -149,6 +149,34 @@ class TestParticipantDetailLine(unittest.TestCase):
         self.assertIn(r'"routing\nAppRoutes"', d2.emit(spec))
 
 
+class TestMessageOutcome(unittest.TestCase):
+    def spec(self, outcome):
+        return {"kind": "sequence", "participants": [{"id": "a"}, {"id": "b"}],
+                "messages": [{"from": "a", "to": "b", "label": "409", "outcome": outcome}]}
+
+    def test_an_error_is_drawn_in_the_ext_colour(self):
+        source = d2.emit(self.spec("error"))
+        self.assertIn(f'style.stroke: "{palette.vars_for("ext", table=True)}"', source)
+        self.assertIn(f'style.font-color: "{palette.vars_for("ext", table=True)}"', source)
+
+    def test_an_ok_is_drawn_in_the_store_colour(self):
+        self.assertIn(f'style.stroke: "{palette.vars_for("store", table=True)}"',
+                      d2.emit(self.spec("ok")))
+
+    def test_a_message_without_one_keeps_the_muted_default(self):
+        spec = {"kind": "sequence", "participants": [{"id": "a"}, {"id": "b"}],
+                "messages": [{"from": "a", "to": "b", "label": "x"}]}
+        self.assertNotIn("style.stroke:", d2.emit(spec).split("(** -> **)")[-1])
+
+    def test_a_push_can_also_carry_one(self):
+        """The dash says nobody asked for it, the colour says how it went — different facts."""
+        spec = self.spec("error")
+        spec["messages"][0]["push"] = True
+        source = d2.emit(spec)
+        self.assertIn("style.stroke-dash: 4", source)
+        self.assertIn("style.stroke:", source)
+
+
 class TestEdgeLabelWrapping(unittest.TestCase):
     """Wrapping an edge label is the cheapest width in the renderer, so where it breaks
     matters — each rule here comes from a label that wrapped badly."""

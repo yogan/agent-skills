@@ -134,6 +134,11 @@ search, not an instruction — and hand-picked anchors have measurably lost to i
 - `push` (optional, sequence only): the receiver never asked for this one — a server push, an
   event, a subscription firing. Renders dashed with an open arrowhead, and its label should say
   what triggered it. An ordinary call you are waiting on is not a push.
+- `outcome` (optional, sequence only): `error` draws the message red, `ok` draws it green. For a
+  flow whose *point* is that it can end two ways — the 409 that turns a request back against the
+  200 that does not. Mark the two or three messages that are the fork, not every message: if
+  everything is coloured, nothing is. A `push` may carry one too; the dash says nobody asked for
+  it, the colour says how it went.
 - **An arrow is a call.** If a participant only *reacts* to state changing elsewhere, put that
   state in the diagram as a participant — then the write and the read are both real calls. See
   SKILL.md; this is the most common way a sequence diagram ends up asserting something false.

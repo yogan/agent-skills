@@ -187,6 +187,11 @@ everywhere is most of what makes a set of figures read as one system.
 - **`push`** (sequence only) draws a message the receiver never asked for — a server push, a
   subscription firing — dashed with an open arrowhead. Label it with what triggered it (`on peer
   join`). An ordinary call you happen to be waiting on is not a push.
+- **`outcome`** (sequence only) colours a message red (`error`) or green (`ok`). Reach for it
+  when the flow you are drawing can end two ways and the change is *about* which — a validation
+  gate returning 409 against the path that writes and returns 200. It replaces the callout you
+  would otherwise write to say so, and it is the answer to "where does this get turned back?"
+  that a reader has to trace by hand otherwise. Colour the fork, not the whole flow.
 - **Mark the box the change added with `new: true` and a one-word `note`.** The box is drawn in
   the accent colour — a border, or the fill on a table, which has none — and the note says what
   the accent means, because there is no legend. Two words are plenty: `"new"`, `"added"`. Do not

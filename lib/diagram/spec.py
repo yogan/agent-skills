@@ -58,6 +58,13 @@ NEAR = (
 
 DIRECTIONS = ("up", "down", "left", "right")
 
+# What a sequence message did, when the flow's point is that it can go two ways. Colour is
+# allowed to carry this — the one other place it carries anything, alongside a `state`'s roles
+# — because red-for-failed and green-for-succeeded is a convention the reader already has, and
+# the label says it in words anyway. Contrast with `push`, where colour was rejected precisely
+# because a reader has no convention for "the receiver did not ask for this".
+OUTCOMES = ("ok", "error")
+
 # Soft limits, all from the prototype's measurements. d2 exposes no `ranksep`, so a
 # sprawling diagram cannot be compacted after the fact — only authored smaller. These
 # predict a size-gate failure early and with a better message ("split this diagram")
@@ -244,6 +251,13 @@ def _check_edges(spec, ids, where, key="edges", required=True, allow_push=False)
                      "relationship — use `dashed`)")
             _require(isinstance(edge["push"], bool),
                      f"{where}: {key}[{i}] push must be true or false")
+        if "outcome" in edge:
+            # Same reasoning as `push`: it is about a call succeeding or failing, and only a
+            # sequence has calls. Elsewhere an edge is a relationship, which has no outcome.
+            _require(allow_push,
+                     f"{where}: {key}[{i}] sets `outcome`, which is only meaningful on a "
+                     "sequence message — a relationship does not succeed or fail")
+            _one_of(edge["outcome"], OUTCOMES, f"{where}: {key}[{i}] outcome")
     return edges
 
 

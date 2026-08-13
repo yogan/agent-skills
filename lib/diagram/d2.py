@@ -322,6 +322,14 @@ def _node(node, indent=0, height=None):
 # *reply* arrow, which is the opposite of what a push is.
 PUSH_STYLE = "{style.stroke-dash: 4; target-arrowhead.shape: arrow}"
 
+# A message's outcome, when a flow's point is that it can end two ways — a 409 turning the
+# request back, or the 200 that means it went through. The text-grade role colours, so both
+# read as text and both are already gate-approved in either theme. Unlike the push above, this
+# colour IS decodable without a legend: red-failed / green-succeeded is the same convention a
+# `state`'s roles lean on, and the label still carries the words.
+OUTCOME_COLOUR = {"ok": palette.vars_for("store", table=True),
+                  "error": palette.vars_for("ext", table=True)}
+
 
 def wrap_edge_label(text, width=EDGE_WRAPS[0]):
     """Break a long edge label onto several lines, at the places a reader already sees.
@@ -401,10 +409,16 @@ def _edge(edge, wrap=None):
     if edge.get("label"):
         label = wrap_edge_label(edge["label"], wrap) if wrap else edge["label"]
         line += f": {_q(label)}"
+    style = []
     if edge.get("push"):
-        line += f" {PUSH_STYLE}"
+        style += ["style.stroke-dash: 4", "target-arrowhead.shape: arrow"]
     elif edge.get("dashed"):
-        line += " {style.stroke-dash: 3}"
+        style.append("style.stroke-dash: 3")
+    if edge.get("outcome"):
+        colour = OUTCOME_COLOUR[edge["outcome"]]
+        style += [f'style.stroke: "{colour}"', f'style.font-color: "{colour}"']
+    if style:
+        line += " {" + "; ".join(style) + "}"
     return line
 
 
