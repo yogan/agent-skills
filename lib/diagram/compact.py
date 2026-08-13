@@ -62,6 +62,25 @@ DETAIL_FONT = 11
 DETAIL_DY = 13
 DETAIL_CLASS = "d2-detail"
 
+# The group legend under a sequence's lifelines: how much canvas it needs, how heavy its rule
+# is, and how loud. Lane colour says which side of the wire a lane is on and nothing says what
+# the colours mean — there is no legend anywhere else in this renderer, and a reader of the
+# first real figure guessed "probably FE/BE". The rule spans exactly the lanes in its group,
+# which is what ties the name to them; it is 2px at 55% because at full strength it read as
+# part of the drawing rather than as an annotation of it.
+LEGEND_BAND = 22
+LEGEND_RULE = 2
+LEGEND_OPACITY = 0.55
+LEGEND_FONT = 12
+LEGEND_GAP = 5            # lifeline feet -> rule
+LEGEND_BASELINE = 19      # lifeline feet -> the name's baseline
+
+# d2's own `--pad`, which render.compile_source passes: the margin between the drawing and the
+# canvas edge, and therefore the offset between the viewBox's bottom and the lifeline feet.
+# Duplicated rather than imported to keep this module free of the render pipeline; the tests
+# pin both, so a change to one fails loudly.
+PAD_BOTTOM = 8
+
 
 class CompactError(Exception):
     """The SVG did not have the structure this module needs to move rows safely."""
@@ -148,6 +167,118 @@ def style_detail_lines(svg):
 
     return re.sub(r"(<text\b[^>]*>)((?:\s*<tspan\b[^>]*>.*?</tspan>\s*)+)</text>",
                   restyle, svg, flags=re.S)
+
+
+def _lane_rects(svg, body_start):
+    """(x, width) per actor box, in document order — the lanes the legend spans."""
+    out = []
+    for start, end in _top_level_groups(svg, body_start):
+        body = svg[start:end]
+        if 'class="shape"' not in body:
+            continue
+        rect = re.search(r"<rect\b[^>]*>", body)
+        if not rect:
+            continue
+        x = re.search(r'\sx="([\d.-]+)"', rect.group(0))
+        w = re.search(r'\swidth="([\d.-]+)"', rect.group(0))
+        if not (x and w):
+            raise CompactError("an actor box has no x/width to hang a legend under")
+        out.append((float(x.group(1)), float(w.group(1))))
+    return out
+
+
+def _runs(lanes):
+    """Consecutive lanes sharing a group -> [(group, colour, first, last)].
+
+    Consecutive rather than "all lanes with this group": a split group is drawn as two spans,
+    which is honest — the rule marks where those lanes actually are. spec.py already advises
+    against splitting one.
+    """
+    out = []
+    for i, (group, colour) in enumerate(lanes):
+        if not group:
+            continue
+        if out and out[-1][0] == group and out[-1][3] == i - 1:
+            out[-1] = (group, colour, out[-1][2], i)
+        else:
+            out.append((group, colour, i, i))
+    return out
+
+
+def add_group_legend(svg, lanes):
+    """Name each lane group under the diagram, in its own colour.
+
+    `lanes` is (group name or None, colour) per participant, in order. Returns the SVG
+    unchanged when there is nothing to explain: fewer than two groups means the colours are
+    not distinguishing anything.
+
+    The band is added INSIDE the inner `<svg>`, whose viewBox is the coordinate system the
+    drawing is laid out in — the outer one is offset from it, and a legend placed there lands
+    a padding's worth out of position. Both grow, or the drawing is cropped.
+    """
+    runs = _runs(lanes)
+    if len(runs) < 2:
+        return svg
+
+    # Both <svg> tags are located by search rather than by position: at this point in the
+    # pipeline the document still opens with d2's XML declaration, and taking the first tag
+    # blindly grew that instead.
+    outer_at = svg.find("<svg")
+    inner_at = svg.find("<svg", outer_at + 1) if outer_at >= 0 else -1
+    if outer_at < 0 or inner_at < 0:
+        raise CompactError("expected an outer and an inner <svg> to place a legend in")
+    outer_tag = svg[outer_at:svg.index(">", outer_at) + 1]
+    inner_tag = svg[inner_at:svg.index(">", inner_at) + 1]
+    box = re.search(r'viewBox="([-\d.]+) ([-\d.]+) ([\d.]+) ([\d.]+)"', inner_tag)
+    if not box:
+        raise CompactError("the inner <svg> has no viewBox to measure from")
+    _vx, vy, _vw, vh = (float(v) for v in box.groups())
+
+    rects = _lane_rects(svg, svg.index(">", inner_at) + 1)
+    if len(rects) < len(lanes):
+        raise CompactError(f"{len(lanes)} lanes but {len(rects)} actor boxes")
+
+    foot = vy + vh - PAD_BOTTOM
+    marks = []
+    for group, colour, first, last in runs:
+        x0 = rects[first][0]
+        x1 = rects[last][0] + rects[last][1]
+        marks.append(
+            f'<rect x="{x0:.1f}" y="{foot + LEGEND_GAP:.1f}" width="{x1 - x0:.1f}" '
+            f'height="{LEGEND_RULE}" fill="{colour}" fill-opacity="{LEGEND_OPACITY}"/>'
+            f'<text x="{(x0 + x1) / 2:.1f}" y="{foot + LEGEND_BASELINE:.1f}" fill="{colour}" '
+            f'style="text-anchor:middle;font-size:{LEGEND_FONT}px">{_escape(group)}</text>')
+
+    svg = svg.replace(inner_tag, _grown(inner_tag), 1)
+    svg = svg.replace(outer_tag, _grown(outer_tag), 1)
+    close = svg.rindex("</svg></svg>")
+    return svg[:close] + "".join(marks) + svg[close:]
+
+
+def _escape(text):
+    return (str(text).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;"))
+
+
+def _grown(tag):
+    """One <svg> tag with `LEGEND_BAND` more height, in its viewBox and, if it has one, its
+    height attribute.
+
+    The outer tag has no height at this point in the pipeline — d2 emits a viewBox alone and
+    `render.pin_intrinsic` writes the size on afterwards, from the viewBox this just grew. The
+    inner tag does have one, and a stale value there would crop the legend.
+    """
+    box = re.search(r'viewBox="([-\d.]+) ([-\d.]+) ([\d.]+) ([\d.]+)"', tag)
+    if not box:
+        raise CompactError("an <svg> tag has no viewBox to grow")
+    out = tag
+    height = re.search(r'\sheight="([\d.]+)"', out)
+    if height:
+        out = (out[:height.start()] + f' height="{float(height.group(1)) + LEGEND_BAND:g}"'
+               + out[height.end():])
+    box = re.search(r'viewBox="([-\d.]+) ([-\d.]+) ([\d.]+) ([\d.]+)"', out)
+    bx, by, bw, bh = (float(v) for v in box.groups())
+    return (out[:box.start()] + f'viewBox="{bx:g} {by:g} {bw:g} {bh + LEGEND_BAND:g}"'
+            + out[box.end():])
 
 
 def compact_sequence(svg):

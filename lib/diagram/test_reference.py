@@ -28,7 +28,9 @@ from lib.diagram.spec import content_warnings
 # explicit height and its rows were re-stacked by compact.py.
 MEASURED = {
     "arch": (887, 771),
-    "sequence": (663, 420),
+    # 420 before the group legend, which adds `compact.LEGEND_BAND` under the lifelines to
+    # say which side of the wire each colour is.
+    "sequence": (663, 442),
     # `er` and `class` are landscape, chosen by measurement rather than by kind — see
     # render._pick_layout. Portrait was 324x722 and 474x560: legible at scale 1.0, but most of
     # the content column empty and nearly a full viewport tall. Wrapping the `er` diagram's

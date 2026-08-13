@@ -124,7 +124,10 @@ search, not an instruction — and hand-picked anchors have measurably lost to i
   your lanes. **Use this instead of `role` here**: per-lane roles make one colour per kind of
   thing, which is six colours saying nothing a reader of a flow asked about. A lane carrying both
   is rejected. Keeping a group's lanes adjacent usually reads best; the renderer warns when one is
-  split, but a long arrow can be the worse trade — see SKILL.md.
+  split, but a long arrow can be the worse trade — see SKILL.md. **The renderer names the groups
+  under the diagram**, each in its own colour over the lanes it covers, so the reader is never
+  left decoding a hue — which means the group name is read by a human and should be a word they
+  know (`browser`, `server`, `worker`), not an internal one.
 - `detail` (optional): a smaller second line under the label. For a lane that is a *subsystem*
   rather than one module — name the lane at the altitude of the question, and put the real
   module names here so the reader can still grep for them. Every participant box grows to the

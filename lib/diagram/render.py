@@ -219,11 +219,24 @@ def _maybe_compact(raw, spec, name):
     if spec.get("kind") != "sequence":
         return svg
     try:
-        return compact.compact_sequence(svg)
+        svg = compact.compact_sequence(svg)
     except compact.CompactError as exc:
         print(f"{name}: could not compact the sequence rows ({exc}) — "
               "falling back to d2's spacing", file=sys.stderr)
+    try:
+        return compact.add_group_legend(svg, _lane_colours(spec["participants"]))
+    except compact.CompactError as exc:
+        print(f"{name}: could not add the group legend ({exc}) — the lane colours are "
+              "unexplained, so say what they mean in the prose", file=sys.stderr)
         return svg
+
+
+def _lane_colours(participants):
+    """(group name or None, its colour) per lane, for the legend under a sequence."""
+    classes = d2mod.group_classes(participants)
+    return [(p.get("group"),
+             palette.vars_for(classes[p["group"]])[1] if p.get("group") else None)
+            for p in participants]
 
 
 # The layouts `render()` will try when the spec does not pin one: both orientations, with the

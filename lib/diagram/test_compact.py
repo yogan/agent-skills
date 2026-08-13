@@ -211,6 +211,72 @@ class TestDetailLines(unittest.TestCase):
         ET.fromstring(compact.style_detail_lines(self.TWO_LINE))
 
 
+class TestGroupLegend(unittest.TestCase):
+    """Lane colour says which side of the wire a lane is on, and nothing said what the colours
+    meant — the first reader of a real figure guessed "probably FE/BE"."""
+
+    def svg(self, lanes=2):
+        boxes = "".join(
+            f'<g><rect x="{i * 200}" y="43" width="120" height="48" class="shape"/></g>'
+            for i in range(lanes))
+        return ('<?xml version="1.0"?>'
+                '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 626 339">'
+                '<svg class="d2-1" width="626" height="339" viewBox="3 43 626 339">'
+                f"{boxes}</svg></svg>")
+
+    def test_two_groups_get_a_rule_and_a_name_each(self):
+        out = compact.add_group_legend(self.svg(), [("browser", "#3b6fd4"),
+                                                    ("server", "#7c4dbd")])
+        self.assertIn(">browser</text>", out)
+        self.assertIn(">server</text>", out)
+        self.assertEqual(out.count(f'fill-opacity="{compact.LEGEND_OPACITY}"'), 2)
+
+    def test_one_group_explains_nothing_and_is_left_alone(self):
+        svg = self.svg()
+        self.assertEqual(compact.add_group_legend(svg, [("server", "#7c4dbd")] * 2), svg)
+
+    def test_ungrouped_lanes_are_left_alone(self):
+        svg = self.svg()
+        self.assertEqual(compact.add_group_legend(svg, [(None, None), (None, None)]), svg)
+
+    def test_the_canvas_grows_so_the_band_is_not_cropped(self):
+        out = compact.add_group_legend(self.svg(), [("browser", "#3b6fd4"),
+                                                    ("server", "#7c4dbd")])
+        self.assertIn(f'viewBox="0 0 626 {339 + compact.LEGEND_BAND}"', out)
+        self.assertIn(f'viewBox="3 43 626 {339 + compact.LEGEND_BAND}"', out)
+        self.assertIn(f'height="{339 + compact.LEGEND_BAND}"', out)
+
+    def test_a_split_group_is_drawn_as_two_spans(self):
+        """Honest: the rule marks where those lanes actually are. spec.py already advises
+        against splitting one."""
+        out = compact.add_group_legend(self.svg(3), [("a", "#111111"), ("b", "#222222"),
+                                                     ("a", "#111111")])
+        self.assertEqual(out.count(">a</text>"), 2)
+
+    def test_a_group_name_is_escaped(self):
+        out = compact.add_group_legend(self.svg(), [("a<b", "#111111"), ("c&d", "#222222")])
+        self.assertIn(">a&lt;b</text>", out)
+        self.assertIn(">c&amp;d</text>", out)
+
+    def test_more_lanes_than_actor_boxes_raises(self):
+        with self.assertRaises(compact.CompactError):
+            compact.add_group_legend(self.svg(1), [("a", "#111111"), ("b", "#222222")])
+
+    def test_a_missing_viewbox_raises_rather_than_cropping_the_band(self):
+        svg = self.svg().replace(' viewBox="3 43 626 339"', "")
+        with self.assertRaises(compact.CompactError):
+            compact.add_group_legend(svg, [("a", "#111111"), ("b", "#222222")])
+
+    def test_the_pad_matches_the_one_the_renderer_asks_d2_for(self):
+        """The band is placed relative to the canvas edge, so a change to d2's --pad without a
+        change here would leave it floating."""
+        import inspect
+
+        from lib.diagram import render
+        self.assertEqual(compact.PAD_BOTTOM,
+                         inspect.signature(render.compile_source).parameters["pad"].default)
+
+
 class TestRefusals(unittest.TestCase):
     def test_an_unbalanced_group_raises(self):
         with self.assertRaises(compact.CompactError):

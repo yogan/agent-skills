@@ -179,9 +179,12 @@ everywhere is most of what makes a set of figures read as one system.
   shares one colour, so the reader sees where the crossing happens. Group names are free text;
   two or three of them is the useful range, one per side of a boundary the reader cares about. A per-lane role paints six colours that each mean
   something different, none of it what a reader of a flow wants. A lane carrying both a `group`
-  and a `role` is rejected. A group's colour is assigned by order of first appearance, so if the
-  document has two sequence diagrams, write the groups in the same order in both — otherwise the
-  browser is blue in one figure and purple in the next.
+  and a `role` is rejected. The renderer writes the group names under the diagram, each in its
+  own colour over its lanes, so a reader never has to guess what blue means — which makes the
+  group name reader-facing: use a word they know (`browser`, `server`, `worker`), not an internal
+  one. A group's colour is assigned by order of first appearance, so if the document has two
+  sequence diagrams, write the groups in the same order in both — otherwise the browser is blue
+  in one figure and purple in the next.
 - **`detail`** (any box) is a smaller second line under the name: the real module names under a
   lane that is named at the altitude of the question.
 - **`push`** (sequence only) draws a message the receiver never asked for — a server push, a
