@@ -42,6 +42,7 @@ Any box, table, class or sequence lane may carry:
 |---|---|---|
 | `note` | | 2–4 words, becomes a permanently visible callout |
 | `near` | optional | one of `top-left` `top-center` `top-right` `center-left` `center-right` `bottom-left` `bottom-center` `bottom-right` |
+| `new` | optional | `true` marks the box a change **added**: an accent border, or an accent fill on a table, which has no border of its own to colour. Requires a `note` — the accent has no legend, so it cannot say what is new on its own, and with one the note shrinks to a word: `"new"`, `"added"`. Not allowed on a container, where it would be silently ignored. |
 
 **Most diagrams should have no notes at all** — see [SKILL.md](SKILL.md) on when one earns its
 place. Note that no example in this file uses one, deliberately: a callout is the exception, not

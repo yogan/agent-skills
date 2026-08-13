@@ -125,6 +125,22 @@ def _list(spec, key, what):
     return value
 
 
+def _check_new(item, where):
+    """`new` marks the one thing a change added, and it may not speak alone.
+
+    Colour without words says "something here is special" and never says what, and there is no
+    legend to look it up in — which is why this was rejected outright for a while. Pairing it
+    with a `note` is what makes it legible: the accent carries the eye, and two words say why.
+    """
+    if "new" not in item:
+        return
+    _require(isinstance(item["new"], bool), f"{where}: `new` must be true or false")
+    _require(not item["new"] or item.get("note"),
+             f"{where} sets `new` without a `note`. The accent colour has no legend, so it "
+             "cannot say WHAT is new on its own — add a note of a word or two (\"new\", "
+             "\"added\", \"gains a revision column\").")
+
+
 def _check_note(obj, where):
     """A `note` becomes a permanently-visible `tooltip.near` callout in the drawing."""
     if "note" not in obj:
@@ -186,10 +202,7 @@ def _check_tree(nodes, where, roles=ROLES):
             # Smaller lines under the name. On a sequence lane it carries the modules behind an
             # abstract lane; on an architecture box, the members behind an aggregated area.
             _str(node["detail"], f"{where}: {nid} detail")
-        _require("new" not in node,
-                 f"{where}: {nid} sets `new`. A stroke-only accent says \"something here is "
-                 "special\" without saying what, and there is no legend to look it up in — "
-                 "use a `note` to name the change in words.")
+        _check_new(node, f"{where}: {nid}")
         _check_note(node, f"{where}: {nid}")
         children = node.get("children")
         if children is not None:
@@ -198,6 +211,10 @@ def _check_tree(nodes, where, roles=ROLES):
             _require("role" not in node,
                      f"{where}: {nid} has children, so it is a container and takes the "
                      "container styling; remove its `role`")
+            _require(not node.get("new"),
+                     f"{where}: {nid} has children, so it is a container and takes the "
+                     "container styling — `new` would be silently ignored. Mark the child "
+                     "the change added, or say it in the container's `note`.")
             _check_tree(children, f"{where}: {nid}")
 
 
@@ -244,6 +261,7 @@ def _check_rows(spec, key, where, ids, row_key, row_extra=(), addressable=True):
         tid = _str(item.get("id"), f"{where}: {key[:-1]} id")
         _require("." not in tid, f"{where}: {key[:-1]} id {tid!r} may not contain '.'")
         _one_of(item.get("role", "neutral"), ROLES, f"{where}: {tid} role")
+        _check_new(item, f"{where}: {tid}")
         _check_note(item, f"{where}: {tid}")
         rows = item.get(row_key)
         # An empty box draws as a bare header with a zero-height body, which reads as a

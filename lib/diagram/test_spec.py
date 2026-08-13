@@ -154,15 +154,44 @@ class TestNotes(unittest.TestCase):
             validate(spec)
 
 
-class TestNewFlagIsRejected(unittest.TestCase):
-    """A stroke-only accent has no legend, so it cannot say WHAT changed. It survived for a
-    while inside the animated `steps` kind, whose per-board caption supplied the words; that
-    kind is gone, and with it the flag."""
+class TestNewFlag(unittest.TestCase):
+    """`new` marks the one box a change added. Colour without words says "something here is
+    special" and never says what — there is no legend — so it may not travel alone."""
 
-    def test_new_is_rejected_on_an_architecture_node(self):
+    def test_new_without_a_note_is_rejected(self):
         spec = arch()
         spec["nodes"][1]["new"] = True
-        with self.assertRaisesRegex(SpecError, "sets `new`"):
+        with self.assertRaisesRegex(SpecError, "without a `note`"):
+            validate(spec)
+
+    def test_new_with_a_note_passes(self):
+        spec = arch()
+        spec["nodes"][1].update(new=True, note="new store")
+        validate(spec)
+
+    def test_new_must_be_a_boolean(self):
+        spec = arch()
+        spec["nodes"][1].update(new="yes", note="new store")
+        with self.assertRaisesRegex(SpecError, "true or false"):
+            validate(spec)
+
+    def test_a_table_may_be_marked_too(self):
+        validate({"kind": "er", "tables": [
+            {"id": "t", "role": "store", "new": True, "note": "new",
+             "columns": [{"name": "id", "type": "uuid"}]}]})
+
+    def test_a_table_marked_without_a_note_is_rejected(self):
+        with self.assertRaisesRegex(SpecError, "without a `note`"):
+            validate({"kind": "er", "tables": [
+                {"id": "t", "role": "store", "new": True,
+                 "columns": [{"name": "id", "type": "uuid"}]}]})
+
+    def test_a_container_cannot_be_marked_because_it_would_be_ignored(self):
+        spec = arch(nodes=[{"id": "g", "new": True, "note": "new area",
+                            "children": [{"id": "c", "role": "client"}]},
+                           {"id": "pg", "role": "store"}],
+                    edges=[{"from": "g.c", "to": "pg"}])
+        with self.assertRaisesRegex(SpecError, "silently ignored"):
             validate(spec)
 
 

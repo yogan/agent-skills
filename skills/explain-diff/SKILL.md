@@ -187,13 +187,16 @@ everywhere is most of what makes a set of figures read as one system.
 - **`push`** (sequence only) draws a message the receiver never asked for — a server push, a
   subscription firing — dashed with an open arrowhead. Label it with what triggered it (`on peer
   join`). An ordinary call you happen to be waiting on is not a push.
-- **Mark what this change touched with `note`**, in the reader's words — "new service", "new
-  table", "gains a revision column" — not with ad-hoc styling. There is no legend, so a colour or
-  a thick border says "something here is special" without ever saying what. Two to four words,
-  and only where the reader would otherwise miss or misread something; a note that says what a box
-  already *is* ("join table") is a caption, and it covers the edge labels underneath it. In an
-  explainer, "new" is never a caption — which box the change added is exactly what the reader
-  cannot see, and it is the one note nearly every figure here should carry.
+- **Mark the box the change added with `new: true` and a one-word `note`.** The box is drawn in
+  the accent colour — a border, or the fill on a table, which has none — and the note says what
+  the accent means, because there is no legend. Two words are plenty: `"new"`, `"added"`. Do not
+  write `"new table"` on a table; that it is a table is on the drawing already.
+- **Anything else worth pointing at is a `note` on its own**, in the reader's words — "gains a
+  revision column", "no index on user_id". Two to four words, and only where the reader would
+  otherwise miss or misread something; a note that says what a box already *is* ("join table")
+  is a caption, and it covers the edge labels underneath it. Never reach for styling to say
+  something a note could say instead: `new` is the one exception, and only because it always
+  travels with its words.
 
 ##### In a `sequence`, an arrow means "A calls B"
 

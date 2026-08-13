@@ -165,6 +165,11 @@ def _prelude(background=None):
         fill, stroke = palette.vars_for(role)
         lines.append(f'  {role}: {{ style: {{ fill: "{fill}"; stroke: "{stroke}"; '
                      "stroke-width: 2 } }")
+    # The one place styling carries meaning, and only ever alongside the `note` spec.py
+    # insists on: the box a change added. Stroke-only so it composes with any role class
+    # (`class: [svc; new]`) and the role still says what the thing IS. A table cannot use
+    # this — there `stroke` is the body fill — so `_table` accents its `fill` instead.
+    lines.append(f'  new: {{ style: {{ stroke: "{palette.ACCENT}"; stroke-width: 4 }} }}')
     grp_fill, grp_stroke = palette.vars_for("neutral")
     lines.append(f'  grp: {{ style: {{ fill: "{grp_fill}"; stroke: "{grp_stroke}"; '
                  f'stroke-width: 2; font-color: "{palette.ACCENT}" }} }}')
@@ -265,7 +270,8 @@ def _classes_for(node):
     """The d2 class carrying this box's colour. A `state`'s role names what is being
     signalled and reuses an architectural role's palette entry — see STATE_CLASS."""
     role = node.get("role", "neutral")
-    return STATE_CLASS.get(role, role)
+    name = STATE_CLASS.get(role, role)
+    return f"[{name}; new]" if node.get("new") else name
 
 
 def _node(node, indent=0, height=None):
@@ -413,7 +419,12 @@ def _table(item, row_key, indent=0):
     """
     pad = " " * indent
     role = item.get("role", "neutral")
-    fill = palette.vars_for(role, table=True)
+    # A table's `fill` is its border, its header background AND its member text (see the
+    # sentinels above), so a new table is accented by swapping that one colour rather than by
+    # a border it has no way to draw. It costs the role's colour on that box — in an `er`
+    # diagram every table is a `store` anyway, and "this is the new one" is the fact the
+    # reader came for.
+    fill = palette.ACCENT if item.get("new") else palette.vars_for(role, table=True)
     style = (f'style: {{ fill: "{fill}"; stroke: "{TABLE_BODY}"; '
              f'font-color: "{TABLE_TITLE}"; font-size: {TABLE_FONT}')
     if item.get("stereotype"):

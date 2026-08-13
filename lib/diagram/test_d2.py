@@ -365,6 +365,21 @@ class TestArchitecture(unittest.TestCase):
         self.assertIn("shape: cylinder", d2.emit(ARCHITECTURE))
         self.assertIn("shape: hexagon", d2.emit(ARCHITECTURE))
 
+    def test_a_new_leaf_composes_the_accent_with_its_role(self):
+        spec = {"kind": "architecture",
+                "nodes": [{"id": "a", "role": "svc", "new": True, "note": "new"}], "edges": []}
+        self.assertIn("class: [svc; new]", d2.emit(spec))
+        self.assertIn(f'new: {{ style: {{ stroke: "{palette.ACCENT}"', d2.emit(spec))
+
+    def test_a_new_table_is_accented_through_its_fill(self):
+        """A table has no border to accent — `stroke` is its body fill — so the one colour
+        that reaches its border, header and member text is what changes."""
+        spec = {"kind": "er", "tables": [
+            {"id": "t", "role": "store", "new": True, "note": "new",
+             "columns": [{"name": "id", "type": "uuid"}]}]}
+        self.assertIn(f'fill: "{palette.ACCENT}"', d2.emit(spec))
+        self.assertNotIn('fill: "#2c6b30"', d2.emit(spec))
+
     def test_a_leaf_label_is_not_bold(self):
         """d2 bolds node labels by default. A filled shape with a coloured border already
         announces itself, and next to a muted subtitle the weight reads as a third signal."""
