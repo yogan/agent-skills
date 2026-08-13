@@ -39,12 +39,23 @@ directly, e.g.:
 
     python3 skills/rework-mr/scripts/test_threads.py
 
-To run everything: `python3 run_tests.py` (add `--slow` for the slower files too — see
-below). Don't reach for `python3 -m unittest discover`: it only finds tests under
+To run everything: `python3 run_tests.py` (~30s). Pass a substring to run just what you are
+working on — `python3 run_tests.py compact` is under a second, and that is the loop you want
+while editing. Don't reach for `python3 -m unittest discover`: it only finds tests under
 directories with an `__init__.py`, which is just `lib/` here, so it silently runs a
 fraction of the suite with no error.
 
-A `test_*.py` file named `*_slow.py` (currently only `hooks/test_paste_gate_slow.py`)
-holds cases that are genuinely slow for a real reason (real `time.sleep()` in a
-subprocess that can't be mocked from the test) and is skipped by `run_tests.py` unless
-you pass `--slow`. Run it directly when you're actually touching that code path.
+**`--slow` costs about four minutes. Do not put it in an edit-test loop.** A `*_slow.py` file
+is one whose cost is irreducible, and there are two, which is the thing to know before typing
+the flag:
+
+| file | cost | why it cannot be faster |
+|---|---|---|
+| `lib/diagram/test_place_slow.py` | ~3m50s | every assertion is a real callout-placement search — 64 d2 compiles per two-callout diagram, each measured in a real browser. Faking it would test the fake. |
+| `hooks/test_paste_gate_slow.py` | ~36s | real `time.sleep()` in a subprocess, unmockable from the test. |
+
+Run `--slow` **once**, at the end, and only if you touched `place.py`, the harness geometry,
+callout anchoring, or the paste gate. Otherwise the plain fast suite is the gate. Every run
+prints seconds per file and names the slowest three, so a regression in test cost is visible
+without anyone having to go looking for it — that reporting exists because a session once spent
+40 of its 76 minutes re-running `--slow` five times over minor edits.
