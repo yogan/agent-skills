@@ -110,6 +110,39 @@ class TestDiscovery(unittest.TestCase):
         self.assertEqual(every - fast,
                          {"test_place_slow.py", "test_paste_gate_slow.py"})
 
+    def test_sharding_only_names_classes_unittest_will_accept(self):
+        """A shard runs as `python3 <file> <ClassName>`, so a plain helper class picked up
+        here would fail the shard outright."""
+        for path in rt.find_test_files(True, []):
+            for name in rt._classes(path):
+                with self.subTest(path=path.name, klass=name):
+                    self.assertTrue(name.startswith("Test"))
+
+    def test_only_files_slow_enough_to_earn_it_are_split(self):
+        files = list(rt.find_test_files(False, []))
+        slow = str(next(p for p in files if p.name == "test_visualize.py")
+                   .relative_to(rt.REPO_ROOT))
+        jobs = rt._jobs(files, {slow: rt.SHARD_OVER + 1})
+        shards = [j for j in jobs if j[1] is not None]
+        self.assertTrue(shards, "the slow file should have been split")
+        self.assertEqual({str(p.relative_to(rt.REPO_ROOT)) for p, _ in shards}, {slow})
+        self.assertEqual(rt._jobs(files, {}), [(p, None) for p in files],
+                         "with no timings, nothing is split")
+
+    def test_every_test_in_a_split_file_lands_in_exactly_one_shard(self):
+        """Sharding must partition the file, not sample it."""
+        path = next(p for p in rt.find_test_files(False, []) if p.name == "test_visualize.py")
+        import ast as _ast
+        tree = _ast.parse(path.read_text(encoding="utf-8"))
+        in_classes = sum(
+            1 for n in tree.body if isinstance(n, _ast.ClassDef) and n.name.startswith("Test")
+            for m in n.body
+            if isinstance(m, _ast.FunctionDef) and m.name.startswith("test_"))
+        loose = [n.name for n in tree.body
+                 if isinstance(n, _ast.FunctionDef) and n.name.startswith("test_")]
+        self.assertEqual(loose, [], "a module-level test would be dropped by sharding")
+        self.assertGreater(in_classes, 0)
+
     def test_a_pattern_filters_by_path_substring(self):
         picked = [p.name for p in rt.find_test_files(False, ["gates/"])]
         self.assertTrue(picked)

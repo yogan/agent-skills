@@ -3,3 +3,4 @@ __pycache__/
 e2e/.env.local
 e2e/.cache/
 e2e/backup/
+.run_tests_timings.json
