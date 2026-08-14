@@ -15,6 +15,16 @@ Guidance for working on this repo's own code. Not for a skill's runtime behavior
   The one place in `lib/` that isn't pure Python: `lib/diagram/js/` holds a Node script
   because measuring a rendered diagram needs a real browser — see that module's docstring
   for why there's no substitute. The Python side decides; the JS only measures.
+
+  **`figure.draw()` is the entry point. A skill calls that and nothing else.** It says what
+  the picture is FOR (`target="embed"` for a host page, `"file"` for a standalone image) and
+  gets back the SVG plus what is wrong with it. Which gates that implies, whether the layer
+  spacing needs escalating, where each callout goes, how many browser launches it takes — all
+  of it is behind that call. A skill that imports `gates`, `place` or `spec` directly is
+  re-deciding something `figure` already decided: both skills used to, they disagreed about
+  which gates apply, and the one `explain-diff` omitted was the only one that can see a label
+  buried under a callout. `render` is fair game for `HOST_CSS`/`page_css` — that is what a
+  host page must ship, which really is the caller's business.
 - `e2e/` — local GitLab demo/test rig for `review-mr`/`rework-mr` (see `e2e/README.md`).
 
 ## Sharing vs. duplication
