@@ -11,6 +11,7 @@ exhaustive two-callout search is 64 d2 compiles plus 64 browser measurements.
 
 Run: `python3 lib/diagram/test_place.py`
 """
+import copy
 import os
 import sys
 import unittest
@@ -288,14 +289,24 @@ class TestJointEscalation(unittest.TestCase):
     fine alone and only fit in one particular combination. Greedy fixes the first one
     against the wrong partner and never revisits it."""
 
-    # Unreachable by changing one index at a time from ER's pinned start
-    # ("top-left", "top-right"): every round-0 candidate clips, so the tie-break fixes
-    # index 0 at NEAR[0] ("top-left") — and no round-1 candidate can recover from that,
-    # because the good pair needs index 0 to be something else entirely.
-    ONLY_GOOD_PAIR = ("bottom-right", "top-left")
+    # The start point is pinned HERE rather than taken from `examples.ER`, because the premise
+    # depends on it exactly: greedy's reach is "one index at a time from wherever it starts".
+    # Read off the fixture, this broke silently the day the ER's own anchors moved — the good
+    # pair became reachable in round 0 and greedy stopped failing, which is the one thing this
+    # class needs it to do.
+    START = ("top-left", "top-left")
+
+    # Unreachable by changing one index at a time from START: every round-0 candidate clips
+    # equally, so the tie-break leaves index 0 at NEAR[0] ("top-left"), and no round-1
+    # candidate can recover from that, because the good pair needs index 0 to be something
+    # else entirely.
+    ONLY_GOOD_PAIR = ("bottom-right", "bottom-right")
 
     def setUp(self):
         self.calls = []
+        self.spec = copy.deepcopy(ER)
+        for site, anchor in zip(place.note_sites(self.spec), self.START):
+            site["near"] = anchor
         self.real = place._measure_candidates
         place._measure_candidates = self.spy
         # `place` asks the renderer which layout to hold the anchor search at, and that is a
@@ -321,13 +332,13 @@ class TestJointEscalation(unittest.TestCase):
 
     def test_greedy_alone_cannot_find_the_only_workable_pair(self):
         """The premise of the whole fallback: this is a real limitation, not a hypothetical."""
-        _, report = place.place(ER, name="er", joint_max=0)
+        _, report = place.place(self.spec, name="er", joint_max=0)
         self.assertEqual(len(self.calls), 2)
         self.assertGreater(report[0]["clip"], 0)
         self.assertNotEqual([e["near"] for e in report], list(self.ONLY_GOOD_PAIR))
 
     def test_the_joint_search_finds_the_only_workable_pair(self):
-        _, report = place.place(ER, name="er", joint_max=2)
+        _, report = place.place(self.spec, name="er", joint_max=2)
         self.assertEqual(report[0]["strategy"], "joint")
         self.assertEqual([e["near"] for e in report], list(self.ONLY_GOOD_PAIR))
         self.assertEqual(report[0]["clip"], 0)
@@ -335,7 +346,7 @@ class TestJointEscalation(unittest.TestCase):
     def test_the_joint_search_costs_the_grid_and_nothing_else(self):
         """It no longer runs greedy first and escalates, so the greedy rounds are not on the
         bill — affordability is the trigger now, not a clip greedy left behind."""
-        _, report = place.place(ER, name="er", joint_max=2)
+        _, report = place.place(self.spec, name="er", joint_max=2)
         self.assertEqual(report[0]["candidates"], len(NEAR) ** 2)
 
     def test_it_does_not_escalate_when_the_count_is_unaffordable(self):
@@ -351,7 +362,7 @@ class TestJointEscalation(unittest.TestCase):
         self.assertTrue(place.unplaceable(report))
 
     def test_a_still_clipped_result_is_surfaced_rather_than_hidden(self):
-        _, report = place.place(ER, name="er", joint_max=0)
+        _, report = place.place(self.spec, name="er", joint_max=0)
         self.assertTrue(place.unplaceable(report),
                         "a placement that could not avoid clipping must say so")
 
