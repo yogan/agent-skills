@@ -124,8 +124,34 @@ class TestScoring(unittest.TestCase):
     def test_a_diagram_with_no_callouts_costs_nothing_but_its_glyph_size(self):
         key, clip, overlap = place._score(fake_measurement([]))
         self.assertEqual((clip, overlap), (0, 0))
-        self.assertEqual(key[0], 0, "no clip")
-        self.assertEqual(key[2], 0, "no overlap")
+        # Everything except the glyph term, which is negated size and so never zero. Indexing
+        # by position broke the day a term was inserted; taking the whole tuple does not.
+        self.assertEqual([term for i, term in enumerate(key) if i != 2], [0, 0, 0],
+                         f"nothing to clip, hide or cover: {key}")
+
+    def test_hidden_text_outranks_everything_the_search_could_trade_it_for(self):
+        """The gap this closes. A buried label was only ever visible as weighted overlap, in a
+        term `HEIGHT_PRICE` can outbid — so on a real explainer figure the search took an anchor
+        lying across 8% of `connectionTimeout` while three anchors hid nothing, because the
+        clean ones were slightly taller. Being unreadable is not a price."""
+        buried = fake_measurement([(0, 0)]); buried["hiddenText"] = 111; buried["rend_h"] = 300
+        clean = fake_measurement([(0, 9000)]); clean["hiddenText"] = 0; clean["rend_h"] = 350
+        self.assertLess(place._score(clean)[0], place._score(buried)[0],
+                        "a clean anchor must win however tall and however much it covers")
+
+    def test_a_clip_still_outranks_hidden_text(self):
+        """Both mean a reader loses something; a clipped callout can lose ALL of it, and it is
+        the one the placement report can act on by asking for a shorter note."""
+        clipped = fake_measurement([(4, 0)]); clipped["hiddenText"] = 0
+        buried = fake_measurement([(0, 0)]); buried["hiddenText"] = 5000
+        self.assertLess(place._score(buried)[0], place._score(clipped)[0])
+
+    def test_less_hidden_text_wins_when_no_anchor_is_clean(self):
+        """Where every anchor buries something the remedy is editorial, but the search still
+        has to hand back the least bad one rather than treating them as equal."""
+        worse = fake_measurement([(0, 0)]); worse["hiddenText"] = 800
+        better = fake_measurement([(0, 0)]); better["hiddenText"] = 120
+        self.assertLess(place._score(better)[0], place._score(worse)[0])
 
     def test_shrinking_the_whole_diagram_outranks_a_large_overlap(self):
         """An anchor can grow the canvas, and a wider canvas is scaled further down in the

@@ -5,19 +5,23 @@ shape, d2 does no overlap avoidance, and it does not even grow the canvas to fit
 callout. There is no "let d2 decide" mode. So the renderer decides: render every anchor,
 measure the result in a browser, keep the best one.
 
-What is being optimised is READABILITY, and the three terms are one idea at three scales —
-text cut off, text shrunk, text covered:
+What is being optimised is READABILITY, and the terms are one idea at four scales — text cut
+off, text made unreadable, text shrunk, text covered:
 
   1. **Clipping is disqualifying, not a trade-off.** A cut-off callout is strictly worse than
      one that overlaps something, so it is weighted at 1e6 — the rest only ever breaks ties
      among candidates that are equally (un)clipped. An earlier version weighted it at 1e3
      and happily traded a 31px clip for a bit less overlap.
-  2. **Then the smallest glyph in the finished drawing.** An anchor can grow the canvas, and a
+  2. **Then text the reader cannot read at all**, in px². Not tradeable either, and it is the
+     term this list was missing: overlap counts a buried label, but at a price that page height
+     could outbid, so the search would take an anchor lying across a word over a clean one that
+     was 50px taller. See `_score`.
+  3. **Then the smallest glyph in the finished drawing.** An anchor can grow the canvas, and a
      wider canvas is scaled further down in the content column, so a callout can shrink every
      letter in the diagram. Blind to that, the search moved a callout on the reference ER to
      `center-left` and took 12.6px text down to 11.5px everywhere to buy a 22% cut in that one
      callout's overlap.
-  3. **Then overlap and page height, traded against each other** at `HEIGHT_PRICE`. Overlap is
+  4. **Then overlap and page height, traded against each other** at `HEIGHT_PRICE`. Overlap is
      weighted by what it damages (see `browser.OVERLAP_WEIGHTS`): burying a label costs 6, an
      edge 2, the body of a shape 0.3, and anything covering half the canvas is ignored as a
      container. Unweighted, the search optimises total area and cheerfully hides a label to
@@ -26,7 +30,7 @@ text cut off, text shrunk, text covered:
      glyph size nor overlap can see it.
 
 And then, often, nothing — because on a diagram with room in it most anchors cover nothing at
-all and the three terms above tie. That is not a gap in the model, it is the model saying there
+all and the terms above tie. That is not a gap in the model, it is the model saying there
 is no readability argument left to make, and the tie falls through to the order of `spec.NEAR`.
 See there, and `_score`.
 
@@ -125,6 +129,23 @@ def _score(measurement):
       the card, and HALF the overlap of the anchor that won (10488 vs 20104). It put the
       callout out in the empty left margin; the winner sat it on top of three arrows.
 
+    **Hidden text** comes straight after clipping, and it is the term this search went without
+    for far too long. Overlap already counts a buried label at weight 6 — but weight 6 of a
+    priced term, which `HEIGHT_PRICE` can outbid, so "covers a word" was tradeable against "is
+    50px taller". It is not tradeable. On a real explainer figure the search took `center-left`,
+    which lies across 8% of `connectionTimeout`, while `bottom-left`, `bottom-center` and
+    `bottom-right` each hid nothing at all: three clean anchors available and it chose a dirty
+    one, because the clean ones were slightly taller.
+
+    Nothing else here could have caught that. The layout half of the same problem is handled by
+    escalating `d2.ELK_SPACING_LADDER` (see `render._pick_layout`), and that deliberately looks
+    at `hiddenByLayout` — the callout's contribution excluded, since no amount of widening moves
+    an anchor. Which left the callout's contribution belonging to exactly one place: here.
+
+    Total hidden text, not the callout's share of it. The layout is pinned for the whole search,
+    so what a candidate adds is what varies, and minimising the total is the same ranking with
+    one less thing to get wrong.
+
     **Glyph size** is here because an anchor can grow the drawing, and a wider drawing is
     scaled further down inside the content column — so a callout can make EVERY letter in the
     diagram smaller. Without this term the search took that trade blind: on the reference ER
@@ -149,9 +170,11 @@ def _score(measurement):
     """
     clip = sum(c["clipVsCard"] for c in measurement["callouts"])
     overlap = sum(c["overlap"] for c in measurement["callouts"])
+    hidden = measurement.get("hiddenText") or 0
     fmin = measurement.get("fmin") or 0
     height = measurement.get("rend_h") or 0
-    return ((clip * CLIP_PENALTY, -round(fmin * 2) / 2, overlap + HEIGHT_PRICE * height),
+    return ((clip * CLIP_PENALTY, hidden, -round(fmin * 2) / 2,
+             overlap + HEIGHT_PRICE * height),
             clip, overlap)
 
 
