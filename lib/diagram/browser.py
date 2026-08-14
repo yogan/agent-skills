@@ -12,7 +12,7 @@ have no workable substitute:
 
 Cost, measured on the machine this was developed on, so nobody has to re-derive it: about
 10s for automatic placement of 7 callouts, 12s for an exhaustive two-callout search, 3.6s
-for the clipping gate over six diagrams. Fine for generating a document once; not fine per
+for the clipping gate over the reference corpus. Fine for generating a document once; not fine per
 keystroke, so keep this in the build step and never in a preview path.
 
 Deliberately `puppeteer-core` (29 MB, no bundled browser) driving the system Chrome, rather

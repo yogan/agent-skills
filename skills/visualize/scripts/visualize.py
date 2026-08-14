@@ -90,7 +90,8 @@ def main():
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("spec", nargs="?", help="path to the JSON diagram spec, or - for stdin")
-    parser.add_argument("-o", "--output", help="where to write it (default: /tmp/<date>-diagram-<slug>)")
+    parser.add_argument("-o", "--output",
+                        help="where to write it (default: /tmp/<date>-diagram-<slug>)")
     parser.add_argument("--format", choices=("svg", "embed", "css"), default="svg",
                         help="svg: a standalone image, opened when it is done (default). "
                              "embed: a themeable SVG for a host page that ships the CSS. "

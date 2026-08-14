@@ -325,7 +325,8 @@ def _check_rows(spec, key, where, ids, row_key, row_extra=(), addressable=True):
             _require(name not in seen, f"{where}: {tid} has duplicate {row_key} {name!r}")
             seen.add(name)
             if "type" in row:
-                _require(isinstance(row["type"], str), f"{where}: {tid}.{name} type must be a string")
+                _require(isinstance(row["type"], str),
+                         f"{where}: {tid}.{name} type must be a string")
             for extra, allowed in row_extra:
                 if extra in row:
                     _one_of(row[extra], allowed, f"{where}: {tid}.{name} {extra}")

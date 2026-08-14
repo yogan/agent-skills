@@ -48,10 +48,10 @@ ACTOR_HEIGHT_DETAIL = 48
 LINE_H = 14
 
 # Characters per detail line before it wraps. A detail is the real module names behind an
-# abstract lane, and left on one line it sets the box's width: a lane reading
-# "Procrastinate worker: discover→ingest (creates Document)→extract→ocr→enrich" stretched its box
-# to ~450px and shoved every other lane sideways. Wrapping trades that width for height, which a
-# sequence diagram has to spare — d2 sizes a box to its longest line, so the cap is the box.
+# abstract lane, and on one line it sets the box's width — a lane whose detail named five
+# pipeline steps came out several times the width of its neighbours and shoved every other lane
+# sideways. Wrapping trades that width for height, which a sequence diagram has to spare: d2
+# sizes a box to its longest line, so this cap IS the box.
 DETAIL_WRAP = 34
 
 # Wrap widths for an edge label, gentlest first. An edge label sits in the gap between two

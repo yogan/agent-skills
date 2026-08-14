@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""End-to-end: the six reference diagrams must render and pass every non-browser gate.
+"""End-to-end: every reference diagram must render and pass every non-browser gate.
 
 This is the regression test for the d2 recipe itself. The expected geometry below was
 measured by hand during the prototype, so a change in these numbers means either the
@@ -147,17 +147,17 @@ class TestReferenceCorpus(unittest.TestCase):
         # first state far enough from the top edge that the dot fits in margin already there.
         self.assertLessEqual(after[1], before[1] + compact.START_ARROW_ABOVE)
 
-    def test_all_six_pass_the_size_gates(self):
+    def test_every_diagram_passes_the_size_gates(self):
         for name, svg in self.svgs.items():
             result = size.check(svg, name)
             self.assertTrue(result.ok, f"{name}: {result.problems}")
 
-    def test_all_six_pass_wcag_aa_in_both_themes(self):
+    def test_every_diagram_passes_wcag_aa_in_both_themes(self):
         for name, svg in self.svgs.items():
             result = contrast.check(svg, name)
             self.assertTrue(result.ok, f"{name}: {result.problems}")
 
-    def test_all_six_are_fully_themeable(self):
+    def test_every_diagram_is_fully_themeable(self):
         for name, svg in self.svgs.items():
             result = theming.check(svg, name)
             self.assertTrue(result.ok, f"{name}: {result.problems}")
