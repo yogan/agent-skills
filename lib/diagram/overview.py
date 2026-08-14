@@ -101,15 +101,14 @@ def collapse(spec, drop=(), limit=MAX_MEMBERS):
     out = []
     for (a, b), labels in merged.items():
         named = [text for text in labels if text]
-        # One edge keeps its own verb; several become a count, because concatenating four verbs
-        # produces a label longer than the boxes it joins.
-        label = named[0] if len(labels) == 1 and named else f"{len(labels)} calls"
-        out.append({"from": a, "to": b, "label": label})
+        # One edge keeps its verb; several become a count, because four concatenated verbs
+        # outrun the boxes they join. An unlabelled single edge gets no label at all.
+        label = f"{len(labels)} calls" if len(labels) > 1 else (named[0] if named else "")
+        out.append({"from": a, "to": b, "label": label} if label else {"from": a, "to": b})
 
     collapsed = {"kind": "architecture", "nodes": nodes, "edges": out}
-    for key in ("title", "slug", "direction"):
-        if spec.get(key):
-            collapsed[key] = spec[key]
+    if spec.get("slug"):
+        collapsed["slug"] = spec["slug"]
     if spec.get("title"):
         collapsed["title"] = f"{spec['title']} — areas"
     return collapsed

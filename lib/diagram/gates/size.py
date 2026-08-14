@@ -115,6 +115,9 @@ def analyse(svg, avail_w=AVAIL_W, standalone=False):
     return {
         "nat_w": nat_w, "nat_h": nat_h, "scale": scale,
         "rend_w": nat_w * scale, "rend_h": nat_h * scale,
+        # fmax counts edge labels, fmin does not: the ceiling is "nothing may shout louder
+        # than an h2", which any text can breach, while the floor is per-kind — an edge label
+        # has its own, lower one below.
         "fmax": max(rendered + rendered_edges), "fmin": min(rendered),
         "fmodal": modal * unit * scale,
         "fmin_detail": min(rendered_details) if rendered_details else None,
@@ -123,25 +126,16 @@ def analyse(svg, avail_w=AVAIL_W, standalone=False):
 
 
 def check(svg, name="diagram", avail_w=AVAIL_W, max_h=MAX_H, standalone=False):
-    """All four size-family gates in one Result.
+    """Every size gate, in one Result.
 
-    `standalone=True` is for an image opened as a file rather than embedded in a page, and it
-    drops three of the four checks — not as a relaxation, but because they are all statements
-    about a page that is not there:
+    `standalone=True` drops the height, maximum-glyph and modal-glyph checks — not as a
+    relaxation, but because all three are statements about a page that is not there: height
+    bounded a figure to one viewport mid-article, and the glyph ceilings compare against
+    surrounding prose. Applying the page's width to a file makes any wide diagram "fail", and
+    the only fix an author has is to split a schema that was perfectly legible at full size.
 
-    * **height** bounded a figure to one viewport so a reader could take it in without
-      scrolling past it mid-article. A file in a viewer is scrolled and zoomed by definition.
-    * **maximum glyph** compared against an `h2`, i.e. against surrounding prose.
-    * **modal glyph** compared against body text, likewise.
-
-    Getting this wrong has a specific cost, and it was observed: applying the page's 777px
-    content width to a standalone image makes any wide diagram "fail", and the only fix the
-    author has is to split it — so a nine-table schema that would have been perfectly legible
-    at full size gets chopped into two for no reason at all.
-
-    What survives is the one check that is about the drawing itself: nothing may render below
-    ~11px, or ~9px for a subtitle line. At natural scale that is a statement about the authored
-    font sizes.
+    What survives is the floor, which is about the drawing itself: nothing may render below
+    ~11px, ~10px for an edge label, ~9px for a subtitle.
     """
     m = analyse(svg, avail_w=avail_w, standalone=standalone)
     problems = []

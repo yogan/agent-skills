@@ -281,7 +281,11 @@ def main():
         if arg in ("--slow", "--changed"):
             continue
         if arg.startswith("-j"):
-            workers = max(1, int(arg[2:] or 1))
+            try:
+                workers = max(1, int(arg[2:] or 1))
+            except ValueError:
+                print(f"not a worker count: {arg} (use -j4)", file=sys.stderr)
+                return 1
         else:
             patterns.append(arg)
 

@@ -154,11 +154,17 @@ def vars_for(role, table=False):
             if var == f"--d-{role}-tx":
                 return literal
         raise KeyError(f"no table colour for role {role!r}")
-    fills = {"client": "#e8effc", "svc": "#ece4f7", "store": "#e3f5e3",
-             "cache": "#fdf0d5", "ext": "#fdecec", "neutral": "#faf8f4"}
-    strokes = {"client": "#3b6fd4", "svc": "#7c4dbd", "store": "#3f9142",
-               "cache": "#d99a2b", "ext": "#c0392b", "neutral": "#d9d4c8"}
-    return fills[role], strokes[role]
+    prefix = _ROLE_VAR[role]
+    return tuple(next(lit for lit, (var, *_) in ROLES.items()
+                      if var == f"--d-{prefix}-{part}") for part in ("bg", "br"))
+
+
+# The one role whose colours are not named after it: `neutral` takes the group container's
+# pair. Everything else is `--d-<role>-bg` / `-br`, looked up in ROLES rather than repeated —
+# a second copy here meant a changed role kept painting the old literal invisibly, since the
+# old value is still a valid ROLES key and the theming gate stayed green.
+_ROLE_VAR = {"client": "client", "svc": "svc", "store": "store",
+             "cache": "cache", "ext": "ext", "neutral": "grp"}
 
 
 def declarations(theme):
@@ -171,11 +177,7 @@ def declarations(theme):
     never touched its toggle.
     """
     index = 0 if theme == "light" else 1
-    seen = {}
-    for var, light, dark in ALL.values():
-        seen[var] = (light, dark)
-    seen.update(EXTRA_VARS)
-    return "".join(f"{var}:{pair[index]};" for var, pair in seen.items())
+    return "".join(f"{var}:{pair[index]};" for var, pair in BY_VAR.items())
 
 
 def css_block(dark_selector="[data-theme=dark]"):

@@ -45,6 +45,7 @@ class Base(unittest.TestCase):
             "drawing": figure.render_mod.choose_drawing,
             "available": figure.browser_mod.available,
             "size": figure._size.check,
+            "analyse": figure._size.analyse,
             "contrast": figure._contrast.check,
             "theming": figure._theming.check,
             "clipping": figure._clipping.check_many,
@@ -58,6 +59,8 @@ class Base(unittest.TestCase):
         figure.render_mod.choose_drawing = lambda spec, name="d", *a, **kw: (("down", None), 15)
         figure.browser_mod.available = lambda: True
         figure._size.check = lambda svg, name, **kw: Result(name, "size")
+        # Contrast is scaled by what this reports; the stub SVGs have no measurable geometry.
+        figure._size.analyse = lambda svg, **kw: {"scale": 1.0}
         figure._contrast.check = lambda svg, name, **kw: Result(name, "contrast")
         figure._theming.check = lambda svg, name, **kw: Result(name, "theming")
         figure._clipping.check_many = self.spy_clipping
@@ -69,6 +72,7 @@ class Base(unittest.TestCase):
         figure.render_mod.choose_drawing = self.real["drawing"]
         figure.browser_mod.available = self.real["available"]
         figure._size.check = self.real["size"]
+        figure._size.analyse = self.real["analyse"]
         figure._contrast.check = self.real["contrast"]
         figure._theming.check = self.real["theming"]
         figure._clipping.check_many = self.real["clipping"]
@@ -201,6 +205,38 @@ class TestInternalKeys(Base):
 
     def test_a_spec_without_one_is_untouched(self):
         self.assertTrue(figure.draw({"flow": STATE})[0].ok)
+
+
+class TestGateIndependence(Base):
+    """A gate that cannot run must not take another down with it.
+
+    Contrast needs the rendered scale to judge WCAG's large-text allowance, and gets it from
+    the size gate — so an SVG the size gate cannot measure used to block both.
+    """
+
+    def test_contrast_still_runs_when_the_drawing_cannot_be_measured(self):
+        def unmeasurable(svg, **kw):
+            raise GateError("no intrinsic size")
+
+        figure._size.analyse = unmeasurable
+        drawn = figure.draw({"flow": STATE})[0]
+        self.assertIn("contrast", [r.gate for r in drawn.results])
+
+    def test_contrast_is_told_the_scale_an_embedded_figure_is_drawn_at(self):
+        seen = {}
+        figure._size.analyse = lambda svg, **kw: {"scale": 0.85}
+        figure._contrast.check = lambda svg, name, **kw: (
+            seen.update(kw) or Result(name, "contrast"))
+        figure.draw({"flow": STATE}, target="embed")
+        self.assertEqual(seen.get("scale"), 0.85)
+
+    def test_a_file_is_shown_at_natural_size_so_its_scale_is_one(self):
+        seen = {}
+        figure._size.analyse = lambda svg, **kw: {"scale": 0.5}
+        figure._contrast.check = lambda svg, name, **kw: (
+            seen.update(kw) or Result(name, "contrast"))
+        figure.draw({"flow": STATE}, target="file")
+        self.assertEqual(seen.get("scale"), 1.0)
 
 
 class TestPlacement(Base):
