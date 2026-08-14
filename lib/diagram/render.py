@@ -414,6 +414,31 @@ def choose_layout(spec, name="diagram", binary="d2"):
     return layout, layers
 
 
+def choose_drawing(spec, name="diagram", theme="dark", standalone=False, binary="d2"):
+    """`(layout, layers)` this spec should be drawn at — decided ONCE, for the whole pipeline.
+
+    `layout` is the `(direction, wrap)` pair, or None where there is nothing to choose: a
+    standalone image takes its direction from `d2.DIRECTION` and does not wrap, and a sequence
+    is laid out by an engine that ignores both.
+
+    This exists because the decision was being made twice, and the second time on different
+    input. `place` pinned a layout so that every anchor was measured on the same drawing —
+    which is the whole reason `choose_layout` was written — and then the caller rendered the
+    finished spec through the full search again. By then the spec HAS its `near` values, and a
+    callout changes the geometry the search ranks on: the reference architecture is 579px wide
+    with its callouts pinned and 462 without. So the drawing that shipped was not necessarily
+    the drawing the anchors had been chosen against, which is precisely the bug the pinning was
+    introduced to prevent, reappearing one step later.
+
+    It is also most of the cost. Deciding once saves a ~4-compile search on the embedded path
+    and a ladder of compiles plus browser launches on the standalone one, per figure.
+    """
+    if standalone:
+        return None, choose_standalone_layers(spec, name, theme, binary)
+    chosen = choose_layout(spec, name, binary)
+    return chosen if chosen else (None, None)
+
+
 def render(spec, name="diagram", binary="d2", theme_vars=True, wrap_edges=None,
            layers=None):
     """Spec -> embeddable SVG, for a host page that ships `page_css()`.

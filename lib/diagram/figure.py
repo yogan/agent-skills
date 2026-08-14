@@ -92,11 +92,16 @@ def draw(specs, target="embed", theme="dark", place_callouts=True, gates=True, b
         # author wrote, not about what the search made of it.
         validate(spec)
         advice = [f"{name}: {line}" for line in content_warnings(spec)]
+        # Which drawing this is — direction, edge wrap, layer spacing — decided once and then
+        # used for BOTH the anchor search and the render that ships. Deciding it again for the
+        # render would re-run the search on a spec that by then has its `near` values, and a
+        # callout changes the geometry the search ranks on. See `render.choose_drawing`.
+        pinned = render_mod.choose_drawing(spec, name, theme, standalone, binary)
+
         placement = []
         if place_callouts:
-            spec, placement = _place(spec, name, theme, standalone)
-        svg = (render_mod.standalone(spec, name=name, theme=theme, binary=binary) if standalone
-               else render_mod.render(spec, name=name, binary=binary))
+            spec, placement = _place(spec, name, theme, standalone, pinned)
+        svg = _render(spec, name, theme, standalone, pinned, binary)
 
         results, blocked = ([], [])
         if gates:
@@ -111,7 +116,27 @@ def draw(specs, target="embed", theme="dark", place_callouts=True, gates=True, b
             for f in drawn]
 
 
-def _place(spec, name, theme, standalone):
+def _render(spec, name, theme, standalone, pinned, binary):
+    """The finished SVG, held to the drawing `choose_drawing` picked.
+
+    Embedded, pinning means putting the chosen direction on the spec and passing the wrap —
+    exactly what `place._measure_candidates` does to each candidate, so the figure that ships
+    is the figure the anchors were measured on. `layout` is None where there was nothing to
+    choose (a sequence, or a spec that pins its own `direction`), and then the renderer's own
+    default path is already the right one.
+    """
+    layout, layers = pinned
+    if standalone:
+        return render_mod.standalone(spec, name=name, theme=theme, binary=binary,
+                                     layers=layers)
+    if not layout:
+        return render_mod.render(spec, name=name, binary=binary)
+    direction, wrap = layout
+    return render_mod.render(dict(spec, direction=direction), name=name, wrap_edges=wrap,
+                             layers=layers, binary=binary)
+
+
+def _place(spec, name, theme, standalone, pinned):
     """Measure the anchors, and report a callout no anchor can fit.
 
     A placement failure is not fatal: the spec's own `near` values still render. It has to be
@@ -127,7 +152,8 @@ def _place(spec, name, theme, standalone):
                       f"({'; '.join(browser_mod.requirements())}) — d2 reserves no canvas "
                       "space for a callout, so one may well be clipped"]
     try:
-        placed, report = place_mod.place(spec, name=name, theme=theme, standalone=standalone)
+        placed, report = place_mod.place(spec, name=name, theme=theme,
+                                         standalone=standalone, pinned=pinned)
     except place_mod.PlacementError as exc:
         return spec, [f"{name}: callouts not placed by measurement ({exc}) — the anchors in "
                       "the spec are being trusted instead, and one may be clipped"]

@@ -294,7 +294,7 @@ def _joint(spec, name, sites, theme, anchors, standalone=False, layout=None,
 
 
 def place(spec, name="diagram", theme="light", joint_max=JOINT_MAX, anchors=NEAR,
-          standalone=False):
+          standalone=False, pinned=None):
     """Return `(spec_with_anchors, report)`.
 
     Exhaustive whenever the callout count can afford it (`joint_max`), greedy above that.
@@ -337,11 +337,12 @@ def place(spec, name="diagram", theme="light", joint_max=JOINT_MAX, anchors=NEAR
     # same two reasons: candidates measured at different spacings are candidates measured on
     # different drawings, and escalating inside each one would put a browser launch inside the
     # 64-candidate loop that exists to need only one.
-    if standalone:
-        layout, layers = None, render_mod.choose_standalone_layers(spec, name, theme)
-    else:
-        chosen = render_mod.choose_layout(spec, name)
-        layout, layers = chosen if chosen else (None, None)
+    #
+    # `pinned` lets a caller that has already decided hand it over, which `figure.draw` does —
+    # it needs the same pair for the FINAL render, and working it out twice was both the cost
+    # and a correctness hole. See `render.choose_drawing`.
+    layout, layers = (pinned if pinned is not None
+                      else render_mod.choose_drawing(spec, name, theme, standalone))
     search = _joint if len(sites) <= joint_max else _greedy
     chosen, clip, overlap, candidates = search(spec, name, sites, theme, anchors,
                                                standalone, layout, layers)

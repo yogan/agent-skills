@@ -42,6 +42,7 @@ class Base(unittest.TestCase):
             "render": figure.render_mod.render,
             "standalone": figure.render_mod.standalone,
             "place": figure.place_mod.place,
+            "drawing": figure.render_mod.choose_drawing,
             "available": figure.browser_mod.available,
             "size": figure._size.check,
             "contrast": figure._contrast.check,
@@ -51,6 +52,10 @@ class Base(unittest.TestCase):
         figure.render_mod.render = lambda spec, name="d", **kw: f"<svg id='{name}'/>"
         figure.render_mod.standalone = lambda spec, name="d", **kw: f"<svg id='{name}-file'/>"
         figure.place_mod.place = lambda spec, name="d", **kw: (spec, [])
+        # Real, this is a d2 run per figure and took this file from 1ms to 28s. What it
+        # decides is `render`'s business and is tested there; what matters here is that it is
+        # decided once and handed on.
+        figure.render_mod.choose_drawing = lambda spec, name="d", *a, **kw: (("down", None), 15)
         figure.browser_mod.available = lambda: True
         figure._size.check = lambda svg, name, **kw: Result(name, "size")
         figure._contrast.check = lambda svg, name, **kw: Result(name, "contrast")
@@ -61,6 +66,7 @@ class Base(unittest.TestCase):
         figure.render_mod.render = self.real["render"]
         figure.render_mod.standalone = self.real["standalone"]
         figure.place_mod.place = self.real["place"]
+        figure.render_mod.choose_drawing = self.real["drawing"]
         figure.browser_mod.available = self.real["available"]
         figure._size.check = self.real["size"]
         figure._contrast.check = self.real["contrast"]
