@@ -17,31 +17,11 @@ Same output style as explain-diff, but for a multi-commit branch or MR: structur
 Draws one diagram that answers a question about the codebase — a database layout, a request or
 interaction flow, how a set of classes relate, a state machine, an architecture, or an animated
 before/after — then opens it in the browser. It explores the code to get the facts, derives a
-spec, renders it with [D2](https://d2lang.com), positions any annotation callouts by measuring
-every candidate position in a headless browser, and holds the result to objective gates
-(fits a viewport, no glyph below ~11px or above an `h2`, WCAG AA in **both** light and dark,
-nothing clipped, every colour themeable). Diagrams follow the page's light/dark toggle with no
-redraw. The renderer lives in `lib/diagram/`, so the `explain-*` skills produce identical
-figures without this skill being installed.
-
-#### Why D2, and not Graphviz or Mermaid
-
-Decided by prototype rather than preference: one scenario drawn six ways by three engines and
-judged on measurable gates. **Mermaid** was rejected on weight and speed — 405 MB plus a 565 MB
-Chromium, and 3x D2's render time — not on capability. **Graphviz** is excellent at plain graphs,
-needs no post-processing and themes for free, but it cannot draw a sequence diagram at all: `dot`
-reorders lifeline columns to minimise edge crossings, so participants come out in the wrong order
-with sloped arrows. That is structural, not cosmetic. It also has no notion of an annotation
-callout, no native table or class shape, and no animation.
-
-**D2** costs a 35 MB Go binary and needs real post-processing (it bakes in colours, emits no
-intrinsic size, and couples three visual roles of a table to two properties), which is why the
-gates exist: they turn "does this look right" into a test, so undocumented behaviour is safe to
-depend on as long as the version is pinned.
-
-Graphviz was kept alongside D2 for exactly one milestone and then removed. Two engines means two
-visual languages, two theming maps and no single source of visual truth — a document mixing them
-looks mixed.
+spec, renders it with [D2](https://d2lang.com), places any annotation callouts by measuring them
+in a headless browser, and holds the result to objective gates: fits a viewport, nothing
+unreadably small or clipped, WCAG AA in **both** light and dark, every colour themeable. Diagrams
+follow the page's light/dark toggle with no redraw. The renderer lives in `lib/diagram/`, so the
+`explain-*` skills produce identical figures without this skill being installed.
 
 ### review-branch
 
@@ -49,11 +29,11 @@ Performs a focused, critique-only code review of every commit on the current bra
 
 ### rework-mr
 
-Works through the reviewer feedback on a GitLab MR **you authored**: retrieves the open discussion threads and reconciles them against a persistent per-MR plan (so the multi-day re-review cycle survives across sessions), then walks them one topic at a time. Trivial points get a recommendation straight away; complex ones get a grilling-style discussion with alternatives and a recommendation. Per topic it then drives the fix test-first, fixes up into the right branch commit(s) instead of adding new ones, force-pushes, derives a stable diff-between-versions URL (never a commit link, which force-push would rot), and drafts a concise thread reply in the thread's own language. glab-only, no MCP dependency.
+Works through the reviewer feedback on a GitLab MR **you authored**: retrieves the open discussion threads, keeps a persistent per-MR plan so a multi-day cycle survives across sessions, and walks the threads one topic at a time — a recommendation straight away for trivial points, a grilling-style discussion for complex ones. Per topic it then drives the fix test-first, fixes up into the right existing commit instead of adding new ones, force-pushes, and drafts a concise thread reply in the thread's own language. glab-only, no MCP dependency.
 
 ### review-mr
 
-Reviews a GitLab MR **someone else authored**, end to end. Optionally generates an explainer first (via `explain-branch`, as a background subagent), seeds findings with `review-branch`, then curates them with you one topic at a time and drafts concise review comments (in the language configured per repo — German by default) — which **you** post in the GitLab UI (the skill is read-only against GitLab, so the tone stays yours). It then runs a persistent, multi-day re-review loop: on each check it reconciles the live threads (author replies, resolutions) and branch pushes (by head-SHA delta, so force-pushes are handled), summarizes what the author addressed, offers the per-topic diff (inline or a stable compare URL), and gates every close behind *your* ack — an author resolving a thread never counts as done on its own. All git work happens in a dedicated review worktree, so your current checkout is untouched. glab-only.
+Reviews a GitLab MR **someone else authored**, end to end: optionally generates an explainer first (via `explain-branch`), seeds findings with `review-branch`, then curates them with you one topic at a time and drafts concise review comments (in the language configured per repo — German by default) — which **you** post in the GitLab UI, so the tone stays yours. It then runs a persistent, multi-day re-review loop that reconciles author replies, resolutions and new pushes on each check, summarizes what the author addressed, offers the per-topic diff, and gates every close behind *your* ack. All git work happens in a dedicated worktree, so your current checkout is untouched. glab-only, read-only against GitLab.
 
 ## Setup
 
@@ -84,48 +64,19 @@ for d in ~/.claude/skills/*/; do
 done
 ```
 
+Restart Claude Code (or start a new session) afterwards so it picks up the new skills.
+
 ### Required for `rework-mr` and `review-mr`: a `Stop` hook
 
-Both skills print blocks — an overview table, a quoted topic with its code, a drafted
-comment — and instruct the model to paste them verbatim, because **Claude Code collapses
-tool output: the chat message is the user's only window**. The model drops them anyway. It
-runs the command, then answers from its own summary, so the user gets "topic t2 needs you"
-with no table, no `file:line`, no code.
+Both skills print blocks meant for you — an overview table, a quoted topic with its code, a
+drafted comment — because **Claude Code collapses tool output: the chat message is your only
+window**. Told to paste them verbatim, the model paraphrases them away anyway, and no amount of
+documentation fixes it. So both skills share a `Stop` hook that checks the visible message for
+the output of any gated command that ran, and blocks the turn until it is really pasted. It
+**fails open**, so a bug in it can never wedge a session, and it never fires outside those skills.
 
-That is not fixable by documentation — it was tried three times in `review-mr` (a rule at
-the top of `SKILL.md`, a single `resume` command so there was no sequence to skip, then an
-explicit rule 0 naming the failure) and the model still paraphrased. So both skills share a
-`Stop` hook that checks the visible message for the output of any gated command that
-actually ran, and blocks the turn until it is really pasted.
-
-**This needs a manual edit to `~/.claude/settings.json`** — skills cannot register their own
-hooks. Link the engine, then register it with one gate spec per installed skill:
-
-```bash
-mkdir -p ~/.claude/hooks
-ln -sfn ~/src/agent-skills/hooks/paste-gate.py ~/.claude/hooks/paste-gate.py
-```
-
-```json
-{
-  "hooks": {
-    "Stop": [
-      {
-        "hooks": [
-          { "type": "command",
-            "command": "python3 ~/.claude/hooks/paste-gate.py ~/.claude/skills/review-mr/scripts/paste-gates.json ~/.claude/skills/rework-mr/scripts/paste-gates.json" }
-        ]
-      }
-    ]
-  }
-}
-```
-
-Use absolute paths if `~` is not expanded in your setup — and don't quote a `~` path, since a
-quoted tilde never expands. A spec path that does not exist is skipped, so both skills stay
-independently installable with the same hook line. The hook **fails open** — any error, or a
-turn where no gated command ran, allows the stop — so a bug in it can never wedge a session,
-and it never fires outside those skills. Details and the gate spec format:
+**Installing it needs a manual edit to `~/.claude/settings.json`** — skills cannot register their
+own hooks. One symlink and one `Stop` entry, both copy-pasteable:
 [`hooks/README.md`](hooks/README.md).
 
 ### Recommended: three read permissions
@@ -147,20 +98,14 @@ remembers it for the repo you happened to be in. Add them to `~/.claude/settings
 }
 ```
 
-The first covers the skills' own files — `SKILL.md` sends the agent to `REFERENCE.md`, and
-the scripts get grepped and executed. The other two cover the per-MR state, which the flow
-reads (the post step takes the discussion id from `topics.json`).
+The first covers the skills' own files, the other two the per-MR state both skills keep. The
+`~/` prefix is required: in *user* settings a bare `/path` resolves to `~/.claude/path`, not to
+the filesystem root. `Read` is enough — every write goes through the skills' own scripts, and a
+`Write(…)` path rule is accepted but never consulted, so it only warns at startup.
 
-Two things about the syntax: the `~/` prefix is required, because in *user* settings a bare
-`/path` resolves to `~/.claude/path` rather than the filesystem root. And `Read` is enough —
-both skills keep state in those directories, but every write goes through their own scripts
-rather than a shell redirect. Don't reach for `Write(…)`: file permissions are only checked
-against `Read(path)` and `Edit(path)`, so a `Write` path rule is accepted, never consulted,
-and warns at startup.
+## Requirements
 
-Requirements:
-
-- `python3` (for `render.py`, the `rework-mr` / `review-mr` scripts, and the `Stop` hook)
+- `python3` (for `render.py` / `visualize.py`, the `rework-mr` / `review-mr` scripts, and the `Stop` hook)
 - [`glab`](https://gitlab.com/gitlab-org/cli) — authenticated, for `explain-*` `mr:123` targets and all of `rework-mr` / `review-mr`
 - macOS for the `rework-mr` / `review-mr` clipboard copy (`pbcopy`)
 
@@ -175,11 +120,6 @@ For every diagram — `visualize` and the `explain-*` skills alike:
   Chromium or Edge you already have. Override discovery with `PUPPETEER_EXECUTABLE_PATH` /
   `PUPPETEER_CORE`, or `npm i -g puppeteer` if you have no system browser.
 
-  A browser is in the render loop by decision, not convenience: it is the only way to position an
-  annotation callout by measurement, and the only way to see one being clipped — a callout's text
-  is HTML inside the SVG, and a CSS drop-shadow's spread is invisible to every static checker.
-  Without it, `visualize` still renders and still runs every gate that does not need one (size,
-  contrast, and theming for an embedded SVG), but it reports the clipping gate as **unable to
-  run** rather than passing. The `explain-*` skills report the same way, once per document.
-
-Restart Claude Code (or start a new session) after adding the symlinks so it picks up the new skills.
+  The browser is what places callouts by measurement and what catches a clipped one. Without it
+  the diagrams still render and every other gate still runs; the clipping gate then reports
+  **unable to run** rather than passing.

@@ -54,7 +54,8 @@ ln -sfn ~/src/agent-skills/hooks/paste-gate.py ~/.claude/hooks/paste-gate.py
 }
 ```
 
-Use absolute paths if `~` is not expanded in your setup. A spec path that does not exist
+Use absolute paths if `~` is not expanded in your setup — and don't quote a `~` path, since
+a quoted tilde never expands. A spec path that does not exist
 is skipped silently — that is how "this skill is not installed" is expressed, so you can
 leave both arguments in place and install the skills independently. Restart Claude Code so
 the hook loads.
