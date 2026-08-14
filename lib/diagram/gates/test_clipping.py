@@ -131,21 +131,25 @@ class TestVerdicts(unittest.TestCase):
 
 @unittest.skipUnless(HAVE_D2 and HAVE_BROWSER, "needs d2 and a browser")
 class TestAgainstRealDiagrams(unittest.TestCase):
-    def test_the_reference_corpus_is_not_clipped(self):
-        """CLIPPING only, on purpose — the corpus is rendered raw here, and a raw render makes
-        no promise about where a callout lands.
+    def test_the_reference_corpus_is_clean_even_without_the_placement_pass(self):
+        """Rendered raw — no `place.place` — which is the cheap path and also a real one:
+        `visualize --no-place` takes it, and every fast test in the suite does.
 
-        A callout has to sit somewhere, and wherever a spec's default anchor puts it, it may
-        land on a label; only measuring the eight alternatives finds one that does not, which is
-        the entire reason `place` exists. So the hidden-text half of this gate is asserted where
-        placement has actually run — `test_place_slow.test_placed_diagrams_pass_the_clipping_gate`
-        — and placing five diagrams here as well cost 70s of the fast suite to duplicate it.
+        This asserted CLIPPING only for a long time, on the reasoning that a raw render makes no
+        promise about where a callout lands. That was true while the corpus pinned anchors
+        nobody had measured. It pins the ones `place` measures now (see `examples.py`), so the
+        stronger claim holds and is worth holding: a spec in this corpus is readable with or
+        without the pass.
+
+        It is not free of consequence. Removing those pins to make the corpus match the advice
+        given to authors — leave `near` out, let the pass decide — put a callout across 59% of
+        `presence deploy ×2`, 88% of `publish` and 165% of `implements`, and every other test in
+        the suite stayed green. This is the one that caught it.
         """
         svgs = {name: render.render(spec, name=f"d2--{name}")
                 for name, spec in REFERENCE.items()}
-        clipped = [(r.name, p) for r in clipping.check_many(svgs)
-                   for p in r.problems if p.startswith("CLIPPED")]
-        self.assertEqual(clipped, [])
+        bad = [(r.name, p) for r in clipping.check_many(svgs) for p in r.problems]
+        self.assertEqual(bad, [])
 
     def test_the_gate_really_fires_on_a_clipped_callout(self):
         """Proof it can fail. Without this the passing corpus above proves nothing."""

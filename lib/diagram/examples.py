@@ -16,6 +16,25 @@ the fact, so these are what "small enough to render legibly" actually looks like
 
 They all carry `note` callouts because they describe an MR — marking what it changed is the
 case notes exist for. A plain overview should have none; see skills/visualize/SKILL.md.
+
+Every note DOES pin a `near`, and each one is the anchor `place.place` measures for it. That
+looks like it contradicts REFERENCE.md, which tells an author to leave `near` out, and it does
+not: an author's spec is always rendered through the placement pass, and these are also
+rendered WITHOUT it, by every fast test in the suite. The pin is the fallback for that path.
+
+It was removed from all seven and measured, because "a pin the pass overrides documents the
+wrong thing" is a good argument that turns out to be answering the wrong question. Unpinned,
+three of the five bury text at d2's `top-center` default — the architecture puts a callout
+across 59% of `presence deploy ×2` and 88% of `publish`, the class diagram across 165% of
+`implements`. Pinned to what the pass picks, all five are clean, and the number in
+`test_reference.MEASURED` becomes the geometry that actually ships instead of one no reader
+ever sees.
+
+So the rule for this file is not "pin" or "do not pin", it is: **a pin here must be the
+anchor the pass measures, and the corpus must render cleanly with no pass at all.** The state
+machine is the proof that this needs checking rather than assuming — it once pinned
+`bottom-left`, which lies across 69% of `max attempts`, and `center-left` is the only one of
+the eight that hides nothing.
 """
 
 ARCHITECTURE = {
@@ -32,10 +51,10 @@ ARCHITECTURE = {
             ]},
             {"id": "presence", "label": "presence deploy ×2", "children": [
                 {"id": "pod", "label": "Presence Gateway", "role": "svc",
-                 "note": "new service", "near": "center-right"},
+                 "note": "new service", "near": "bottom-left"},
             ]},
             {"id": "redis", "label": "Redis", "role": "cache", "shape": "cylinder",
-             "note": "now fans out presence", "near": "center-right"},
+             "note": "now fans out presence", "near": "bottom-left"},
         ]},
         {"id": "pg", "label": "PostgreSQL", "role": "store", "shape": "cylinder"},
         {"id": "idp", "label": "OIDC provider", "role": "ext", "shape": "hexagon"},
@@ -65,7 +84,7 @@ SEQUENCE = {
         {"id": "editor", "label": "Editor", "group": "browser"},
         {"id": "api", "label": "GraphQL API", "group": "server"},
         {"id": "gw", "label": "Presence Gateway", "group": "server",
-         "note": "new in this MR", "near": "bottom-right"},
+         "note": "new in this MR", "near": "bottom-left"},
         {"id": "redis", "label": "Redis", "group": "server"},
     ],
     "messages": [
@@ -96,11 +115,6 @@ ER = {
              {"name": "title", "type": "text"},
              {"name": "revision", "type": "bigint"},
          ]},
-        # `top-left`, like the callout above `documents`: both are free to sit anywhere along
-        # their table's top edge, and the placement pass lands them on the same side rather
-        # than scattering them — see `spec.NEAR` on why the tie-break is reading order. This
-        # pinned `top-right` until then, which the search agreed with only because a callout
-        # used to be charged for its own drop-shadow grazing the table's title.
         {"id": "presence_sessions", "role": "svc",
          "note": "new table", "near": "top-left", "columns": [
              {"name": "id", "type": "uuid", "key": "pk"},
@@ -138,7 +152,7 @@ CLASS = {
             {"name": "+ forDocument()", "type": "Session[]"},
         ]},
         {"id": "Broadcaster", "role": "ext", "stereotype": "interface",
-         "note": "new interface", "near": "bottom-left", "members": [
+         "note": "new interface", "near": "center-right", "members": [
              {"name": "+ publish()", "type": "void"},
              {"name": "+ subscribe()", "type": "void"},
          ]},
@@ -166,12 +180,7 @@ STATE = {
         {"id": "authenticating", "role": "working"},
         {"id": "live", "role": "steady"},
         {"id": "backoff", "label": "reconnect backoff", "role": "transient",
-         # No `near`. It used to pin `bottom-left`, which the hidden-text check then caught
-         # putting this callout across 69% of the `max attempts` label — a defect that only
-         # ever showed when something rendered this spec WITHOUT the placement pass, since
-         # `place.place` measures the alternatives and picks `center-left` instead. A pinned
-         # anchor that the pipeline always overrides is documentation of the wrong thing.
-         "note": "new retry path"},
+         "note": "new retry path", "near": "center-left"},
         {"id": "closed", "role": "terminal"},
     ],
     "transitions": [

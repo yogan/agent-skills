@@ -54,8 +54,16 @@ class TestQuoting(unittest.TestCase):
 
 class TestNotesBecomeVisibleCallouts(unittest.TestCase):
     def test_a_note_emits_both_tooltip_and_near(self):
-        """`tooltip` alone is a hover-only <title>; `near` is what makes it permanent."""
-        source = d2.emit(SEQUENCE)
+        """`tooltip` alone is a hover-only <title>; `near` is what makes it permanent.
+
+        The anchor is set HERE rather than read off `SEQUENCE`, which no longer pins one — and
+        should not have been read off it even when it did. What this covers is that an anchor
+        reaches the emitted source, not which anchor the corpus happens to carry.
+        """
+        import copy
+        spec = copy.deepcopy(SEQUENCE)
+        next(p for p in spec["participants"] if p.get("note"))["near"] = "bottom-right"
+        source = d2.emit(spec)
         self.assertIn("tooltip: \"new in this MR\"", source)
         self.assertIn("tooltip.near: bottom-right", source)
 

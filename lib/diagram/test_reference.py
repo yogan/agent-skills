@@ -34,9 +34,16 @@ from lib.diagram.spec import content_warnings
 #
 # `er` also sits one rung up the spacing ladder (`d2.ELK_SPACING_LADDER`): at the tight default
 # its cardinality label was unreadable, and it is the only reference figure that needs the room.
+#
+# These are UNPLACED renders — `render.render` on the spec as written, with no `place.place`
+# ahead of it, because placement is 64 measured candidates and minutes where this file runs in
+# tenths of a second (the placed corpus is checked in `test_place_slow.py`). They are still the
+# shipped geometry, because `examples.py` pins each callout to the anchor the pass measures for
+# it; see that file's docstring on why it pins at all.
 MEASURED = {
-    # dagre: 887x771 at 11.4px, scaled to 0.88.
-    "arch": (579, 767),
+    # dagre: 887x771 at 11.4px, scaled to 0.88. 579 while the two callouts were pinned
+    # `center-right`, which is not where the pass puts them.
+    "arch": (493, 767),
     # d2's own sequence engine lays this one out; the layout engine never touches it, and
     # dagre and elk output are byte-identical. 420 before the group legend added LEGEND_BAND.
     "sequence": (663, 442),
@@ -50,11 +57,13 @@ MEASURED = {
     # spacing. On one line the labels cost 37px of width and half a pixel of glyph, and read
     # as the single phrase they are. See `d2.wrap_edge_label`.
     "er": (892, 257),
-    # dagre: 899x357 at 12.1px. This is the biggest single gain in the corpus — less than half
-    # the width, and 14.0px text because none of it is scaled away.
-    "class": (411, 450),
-    # dagre: 376x796, same 13.0px text. 205px shorter for nothing given up.
-    "state": (327, 591),
+    # dagre: 899x357 at 12.1px. This is the biggest single gain in the corpus — barely half
+    # the width, and 14.0px text because none of it is scaled away. 411 while its callout was
+    # pinned `bottom-left`; `center-right`, where the pass puts it, reaches out to the side.
+    "class": (498, 450),
+    # dagre: 376x796, same 13.0px text. 205px shorter for nothing given up. 327 while this
+    # pinned no anchor at all, which put its callout across 26% of `transport error`.
+    "state": (432, 591),
 }
 
 HAVE_D2 = render.d2_version() is not None
