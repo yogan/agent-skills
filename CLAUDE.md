@@ -2,6 +2,20 @@ Guidance for working on this repo's own code. Not for a skill's runtime behavior
 `SKILL.md`/`REFERENCE.md` inside each skill — and not project setup — that's
 [README.md](README.md).
 
+## This repository is public
+
+MIT licensed, and readable by anyone. **Nothing from a proprietary or commercial codebase may
+land in it** — not in source, tests, fixtures, docs, examples or **commit messages**.
+
+Testing a skill against real private work is fine and is how most of this was measured. What
+must not cross over is anything identifying: real commit hashes and subject lines, ticket ids,
+internal API, header, service, field or diagram names, a library choice tied to a real change.
+Invent the identifiers instead. A measurement is ours and can be quoted — "8% of a label was
+covered, three anchors hid nothing" — while the *name* of the thing measured is not.
+
+Commit messages matter most, because a file can be edited later and history cannot. Grep the
+diff before committing.
+
 ## Layout
 
 - `skills/<name>/` — one skill each, independently symlink-installable (see README.md).

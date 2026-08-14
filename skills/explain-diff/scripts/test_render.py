@@ -84,10 +84,10 @@ class TestFormatDiffstat(unittest.TestCase):
 
 class TestFormatCommitByline(unittest.TestCase):
     def test_with_url_links_the_subject(self):
-        out = R.format_commit_byline({"hash": "a1b2c3d4", "subject": "fix: drop legacy-auth-adapter",
+        out = R.format_commit_byline({"hash": "a1b2c3d4", "subject": "fix: drop the legacy auth adapter",
                                       "url": "https://example.com/commit/a1b2c3d4"})
         self.assertIn('<a href="https://example.com/commit/a1b2c3d4"', out)
-        self.assertIn(">fix: drop legacy-auth-adapter</a>", out)
+        self.assertIn(">fix: drop the legacy auth adapter</a>", out)
         self.assertIn("<code>a1b2c3d4</code>", out)
 
     def test_without_url_subject_is_plain_text(self):
@@ -458,7 +458,7 @@ class TestRender(unittest.TestCase):
     def test_section_commit_byline_is_rendered(self):
         out = R.render(self._spec(sections=[{
             "id": "code", "heading": "Code walkthrough", "html": "<p>...</p>",
-            "commit": {"hash": "a1b2c3d4", "subject": "fix: drop legacy-auth-adapter"},
+            "commit": {"hash": "a1b2c3d4", "subject": "fix: drop the legacy auth adapter"},
         }]))
         self.assertIn("commit <code>a1b2c3d4</code>", out)
 

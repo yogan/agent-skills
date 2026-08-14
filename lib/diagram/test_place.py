@@ -132,7 +132,7 @@ class TestScoring(unittest.TestCase):
     def test_hidden_text_outranks_everything_the_search_could_trade_it_for(self):
         """The gap this closes. A buried label was only ever visible as weighted overlap, in a
         term `HEIGHT_PRICE` can outbid — so on a real explainer figure the search took an anchor
-        lying across 8% of `connectionTimeout` while three anchors hid nothing, because the
+        lying across 8% of a box's label while three anchors hid nothing, because the
         clean ones were slightly taller. Being unreadable is not a price."""
         buried = fake_measurement([(0, 0)]); buried["hiddenText"] = 111; buried["rend_h"] = 300
         clean = fake_measurement([(0, 9000)]); clean["hiddenText"] = 0; clean["rend_h"] = 350

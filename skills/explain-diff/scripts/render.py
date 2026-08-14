@@ -77,7 +77,7 @@ Spec format (JSON):
     {
       "id": "code", "heading": "Code walkthrough", "html": "<pre><code>...</code></pre>",
       "commit": {
-        "hash": "a1b2c3d4", "subject": "fix: drop legacy-auth-adapter",
+        "hash": "a1b2c3d4", "subject": "fix: drop the legacy auth adapter",
         "url": "https://gitlab.example.com/.../-/commit/a1b2c3d4...",
         "diffstat": {"files": 3, "insertions": 40, "deletions": 12}
       }
@@ -189,7 +189,7 @@ more: a markdown link `[label](https://...)` renders as a real `<a target="_blan
 Use this for a source link picked up during data gathering (e.g. an MR's `web_url` from
 `glab`) — don't hand-write raw backticks or a bare URL where a link is available:
 
-    "subtitle": "[MR !123](https://gitlab.example.com/.../merge_requests/123) · `fix/drop-legacy-auth-adapter` · commit `a1b2c3d4`"
+    "subtitle": "[MR !123](https://gitlab.example.com/.../merge_requests/123) · `fix/drop-legacy-auth` · commit `a1b2c3d4`"
 
 The page defaults to the reader's OS light/dark preference
 (`prefers-color-scheme`) and includes a manual toggle button that overrides it,

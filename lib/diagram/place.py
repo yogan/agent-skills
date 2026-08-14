@@ -133,7 +133,7 @@ def _score(measurement):
     for far too long. Overlap already counts a buried label at weight 6 — but weight 6 of a
     priced term, which `HEIGHT_PRICE` can outbid, so "covers a word" was tradeable against "is
     50px taller". It is not tradeable. On a real explainer figure the search took `center-left`,
-    which lies across 8% of `connectionTimeout`, while `bottom-left`, `bottom-center` and
+    which lay across 8% of a box's label, while `bottom-left`, `bottom-center` and
     `bottom-right` each hid nothing at all: three clean anchors available and it chose a dirty
     one, because the clean ones were slightly taller.
 
