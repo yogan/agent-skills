@@ -178,7 +178,8 @@ For every diagram — `visualize` and the `explain-*` skills alike:
   A browser is in the render loop by decision, not convenience: it is the only way to position an
   annotation callout by measurement, and the only way to see one being clipped — a callout's text
   is HTML inside the SVG, and a CSS drop-shadow's spread is invisible to every static checker.
-  Without it, `visualize` still renders and still runs the other five gates, but it reports the
-  clipping gate as **unable to run** rather than passing.
+  Without it, `visualize` still renders and still runs every gate that does not need one (size,
+  contrast, and theming for an embedded SVG), but it reports the clipping gate as **unable to
+  run** rather than passing. The `explain-*` skills report the same way, once per document.
 
 Restart Claude Code (or start a new session) after adding the symlinks so it picks up the new skills.

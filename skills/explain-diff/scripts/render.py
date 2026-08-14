@@ -234,6 +234,7 @@ from lib.diagram import place as _diagram_place            # noqa: E402
 from lib.diagram import render as _diagram_render          # noqa: E402
 from lib.diagram import spec as _diagram_spec              # noqa: E402
 from lib.diagram.gates import GateError                    # noqa: E402
+from lib.diagram.gates import clipping as _gate_clipping   # noqa: E402
 from lib.diagram.gates import contrast as _gate_contrast   # noqa: E402
 from lib.diagram.gates import size as _gate_size           # noqa: E402
 from lib.diagram.gates import theming as _gate_theming     # noqa: E402
@@ -783,6 +784,9 @@ def render_d2_diagram(diagram: dict, name: str) -> str:
 
     svg = _diagram_render.render(diagram, name=name)
 
+    # Clipping is NOT here: it needs a browser, and launching one per diagram would cost more
+    # than every other gate in this file put together. It runs once over the whole document
+    # instead — see `check_rendered_diagrams`.
     for gate in (_gate_size, _gate_contrast, _gate_theming):
         try:
             result = gate.check(svg, name)
@@ -793,6 +797,38 @@ def render_d2_diagram(diagram: dict, name: str) -> str:
         for problem in result.problems:
             _DIAGRAM_GATE_PROBLEMS.append(f"{name}: {problem}")
     return svg
+
+
+def check_rendered_diagrams() -> None:
+    """Run the clipping gate over every diagram in the document, in one browser launch.
+
+    This gate was missing from this file entirely for a while, and the hole it left was exactly
+    the shape of the one rule that is not a trade-off: it is the only gate that sees TEXT A
+    READER CANNOT READ. `place` avoids burying a label — that is most of what its overlap term
+    is for — but avoiding is not detecting, and when every anchor covers something the search
+    picks the least bad one and says nothing. `unplaceable()` above reports a callout still
+    CLIPPED, which is a different question.
+
+    Batched rather than per-diagram because the cost here is starting Chrome, not measuring one
+    more page: a six-figure article pays for one launch instead of six.
+    """
+    svgs = {key: svg for (key, _spec), svg in _DIAGRAM_CACHE.items()}
+    if not svgs:
+        return
+    if not _diagram_browser.available():
+        _DIAGRAM_GATE_PROBLEMS.append(
+            "clipping gate could not run (" + "; ".join(_diagram_browser.requirements())
+            + ") — it is the only gate that sees a callout cut off or a label buried, so its "
+              "absence is not a clean bill of health")
+        return
+    try:
+        results = _gate_clipping.check_many(svgs)
+    except GateError as exc:
+        _DIAGRAM_GATE_PROBLEMS.append(f"clipping gate could not run — {exc}")
+        return
+    for result in results:
+        for problem in result.problems:
+            _DIAGRAM_GATE_PROBLEMS.append(f"{result.name}: {problem}")
 
 
 def render_diagram(diagram: dict, name: str = "diagram") -> str:
@@ -1064,6 +1100,10 @@ def main():
         date_prefix = datetime.date.today().strftime("%Y-%m-%d")
         slug = spec.get("slug") or slugify(spec["title"])
         out_path = Path(f"/tmp/{date_prefix}-explanation-{slug}.html")
+
+    # After every diagram is rendered and before anything is reported: one browser launch for
+    # the whole document — see `check_rendered_diagrams`.
+    check_rendered_diagrams()
 
     out_path.write_text(out_html, encoding="utf-8")
     print(str(out_path))

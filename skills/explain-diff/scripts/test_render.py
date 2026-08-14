@@ -19,6 +19,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 
 import render as R  # noqa: E402
+from lib.diagram.gates import Result as _Result  # noqa: E402
 
 
 class TestFormatMeta(unittest.TestCase):
@@ -337,6 +338,93 @@ class TestD2Diagrams(unittest.TestCase):
         with self.assertRaises(SpecError):
             R.render_diagram({"kind": "state", "states": [{"id": "a", "role": "working"}],
                               "transitions": [{"from": "a", "to": "typo"}]}, name="x")
+
+
+class TestClippingGateIsRunOverTheDocument(unittest.TestCase):
+    """This gate was absent from render.py entirely, and it is the only one that sees TEXT A
+    READER CANNOT READ — a callout sitting on a label, or one cut off by the card. The other
+    three measure the SVG statically and cannot.
+
+    What is checked here is the WIRING, because that is what this file owns: that every
+    rendered diagram is submitted, in one call, and that whatever comes back is surfaced under
+    the diagram's own name. That the gate can actually catch a buried label is proved where the
+    gate lives, in lib/diagram/gates/test_clipping.py, with a real browser.
+    """
+
+    def setUp(self):
+        R._DIAGRAM_GATE_PROBLEMS.clear()
+        R._DIAGRAM_CACHE.clear()
+        self._avail = R._diagram_browser.available
+        self._check = R._gate_clipping.check_many
+        R._diagram_browser.available = lambda: True
+
+    def tearDown(self):
+        R._diagram_browser.available = self._avail
+        R._gate_clipping.check_many = self._check
+        R._DIAGRAM_GATE_PROBLEMS.clear()
+        R._DIAGRAM_CACHE.clear()
+
+    def _cache(self, *names):
+        for name in names:
+            R._DIAGRAM_CACHE[(name, "{}")] = f"<svg id='{name}'/>"
+
+    def test_every_rendered_diagram_is_submitted_in_one_call(self):
+        """One call, not one per diagram: the cost is starting Chrome, not measuring a page."""
+        calls = []
+
+        def spy(svgs, **kw):
+            calls.append(sorted(svgs))
+            return [_Result(name, "clipping") for name in svgs]
+
+        R._gate_clipping.check_many = spy
+        self._cache("flow", "tables", "states")
+        R.check_rendered_diagrams()
+        self.assertEqual(calls, [["flow", "states", "tables"]])
+
+    def test_a_finding_is_reported_under_its_diagram_name(self):
+        R._gate_clipping.check_many = lambda svgs, **kw: [
+            _Result("tables", "clipping", ["HIDDEN TEXT 88px² — “owner_id” 40%"])]
+        self._cache("tables")
+        R.check_rendered_diagrams()
+        self.assertEqual(len(R._DIAGRAM_GATE_PROBLEMS), 1)
+        self.assertIn("tables:", R._DIAGRAM_GATE_PROBLEMS[0])
+        self.assertIn("HIDDEN TEXT", R._DIAGRAM_GATE_PROBLEMS[0])
+
+    def test_a_clean_document_reports_nothing(self):
+        R._gate_clipping.check_many = lambda svgs, **kw: [
+            _Result(name, "clipping") for name in svgs]
+        self._cache("flow")
+        R.check_rendered_diagrams()
+        self.assertEqual(R._DIAGRAM_GATE_PROBLEMS, [])
+
+    def test_a_document_with_no_diagrams_does_not_start_a_browser(self):
+        def explode(svgs, **kw):
+            raise AssertionError("nothing to measure, so nothing should be launched")
+
+        R._gate_clipping.check_many = explode
+        R.check_rendered_diagrams()
+        self.assertEqual(R._DIAGRAM_GATE_PROBLEMS, [])
+
+    def test_without_a_browser_it_says_so_rather_than_passing_quietly(self):
+        """A gate that cannot run must never read as a clean bill of health — the whole reason
+        `GateError` is distinct from a finding. See lib/diagram/gates/__init__.py."""
+        R._diagram_browser.available = lambda: False
+        self._cache("flow")
+        R.check_rendered_diagrams()
+        self.assertTrue(any("could not run" in p for p in R._DIAGRAM_GATE_PROBLEMS),
+                        R._DIAGRAM_GATE_PROBLEMS)
+        self.assertTrue(any("not a clean bill of health" in p
+                            for p in R._DIAGRAM_GATE_PROBLEMS))
+
+    def test_a_gate_error_is_reported_rather_than_swallowed(self):
+        def boom(svgs, **kw):
+            raise R.GateError("chrome vanished")
+
+        R._gate_clipping.check_many = boom
+        self._cache("flow")
+        R.check_rendered_diagrams()
+        self.assertTrue(any("chrome vanished" in p for p in R._DIAGRAM_GATE_PROBLEMS),
+                        R._DIAGRAM_GATE_PROBLEMS)
 
 
 class TestDiagramAdvice(unittest.TestCase):
