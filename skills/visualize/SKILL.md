@@ -143,7 +143,7 @@ zooms; a nine-table schema at full size is fine. Do **not** split a diagram beca
 wide, and do not split one to satisfy a size warning — the warnings are advisory, and the
 standalone gates deliberately do not enforce a page width or a viewport height. The renderer
 leans *into* that width: a standalone `er`, `class` or `state` diagram is laid out wide,
-because it is opened full-screen on a landscape monitor. Leave `direction` alone and let it.
+because it is opened full-screen on a landscape monitor. `direction` is not yours to set — a spec carrying one is rejected, because pinning it also switches off the escalation that keeps text readable.
 
 Split only for an editorial reason: the diagram is answering **two different questions** and
 each deserves its own. "All the tables" is one question, even with nine tables in it.

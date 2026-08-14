@@ -23,7 +23,7 @@ fine and is wrong:
 | `kind` | required | `architecture` · `sequence` · `er` · `class` · `state` |
 | `title` | optional | names the output file, and the ids inside the SVG |
 | `slug` | optional | same, and wins over `title` when both are set |
-| `direction` | optional | `up` · `down` · `left` · `right`. **Leave it out.** For an embedded figure the renderer draws it both ways, measures each, and keeps the one that stays legible with less height — wrapping long edge labels if that is what makes the wider layout fit. Setting this by hand turns that off and is nearly always a mistake: which way round a given diagram reads better is a fact about its size, not about its kind. A standalone image is laid out wide by default, having no column to fit into. (`sequence` ignores it entirely — d2's sequence engine has its own layout.) |
+| `direction` | **not accepted** | The renderer decides. For an embedded figure it draws the diagram both ways, measures each, and keeps the one that stays legible with less height — wrapping long edge labels if that is what makes the wider layout fit. A spec carrying one is rejected, because pinning it also switches off the spacing escalation that keeps text readable, and the diagram comes out quietly worse: the reference ER pinned to its own measured direction renders a cardinality on top of a table. A standalone image is laid out wide by default, having no column to fit into. (`sequence` ignores it entirely — d2's sequence engine has its own layout.) |
 
 ### Roles
 

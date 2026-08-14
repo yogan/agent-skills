@@ -176,6 +176,33 @@ class TestWhatComesBack(Base):
                                  "transitions": [{"from": "a", "to": "typo"}]}})
 
 
+class TestInternalKeys(Base):
+    """`direction` is the renderer's to decide, so a spec may not carry one — and this is the
+    only place that can say so. `spec.validate` cannot: `d2.emit` validates on every call, and
+    by then the search has set a direction on its own copy.
+
+    What it bought an author was a way to switch off the check that keeps text readable. A
+    pinned direction skips `render._pick_layout`, and the spacing escalation lives there: the
+    reference ER pinned to its OWN measured direction renders 862x257 with `n sessions : 1 doc`
+    on top of a table, where the same spec unpinned renders 892x257 and clean.
+    """
+
+    def test_a_spec_that_pins_a_direction_is_refused(self):
+        with self.assertRaises(SpecError) as caught:
+            figure.draw({"flow": dict(STATE, direction="right")})
+        self.assertIn("not yours to set", str(caught.exception))
+
+    def test_the_refusal_names_the_figure_and_says_what_to_do(self):
+        with self.assertRaises(SpecError) as caught:
+            figure.draw({"flow": dict(STATE, direction="down")})
+        message = str(caught.exception)
+        self.assertIn("flow:", message)
+        self.assertIn("Remove it", message)
+
+    def test_a_spec_without_one_is_untouched(self):
+        self.assertTrue(figure.draw({"flow": STATE})[0].ok)
+
+
 class TestPlacement(Base):
     def test_a_callout_no_anchor_fits_is_reported_but_not_as_a_gate_verdict(self):
         """The remedy is editorial — shorten the note — so a CLI says it rather than failing

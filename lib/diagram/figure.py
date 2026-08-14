@@ -37,7 +37,7 @@ from .gates import clipping as _clipping
 from .gates import contrast as _contrast
 from .gates import size as _size
 from .gates import theming as _theming
-from .spec import content_warnings, validate
+from .spec import SpecError, content_warnings, validate
 
 TARGETS = ("embed", "file")
 
@@ -91,6 +91,7 @@ def draw(specs, target="embed", theme="dark", place_callouts=True, gates=True, b
         # Before placement rewrites the spec's `near` values: the advice is about what the
         # author wrote, not about what the search made of it.
         validate(spec)
+        _reject_internal_keys(name, spec)
         advice = [f"{name}: {line}" for line in content_warnings(spec)]
         # Which drawing this is — direction, edge wrap, layer spacing — decided once and then
         # used for BOTH the anchor search and the render that ships. Deciding it again for the
@@ -114,6 +115,35 @@ def draw(specs, target="embed", theme="dark", place_callouts=True, gates=True, b
     return [f._replace(problems=f.placement
                        + [f"{f.name}: {p}" for r in f.results for p in r.problems])
             for f in drawn]
+
+
+# Keys the RENDERER sets on a copy of a spec, which an author may therefore not set on the
+# original. They cannot be rejected in `spec.validate`, because `d2.emit` validates on every
+# call and by then the search has already set them — so the check belongs at the door authors
+# come in through, which is this module.
+INTERNAL_KEYS = {
+    "direction": "the renderer draws an embedded figure both ways, measures each, and keeps "
+                 "the one that stays legible. Pinning it turns that off, and takes the "
+                 "spacing escalation that keeps text readable with it: the reference ER "
+                 "pinned to its own measured direction comes out 862x257 with a cardinality "
+                 "sitting on a table, where the same spec unpinned comes out 892x257 and "
+                 "clean. A standalone image is laid out wide by default; a sequence has its "
+                 "own engine and ignores this entirely",
+}
+
+
+def _reject_internal_keys(name, spec):
+    """Refuse a spec that sets something the renderer decides.
+
+    Loud rather than ignored: an author who wrote one of these meant something by it, and
+    silently dropping it would leave them believing it worked. Every document already said to
+    leave `direction` out — "nearly always a mistake" — and nothing in the corpus or in any
+    real spec ever set one, so what the field actually bought was a way to switch off the
+    check that keeps text readable.
+    """
+    for key, why in INTERNAL_KEYS.items():
+        if key in spec:
+            raise SpecError(f"{name}: `{key}` is not yours to set — {why}. Remove it.")
 
 
 def _render(spec, name, theme, standalone, pinned, binary):

@@ -60,6 +60,13 @@ class TestKindAndRoleVocabulary(unittest.TestCase):
         with self.assertRaisesRegex(SpecError, "direction"):
             validate(arch(direction="sideways"))
 
+    def test_a_direction_the_RENDERER_set_still_validates(self):
+        """`validate` may not reject this key, however much an author should not write it:
+        `d2.emit` validates on every call, and by then the layout search has put a direction
+        on its copy of the spec. Whether an AUTHOR may write one is asked at the door they
+        come in through — see test_figure's TestInternalKeys."""
+        validate(arch(direction="right"))
+
 
 class TestDanglingEdges(unittest.TestCase):
     """The headline case: d2 invents a node for an unknown endpoint rather than erroring."""

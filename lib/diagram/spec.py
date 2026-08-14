@@ -75,6 +75,10 @@ NEAR = (
     "bottom-left", "bottom-center", "bottom-right",
 )
 
+# The layout axis. NOT a key an author may write, and the constant is kept because the
+# renderer sets it internally — `render._pick_at_spacing` and `place._measure_candidates` put
+# one of these on a COPY of the spec to tell the emitter which way to rank the graph, after
+# validation has run. See `validate`.
 DIRECTIONS = ("up", "down", "left", "right")
 
 # What a sequence message did, when the flow's point is that it can go two ways. Colour is
@@ -338,6 +342,9 @@ def validate(spec):
     """Raise SpecError unless `spec` describes a renderable diagram. Returns the spec."""
     _require(isinstance(spec, dict), "a spec must be a dict")
     kind = _one_of(spec.get("kind"), KINDS, "kind")
+    # Checked, not rejected: `d2.emit` validates on every call, and by then the layout search
+    # has set this on a copy of the spec. Rejecting it here breaks the search that sets it.
+    # An AUTHOR may not write it, and that is enforced where authors come in — `figure.draw`.
     if "direction" in spec:
         _one_of(spec["direction"], DIRECTIONS, "direction")
     if "title" in spec:

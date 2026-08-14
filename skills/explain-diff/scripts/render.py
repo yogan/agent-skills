@@ -127,7 +127,7 @@ rather than guessing.** The short version:
   border says "something here is special" without ever saying what.
 - **A diagram here is embedded in a page, so width is a hard constraint.** The article gives it
   a 777px column and scales anything wider down, every glyph with it; past roughly 900px of
-  natural canvas the text drops under 11px and the size gate says TINY. Leave "direction" out
+  natural canvas the text drops under 11px and the size gate says TINY. Do not set "direction" (a spec carrying one is rejected)
   (the renderer already stacks an embedded figure) and buy space by drawing less: <=6 states,
   <=7 sequence messages, <=6 boxes per container, and only the columns or members the change is
   actually about. Making it wider is never the fix. Note that the standalone `visualize` skill
