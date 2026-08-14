@@ -402,6 +402,26 @@ class TestStartMarker(unittest.TestCase):
             compact.add_start_marker(self.svg(), "nosuchstate", self.GREY)
 
 
+class TestNumberParsing(unittest.TestCase):
+    """Path data is the only thing `_floats` ever reads, and it decides where a row sits."""
+
+    def test_a_coordinate_in_exponent_notation_is_one_number(self):
+        """`1e-5` used to parse as TWO numbers, 1 and -5. The damage would have been silent:
+        `_path_extent` guards on the coordinate count being even, and splitting one number in
+        two keeps it even, so a row would have been stacked against a bogus extent with
+        nothing raised."""
+        self.assertEqual(compact._floats("M 1e-5 2 L 3 4"), [1e-5, 2.0, 3.0, 4.0])
+        self.assertEqual(compact._path_extent('<path d="M 1e-5 2 L 3 4"/>'), (2.0, 4.0))
+
+    def test_ordinary_coordinates_are_unchanged(self):
+        self.assertEqual(compact._floats("M 10 20 L 30 40.5"), [10.0, 20.0, 30.0, 40.5])
+        self.assertEqual(compact._floats("M -3.25 0"), [-3.25, 0.0])
+
+    def test_an_odd_coordinate_count_still_refuses(self):
+        with self.assertRaises(compact.CompactError):
+            compact._path_extent('<path d="M 1 2 3"/>')
+
+
 class TestRefusals(unittest.TestCase):
     def test_an_unbalanced_group_raises(self):
         with self.assertRaises(compact.CompactError):

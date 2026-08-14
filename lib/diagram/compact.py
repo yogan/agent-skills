@@ -117,8 +117,16 @@ class CompactError(Exception):
     """The SVG did not have the structure this module needs to move rows safely."""
 
 
+# Every caller parses SVG path data (`d="M 10 20 L 30 40"`) and nothing else, which is what
+# makes the exponent part safe to accept: no path command letter is `e` or `E`, so an `e`
+# between digits can only be exponent notation. Without it `1e-5` parsed as TWO numbers, 1 and
+# -5 — and the damage would have been silent, because `_path_extent` guards on the coordinate
+# count being even and splitting one number into two keeps it even.
+_NUMBER = re.compile(r"-?\d+(?:\.\d+)?(?:[eE][-+]?\d+)?")
+
+
 def _floats(text):
-    return [float(n) for n in re.findall(r"-?\d+(?:\.\d+)?", text)]
+    return [float(n) for n in _NUMBER.findall(text)]
 
 
 def _top_level_groups(svg, start):
