@@ -345,7 +345,12 @@ class TestEmbedMode(unittest.TestCase):
     """The other direction: a themeable SVG for a page that supplies the vars and CSS."""
 
     def test_it_writes_a_themeable_svg(self):
-        code, out, err = run("--format", "embed", "--no-place", spec=STATE)
+        """`--no-gates` alongside `--no-place`, because the two now interact: skipping placement
+        leaves the callout wherever the spec's default anchor puts it, and on this spec that is
+        across a label — which the hidden-text check correctly fails the run for. This test is
+        about the FILE the embed format writes, so it opts out of the checks rather than paying
+        for a placement pass to satisfy them."""
+        code, out, err = run("--format", "embed", "--no-place", "--no-gates", spec=STATE)
         self.assertEqual(code, 0, err)
         path = out.strip()
         self.assertTrue(path.endswith(".svg"))

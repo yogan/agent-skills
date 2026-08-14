@@ -132,11 +132,20 @@ class TestVerdicts(unittest.TestCase):
 @unittest.skipUnless(HAVE_D2 and HAVE_BROWSER, "needs d2 and a browser")
 class TestAgainstRealDiagrams(unittest.TestCase):
     def test_the_reference_corpus_is_not_clipped(self):
+        """CLIPPING only, on purpose — the corpus is rendered raw here, and a raw render makes
+        no promise about where a callout lands.
+
+        A callout has to sit somewhere, and wherever a spec's default anchor puts it, it may
+        land on a label; only measuring the eight alternatives finds one that does not, which is
+        the entire reason `place` exists. So the hidden-text half of this gate is asserted where
+        placement has actually run — `test_place_slow.test_placed_diagrams_pass_the_clipping_gate`
+        — and placing five diagrams here as well cost 70s of the fast suite to duplicate it.
+        """
         svgs = {name: render.render(spec, name=f"d2--{name}")
                 for name, spec in REFERENCE.items()}
-        results = clipping.check_many(svgs)
-        bad = [r for r in results if not r.ok]
-        self.assertEqual(bad, [], f"clipped: {[(r.name, r.problems) for r in bad]}")
+        clipped = [(r.name, p) for r in clipping.check_many(svgs)
+                   for p in r.problems if p.startswith("CLIPPED")]
+        self.assertEqual(clipped, [])
 
     def test_the_gate_really_fires_on_a_clipped_callout(self):
         """Proof it can fail. Without this the passing corpus above proves nothing."""
@@ -149,6 +158,32 @@ class TestAgainstRealDiagrams(unittest.TestCase):
         svg = render.render(CLIPPED_SPEC, name="clipbait")
         result = clipping.check(svg, "clipbait")
         self.assertIn("foreignobject", result.problems[0])
+
+    def test_it_catches_a_label_a_callout_is_sitting_on_top_of(self):
+        """The occluded half of the hidden-text check: geometry painted over a word.
+
+        Pinning the state machine's callout back to `bottom-left` reproduces it exactly — that
+        anchor puts the callout across 69% of `max attempts`, which is why `examples.py` no
+        longer pins it and lets the placement pass measure instead.
+        """
+        import copy
+        spec = copy.deepcopy(REFERENCE["state"])
+        next(s for s in spec["states"] if s.get("note"))["near"] = "bottom-left"
+        result = clipping.check(render.render(spec, name="buried"), "buried")
+        self.assertFalse(result.ok)
+        self.assertTrue(any("HIDDEN TEXT" in p and "max attempts" in p for p in result.problems),
+                        result.problems)
+
+    def test_a_label_merely_crossing_a_pale_container_is_not_called_hidden(self):
+        """The other half, and the reason this is not just an overlap check. The architecture's
+        `GraphQL` and `WebSocket` labels stray onto the Kubernetes cluster's pale fill, and are
+        perfectly readable there — flagging them made the layout search widen the whole diagram
+        past the 800px height gate to fix a non-problem. Text ON TOP of a shape counts only when
+        the contrast against that shape fails AA.
+        """
+        svg = render.render(REFERENCE["arch"], name="pale")
+        result = clipping.check(svg, "pale")
+        self.assertEqual([p for p in result.problems if "HIDDEN TEXT" in p], [])
 
 
 if __name__ == "__main__":

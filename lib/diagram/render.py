@@ -120,14 +120,15 @@ def check_toolchain(binary="d2"):
     return []
 
 
-def compile_source(source, pad=8, binary="d2"):
+def compile_source(source, pad=8, binary="d2", layers=None):
     """d2 source -> raw SVG text, laid out by ELK.
 
     `--theme 0` is deliberate: the palette is applied by our own literals and by the
     substitution below, so d2's themes would only add colours nothing maps.
 
-    `--layout elk` and its spacing are not options a caller chooses — see `d2.ELK_OPTS` for
-    why this repo uses one engine and which one, and for the two flaws that come with it.
+    `--layout elk` is not an option a caller chooses — see `d2.ELK_OPTS` for why this repo uses
+    one engine and which one. `layers` overrides the layer spacing, which `_pick_layout`
+    escalates when the tight default leaves text unreadable; see `d2.ELK_SPACING_LADDER`.
 
     Output goes to a temp file rather than stdout: it costs a temp dir and it is the one
     form d2 will write in every case, including outputs it refuses to send to stdout.
@@ -137,7 +138,7 @@ def compile_source(source, pad=8, binary="d2"):
                           f"(install: brew install d2, pin {PINNED_VERSION})")
     with tempfile.TemporaryDirectory(prefix="lib-diagram-") as tmp:
         target = os.path.join(tmp, "out.svg")
-        layers = d2mod.ELK_OPTS["nodeNodeBetweenLayers"]
+        layers = d2mod.ELK_OPTS["nodeNodeBetweenLayers"] if layers is None else layers
         edges = d2mod.ELK_OPTS["edgeNodeBetweenLayers"]
         box = d2mod.ELK_OPTS["padding"]
         cmd = [binary, "--pad", str(pad), "--theme", "0", "--layout", "elk",
@@ -325,6 +326,37 @@ def _pick_layout(spec, name, binary, theme_vars):
     downward at 164x643, so the search stopped and never learned that wrapping its labels
     fits the same content landscape at 916x93 — seven times shorter.
     """
+    for layers in d2mod.ELK_SPACING_LADDER:
+        layout, svg = _pick_at_spacing(spec, name, binary, theme_vars, layers)
+        # Unreadable text is the one defect worth re-laying-out for, and the only fix is a
+        # wider gap: a label lands in the space between two layers, so at 15px it overlaps
+        # whatever borders that space. Escalated rather than raised for everyone, because it
+        # costs — see `d2.ELK_SPACING_LADDER`. Without a browser this cannot be measured, so
+        # the tight spacing stands and the clipping gate reports the consequence later.
+        if not _hides_text(svg, theme_vars):
+            return layout, svg, layers
+    return layout, svg, layers
+
+
+def _hides_text(svg, theme_vars):
+    """Whether the LAYOUT has made any text unreadable — covered by geometry it is not inside,
+    or printed on a background it has no contrast against.
+
+    False when there is no browser to ask — the measurement needs real laid-out glyph boxes,
+    and guessing would be worse than the gate that reports it afterwards.
+    """
+    if not theme_vars or not browser.available():
+        return False
+    try:
+        measured = browser.measure([{"key": "t", "html": harness_html(svg, theme="light")}])
+    except browser.BrowserError:
+        return False
+    # Only what the LAYOUT hid. Text buried by a callout is the placement pass's problem and
+    # it has its own term for it — widening the whole diagram would not move the anchor.
+    return bool(measured and measured[0].get("hiddenByLayout"))
+
+
+def _pick_at_spacing(spec, name, binary, theme_vars, layers):
     from .gates import GateError, size as size_gate   # local: gates.clipping imports this
 
     best = None
@@ -342,7 +374,7 @@ def _pick_layout(spec, name, binary, theme_vars):
         if source in seen:
             continue
         seen.add(source)
-        raw = compile_source(source, binary=binary)
+        raw = compile_source(source, binary=binary, layers=layers)
         svg = postprocess(_maybe_compact(raw, variant, name), name, theme_vars=theme_vars)
         try:
             result = size_gate.check(svg, name)
@@ -360,7 +392,7 @@ def _pick_layout(spec, name, binary, theme_vars):
 
 
 def choose_layout(spec, name="diagram", binary="d2"):
-    """The `(direction, wrap)` this spec measures best at, or None if there is nothing to pick.
+    """The `((direction, wrap), layers)` this spec measures best at, or None if nothing to pick.
 
     Exposed for the callout placement pass, which needs to hold the layout STILL while it
     varies anchors. Without it, `place` rendered every anchor candidate through the full search
@@ -372,10 +404,12 @@ def choose_layout(spec, name="diagram", binary="d2"):
     """
     if spec.get("direction") or spec.get("kind") == "sequence":
         return None
-    return _pick_layout(spec, name, binary, theme_vars=True)[0]
+    layout, _svg, layers = _pick_layout(spec, name, binary, theme_vars=True)
+    return layout, layers
 
 
-def render(spec, name="diagram", binary="d2", theme_vars=True, wrap_edges=None):
+def render(spec, name="diagram", binary="d2", theme_vars=True, wrap_edges=None,
+           layers=None):
     """Spec -> embeddable SVG, for a host page that ships `page_css()`.
 
     `name` namespaces the SVG's ids, so it must be unique within a page. For a file to open
@@ -389,8 +423,9 @@ def render(spec, name="diagram", binary="d2", theme_vars=True, wrap_edges=None):
     meaningful alongside a pinned `direction`. `place` uses the pair to hold one layout still.
     """
     if not spec.get("direction") and spec.get("kind") != "sequence":
-        return _pick_layout(spec, name, binary, theme_vars)[1]
-    raw = compile_source(d2mod.emit(spec, wrap_edges=wrap_edges), binary=binary)
+        return _pick_layout(spec, name, binary, theme_vars)[1]  # noqa: E501  (svg)
+    raw = compile_source(d2mod.emit(spec, wrap_edges=wrap_edges), binary=binary,
+                         layers=layers)
     return postprocess(_maybe_compact(raw, spec, name), name, theme_vars=theme_vars)
 
 

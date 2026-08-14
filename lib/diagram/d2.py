@@ -139,6 +139,22 @@ ELK_OPTS = {
     "padding": 10,                 # ELK default 50, applied to every container alike
 }
 
+# Layer spacings to try, tightest first, when the tight one leaves TEXT UNREADABLE.
+#
+# 15 is right for most diagrams and wrong for two of the five reference figures, because the gap
+# between layers is also where ELK puts an edge label and where a container's border runs:
+#
+#   * the ER cardinality `1 doc : n sessions` needs 30, or it overlaps the `presence_sessions`
+#     table and its first glyph sits grey-on-purple.
+#   * the architecture's `GraphQL` and `WebSocket` need 40, or they land on the Kubernetes
+#     cluster's border. 30 is not enough.
+#
+# Escalated rather than raised, because it is not free: ER loses 13.2px of text for 12.7px at
+# 30, and the architecture gains 60px of height at 40. Neither is worth paying on a diagram that
+# reads fine at 15. Wrapping the label instead does NOT help — measured, it changes the covered
+# area not at all, since a folded label is still wider than a 15px gap.
+ELK_SPACING_LADDER = (15, 30, 40)
+
 # A table's own base font. d2 renders a sql_table/class header at ~1.3x this and ignores
 # the global `**.style.font-size` for it, so 14 gives 14px rows and an ~18px header —
 # both under the 19px body text. At the global 13 the header lands at 17px, which reads
@@ -424,6 +440,32 @@ def wrap_edge_label(text, width=EDGE_WRAPS[0]):
     return "\n".join(out)
 
 
+def split_cardinality(text):
+    """Fold a cardinality label at its colon, and nowhere else.
+
+    An `er` edge label gets this unconditionally, where other kinds only wrap when the layout
+    search needs the width. Two reasons, and the first is that it is simply the right shape:
+    `1 doc : n sessions` is two facts, one about docs and one about sessions, and the colon is
+    where a reader would fold it — which is already why `wrap_edge_label` breaks there first.
+
+    The second is that on one line it does not fit. In a landscape ER the label sits in the gap
+    between two tables, and that gap is `ELK_OPTS["nodeNodeBetweenLayers"]` wide; on the
+    reference diagram `1 doc : n sessions` ran under the `presence_sessions` table and hid its
+    leading `1`. Folded, it clears the table AND the figure comes out narrower, so less of it is
+    scaled away: 862x257 at 12.6px becomes 825x260 at 13.2px.
+
+    Widening the gap instead was measured and is the wrong lever — every px of width is scaled
+    back out of the glyphs: at 40 the text is 11.7px, at ELK's default 70 it is 10.3px.
+    """
+    out = []
+    for paragraph in str(text).split("\n"):
+        words = paragraph.split()
+        head, rest = _split_at_colon(words)
+        lines = [" ".join(part) for part in (head, rest) if part]
+        out += _tidy(lines)
+    return "\n".join(out)
+
+
 # Words no longer than this are never left alone on a line — see wrap_edge_label.
 ORPHAN = 2
 
@@ -461,10 +503,15 @@ def _tidy(lines):
     return out
 
 
-def _edge(edge, wrap=None):
+def _edge(edge, wrap=None, fold_cardinality=False):
     line = f"{_path(edge['from'])} -> {_path(edge['to'])}"
     if edge.get("label"):
-        label = wrap_edge_label(edge["label"], wrap) if wrap else edge["label"]
+        if wrap:
+            label = wrap_edge_label(edge["label"], wrap)
+        elif fold_cardinality:
+            label = split_cardinality(edge["label"])
+        else:
+            label = edge["label"]
         line += f": {_q(label)}"
     style = []
     if edge.get("push"):
@@ -585,7 +632,8 @@ def emit(spec, background=None, standalone=False, wrap_edges=None):
         for table in spec["tables"]:
             lines += _table(table, "columns")
         for edge in spec.get("edges") or []:
-            lines.append(_edge(edge, wrap=wrap_edges))
+            # A cardinality always folds at its colon — see `split_cardinality`.
+            lines.append(_edge(edge, wrap=wrap_edges, fold_cardinality=True))
     elif kind == "class":
         for item in spec["classes"]:
             lines += _table(item, "members")

@@ -66,6 +66,18 @@ def check_many(svgs, theme="light", standalone=False):
                             + (f" — {culprits}" if culprits else "")
                             + " — shorten the note text or pick another anchor; a narrower "
                               "callout fits where a wide one cannot")
+        # Text a reader cannot read. Held to zero rather than to a tolerance: a diagram exists
+        # to say something, and there is no amount of a word being unreadable that is fine.
+        # `render._pick_layout` already widens the layer spacing to clear this, so reaching the
+        # gate means no spacing on the ladder was enough — which is an editorial problem, the
+        # same as a note too long to place.
+        if result.get("hiddenText"):
+            buried = ", ".join(f"“{h['text']}” {h['fraction'] * 100:.0f}%"
+                               for h in result.get("hidden", [])[:3])
+            problems.append(
+                f"HIDDEN TEXT {result['hiddenText']:.0f}px² — {buried} — a label is overlapping "
+                "geometry it is not inside, so it is either covered or printed on the wrong "
+                "background; shorten the label or the diagram")
         detail = (f"{result['svg']['width']:.0f}x{result['svg']['height']:.0f} "
                   f"{len(result['callouts'])} callout(s)")
         out.append(Result(result["key"], "clipping", problems, detail))

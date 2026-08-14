@@ -22,16 +22,21 @@ from lib.diagram.examples import ARCHITECTURE, CLASS, ER, SEQUENCE, STATE
 from lib.diagram.spec import NEAR
 
 
-def fake_measurement(callouts, svg_clip=None):
+def fake_measurement(callouts, svg_clip=None, fmin=13.0):
     """A measurement dict shaped like the browser's, for scoring tests.
 
     `measure.js` reports a callout's overflow against two boundaries and `_score` uses the
     CARD one, because that is what actually clips on the page and what the clipping gate
     holds a callout to. So the (clip, overlap) pairs here are card-relative; `svg_clip`
     supplies the svg-box number for the one test that cares that they can differ.
+
+    `fmin` is the smallest glyph in the finished drawing, which `_measure_candidates` attaches
+    from the size gate. It defaults to a comfortable value so a test about overlap is not
+    accidentally a test about glyph size.
     """
     return {"callouts": [{"clipVsCard": c, "clip": c if svg_clip is None else svg_clip[i],
                           "overlap": o} for i, (c, o) in enumerate(callouts)],
+            "fmin": fmin,
             "svg": {"width": 100, "height": 100}, "overflow": {}, "offenders": []}
 
 
@@ -108,13 +113,48 @@ class TestScoring(unittest.TestCase):
         past the svg box, 0 past the card, overlap 10488 against the winner's 20104 — and the
         callout it rejected sat out in an empty margin instead of on top of three arrows.
         """
-        absorbed = place._score(fake_measurement([(0, 10_000)], svg_clip=[16]))[0]
-        real = place._score(fake_measurement([(16, 10_000)], svg_clip=[16]))[0]
-        self.assertLess(absorbed, real, "an overhang the card absorbs must not be penalised")
-        self.assertEqual(absorbed, 10_000, "it should cost exactly its overlap and no more")
+        absorbed = place._score(fake_measurement([(0, 10_000)], svg_clip=[16]))
+        real = place._score(fake_measurement([(16, 10_000)], svg_clip=[16]))
+        self.assertLess(absorbed[0], real[0],
+                        "an overhang the card absorbs must not be penalised")
+        self.assertEqual(absorbed[1], 0, "it should register no clip at all")
+        self.assertEqual(absorbed[0][0], 0, "and carry no clip penalty")
 
-    def test_a_diagram_with_no_callouts_scores_zero(self):
-        self.assertEqual(place._score(fake_measurement([]))[0], 0)
+    def test_a_diagram_with_no_callouts_costs_nothing_but_its_glyph_size(self):
+        key, clip, overlap = place._score(fake_measurement([]))
+        self.assertEqual((clip, overlap), (0, 0))
+        self.assertEqual(key[0], 0, "no clip")
+        self.assertEqual(key[2], 0, "no overlap")
+
+    def test_shrinking_the_whole_diagram_outranks_a_large_overlap(self):
+        """An anchor can grow the canvas, and a wider canvas is scaled further down in the
+        content column — so a callout can shrink every letter in the figure. Blind to that,
+        the search moved a callout on the reference ER to `center-left` and took 12.6px text
+        down to 11.5px everywhere to buy a 22% cut in that one callout's overlap."""
+        roomy = place._score(fake_measurement([(0, 3082)], fmin=12.6))[0]
+        cramped = place._score(fake_measurement([(0, 2398)], fmin=11.5))[0]
+        self.assertLess(roomy, cramped,
+                        "bigger text must win even with more overlap")
+
+    def test_height_is_priced_against_overlap_rather_than_ordered_against_it(self):
+        """Whichever of the two goes first, the other becomes free. Ordered by height, the
+        search buried text to save 50px (an anchor covering 15228 beat one covering 3082);
+        ordered by overlap, it spent 47px of height to save 490 — noise on totals in the
+        thousands. The real ER numbers, both ways round."""
+        shorter = fake_measurement([(0, 3478)]); shorter["rend_h"] = 245
+        taller = fake_measurement([(0, 2988)]); taller["rend_h"] = 292
+        self.assertLess(place._score(shorter)[0], place._score(taller)[0],
+                        "47px of height must outrank a 490-unit overlap saving")
+        buried = fake_measurement([(0, 15228)]); buried["rend_h"] = 245
+        clean = fake_measurement([(0, 3082)]); clean["rend_h"] = 292
+        self.assertLess(place._score(clean)[0], place._score(buried)[0],
+                        "but 12000 units of covered text must outrank 47px of height")
+
+    def test_a_glyph_difference_too_small_to_see_does_not_outrank_overlap(self):
+        """Rounded to the nearest half pixel, so measurement noise cannot decide a layout."""
+        noisy = place._score(fake_measurement([(0, 500)], fmin=12.9))[0]
+        clean = place._score(fake_measurement([(0, 100)], fmin=13.0))[0]
+        self.assertLess(clean, noisy, "0.1px apart should tie on size, then overlap decides")
 
     def test_best_picks_the_lowest_total(self):
         measured = [(("a",), fake_measurement([(0, 50)])),
@@ -141,13 +181,15 @@ class TestSearchStrategy(unittest.TestCase):
         # real d2 run. These tests are deliberately free of d2 and of a browser — see the
         # module docstring — so the answer is stubbed rather than computed.
         self.real_layout = place.render_mod.choose_layout
-        place.render_mod.choose_layout = lambda spec, name="d", binary="d2": ("down", None)
+        place.render_mod.choose_layout = (
+            lambda spec, name="d", binary="d2": (("down", None), 15))
 
     def tearDown(self):
         place._measure_candidates = self.real
         place.render_mod.choose_layout = self.real_layout
 
-    def spy(self, spec, name, combos, theme, standalone=False, layout=None):
+    def spy(self, spec, name, combos, theme, standalone=False, layout=None,
+            layers=None):
         self.calls.append(list(combos))
         # Prefer "bottom-left" wherever it appears; everything else is worse. Nothing clips,
         # so greedy always succeeds and the joint fallback stays untouched.
@@ -260,13 +302,15 @@ class TestJointEscalation(unittest.TestCase):
         # real d2 run. These tests are deliberately free of d2 and of a browser — see the
         # module docstring — so the answer is stubbed rather than computed.
         self.real_layout = place.render_mod.choose_layout
-        place.render_mod.choose_layout = lambda spec, name="d", binary="d2": ("down", None)
+        place.render_mod.choose_layout = (
+            lambda spec, name="d", binary="d2": (("down", None), 15))
 
     def tearDown(self):
         place._measure_candidates = self.real
         place.render_mod.choose_layout = self.real_layout
 
-    def spy(self, spec, name, combos, theme, standalone=False, layout=None):
+    def spy(self, spec, name, combos, theme, standalone=False, layout=None,
+            layers=None):
         self.calls.append(list(combos))
         out = []
         for anchors in combos:

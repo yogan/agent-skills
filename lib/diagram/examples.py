@@ -157,7 +157,12 @@ STATE = {
         {"id": "authenticating", "role": "working"},
         {"id": "live", "role": "steady"},
         {"id": "backoff", "label": "reconnect backoff", "role": "transient",
-         "note": "new retry path", "near": "bottom-left"},
+         # No `near`. It used to pin `bottom-left`, which the hidden-text check then caught
+         # putting this callout across 69% of the `max attempts` label — a defect that only
+         # ever showed when something rendered this spec WITHOUT the placement pass, since
+         # `place.place` measures the alternatives and picks `center-left` instead. A pinned
+         # anchor that the pipeline always overrides is documentation of the wrong thing.
+         "note": "new retry path"},
         {"id": "closed", "role": "terminal"},
     ],
     "transitions": [

@@ -31,6 +31,9 @@ from lib.diagram.spec import content_warnings
 # `d2.ELK_OPTS`. The dagre figures they replace are kept alongside, because the trade is the
 # reason for the change: ELK spends page height and buys back text size, and dagre's wider
 # drawings were losing a fifth of their glyph size to being scaled into the content column.
+#
+# `er` also sits one rung up the spacing ladder (`d2.ELK_SPACING_LADDER`): at the tight default
+# its cardinality label was unreadable, and it is the only reference figure that needs the room.
 MEASURED = {
     # dagre: 887x771 at 11.4px, scaled to 0.88.
     "arch": (579, 767),
@@ -40,7 +43,11 @@ MEASURED = {
     # dagre: 935x285 at 11.6px — and its arrows pointed at the TABLE. `documents.owner_id` was
     # accepted and silently dropped, so the picture never showed the column-level fact the spec
     # asserted. The arrow now leaves the column, from a figure that is also smaller.
-    "er": (862, 257),
+    #
+    # 862x257 at 12.6px until the cardinality labels started folding at their colon — see
+    # `d2.split_cardinality`. On one line `1 doc : n sessions` was wider than the gap between
+    # the tables and ran under `presence_sessions`, hiding its leading `1`.
+    "er": (855, 260),
     # dagre: 899x357 at 12.1px. This is the biggest single gain in the corpus — less than half
     # the width, and 14.0px text because none of it is scaled away.
     "class": (411, 450),
