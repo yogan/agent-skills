@@ -228,16 +228,12 @@ _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(
 if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
 
-from lib.diagram import browser as _diagram_browser        # noqa: E402
+# Three names, and the boundary is visible in them: `figure` draws (and knows what a gate is,
+# so this file does not), while `palette` and `render` supply the CSS a HOST PAGE has to ship
+# for a diagram to render in it at all — which is this file's business and nothing else's.
+from lib.diagram import figure as _diagram_figure          # noqa: E402
 from lib.diagram import palette as _diagram_palette        # noqa: E402
-from lib.diagram import place as _diagram_place            # noqa: E402
 from lib.diagram import render as _diagram_render          # noqa: E402
-from lib.diagram import spec as _diagram_spec              # noqa: E402
-from lib.diagram.gates import GateError                    # noqa: E402
-from lib.diagram.gates import clipping as _gate_clipping   # noqa: E402
-from lib.diagram.gates import contrast as _gate_contrast   # noqa: E402
-from lib.diagram.gates import size as _gate_size           # noqa: E402
-from lib.diagram.gates import theming as _gate_theming     # noqa: E402
 
 _LIGHT_VARS = """
     --bg: #fafaf8; --fg: #1a1a1a; --accent: #b5541f; --muted: #6b6b6b;
@@ -745,90 +741,47 @@ _DIAGRAM_GATE_PROBLEMS: list = []
 _DIAGRAM_ADVICE: list = []
 
 
+def prepare_diagrams(spec: dict) -> None:
+    """Draw every diagram the document actually references, in one pass.
+
+    Up front rather than per token, because `lib.diagram.figure.draw` batches its browser work
+    across the whole call — one Chrome launch for the article instead of one per figure — and
+    it can only do that if it is handed the whole set. Only what a `{{diagram:key}}` token
+    actually references is drawn: a spec is free to carry a diagram it ended up not using, and
+    placing one costs seconds.
+
+    Which gates that implies is not this file's business; see lib/diagram/figure.py. What
+    belongs here is only what to do with the answer, and that is two lists under two headings.
+    """
+    diagrams = spec.get("diagrams") or {}
+    referenced = [key for key in dict.fromkeys(_DIAGRAM_TOKEN_RE.findall(json.dumps(spec)))
+                  if key in diagrams]
+    wanted = {key: diagrams[key] for key in referenced
+              if (key, json.dumps(diagrams[key], sort_keys=True)) not in _DIAGRAM_CACHE}
+    if not wanted:
+        return
+    for drawn in _diagram_figure.draw(wanted, target="embed"):
+        _DIAGRAM_CACHE[(drawn.name,
+                        json.dumps(diagrams[drawn.name], sort_keys=True))] = drawn.svg
+        _DIAGRAM_GATE_PROBLEMS.extend(drawn.problems)
+        _DIAGRAM_GATE_PROBLEMS.extend(drawn.blocked)
+        _DIAGRAM_ADVICE.extend(drawn.advice)
+
+
 def render_d2_diagram(diagram: dict, name: str) -> str:
-    """Render a `lib/diagram` spec (anything with a "kind") through D2.
+    """One diagram, drawn if `prepare_diagrams` has not already done it.
 
-    This replaced Graphviz. It buys the diagram kinds `dot` could not draw at all — a sequence
-    diagram above all, since `dot` reorders lifeline columns to minimise edge crossings and there
-    is no way to stop it — plus annotation callouts and one shared visual vocabulary across every
-    figure in the document.
-
-    Callouts are positioned by measuring all eight candidate anchors in a headless browser. If
-    no browser is available the spec's own `near` values (or the default) are used and a warning
-    is recorded: D2 reserves no canvas space for a callout, so an unmeasured one may be clipped.
+    The lone path is the fallback: a caller rendering a single spec outside the document flow
+    still gets a gated figure, it just pays for its own browser launch.
     """
-    # Validate here rather than leaving it to the render below, because content_warnings() reads
-    # fields (a state's `id`, an edge's ends) without checking them: on a malformed spec it would
-    # raise a bare KeyError before the SpecError that actually says what is wrong.
-    _diagram_spec.validate(diagram)
-
-    # On the spec as authored, before placement rewrites its `near` values — the advice is about
-    # what was written. The hard errors (a dangling edge, a role a kind does not have) are the
-    # SpecError above and stop the page; these only inform the author.
-    for advice in _diagram_spec.content_warnings(diagram):
-        _DIAGRAM_ADVICE.append(f"{name}: {advice}")
-
-    if _diagram_browser.available():
-        try:
-            diagram, report = _diagram_place.place(diagram, name=name)
-            for entry in _diagram_place.unplaceable(report):
-                _DIAGRAM_GATE_PROBLEMS.append(
-                    f"{name}: callout {entry['index']} still clips by {entry['clip']:.0f}px — "
-                    "shorten its note text")
-        except _diagram_place.PlacementError as exc:
-            _DIAGRAM_GATE_PROBLEMS.append(f"{name}: callouts not placed automatically ({exc})")
-    elif _diagram_place.note_sites(diagram):
-        _DIAGRAM_GATE_PROBLEMS.append(
-            f"{name}: no browser, so its callouts were not placed by measurement "
-            f"({'; '.join(_diagram_browser.requirements())}) — one may be clipped")
-
-    svg = _diagram_render.render(diagram, name=name)
-
-    # Clipping is NOT here: it needs a browser, and launching one per diagram would cost more
-    # than every other gate in this file put together. It runs once over the whole document
-    # instead — see `check_rendered_diagrams`.
-    for gate in (_gate_size, _gate_contrast, _gate_theming):
-        try:
-            result = gate.check(svg, name)
-        except GateError as exc:
-            _DIAGRAM_GATE_PROBLEMS.append(f"{name}: {gate.__name__.rsplit('.', 1)[-1]} "
-                                          f"could not run — {exc}")
-            continue
-        for problem in result.problems:
-            _DIAGRAM_GATE_PROBLEMS.append(f"{name}: {problem}")
-    return svg
-
-
-def check_rendered_diagrams() -> None:
-    """Run the clipping gate over every diagram in the document, in one browser launch.
-
-    This gate was missing from this file entirely for a while, and the hole it left was exactly
-    the shape of the one rule that is not a trade-off: it is the only gate that sees TEXT A
-    READER CANNOT READ. `place` avoids burying a label — that is most of what its overlap term
-    is for — but avoiding is not detecting, and when every anchor covers something the search
-    picks the least bad one and says nothing. `unplaceable()` above reports a callout still
-    CLIPPED, which is a different question.
-
-    Batched rather than per-diagram because the cost here is starting Chrome, not measuring one
-    more page: a six-figure article pays for one launch instead of six.
-    """
-    svgs = {key: svg for (key, _spec), svg in _DIAGRAM_CACHE.items()}
-    if not svgs:
-        return
-    if not _diagram_browser.available():
-        _DIAGRAM_GATE_PROBLEMS.append(
-            "clipping gate could not run (" + "; ".join(_diagram_browser.requirements())
-            + ") — it is the only gate that sees a callout cut off or a label buried, so its "
-              "absence is not a clean bill of health")
-        return
-    try:
-        results = _gate_clipping.check_many(svgs)
-    except GateError as exc:
-        _DIAGRAM_GATE_PROBLEMS.append(f"clipping gate could not run — {exc}")
-        return
-    for result in results:
-        for problem in result.problems:
-            _DIAGRAM_GATE_PROBLEMS.append(f"{result.name}: {problem}")
+    key = (name, json.dumps(diagram, sort_keys=True))
+    if key not in _DIAGRAM_CACHE:
+        drawn = _diagram_figure.draw({name: diagram}, target="embed")[0]
+        _DIAGRAM_CACHE[key] = drawn.svg
+        _DIAGRAM_GATE_PROBLEMS.extend(drawn.problems)
+        _DIAGRAM_GATE_PROBLEMS.extend(drawn.blocked)
+        _DIAGRAM_ADVICE.extend(drawn.advice)
+    return _DIAGRAM_CACHE[key]
 
 
 def render_diagram(diagram: dict, name: str = "diagram") -> str:
@@ -1094,16 +1047,15 @@ def main():
         check_length_bias(collect_all_quiz_questions(spec))
     out_html = render(spec)
 
+    # Every referenced diagram, drawn and gated in one pass before the page is assembled.
+    prepare_diagrams(spec)
+
     if args.output:
         out_path = args.output
     else:
         date_prefix = datetime.date.today().strftime("%Y-%m-%d")
         slug = spec.get("slug") or slugify(spec["title"])
         out_path = Path(f"/tmp/{date_prefix}-explanation-{slug}.html")
-
-    # After every diagram is rendered and before anything is reported: one browser launch for
-    # the whole document — see `check_rendered_diagrams`.
-    check_rendered_diagrams()
 
     out_path.write_text(out_html, encoding="utf-8")
     print(str(out_path))

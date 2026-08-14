@@ -39,9 +39,9 @@ _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(
 if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
 
-from lib.diagram import browser, overview, place, render          # noqa: E402
-from lib.diagram.gates import GateError, clipping, contrast, report, size, theming  # noqa: E402
-from lib.diagram.spec import SpecError, content_warnings, validate  # noqa: E402
+from lib.diagram import figure, overview, render                  # noqa: E402
+from lib.diagram.gates import report                              # noqa: E402
+from lib.diagram.spec import SpecError, validate                  # noqa: E402
 
 
 def die(message, code=2):
@@ -73,47 +73,6 @@ def load_spec(path):
         return json.loads(raw)
     except ValueError as exc:
         die(f"the spec is not valid JSON: {exc}")
-
-
-def run_gates(svg, name, standalone=True, theme="dark"):
-    """Every gate that can run, as a list of Results.
-
-    The two output modes get genuinely different gate sets, because most of the gates are
-    statements about a host page:
-
-    * **standalone** drops the page-width, viewport-height and glyph-vs-prose rules (see
-      gates/size.py — applying them to a file is what makes a wide diagram "fail" and pushes
-      an author into splitting one that was perfectly legible), checks contrast for the one
-      theme that got baked in, and skips theming entirely since there are no vars left to
-      follow a toggle. `render.standalone` verifies mappability itself, before baking.
-    * **embedded** keeps all of them, and checks both themes, because it really does render
-      both ways.
-
-    A gate that cannot measure something raises GateError and is reported as blocked, never
-    silently skipped — see lib/diagram/gates/__init__.py.
-    """
-    results, blocked = [], []
-
-    def run(label, fn):
-        try:
-            results.append(fn())
-        except GateError as exc:
-            blocked.append(f"{label}: {exc}")
-
-    run("size", lambda: size.check(svg, name, standalone=standalone))
-    run("contrast", lambda: contrast.check(
-        svg, name, themes=(theme,) if standalone else ("light", "dark")))
-    if not standalone:
-        run("theming", lambda: theming.check(svg, name))
-
-    if browser.available():
-        run("clipping", lambda: clipping.check_many(
-            {name: svg}, theme=theme, standalone=standalone)[0])
-    else:
-        blocked.append("clipping: " + "; ".join(browser.requirements())
-                       + " — this gate is the only one that can see a callout cut off, "
-                         "so its absence is not a clean bill of health")
-    return results, blocked
 
 
 def open_file(path):
@@ -184,44 +143,33 @@ def main():
     elif args.drop:
         die("--drop only applies with --overview")
 
-    for warning in content_warnings(spec):
-        print(f"warning: {warning}", file=sys.stderr)
-
     name = slugify(spec.get("slug") or spec.get("title") or spec.get("kind"))
+    target = "file" if args.format == "svg" else "embed"
+    standalone = target == "file"
 
-    standalone = args.format == "svg"
-
-    if not args.no_place:
-        try:
-            spec, report_rows = place.place(spec, name=name, theme=args.theme,
-                                            standalone=standalone)
-        except place.PlacementError as exc:
-            # Not fatal: the spec's own anchors (or the default) still render. Worth saying
-            # out loud, because the callouts are then placed by guess rather than measurement.
-            print(f"warning: could not place callouts automatically ({exc}); "
-                  "using the anchors in the spec", file=sys.stderr)
-            report_rows = []
-        for entry in place.unplaceable(report_rows):
-            print(f"warning: callout {entry['index']} still clips by {entry['clip']:.0f}px at "
-                  f"{entry['near']} — no anchor fits, so shorten its note text",
-                  file=sys.stderr)
-
+    # One call: validated, placed, rendered and gated. The CLI states what the picture is FOR
+    # and reports what came back; it does not know which gates that implies. See
+    # lib/diagram/figure.py.
     try:
-        if standalone:
-            svg = render.standalone(spec, name=name, theme=args.theme)
-        else:
-            svg = render.render(spec, name=name)
-    except render.RenderError as exc:
+        drawn = figure.draw({name: spec}, target=target, theme=args.theme,
+                            place_callouts=not args.no_place, gates=not args.no_gates)[0]
+    except (SpecError, render.RenderError) as exc:
         die(str(exc))
 
+    for line in drawn.advice:
+        print(f"warning: {line}", file=sys.stderr)
+    svg = drawn.svg
+
     failed = 0
-    if not args.no_gates:
-        results, blocked = run_gates(svg, name, standalone=standalone, theme=args.theme)
-        if results:
-            failed = report(results, stream=sys.stderr)
-        for problem in blocked:
-            print(f"GATE COULD NOT RUN — {problem}", file=sys.stderr)
-        failed += len(blocked)
+    if drawn.results:
+        failed = report(drawn.results, stream=sys.stderr)
+    for problem in drawn.blocked:
+        print(f"GATE COULD NOT RUN — {problem}", file=sys.stderr)
+    failed += len(drawn.blocked)
+    # Placement findings are not a gate verdict — no anchor fits and the remedy is editorial —
+    # so they are said plainly rather than counted against the exit code.
+    for problem in drawn.placement:
+        print(f"warning: {problem}", file=sys.stderr)
 
     date = datetime.date.today().strftime("%Y-%m-%d")
     out_path = args.output or f"/tmp/{date}-diagram-{name}.svg"

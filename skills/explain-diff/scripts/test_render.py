@@ -19,7 +19,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 
 import render as R  # noqa: E402
-from lib.diagram.gates import Result as _Result  # noqa: E402
+from lib.diagram.figure import Figure as _Figure  # noqa: E402
 
 
 class TestFormatMeta(unittest.TestCase):
@@ -260,26 +260,30 @@ class TestDiagramRouting(unittest.TestCase):
 
 @unittest.skipUnless(shutil.which("d2"), "d2 is not installed (brew install d2)")
 class TestD2Diagrams(unittest.TestCase):
-    """The real D2 path, end to end. Placement is skipped (it needs a browser and seconds);
-    lib/diagram's own tests cover it."""
+    """The real D2 path, end to end. Placement is skipped — it needs a browser and seconds —
+    and lib/diagram's own tests cover it."""
 
     SEQUENCE = {
         "kind": "sequence",
         "participants": [{"id": "editor", "label": "Editor", "role": "client"},
                          {"id": "gw", "label": "Gateway", "role": "svc",
-                          "note": "new service", "near": "bottom-right"}],
+                          "note": "new service"}],
         "messages": [{"from": "editor", "to": "gw", "label": "WS upgrade"}],
     }
 
     def setUp(self):
         R._DIAGRAM_GATE_PROBLEMS.clear()
+        R._DIAGRAM_ADVICE.clear()
         R._DIAGRAM_CACHE.clear()
-        self._avail = R._diagram_browser.available
-        R._diagram_browser.available = lambda: False
+        self._draw = R._diagram_figure.draw
+        # Placement is what costs seconds; everything else about the real path is cheap.
+        R._diagram_figure.draw = lambda specs, **kw: self._draw(
+            specs, **{**kw, "place_callouts": False})
 
     def tearDown(self):
-        R._diagram_browser.available = self._avail
+        R._diagram_figure.draw = self._draw
         R._DIAGRAM_GATE_PROBLEMS.clear()
+        R._DIAGRAM_ADVICE.clear()
         R._DIAGRAM_CACHE.clear()
 
     def test_it_renders_a_kind_dot_could_not_draw_at_all(self):
@@ -289,39 +293,21 @@ class TestD2Diagrams(unittest.TestCase):
         self.assertIn("Gateway", svg)
 
     def test_colours_are_css_vars_so_the_diagram_follows_the_page_toggle(self):
-        svg = R.render_diagram(self.SEQUENCE, name="seq")
-        self.assertIn("var(--d-", svg)
+        self.assertIn("var(--d-", R.render_diagram(self.SEQUENCE, name="seq"))
 
     def test_ids_are_namespaced_with_the_diagram_key(self):
-        svg = R.render_diagram(self.SEQUENCE, name="seq")
-        self.assertIn('id="seq-', svg)
+        self.assertIn('id="seq-', R.render_diagram(self.SEQUENCE, name="seq"))
 
     def test_a_note_becomes_a_tagged_callout(self):
-        svg = R.render_diagram(self.SEQUENCE, name="seq")
-        self.assertIn("d2-callout", svg)
+        self.assertIn("d2-callout", R.render_diagram(self.SEQUENCE, name="seq"))
 
-    def test_gates_run_and_a_clean_diagram_reports_nothing(self):
-        """No note, so nothing needs placing and nothing should be reported."""
+    def test_a_clean_diagram_reports_nothing(self):
         plain = {"kind": "state",
                  "states": [{"id": "live", "role": "steady"},
                             {"id": "closed", "role": "terminal"}],
                  "transitions": [{"from": "live", "to": "closed", "label": "user leaves"}]}
         R.render_diagram(plain, name="plain")
         self.assertEqual(R._DIAGRAM_GATE_PROBLEMS, [])
-
-    def test_an_unmeasured_callout_without_a_browser_is_reported(self):
-        """D2 reserves no canvas room for a callout, so an unmeasured anchor may well be
-        clipped. Staying quiet about that would be reporting a pass we did not verify."""
-        R.render_diagram(self.SEQUENCE, name="seq")
-        self.assertTrue(any("no browser" in p for p in R._DIAGRAM_GATE_PROBLEMS),
-                        R._DIAGRAM_GATE_PROBLEMS)
-
-    def test_a_diagram_with_no_notes_needs_no_browser_and_says_nothing_about_one(self):
-        plain = {"kind": "state",
-                 "states": [{"id": "a", "role": "working"}, {"id": "b", "role": "working"}],
-                 "transitions": [{"from": "a", "to": "b"}]}
-        R.render_diagram(plain, name="plain")
-        self.assertFalse(any("browser" in p for p in R._DIAGRAM_GATE_PROBLEMS))
 
     def test_an_oversized_diagram_is_reported_but_still_renders(self):
         tall = {"kind": "state",
@@ -340,158 +326,98 @@ class TestD2Diagrams(unittest.TestCase):
                               "transitions": [{"from": "a", "to": "typo"}]}, name="x")
 
 
-class TestClippingGateIsRunOverTheDocument(unittest.TestCase):
-    """This gate was absent from render.py entirely, and it is the only one that sees TEXT A
-    READER CANNOT READ — a callout sitting on a label, or one cut off by the card. The other
-    three measure the SVG statically and cannot.
+class TestPrepareDiagrams(unittest.TestCase):
+    """What this file is responsible for once drawing moved behind `lib.diagram.figure.draw`:
+    handing it the right set, once, and putting what comes back under the right heading.
 
-    What is checked here is the WIRING, because that is what this file owns: that every
-    rendered diagram is submitted, in one call, and that whatever comes back is surfaced under
-    the diagram's own name. That the gate can actually catch a buried label is proved where the
-    gate lives, in lib/diagram/gates/test_clipping.py, with a real browser.
+    Nothing here knows what a gate is, which is the point — that used to be four gate imports
+    and a hand-written list of which ones apply. See lib/diagram/figure.py.
     """
 
-    def setUp(self):
-        R._DIAGRAM_GATE_PROBLEMS.clear()
-        R._DIAGRAM_CACHE.clear()
-        self._avail = R._diagram_browser.available
-        self._check = R._gate_clipping.check_many
-        R._diagram_browser.available = lambda: True
-
-    def tearDown(self):
-        R._diagram_browser.available = self._avail
-        R._gate_clipping.check_many = self._check
-        R._DIAGRAM_GATE_PROBLEMS.clear()
-        R._DIAGRAM_CACHE.clear()
-
-    def _cache(self, *names):
-        for name in names:
-            R._DIAGRAM_CACHE[(name, "{}")] = f"<svg id='{name}'/>"
-
-    def test_every_rendered_diagram_is_submitted_in_one_call(self):
-        """One call, not one per diagram: the cost is starting Chrome, not measuring a page."""
-        calls = []
-
-        def spy(svgs, **kw):
-            calls.append(sorted(svgs))
-            return [_Result(name, "clipping") for name in svgs]
-
-        R._gate_clipping.check_many = spy
-        self._cache("flow", "tables", "states")
-        R.check_rendered_diagrams()
-        self.assertEqual(calls, [["flow", "states", "tables"]])
-
-    def test_a_finding_is_reported_under_its_diagram_name(self):
-        R._gate_clipping.check_many = lambda svgs, **kw: [
-            _Result("tables", "clipping", ["HIDDEN TEXT 88px² — “owner_id” 40%"])]
-        self._cache("tables")
-        R.check_rendered_diagrams()
-        self.assertEqual(len(R._DIAGRAM_GATE_PROBLEMS), 1)
-        self.assertIn("tables:", R._DIAGRAM_GATE_PROBLEMS[0])
-        self.assertIn("HIDDEN TEXT", R._DIAGRAM_GATE_PROBLEMS[0])
-
-    def test_a_clean_document_reports_nothing(self):
-        R._gate_clipping.check_many = lambda svgs, **kw: [
-            _Result(name, "clipping") for name in svgs]
-        self._cache("flow")
-        R.check_rendered_diagrams()
-        self.assertEqual(R._DIAGRAM_GATE_PROBLEMS, [])
-
-    def test_a_document_with_no_diagrams_does_not_start_a_browser(self):
-        def explode(svgs, **kw):
-            raise AssertionError("nothing to measure, so nothing should be launched")
-
-        R._gate_clipping.check_many = explode
-        R.check_rendered_diagrams()
-        self.assertEqual(R._DIAGRAM_GATE_PROBLEMS, [])
-
-    def test_without_a_browser_it_says_so_rather_than_passing_quietly(self):
-        """A gate that cannot run must never read as a clean bill of health — the whole reason
-        `GateError` is distinct from a finding. See lib/diagram/gates/__init__.py."""
-        R._diagram_browser.available = lambda: False
-        self._cache("flow")
-        R.check_rendered_diagrams()
-        self.assertTrue(any("could not run" in p for p in R._DIAGRAM_GATE_PROBLEMS),
-                        R._DIAGRAM_GATE_PROBLEMS)
-        self.assertTrue(any("not a clean bill of health" in p
-                            for p in R._DIAGRAM_GATE_PROBLEMS))
-
-    def test_a_gate_error_is_reported_rather_than_swallowed(self):
-        def boom(svgs, **kw):
-            raise R.GateError("chrome vanished")
-
-        R._gate_clipping.check_many = boom
-        self._cache("flow")
-        R.check_rendered_diagrams()
-        self.assertTrue(any("chrome vanished" in p for p in R._DIAGRAM_GATE_PROBLEMS),
-                        R._DIAGRAM_GATE_PROBLEMS)
-
-
-class TestDiagramAdvice(unittest.TestCase):
-    """`lib.diagram.spec.content_warnings` is how the author finds out that a spec is
-    editorially off — a bare ER ratio, eight sequence steps, an ASCII arrow in a label. It
-    used to be collected by the visualize CLI only, so an explainer's diagrams were never
-    advised at all."""
+    DIAGRAMS = {"flow": {"kind": "state", "states": [], "transitions": []},
+                "tables": {"kind": "state", "states": [], "transitions": []},
+                "unused": {"kind": "state", "states": [], "transitions": []}}
 
     def setUp(self):
-        R._DIAGRAM_ADVICE.clear()
+        self.calls = []
+        self._draw = R._diagram_figure.draw
+        R._diagram_figure.draw = self.spy
         R._DIAGRAM_GATE_PROBLEMS.clear()
+        R._DIAGRAM_ADVICE.clear()
         R._DIAGRAM_CACHE.clear()
-        self._render = R._diagram_render.render
-        self._avail = R._diagram_browser.available
-        # The advice is computed from the spec, so neither d2 nor a browser is involved.
-        R._diagram_render.render = lambda spec, name="diagram", **kw: "<svg/>"
-        R._diagram_browser.available = lambda: False
 
     def tearDown(self):
-        R._diagram_render.render = self._render
-        R._diagram_browser.available = self._avail
-        R._DIAGRAM_ADVICE.clear()
+        R._diagram_figure.draw = self._draw
         R._DIAGRAM_GATE_PROBLEMS.clear()
+        R._DIAGRAM_ADVICE.clear()
         R._DIAGRAM_CACHE.clear()
 
-    def test_a_bare_er_ratio_is_advised_against(self):
-        R.render_diagram({
-            "kind": "er",
-            "tables": [{"id": "users", "role": "store",
-                        "columns": [{"name": "id", "type": "uuid", "key": "pk"}]},
-                       {"id": "docs", "role": "store",
-                        "columns": [{"name": "owner_id", "type": "uuid", "key": "fk"}]}],
-            "edges": [{"from": "docs.owner_id", "to": "users.id", "label": "n : 1"}],
-        }, name="schema")
-        self.assertTrue(any("name the entities" in a for a in R._DIAGRAM_ADVICE),
-                        R._DIAGRAM_ADVICE)
-        self.assertTrue(all(a.startswith("schema: ") for a in R._DIAGRAM_ADVICE),
-                        R._DIAGRAM_ADVICE)
+    def spy(self, specs, **kw):
+        self.calls.append((sorted(specs), kw))
+        return [_Figure(name, f"<svg id='{name}'/>", [], [], self.problems.get(name, []),
+                        self.advice.get(name, []), self.blocked.get(name, []))
+                for name in specs]
 
-    def test_advice_is_kept_apart_from_the_gate_problems(self):
-        """One list would make "wide" read as loudly as "clipped"."""
-        R.render_diagram({
-            "kind": "state",
-            "states": [{"id": f"s{i}", "role": "working"} for i in range(8)],
-            "transitions": [{"from": f"s{i}", "to": f"s{i + 1}", "label": "next"}
-                            for i in range(7)],
-        }, name="lifecycle")
-        self.assertTrue(any("8 states" in a for a in R._DIAGRAM_ADVICE), R._DIAGRAM_ADVICE)
-        self.assertFalse(any("8 states" in p for p in R._DIAGRAM_GATE_PROBLEMS),
-                         R._DIAGRAM_GATE_PROBLEMS)
+    problems: dict = {}
+    advice: dict = {}
+    blocked: dict = {}
 
-    def test_a_clean_spec_says_nothing(self):
-        R.render_diagram({
-            "kind": "state",
-            "states": [{"id": "live", "role": "steady", "start": True},
-                       {"id": "closed", "role": "terminal"}],
-            "transitions": [{"from": "live", "to": "closed", "label": "user leaves"}],
-        }, name="plain")
-        self.assertEqual(R._DIAGRAM_ADVICE, [])
+    def _spec(self, *html):
+        return {"title": "t", "diagrams": self.DIAGRAMS,
+                "sections": [{"id": f"s{i}", "heading": "H", "html": h}
+                             for i, h in enumerate(html)]}
 
-    def test_a_malformed_spec_raises_a_spec_error_not_a_key_error(self):
-        """content_warnings() indexes fields it has not checked, so validating first is what
-        makes the message say which field is wrong."""
-        from lib.diagram.spec import SpecError
-        with self.assertRaises(SpecError):
-            R.render_diagram({"kind": "state", "states": [{"role": "working"}],
-                              "transitions": []}, name="nameless")
+    def test_every_referenced_diagram_is_drawn_in_one_call(self):
+        """Across sections, not per section: the browser work batches over a document, and it
+        can only do that if it is handed the whole set at once."""
+        R.prepare_diagrams(self._spec("<p>{{diagram:flow}}</p>", "<p>{{diagram:tables}}</p>"))
+        self.assertEqual(len(self.calls), 1)
+        self.assertEqual(self.calls[0][0], ["flow", "tables"])
+
+    def test_a_diagram_the_document_never_references_is_not_drawn(self):
+        """A spec may carry one it ended up not using, and placing a callout costs seconds."""
+        R.prepare_diagrams(self._spec("<p>{{diagram:flow}}</p>"))
+        self.assertEqual(self.calls[0][0], ["flow"])
+
+    def test_it_asks_for_the_embedded_target(self):
+        """The one thing this file states, because it is the one thing it knows: the figure is
+        going into a page that ships the CSS and follows its own toggle."""
+        R.prepare_diagrams(self._spec("{{diagram:flow}}"))
+        self.assertEqual(self.calls[0][1].get("target"), "embed")
+
+    def test_a_document_with_no_diagrams_draws_nothing(self):
+        R.prepare_diagrams({"title": "t", "sections": [{"id": "a", "heading": "H",
+                                                        "html": "<p>no figures</p>"}]})
+        self.assertEqual(self.calls, [])
+
+    def test_problems_and_blocked_gates_go_to_the_same_channel(self):
+        """Both mean "something is wrong with a figure in this page"; a reader of stderr does
+        not care that one is a verdict and the other is a gate that could not reach one."""
+        self.problems = {"flow": ["flow: HIDDEN TEXT 88px²"]}
+        self.blocked = {"flow": ["flow: clipping could not run"]}
+        try:
+            R.prepare_diagrams(self._spec("{{diagram:flow}}"))
+            self.assertEqual(sorted(R._DIAGRAM_GATE_PROBLEMS),
+                             ["flow: HIDDEN TEXT 88px²", "flow: clipping could not run"])
+            self.assertEqual(R._DIAGRAM_ADVICE, [])
+        finally:
+            self.problems = self.blocked = {}
+
+    def test_advice_goes_to_its_own_channel(self):
+        self.advice = {"flow": ["flow: no state is marked `start: true`"]}
+        try:
+            R.prepare_diagrams(self._spec("{{diagram:flow}}"))
+            self.assertEqual(R._DIAGRAM_ADVICE, ["flow: no state is marked `start: true`"])
+            self.assertEqual(R._DIAGRAM_GATE_PROBLEMS, [])
+        finally:
+            self.advice = {}
+
+    def test_what_it_drew_is_what_the_token_expands_to(self):
+        spec = self._spec("<p>{{diagram:flow}}</p>")
+        R.prepare_diagrams(spec)
+        out = R.render_diagrams_in_html(spec["sections"][0]["html"], self.DIAGRAMS)
+        self.assertIn("<svg id='flow'/>", out)
+        self.assertEqual(len(self.calls), 1, "expanding a token must not draw it again")
 
 
 class TestRender(unittest.TestCase):

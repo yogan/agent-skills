@@ -10,7 +10,9 @@ The subprocess tests need d2; they skip visibly without it.
 
 Run: `python3 skills/visualize/scripts/test_visualize.py`
 """
+import contextlib
 import hashlib
+import io
 import json
 import os
 import shutil
@@ -415,7 +417,7 @@ class TestOpening(unittest.TestCase):
     def test_the_title_is_drawn_into_the_png_so_a_part_is_not_anonymous(self):
         """It matters when one subject was split across several images: a cross-reference in a
         callout otherwise points at a name the reader cannot see anywhere."""
-        if not V.browser.available():
+        if not V.figure.browser_mod.available():
             self.skipTest("no browser to rasterise with")
         spec = {"kind": "architecture", "title": "pipeline 2/4 — test stage",
                 "nodes": [{"id": "a", "role": "svc"}, {"id": "b", "role": "svc"}],
@@ -430,7 +432,7 @@ class TestOpening(unittest.TestCase):
 
     def test_the_png_is_what_gets_opened_when_a_browser_is_there(self):
         """macOS renders SVG through Quick Look, which crops our canvas square."""
-        if not V.browser.available():
+        if not V.figure.browser_mod.available():
             self.skipTest("no browser to rasterise with")
         with tempfile.TemporaryDirectory() as tmp:
             target = os.path.join(tmp, "out.svg")
@@ -467,24 +469,53 @@ class TestOpening(unittest.TestCase):
 
 
 class TestBlockedGatesAreNotPasses(unittest.TestCase):
+    """That a gate which could not run is never silence is `lib.diagram.figure`'s promise, and
+    is tested there. What is left for the CLI is the half only it can keep: saying so on
+    stderr, and exiting non-zero so a caller notices.
+
+    In-process rather than through `run`, because the point is a browser that is missing and
+    the subprocess harness has a real one.
+    """
+
     def setUp(self):
-        self.real = V.browser.available
-        self.real_reqs = V.browser.requirements
+        self.real = V.figure.draw
 
     def tearDown(self):
-        V.browser.available = self.real
-        V.browser.requirements = self.real_reqs
+        V.figure.draw = self.real
 
-    @unittest.skipUnless(HAVE_D2, "needs d2")
-    def test_a_missing_browser_is_reported_as_a_gate_that_could_not_run(self):
-        V.browser.available = lambda: False
-        V.browser.requirements = lambda: ["node is not on PATH"]
-        svg = render.render(STATE, name="state")
-        results, blocked = V.run_gates(svg, "state")
-        self.assertTrue(all(r.ok for r in results))
-        self.assertEqual(len(blocked), 1)
-        self.assertIn("clipping", blocked[0])
-        self.assertIn("not a clean bill of health", blocked[0])
+    def _run(self, drawn):
+        V.figure.draw = lambda specs, **kw: [drawn]
+        spec = os.path.join(_WORKSPACE, "blocked-spec.json")
+        with open(spec, "w", encoding="utf-8") as handle:
+            json.dump(STATE, handle)
+        out = os.path.join(_WORKSPACE, "blocked.svg")
+        err = io.StringIO()
+        argv = sys.argv
+        sys.argv = ["visualize.py", spec, "-o", out, "--no-open", "--no-png"]
+        try:
+            with contextlib.redirect_stderr(err), contextlib.redirect_stdout(io.StringIO()):
+                code = V.main()
+        finally:
+            sys.argv = argv
+        return code, err.getvalue()
+
+    def test_a_gate_that_could_not_run_is_announced_and_counted(self):
+        code, err = self._run(V.figure.Figure(
+            "state", "<svg/>", [], [], [], [],
+            ["state: clipping could not run — node is not on PATH. It is the only gate that "
+             "sees a callout cut off, so its absence is not a clean bill of health"]))
+        self.assertIn("GATE COULD NOT RUN", err)
+        self.assertIn("not a clean bill of health", err)
+        self.assertNotEqual(code, 0, "a blocked gate must not exit 0")
+
+    def test_a_callout_that_cannot_be_placed_is_said_but_does_not_fail_the_run(self):
+        """The remedy is editorial — shorten the note — so the CLI reports it and still hands
+        back a diagram and a zero exit."""
+        code, err = self._run(V.figure.Figure(
+            "state", "<svg/>", [], ["state: callout 0 still clips by 12px"],
+            ["state: callout 0 still clips by 12px"], [], []))
+        self.assertIn("still clips", err)
+        self.assertEqual(code, 0)
 
 
 if __name__ == "__main__":
