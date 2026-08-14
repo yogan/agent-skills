@@ -559,6 +559,45 @@ class TestContentWarnings(unittest.TestCase):
                 "edges": [{"from": "b.a_id", "to": "a.id", "label": "1 a : n bs"}]}
         self.assertEqual(content_warnings(spec), [])
 
+    def _er(self, label):
+        """The reference diagram's shape in miniature: `sessions -> documents`, so a label
+        naming documents first is naming them in the opposite order to the arrow."""
+        return {"kind": "er",
+                "tables": [{"id": "documents", "role": "store",
+                            "columns": [{"name": "id", "type": "uuid"}]},
+                           {"id": "sessions", "role": "store",
+                            "columns": [{"name": "document_id", "type": "uuid"}]}],
+                "edges": [{"from": "sessions.document_id", "to": "documents.id",
+                           "label": label}]}
+
+    def test_a_cardinality_written_against_its_arrow_warns(self):
+        """The label and the picture disagreed about which end was which — the reference ER
+        shipped like this for a long time and it is genuinely hard to see."""
+        warns = content_warnings(self._er("1 doc : n sessions"))
+        self.assertTrue(any("opposite order to its arrow" in w for w in warns), warns)
+        self.assertTrue(any('"n sessions : 1 doc"' in w for w in warns),
+                        f"the warning should offer the corrected label: {warns}")
+
+    def test_a_cardinality_written_with_its_arrow_does_not_warn(self):
+        self.assertEqual(content_warnings(self._er("n sessions : 1 doc")), [])
+
+    def test_the_order_check_stays_quiet_when_it_cannot_read_both_ends(self):
+        """Deliberately hard to trip. A warning that fired on a label it had misread would
+        send an author to make a correct label wrong, so anything ambiguous passes."""
+        for label in ("belongs to",                    # no ratio at all
+                      "n : m via sessions_documents",  # a join table, not two ends
+                      "n sessions : 1 owner",          # `owner` is not the table `documents`
+                      "1 document : n documents"):     # a self-edge in all but name
+            self.assertEqual(content_warnings(self._er(label)), [], label)
+
+    def test_the_order_check_matches_a_shortened_table_name(self):
+        """`doc` for `documents` is the form an author actually writes, and the reason the
+        match is on stems rather than on the name as written."""
+        from lib.diagram.spec import _reads_backwards
+        self.assertTrue(_reads_backwards("1 doc : n sessions", "sessions.x", "documents.id"))
+        self.assertTrue(_reads_backwards("1 documents : n session", "sessions", "documents"))
+        self.assertFalse(_reads_backwards("n docs : 1 owner", "documents.owner_id", "users.id"))
+
     def test_the_n_in_a_ratio_is_not_mistaken_for_a_word(self):
         """The first version of this check passed "n : 1" for containing a letter."""
         from lib.diagram.spec import _names_something

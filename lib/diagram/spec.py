@@ -419,6 +419,57 @@ def _names_something(label):
     return any(c not in _RATIO_CHARS for c in label.lower())
 
 
+# Shorter than this and a word is not enough to identify a table by: "id" would match
+# anything, and a spec is free to name its tables `a` and `b`, where every label mentions both.
+_STEM_MIN = 3
+
+
+def _stem(word):
+    """A word reduced to what a table name and a label can plausibly share.
+
+    Just the plural: `docs`/`documents` do not match as prefixes, but `doc`/`document` do, and
+    that pair is the whole reason this exists — an author writes the short form of a name.
+    """
+    word = "".join(c for c in word.lower() if c.isalnum() or c == "_")
+    return word[:-1] if word.endswith("s") and len(word) > _STEM_MIN else word
+
+
+def _mentions(half, table):
+    """Whether the words in `half` name the table `table` — matched on stems, either way
+    round, so `doc` finds `documents` and `documents` finds `doc`."""
+    stems = {_stem(part) for part in str(table).split("_")}
+    for word in str(half).split():
+        word = _stem(word)
+        if len(word) < _STEM_MIN:
+            continue
+        if any(len(stem) >= _STEM_MIN and (word.startswith(stem) or stem.startswith(word))
+               for stem in stems):
+            return True
+    return False
+
+
+def _reads_backwards(label, source, target):
+    """Whether a cardinality names its two tables in the opposite order to its arrow.
+
+    `presence_sessions -> documents` labelled "1 doc : n sessions" is true and reads
+    right-to-left against an arrow that flies left-to-right, so the reader has to reconcile the
+    two. "n sessions : 1 doc" says the same thing and agrees with the picture.
+
+    Deliberately hard to trip. It fires only when BOTH ends are positively identified AND they
+    are swapped, so anything it cannot read confidently — "belongs to", "n : m via
+    email_documents", a self-edge, a name too short to match — passes silently. A warning about
+    reading order that fired on a label it had misread would be worse than no warning: the
+    remedy it suggests would make a correct label wrong.
+    """
+    left, colon, right = str(label).partition(":")
+    if not colon:
+        return False
+    source, target = str(source).split(".")[0], str(target).split(".")[0]
+    swapped = _mentions(left, target) and _mentions(right, source)
+    correct = _mentions(left, source) and _mentions(right, target)
+    return swapped and not correct
+
+
 def components(names, edges):
     """Group top-level `names` into connected islands, ignoring edge direction.
 
@@ -662,8 +713,14 @@ def content_warnings(spec):
                            "interesting half of the answer")
             elif kind == "er" and not _names_something(label):
                 out.append(f"{where} is labelled {label!r} — name the entities instead "
-                           "(\"1 doc : n sessions\"), so the reader does not have to work out "
+                           "(\"n sessions : 1 doc\"), so the reader does not have to work out "
                            "which end is which")
+            elif kind == "er" and _reads_backwards(label, edge.get("from"), edge.get("to")):
+                left, _, right = label.partition(":")
+                out.append(f"{where} is labelled {label!r}, which names its tables in the "
+                           f"opposite order to its arrow — write it as "
+                           f"\"{right.strip()} : {left.strip()}\", so the end the arrow leaves "
+                           "is the end the label starts with")
         key, row_key, noun = (("tables", "columns", "table") if kind == "er"
                               else ("classes", "members", "class"))
         items = spec.get(key) or []

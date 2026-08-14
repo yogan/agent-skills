@@ -44,10 +44,12 @@ MEASURED = {
     # accepted and silently dropped, so the picture never showed the column-level fact the spec
     # asserted. The arrow now leaves the column, from a figure that is also smaller.
     #
-    # 862x257 at 12.6px until the cardinality labels started folding at their colon — see
-    # `d2.split_cardinality`. On one line `1 doc : n sessions` was wider than the gap between
-    # the tables and ran under `presence_sessions`, hiding its leading `1`.
-    "er": (855, 260),
+    # 855x260 at 12.7px while every cardinality was folded at its colon. That fold is gone —
+    # it was added believing it kept `1 doc : n sessions` from running under the
+    # `presence_sessions` table, and the thing that actually keeps it clear is the layer
+    # spacing. On one line the labels cost 37px of width and half a pixel of glyph, and read
+    # as the single phrase they are. See `d2.wrap_edge_label`.
+    "er": (892, 257),
     # dagre: 899x357 at 12.1px. This is the biggest single gain in the corpus — less than half
     # the width, and 14.0px text because none of it is scaled away.
     "class": (411, 450),

@@ -185,11 +185,17 @@ search, not an instruction — and hand-picked anchors have measurably lost to i
   | | |
   |---|---|
   | `"n : 1"`, `"1 : 1"`, `"1 : n"` | **no.** Ambiguous without tracing the arrow. |
-  | `"1 doc : n edits"` | yes |
-  | `"1 doc : 0..1 claim"` | yes — and says the 1:1 is optional |
+  | `"n edits : 1 doc"` | yes |
+  | `"0..1 claim : 1 doc"` | yes — and says the 1:1 is optional |
   | `"n : m via email_documents"` | yes — names the join table |
 
   The renderer warns you when a label is a bare ratio.
+- **Write it in the direction the arrow goes.** The table the edge LEAVES goes on the left of
+  the colon, the table it points at on the right — `presence_sessions -> documents` is
+  `"n sessions : 1 doc"`, not `"1 doc : n sessions"`. Both are true; only one of them agrees
+  with the picture. Written backwards, the reader has to reconcile a label that reads
+  right-to-left against an arrow that flies left-to-right, which is work the label exists to
+  save them. The renderer warns you when it can tell a label is reversed.
 - `edges` is optional — a single table with no relationships is a legitimate diagram.
 - Show the columns the question is about. Not all of them.
 

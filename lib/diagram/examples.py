@@ -105,12 +105,16 @@ ER = {
              {"name": "last_seen_at", "type": "timestamptz"},
          ]},
     ],
+    # A cardinality reads in the direction its arrow goes: the table the arrow LEAVES on the
+    # left of the colon, the one it points at on the right. These said "1 doc : n sessions"
+    # while being drawn `presence_sessions -> documents`, so the label and the picture
+    # disagreed about which end was which and the reader had to reconcile them.
     "edges": [
         {"from": "documents.owner_id", "to": "users.id", "label": "belongs to"},
         {"from": "presence_sessions.document_id", "to": "documents.id",
-         "label": "1 doc : n sessions"},
+         "label": "n sessions : 1 doc"},
         {"from": "presence_sessions.user_id", "to": "users.id",
-         "label": "1 user : n sessions"},
+         "label": "n sessions : 1 user"},
     ],
 }
 

@@ -123,10 +123,12 @@ Four rules that keep a diagram honest:
   source code that escaped — and the single glyph is narrower. The renderer warns you.
 - **Label every relationship.** An unlabelled arrow says two things are connected and nothing
   about how, which is the least interesting half of the answer. In particular:
-  - **`er` edges carry a cardinality that names its entities** — `1 doc : n edits`, `1 doc :
-    0..1 claim`, `n : m via email_documents`. **Not a bare ratio:** `n : 1` is technically
-    correct and hard to read, because it makes the reader work out which end is which and then
-    map it back to the table names. The named form reads on its own. Point the edge at the
+  - **`er` edges carry a cardinality that names its entities, in the direction the arrow
+    goes** — `n edits : 1 doc`, `0..1 claim : 1 doc`, `n : m via email_documents`. **Not a bare
+    ratio:** `n : 1` is technically correct and hard to read, because it makes the reader work
+    out which end is which and then map it back to the table names. **And not backwards:** the
+    table the arrow LEAVES belongs on the left of the colon, the one it points at on the right,
+    so the label and the picture agree instead of having to be reconciled. Point the edge at the
     specific column (`documents.owner_id -> users.id`) so it is obvious which key it is.
   - **`state` transitions carry their trigger** — what causes the move.
   - **`class` edges carry the relationship** — `owns`, `implements`, `emits` (dashed for
