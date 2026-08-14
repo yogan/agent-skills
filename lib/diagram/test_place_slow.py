@@ -42,14 +42,20 @@ class TestPlacementAgainstRealDiagrams(unittest.TestCase):
         cls.placed = {name: place.place(spec, name=name)
                       for name, spec in REFERENCE.items()}
 
-    def test_placement_beats_the_hand_picked_reference_anchors(self):
+    def test_placement_is_never_worse_than_the_hand_picked_reference_anchors(self):
         """The justification for having a search at all.
 
-        The reference ER diagram's anchors were chosen by eye and looked fine. The search
-        finds a placement that covers an order of magnitude less of the drawing, on a layout
-        the author never saw — the diagram is laid out by measurement too now, so an anchor
-        picked against one shape is being applied to another. Hand placement is not reliable,
-        which is why this is not left to an author.
+        The reference ER diagram's anchors were chosen by eye. This test asked the search to
+        BEAT them, and for a long time it did — by a factor of fourteen under dagre (216
+        against 3123), by 1.3 under ELK at the tight default spacing.
+
+        It no longer beats them: it agrees with them exactly. The hidden-text check moved this
+        one diagram a rung up `d2.ELK_SPACING_LADDER`, and at 30 the drawing is roomy enough
+        that `top-left` / `top-right` is simply the optimum — the search measures 3121 and so
+        does the hand pick, the same number, because they are the same two anchors. Asserting a
+        strict improvement was asserting that the author had got it wrong, which is not a
+        property worth pinning; what must hold is that a measured anchor never covers MORE than
+        one chosen by eye.
 
         This compared CLIPPING until the day `_score` started measuring against the card
         rather than the svg box, at which point the hand-picked anchors stopped clipping too:
@@ -57,23 +63,30 @@ class TestPlacementAgainstRealDiagrams(unittest.TestCase):
         left overlap as the honest comparison — and it is the sharper one anyway, since it is
         what the reader actually loses.
 
-        The MARGIN has moved a long way and is deliberately not asserted. Under dagre the
-        search found 216 against the hand pick's 3123, a factor of fourteen; under ELK it is
-        about 2400 against 3100, a factor of 1.3. ELK packs this diagram tightly enough that
-        every anchor overlaps something, so there is simply less for a search to win — which
-        is worth knowing, and is not a regression. What must stay true is the direction.
+        A tie against the hand pick could equally mean the search has stopped discriminating,
+        so the second half measures the spread it is choosing within: `center-left` for the new
+        table is the anchor the module docstrings keep citing, and it is six times worse (19132
+        against 3121) while shrinking every glyph in the figure from 12.7px to 11.5px. The
+        search has plenty to get wrong here and does not.
         """
         _, report = self.placed["er"]
         self.assertEqual(place.unplaceable(report), [], f"search still clips: {report}")
         self.assertEqual(max(row["clip"] for row in report), 0)
         found = sum(row["overlap"] for row in report) / len(report)
 
-        by_hand = place._measure_candidates(ER, "er", [("top-left", "top-right")], "light")
-        _, hand_clip, hand_overlap = place._score(by_hand[0][1])
+        # Both alternatives in one call: the cost here is the browser launch, not the extra
+        # candidate.
+        measured = place._measure_candidates(
+            ER, "er", [("top-left", "top-right"), ("bottom-left", "center-left")], "light")
+        _, hand_clip, hand_overlap = place._score(measured[0][1])
+        _, _, poor_overlap = place._score(measured[1][1])
         self.assertEqual(hand_clip, 0, "the hand pick overhangs the canvas but not the card")
-        self.assertLess(found, hand_overlap,
-                        f"search {found:.0f} vs hand {hand_overlap:.0f} — a measured anchor "
-                        "must not cover more of the drawing than one chosen by eye")
+        self.assertLessEqual(found, hand_overlap,
+                             f"search {found:.0f} vs hand {hand_overlap:.0f} — a measured "
+                             "anchor must not cover more of the drawing than one chosen by eye")
+        self.assertLess(found * 2, poor_overlap,
+                        f"search {found:.0f} vs a poor anchor {poor_overlap:.0f} — the spread "
+                        "has collapsed, so the tie above no longer says anything")
 
     def test_every_reference_diagram_places_without_clipping(self):
         for name, (_placed, report) in self.placed.items():
