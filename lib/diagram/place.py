@@ -1,47 +1,28 @@
 """Choosing where each callout sits, by measuring the alternatives.
 
-d2 cannot do this. `tooltip.near` takes exactly one of eight fixed anchors relative to its
-shape, d2 does no overlap avoidance, and it does not even grow the canvas to fit the
-callout. There is no "let d2 decide" mode. So the renderer decides: render every anchor,
-measure the result in a browser, keep the best one.
+d2 cannot do this: `tooltip.near` takes one of eight fixed anchors, d2 avoids no overlaps, and
+it does not grow the canvas to fit a callout. So the renderer decides — render every anchor,
+measure in a browser, keep the best.
 
-What is being optimised is READABILITY, and the terms are one idea at four scales — text cut
-off, text made unreadable, text shrunk, text covered:
+What is optimised is READABILITY, as four terms compared in order:
 
-  1. **Clipping is disqualifying, not a trade-off.** A cut-off callout is strictly worse than
-     one that overlaps something, so it is weighted at 1e6 — the rest only ever breaks ties
-     among candidates that are equally (un)clipped. An earlier version weighted it at 1e3
-     and happily traded a 31px clip for a bit less overlap.
-  2. **Then text the reader cannot read at all**, in px². Not tradeable either, and it is the
-     term this list was missing: overlap counts a buried label, but at a price that page height
-     could outbid, so the search would take an anchor lying across a word over a clean one that
-     was 50px taller. See `_score`.
-  3. **Then the smallest glyph in the finished drawing.** An anchor can grow the canvas, and a
-     wider canvas is scaled further down in the content column, so a callout can shrink every
-     letter in the diagram. Blind to that, the search moved a callout on the reference ER to
-     `center-left` and took 12.6px text down to 11.5px everywhere to buy a 22% cut in that one
-     callout's overlap.
-  4. **Then overlap and page height, traded against each other** at `HEIGHT_PRICE`. Overlap is
-     weighted by what it damages (see `browser.OVERLAP_WEIGHTS`): burying a label costs 6, an
-     edge 2, the body of a shape 0.3, and anything covering half the canvas is ignored as a
-     container. Unweighted, the search optimises total area and cheerfully hides a label to
-     stay off a big rectangle. Height belongs in the same term because an anchor that hangs a
-     callout off the bottom makes the figure taller without shrinking any text, so neither
-     glyph size nor overlap can see it.
+  1. **Clipping**, at 1e6, so it is never traded. An earlier 1e3 swapped a 31px clip for a
+     little less overlap.
+  2. **Text made unreadable**, in px². Also never traded — see `_score`.
+  3. **The smallest glyph in the finished drawing.** An anchor can widen the canvas, and a
+     wider canvas is scaled further down, so a callout can shrink every letter in the diagram.
+  4. **Overlap and page height, priced against each other** at `HEIGHT_PRICE`. Overlap is
+     weighted by what it damages (`browser.OVERLAP_WEIGHTS`): unweighted, the search optimises
+     area and will hide a label to stay off a big rectangle.
 
-And then, often, nothing — because on a diagram with room in it most anchors cover nothing at
-all and the terms above tie. That is not a gap in the model, it is the model saying there
-is no readability argument left to make, and the tie falls through to the order of `spec.NEAR`.
-See there, and `_score`.
+Often all four tie, because on a roomy diagram most anchors cover nothing. That is the model
+saying there is no readability argument left, and the tie falls to the order of `spec.NEAR`.
 
-Greedy per-callout is not always enough — two callouts can each look fine alone and only fit
-in a particular combination — so a diagram with few enough of them gets an exhaustive search
-instead. Eight anchors means 8^n candidates, which is affordable at n=2 (64) and not at n=3
-(512), hence `JOINT_MAX`.
+Greedy settles one callout at a time and cannot see a pair that only works together, so a
+small enough diagram gets the exhaustive 8^n search instead — affordable at n=2 (64), not at
+n=3 (512), hence `JOINT_MAX`.
 
-Where no anchor is clip-free, the fix is editorial rather than geometric: shorten the note.
-A narrower callout fits where a wide one cannot, which is why the content limits cap a note
-at a few words.
+Where no anchor is clip-free the fix is editorial: shorten the note.
 """
 import copy
 import itertools
@@ -56,18 +37,11 @@ CLIP_PENALTY = 1e6
 # Above this many callouts, search greedily instead of exhaustively.
 JOINT_MAX = 2
 
-# What one pixel of extra page height is worth in weighted-overlap units. Overlap and height
-# have to be traded, not ordered: putting height first made the search bury text to save 50px
-# (an anchor covering 15228 units beat one covering 3082), and putting overlap first made it
-# spend 50px to save an overlap difference of 315, which is noise on totals in the thousands.
-#
-# Bucketing both was tried and is subtly wrong — two values closer together than the bucket
-# still land either side of a boundary, which is exactly how the reference ER came to prefer a
-# callout hanging off the bottom for a 490-unit overlap saving.
-#
-# So: one budget, one exchange rate. 20 puts 47px of height (the ER case) at 940 units, which
-# outranks that 490 saving, while the 12146-unit difference in the bury-the-text case would
-# need 600px of height to justify and so never happens.
+# What a pixel of page height is worth in weighted-overlap units. The two must be priced, not
+# ordered: height first buried text to save 50px, overlap first spent 50px to save 315 units of
+# noise. Bucketing both is subtly wrong — two values closer than the bucket still land either
+# side of a boundary. At 20, the ER's 47px of height costs 940 units, which outranks a 490-unit
+# overlap saving, while burying a label (12146 units) would need 600px to justify.
 HEIGHT_PRICE = 20
 
 DEFAULT_NEAR = "top-center"
@@ -111,68 +85,37 @@ def _apply(spec, anchors):
 
 
 def _score(measurement):
-    """Cost of one candidate, as a tuple compared left to right: clipped, then how small the
-    text ended up, then how much the callout covers.
+    """Cost of one candidate, compared left to right: clipped, hidden, shrunk, covered.
 
-    What is being optimised is READABILITY, and the three terms are that one idea at three
-    scales — text cut off, text shrunk, text covered.
+    Each term is measured against a boundary that is not the obvious one, and each choice was
+    made after the obvious one was wrong:
 
-    **Clipping** is measured against the CARD, not the svg box, and the difference is not
-    academic. `measure.js` reports both, and this used to take the svg-box number on the
-    reasoning that d2 reserves no canvas space for a callout so any overflow is the wrong
-    anchor. But the page gives a callout the card's padding to bleed into — `HOST_CSS` sets
-    `overflow: visible` precisely so a shadow can — and the clipping *gate*, which is what
-    decides whether output is acceptable, holds callouts to the card for that reason. Scoring
-    on the stricter boundary made the search reject anchors that clip nothing:
+    **Clipping** is measured against the CARD, not the svg box. The page lets a callout bleed
+    into the card's padding (`HOST_CSS` sets `overflow: visible` so a shadow can) and the
+    clipping gate holds it to the card for that reason. On the stricter boundary the search
+    rejected anchors that clip nothing — the state machine's `center-left` is 16px past the svg
+    box, 0px past the card, and covers HALF what the winner did.
 
-      the reference state machine, portrait, `center-left` — 16px past the svg box, 0px past
-      the card, and HALF the overlap of the anchor that won (10488 vs 20104). It put the
-      callout out in the empty left margin; the winner sat it on top of three arrows.
+    **Hidden text** is the anchor's OWN share, `hiddenText - hiddenByLayout`. Both come out of
+    one loop in `measure.js` under one threshold, so the subtraction is exact. The layout's
+    share is near-constant across a search and would mostly cancel, but not reliably: an anchor
+    can change the canvas, and then it would earn credit for relieving damage it never caused.
+    It ranks above everything below because being unreadable is not a price — as weighted
+    overlap alone, `HEIGHT_PRICE` could outbid it, and did.
 
-    **Hidden text** comes straight after clipping, and it is the term this search went without
-    for far too long. Overlap already counts a buried label at weight 6 — but weight 6 of a
-    priced term, which `HEIGHT_PRICE` can outbid, so "covers a word" was tradeable against "is
-    50px taller". It is not tradeable. On a real explainer figure the search took `center-left`,
-    which lay across 8% of a box's label, while `bottom-left`, `bottom-center` and
-    `bottom-right` each hid nothing at all: three clean anchors available and it chose a dirty
-    one, because the clean ones were slightly taller.
+    **Glyph size** catches the trade the other terms cannot see: a wider canvas is scaled
+    further down, so one callout can shrink every letter in the figure. Rounded to the half
+    pixel so rounding noise does not outrank a real overlap.
 
-    Nothing else here could have caught that. The layout half of the same problem is handled by
-    escalating `d2.ELK_SPACING_LADDER` (see `render._pick_layout`), and that deliberately looks
-    at `hiddenByLayout` — the callout's contribution excluded, since no amount of widening moves
-    an anchor. Which left the callout's contribution belonging to exactly one place: here.
+    **Overlap** means OCCLUSION, not proximity: it is measured against the callout as painted,
+    where clipping uses that box plus the drop-shadow's reach (`js/measure.js` explains why the
+    two questions get different boxes). Charged on the grown box, a callout paid for its own
+    halo grazing a neighbour — which was the entire difference between the ER's top-row anchors,
+    all of which cover nothing.
 
-    The callout's OWN share, not the page total. The layout's share is mostly a constant across
-    the search — the drawing is pinned — and a constant added to every candidate changes no
-    ranking, which is why the total very nearly works. It is not reliably constant: an anchor
-    can change the canvas (`center-left` on the reference ER gives 949x207 where the others give
-    862x257), and a different canvas can hide a different amount by itself. Scored on the total,
-    an anchor that buries 100px² of a label while incidentally relieving 200px² of the layout's
-    own damage would beat one that buries nothing — credit for repairing something it was never
-    responsible for. `measure.js` reports both numbers from one loop, so the anchor's share is a
-    subtraction and not an approximation.
-
-    **Glyph size** is here because an anchor can grow the drawing, and a wider drawing is
-    scaled further down inside the content column — so a callout can make EVERY letter in the
-    diagram smaller. Without this term the search took that trade blind: on the reference ER
-    it moved a callout to `center-left`, spending 12.6px text for 11.5px across the whole
-    figure, to buy a 22% reduction in one callout's overlap. Rounded to the nearest half
-    pixel, so a rounding-level difference does not outrank a real overlap.
-
-    **Overlap and height share one term**, priced against each other — see `HEIGHT_PRICE`.
-    They cannot be ordered: whichever goes first, the other becomes free.
-
-    Overlap means OCCLUSION, not proximity, and the distinction is load-bearing. It is measured
-    against the callout as painted, while clipping above is measured against that box plus the
-    drop-shadow's reach — see `js/measure.js`, which explains why the two questions get
-    different boxes. Measured against the grown box, as it was at first, a callout was charged
-    for its halo grazing a bounding box: on the reference ER that made the difference between
-    every anchor in the top row, all of which cover nothing whatsoever.
-
-    Which means this tuple frequently ties, and the tie is settled by the order of `spec.NEAR`
-    — top row first, left first. That is deliberate; see the comment there. When several
-    anchors are equally free, "put them where the last one went" is a better answer than any
-    number this can produce.
+    It ties often, and the tie falls to the order of `spec.NEAR`. That is deliberate: when
+    several anchors are equally free, landing them on the same side as each other is a better
+    answer than any number here can produce.
     """
     clip = sum(c["clipVsCard"] for c in measurement["callouts"])
     overlap = sum(c["overlap"] for c in measurement["callouts"])
@@ -306,24 +249,15 @@ def place(spec, name="diagram", theme="light", joint_max=JOINT_MAX, anchors=NEAR
           standalone=False, pinned=None):
     """Return `(spec_with_anchors, report)`.
 
-    Exhaustive whenever the callout count can afford it (`joint_max`), greedy above that.
+    Exhaustive whenever the callout count can afford it (`joint_max`), greedy above that. The
+    trigger is affordability, not clipping: it used to run greedy and escalate only on a clip,
+    which reached the right answer only because clipping used to be common. On the reference ER
+    greedy returns 5483 overlap where the grid finds 3123, because settling one callout at a
+    time cannot see a pair that only works together.
 
-    This used to run greedy first and escalate only when greedy left something CLIPPED, on
-    the measured claim that greedy reached the same anchors anyway. That claim was true only
-    because clipping used to be common: greedy clipped, so it escalated, so it got the right
-    answer for the wrong reason. The moment `_score` started measuring against the card (see
-    there) far fewer candidates clipped, nothing escalated, and greedy's real weakness showed
-    — on the reference ER diagram it returned 5483 total overlap where the joint search finds
-    3123, because settling one callout at a time cannot see a pair that only works together.
-
-    So the trigger is affordability, not clipping. For one callout the two searches are the
-    same 8 candidates, so nothing is lost; for two it is 64 measurements instead of 16, which
-    is the price of not shipping a placement 75% worse than the one available.
-
-    `report` describes what was chosen and what it cost, so a caller can surface "this
-    callout could not be placed without clipping" instead of silently shipping the
-    least-bad option. A spec with no notes is returned untouched and costs nothing — no d2
-    run, no browser.
+    `report` says what was chosen and what it cost, so a caller can surface "this callout could
+    not be placed without clipping" rather than silently shipping the least-bad option. A spec
+    with no notes costs nothing — no d2 run, no browser.
     """
     validate(spec)
     sites = note_sites(spec)

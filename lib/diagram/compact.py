@@ -174,19 +174,14 @@ def _path_extent(body):
 def style_detail_lines(svg):
     """Shrink and mute the second line of any two-line *box* label.
 
-    d2 emits `"Title\\nDetail"` as a single `<text>` holding one `<tspan>` per line and offers
-    no way to style them differently, so the distinction has to be made here. Every tspan after
-    the first gets `DETAIL_FONT` and the muted foreground — the same colour the edge labels use,
-    so it is already covered by the contrast gate and by the palette's var substitution.
+    d2 emits `"Title\\nDetail"` as one `<text>` of two `<tspan>`s and offers no way to style
+    them differently, so the distinction is made here.
 
-    An **edge** label is left alone, and that exclusion is load-bearing rather than tidiness.
-    A two-line edge label is one phrase that wrapped, not a subtitle, so shrinking its
-    continuation both misreads it and costs the whole diagram its headroom: DETAIL_FONT is the
-    legibility floor, so a diagram containing one cannot be scaled down at all. Wrapping a long
-    edge label is the cheapest width there is — it took a four-column architecture from 1159px
-    to 842px — and that lever only works if the wrapped line stays the size it was.
-
-    Untouched when there is no two-line label, which is the normal case.
+    An **edge** label is excluded, and that is load-bearing: a two-line edge label is one
+    phrase that wrapped, not a subtitle. Shrinking its continuation would misread it and cost
+    the diagram its headroom — `DETAIL_FONT` is the legibility floor, so a diagram containing
+    one cannot be scaled down at all, and wrapping a long edge label is the cheapest width
+    there is (1159px to 842px on a four-column architecture).
     """
     def restyle(match):
         head, spans = match.group(1), match.group(2)
@@ -258,20 +253,15 @@ def add_group_legend(svg, lanes, pad=D2_PAD):
     """Name each lane group under the diagram, in its own colour.
 
     `lanes` is (group name or None, rule colour, name colour) per participant, in order. Two
-    colours because the rule matches the boxes it spans and the name has to be readable as
-    text — see the LEGEND_* constants.
+    colours because the rule matches the boxes it spans and the name has to read as text.
 
-    Returns the SVG unchanged when there is nothing to explain, which is two cases:
+    Returns the SVG unchanged when there is nothing to explain: fewer than two groups, or no
+    group covering more than one lane. A group of one lane is not grouping — its rule is an
+    underline under a single box.
 
-    * **fewer than two groups.** One colour is not distinguishing anything.
-    * **no group covering more than one lane.** A group of one lane is not grouping: its rule
-      is an underline under a single box, and its name is a second name for something already
-      named. Three lanes reading Reviewer / Backend / Postgres do not need to be told they are
-      browser / server / db.
-
-    The band is added INSIDE the inner `<svg>`, whose viewBox is the coordinate system the
-    drawing is laid out in — the outer one is offset from it, and a legend placed there lands
-    a padding's worth out of position. Both grow, or the drawing is cropped.
+    The band goes INSIDE the inner `<svg>`, whose viewBox is the coordinate system the drawing
+    is laid out in; the outer one is offset from it, so a legend placed there lands a padding
+    out of position. Both grow, or the drawing is cropped.
     """
     runs = _runs(lanes)
     if len(runs) < 2 or not any(last > first for _g, _r, _n, first, last in runs):
@@ -279,7 +269,7 @@ def add_group_legend(svg, lanes, pad=D2_PAD):
 
     outer_tag, inner_tag = _svg_tags(svg)
     _vx, vy, _vw, vh = _viewbox(inner_tag)
-    rects = _shape_rects(svg, svg.index(">", svg.find("<svg", svg.find("<svg") + 1)) + 1)
+    rects = _shape_rects(svg, _body_start(svg))
     if len(rects) < len(lanes):
         raise CompactError(f"{len(lanes)} lanes but {len(rects)} actor boxes")
 
@@ -315,7 +305,7 @@ def add_start_marker(svg, state_id, colour, vertical=False, pad=D2_PAD):
     """
     _outer_tag, inner_tag = _svg_tags(svg)
     vx, vy, vw, vh = _viewbox(inner_tag)
-    body_start = svg.index(">", svg.find("<svg", svg.find("<svg") + 1)) + 1
+    body_start = _body_start(svg)
     rects = _shape_rects(svg, body_start)
     box = _rect_for(svg, body_start, state_id)
 
@@ -397,6 +387,14 @@ def _escape(text):
     return (str(text).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;"))
 
 
+def _body_start(svg):
+    """Where the inner `<svg>`'s contents begin — the offset every group scan starts from."""
+    inner = svg.find("<svg", svg.find("<svg") + 1)
+    if inner < 0:
+        raise CompactError("no inner <svg> element")
+    return svg.index(">", inner) + 1
+
+
 def _svg_tags(svg):
     """The outer and inner `<svg …>` tags, as text.
 
@@ -446,6 +444,8 @@ def _grown(svg, left=0, right=0, top=0, bottom=0):
                 out = (out[:found.start()] + f' {attr}="{float(found.group(1)) + delta:g}"'
                        + out[found.end():])
         box = re.search(r'viewBox="([-\d.]+) ([-\d.]+) ([\d.]+) ([\d.]+)"', out)
+        if not box:
+            raise CompactError("an <svg> tag has no viewBox to grow")
         bx, by, bw, bh = (float(v) for v in box.groups())
         out = (out[:box.start()]
                + f'viewBox="{bx - left:g} {by - top:g} {bw + left + right:g} '
@@ -477,10 +477,7 @@ def compact_sequence(svg):
     Returns the SVG unchanged when there is nothing to gain. Raises `CompactError` if the
     markup is not the shape described in the module docstring.
     """
-    inner = svg.find("<svg", svg.find("<svg") + 1)
-    if inner < 0:
-        raise CompactError("no inner <svg> element")
-    body_start = svg.find(">", inner) + 1
+    body_start = _body_start(svg)
 
     actors, lifelines, rows = [], [], []
     for start, end in _top_level_groups(svg, body_start):

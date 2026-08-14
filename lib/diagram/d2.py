@@ -19,14 +19,11 @@ What is deliberately NOT here:
   * **Change marking by styling.** A thick accent border says "something here is
     special" and never says what, and there is no legend to look it up in. Changes are
     marked with `note`, which becomes a permanently-visible callout carrying the words.
-  * **Animation.** d2 can do it — `steps: { "1": { ... } }` declares one board per beat and
-    `--animate-interval` cycles them in the SVG — and this module emitted it until we watched
-    people read the result. Boards that differ in *topology* animate into an unreadable
-    comparison: only one is on screen at a time, so the reader has to hold the previous one in
-    their head, and two independent readers said the same thing unprompted. Before/after is two
-    diagrams side by side. The form that might have earned it — one fixed graph with a
-    highlight walking through it, narrating a flow — has never been the thing anyone asked for
-    here, so the capability is noted rather than built. Do not re-add it without that use case.
+  * **Animation.** d2 can do it (`steps:` + `--animate-interval`) and this module emitted it
+    until we watched people read the result: boards that differ in topology put only one on
+    screen at a time, so the reader holds the previous one in their head. Before/after is two
+    diagrams side by side. The form that might earn it — one fixed graph with a highlight
+    walking through it — has never been asked for, so do not re-add it without that case.
 """
 from . import palette
 from .spec import validate
@@ -71,8 +68,9 @@ EDGE_WRAPS = (14, 8)
 # lines is a diagram of its own trying to hide inside a label.
 MAX_DETAIL_LINES = 3
 
-# Default `direction` per kind, as (embedded, standalone). A spec's own `direction` wins over
-# both. The two targets want opposite layouts and only one of them has a width to fit into:
+# Default `direction` per kind, as (embedded, standalone) — a spec may not set one itself
+# (`figure.draw` rejects it; the search sets it on a copy). The two targets want opposite
+# layouts and only one of them has a width to fit into:
 #
 #   Embedded, a landscape drawing is scaled into the ~777px content column until its text
 #   breaks the 11px floor — measured on the reference corpus at `right`: er 9.7px, state
@@ -85,13 +83,10 @@ MAX_DETAIL_LINES = 3
 #   are packed differently from plain boxes, and `right` leaves a dead quadrant while
 #   crowding the callouts. It stays `down` for both, and still measures that way under ELK.
 #
-# The per-kind numbers above were measured under dagre, before the renderer settled on one
-# engine. They are kept because they are what the defaults were chosen from, not because they
-# describe today's output — and the embedded default is now only a starting point anyway,
-# since `render._pick_layout` measures both orientations and may pick the other.
-#
-# `sequence` is absent because d2's sequence engine ignores `direction` entirely — and, as it
-# turns out, ignores the layout engine too: dagre and ELK produce byte-identical output there.
+# Those px figures were measured under dagre and are kept as the reason for the defaults, not
+# as a description of today's output — embedded, `render._pick_layout` measures both
+# orientations anyway. `sequence` is absent: its engine ignores `direction`, and the layout
+# engine too (dagre and ELK are byte-identical there).
 DIRECTION = {
     "er": ("down", "right"),
     "class": ("down", "right"),
@@ -418,26 +413,18 @@ def wrap_edge_label(text, width=EDGE_WRAPS[0]):
 
     Three rules, each from a label that wrapped badly:
 
-    * **Break after a `:` first.** A cardinality is two halves either side of it — "1 doc : n
-      sessions" says one thing about docs and one about sessions — so that is where the reader
-      would fold it. The colon stays on the first line and is never dropped: unlike the dots in
-      "list · read · stat" it is not punctuation between equals, it *is* the ratio.
-    * **Never strand a separator.** A `·`, `,` or `-` left at the end of a line separates a word
-      from a line break rather than from the next word, so it reads as debris and costs width.
-    * **Never leave a one- or two-character word alone on a line.** "1 doc :" / "n" / "sessions"
-      puts the whole meaning of the cardinality on a line by itself; it joins its neighbour even
-      when that overruns the target width, which is a smaller cost than the orphan.
+    * **Break after a `:` first.** A cardinality is two halves either side of it, so that is
+      where a reader would fold it. The colon stays on the first line and is never dropped:
+      unlike the dots in "list · read · stat" it is not punctuation between equals, it IS the
+      ratio.
+    * **Never strand a separator.** A `·`, `,` or `-` at the end of a line separates a word
+      from a line break rather than from the next word.
+    * **Never leave a one- or two-character word alone on a line.** It joins its neighbour even
+      when that overruns the target width, which is the smaller cost.
 
-    The author's own newlines are kept as written.
-
-    This is the ONLY thing that folds a label, and that is a correction. An `er` cardinality
-    used to be folded at its colon unconditionally, on the belief that it was what stopped the
-    reference diagram's label running under the `presence_sessions` table. It was not: the fix
-    for that is the layer spacing (`ELK_SPACING_LADDER`), and once the spacing was right the
-    fold was spending a line to change the covered area by nothing. So a cardinality reads on
-    one line when one line fits, and reaches this ladder when it does not — which costs about
-    half a pixel of glyph on the reference ER (12.7px folded, 12.2px on one line), for a label
-    that reads as the single phrase it is.
+    Author newlines are kept. This is the ONLY thing that folds a label — an `er` cardinality
+    used to fold at its colon unconditionally, on the belief that it was what kept the
+    reference label off the table. It was not; the layer spacing is. See `ELK_SPACING_LADDER`.
     """
     out = []
     for paragraph in str(text).split("\n"):

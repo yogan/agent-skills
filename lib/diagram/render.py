@@ -541,36 +541,27 @@ def choose_standalone_layers(spec, name="diagram", theme="dark", binary="d2"):
 def standalone(spec, name="diagram", theme="dark", binary="d2", layers=None):
     """Spec -> a self-contained SVG that can be opened on its own.
 
-    Three things separate this from `render()`, and all three are what make an SVG file
-    actually work by itself rather than only inside a page that cooperates:
+    Three things separate this from `render()`, and all three are what make a file work by
+    itself rather than only inside a page that cooperates:
 
-    1. **The colours are baked**, not `var()` references. An undefined custom property makes
-       the browser drop the whole attribute, so a themed SVG opened directly renders as
-       unpainted shapes.
-    2. **The canvas is painted.** See d2.py's `_prelude` — the exact inverse of the embedded
-       case, and not optional: left transparent, the drawing is composited onto whatever the
-       viewer uses, and a dark one on white gives its muted edge labels no contrast at all.
-       Pure white in light mode, so the image disappears into a browser's own white instead of
-       sitting on it as a faintly grey slab.
-    3. **The CSS travels inside the file**, in a `<style>` element, because a callout's text
-       is HTML in a `<foreignObject>` and d2 ships no paragraph reset for it.
+    1. **The colours are baked**, not `var()` references — an undefined custom property makes
+       the browser drop the whole attribute, so a themed SVG opened directly is unpainted.
+    2. **The canvas is painted** (see d2.py's `_prelude`). Left transparent, the drawing is
+       composited onto whatever the viewer uses, and a dark one on white gives its muted edge
+       labels no contrast at all.
+    3. **The CSS travels inside the file**, because a callout's text is HTML in a
+       `<foreignObject>` and d2 ships no paragraph reset for it.
 
-    Defaults to dark, which reverses an earlier decision. The argument for light was that the
-    file is viewed inside a frame it cannot paint, and that frame was assumed to be a browser's
-    white page. It is not: the output is rasterised and handed to the system image viewer, whose
-    chrome follows the OS appearance, so on a dark desktop a light drawing is the slab that
-    fights its surroundings. A caller that really is embedding into a light page should ask for
-    `theme="light"` — or use `render()`, which follows the page's own toggle.
+    Dark by default, which reverses an earlier decision: the output is rasterised and handed to
+    the system image viewer, whose chrome follows the OS appearance — so on a dark desktop a
+    light drawing is the slab that fights its surroundings.
 
-    The layer spacing is escalated up `d2.ELK_SPACING_LADDER` until no text is unreadable,
-    exactly as `_pick_layout` does for the embedded target — see `_standalone_ladder`. This
-    path went without it at first, and the consequence was not theoretical: the reference ER's
-    cardinality label sat on the `presence_sessions` table in every image the `visualize` skill
-    wrote, while the same diagram came out clean in the explainers. The gate reported it on
-    every run; the renderer just had no answer for it.
+    The layer spacing climbs `d2.ELK_SPACING_LADDER` until no text is unreadable, as
+    `_pick_layout` does for the embedded target — see `_standalone_ladder`. This path went
+    without it, and every image the `visualize` skill wrote of the reference ER had a
+    cardinality sitting on a table while the explainers' copy came out clean.
 
-    `layers` pins that spacing instead of measuring it, for `place`, which must hold one
-    drawing still while it varies anchors.
+    `layers` pins that spacing instead of measuring it, for `place`.
     """
     if theme not in ("light", "dark"):
         raise RenderError(f"theme must be 'light' or 'dark', not {theme!r}")

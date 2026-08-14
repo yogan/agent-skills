@@ -45,23 +45,17 @@ TARGETS = ("embed", "file")
 class Figure(namedtuple("Figure", "name svg results placement problems advice blocked")):
     """One drawn diagram and everything known about it.
 
-    Three views of what is wrong, because two callers want it two ways and neither should have
-    to take the other's:
+    Three views of what is wrong, because two callers want it two ways:
 
-      * `results`   — the gates' own verdicts, for a caller whose product is a report. The
-                      `visualize` CLI prints these as a table and counts them for its exit code.
+      * `results`   — the gates' own verdicts, for a caller whose product is a report.
       * `placement` — a callout no anchor could fit. Not a gate verdict: the remedy is
-                      editorial (shorten the note), so a CLI says it rather than failing on it.
-      * `problems`  — both of the above, flattened to strings and prefixed with the figure's
-                      name, for a caller that just needs to tell someone. This is why the
+                      editorial, so a CLI says it rather than failing on it.
+      * `problems`  — both, flattened and prefixed with the figure's name, which is why the
                       explainer needs neither the gate modules nor `Result`.
 
-    `advice` is editorial and deliberately kept apart: a gate measured the drawing and found
-    something wrong with it, while advice is about the spec as AUTHORED — a bare ER ratio,
-    eight sequence steps. Merging the two lists would make "wide" read as loudly as "clipped".
-
-    `blocked` is a gate that could not run. It is never silence and never a pass; see
-    gates/__init__.py on why that distinction is written down rather than assumed.
+    `advice` is kept apart because it is about the spec as AUTHORED, not the drawing; one list
+    would make "wide" read as loudly as "clipped". `blocked` is a gate that could not run,
+    which is never silence and never a pass — see gates/__init__.py.
     """
 
     @property
@@ -212,8 +206,17 @@ def _static_gates(svg, name, standalone, theme):
             blocked.append(f"{name}: {label} could not run — {exc}")
 
     run("size", lambda: _size.check(svg, name, standalone=standalone))
+    # Contrast needs the scale, because WCAG's 3:1 allowance is for text >=18.66px AS
+    # RENDERED: measured at authored size, 20px text in a figure scaled to 0.85 renders at
+    # 17px and still claims it. Falling back to 1.0 when the drawing cannot be measured keeps
+    # the two gates independent — the size gate is already reporting why, and one unmeasurable
+    # SVG should not take a second gate down with it.
+    try:
+        scale = 1.0 if standalone else _size.analyse(svg)["scale"]
+    except GateError:
+        scale = 1.0
     run("contrast", lambda: _contrast.check(
-        svg, name, themes=(theme,) if standalone else ("light", "dark")))
+        svg, name, scale=scale, themes=(theme,) if standalone else ("light", "dark")))
     if not standalone:
         run("theming", lambda: _theming.check(svg, name))
     return results, blocked
