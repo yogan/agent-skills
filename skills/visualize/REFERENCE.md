@@ -174,7 +174,10 @@ search, not an instruction — and hand-picked anchors have measurably lost to i
 
 - `key` (optional): `pk` · `fk` · `unique`.
 - **An edge can point at a single column** (`documents.owner_id`) or at the whole table
-  (`documents`). Column-level is usually what you want for a foreign key.
+  (`documents`). Column-level is usually what you want for a foreign key, and it shows: the
+  arrow leaves that column's row. For a long time it was silently drawn table-to-table, because
+  the layout engine of the day discarded the column without a word — worth knowing if you are
+  reading an older figure and wondering why it never matched its spec.
 - **Label every edge with a cardinality that names its entities.** A bare ratio is not enough:
   `n : 1` makes the reader work out which end is which and then map it back to the table names.
   Spell it out so the label reads on its own.
@@ -211,8 +214,12 @@ search, not an instruction — and hand-picked anchors have measurably lost to i
   (`+ handleUpgrade()`, `- authenticate()`); `type` is the return or field type.
 - `stereotype` (optional, e.g. `interface`) adds a «guillemet» row and a dashed outline.
 - Use `dashed: true` for "implements" / "uses" and a solid edge for ownership.
-- **Edges connect classes, not members.** Unlike `er`, a member is a label rather than an
-  addressable id.
+- **An edge may start at one member**, written `ClassName.member name` exactly as the member
+  appears: `"from": "SupplierLookupService.+ lookup(id, data?)"`. Use it when the whole box is
+  not the answer — `raises` leaving a class with four methods does not say which one raises,
+  and that was a real complaint about a real figure. `builds` and `returns` are already
+  traceable through the member types, so they rarely need it.
+  A member whose name contains a `.` cannot be addressed (the path is split on dots).
 
 ## `state`
 

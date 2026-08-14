@@ -4,7 +4,7 @@
     python3 run_tests.py               # fast tests only (the default), in parallel
     python3 run_tests.py --changed     # only what your uncommitted edits can affect
     python3 run_tests.py compact spec  # only files whose path contains one of these
-    python3 run_tests.py --slow        # fast + slow. FOUR MINUTES. See below.
+    python3 run_tests.py --slow        # fast + slow. TWO MINUTES. See below.
     python3 run_tests.py -j1           # serial, for when a parallel failure is confusing
 
 `--changed` reads the working tree against HEAD, resolves each changed module through the
@@ -29,7 +29,7 @@ A cost you cannot see is a cost you repeat.
 
 The `*_slow.py` split, and what each one actually costs:
 
-  * `lib/diagram/test_place_slow.py` — ~4 minutes. Every assertion is a real callout-placement
+  * `lib/diagram/test_place_slow.py` — ~2 minutes. Every assertion is a real callout-placement
     search: dozens of d2 compiles, each measured in a real browser. Nothing here can be faked
     down without testing the fake instead. Run it when you touch `place.py`, the harness
     geometry, or anything that moves a callout — not otherwise.

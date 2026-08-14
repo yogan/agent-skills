@@ -121,10 +121,13 @@ def check_toolchain(binary="d2"):
 
 
 def compile_source(source, pad=8, binary="d2"):
-    """d2 source -> raw SVG text.
+    """d2 source -> raw SVG text, laid out by ELK.
 
     `--theme 0` is deliberate: the palette is applied by our own literals and by the
     substitution below, so d2's themes would only add colours nothing maps.
+
+    `--layout elk` and its spacing are not options a caller chooses — see `d2.ELK_OPTS` for
+    why this repo uses one engine and which one, and for the two flaws that come with it.
 
     Output goes to a temp file rather than stdout: it costs a temp dir and it is the one
     form d2 will write in every case, including outputs it refuses to send to stdout.
@@ -134,7 +137,14 @@ def compile_source(source, pad=8, binary="d2"):
                           f"(install: brew install d2, pin {PINNED_VERSION})")
     with tempfile.TemporaryDirectory(prefix="lib-diagram-") as tmp:
         target = os.path.join(tmp, "out.svg")
-        cmd = [binary, "--pad", str(pad), "--theme", "0", "-", target]
+        layers = d2mod.ELK_OPTS["nodeNodeBetweenLayers"]
+        edges = d2mod.ELK_OPTS["edgeNodeBetweenLayers"]
+        box = d2mod.ELK_OPTS["padding"]
+        cmd = [binary, "--pad", str(pad), "--theme", "0", "--layout", "elk",
+               "--elk-nodeNodeBetweenLayers", str(layers),
+               "--elk-edgeNodeBetweenLayers", str(edges),
+               "--elk-padding", f"[top={box},left={box},bottom={box},right={box}]",
+               "-", target]
         proc = subprocess.run(cmd, input=source, capture_output=True, text=True)
         if proc.returncode != 0 or not os.path.exists(target):
             raise RenderError(f"d2 failed to compile the diagram:\n{proc.stderr.strip()}\n"
@@ -277,6 +287,8 @@ def _maybe_mark_start(svg, spec, name, standalone, pad):
 # edge labels as written and then wrapped progressively harder. Landscape is not a preference
 # — it wins when it wins, on measurement — but it is tried because a small diagram stacked
 # downward leaves most of the content column empty and costs a screen of scrolling for nothing.
+#
+# The engine is NOT an axis here; there is one. See `d2.ELK_OPTS`.
 CANDIDATES = tuple((direction, wrap)
                    for wrap in (None,) + d2mod.EDGE_WRAPS
                    for direction in ("down", "right"))
@@ -316,26 +328,54 @@ def _pick_layout(spec, name, binary, theme_vars):
     from .gates import GateError, size as size_gate   # local: gates.clipping imports this
 
     best = None
+    seen = set()
     for direction, wrap in CANDIDATES:
         variant = dict(spec, direction=direction)
-        raw = compile_source(d2mod.emit(variant, wrap_edges=wrap), binary=binary)
+        source = d2mod.emit(variant, wrap_edges=wrap)
+        # A wrap level only changes anything if some edge label is longer than it. When every
+        # label already fits, the wrapped source is character-for-character the unwrapped one,
+        # and compiling it again cannot produce a different measurement — so the rung is
+        # skipped. On the reference architecture, whose longest label is `verify JWT`, that is
+        # a third of the search for free. It is a dedup, not a heuristic: identical input,
+        # identical output, and the FIRST occurrence is kept so the wrap tie-break still
+        # prefers the gentlest one.
+        if source in seen:
+            continue
+        seen.add(source)
+        raw = compile_source(source, binary=binary)
         svg = postprocess(_maybe_compact(raw, variant, name), name, theme_vars=theme_vars)
         try:
             result = size_gate.check(svg, name)
             metrics = size_gate.analyse(svg)
         except GateError:
             # Unmeasurable is not a reason to render nothing; the gates report it later.
-            return svg
+            return (direction, wrap), svg
         # Gentler wrapping ranks better only among layouts that read equally well, so a
         # diagram spends lines when that buys glyph size and not otherwise.
         rank = (len(result.problems), round(metrics["rend_h"] / HEIGHT_BUCKET),
                 CANDIDATES.index((direction, wrap)), -metrics["fmin"])
         if best is None or rank < best[0]:
-            best = (rank, svg)
-    return best[1]
+            best = (rank, (direction, wrap), svg)
+    return best[1], best[2]
 
 
-def render(spec, name="diagram", binary="d2", theme_vars=True):
+def choose_layout(spec, name="diagram", binary="d2"):
+    """The `(direction, wrap)` this spec measures best at, or None if there is nothing to pick.
+
+    Exposed for the callout placement pass, which needs to hold the layout STILL while it
+    varies anchors. Without it, `place` rendered every anchor candidate through the full search
+    and each one could land on a different layout — so their overlap scores were compared across
+    different drawings, and the anchor that won might have been measured against a shape the
+    final diagram does not have. Pinning one layout for the whole anchor search fixes that and
+    happens to remove most of the cost: a two-callout diagram was 64 anchor candidates times a
+    ~4-compile search, and ELK compiles are ~330ms.
+    """
+    if spec.get("direction") or spec.get("kind") == "sequence":
+        return None
+    return _pick_layout(spec, name, binary, theme_vars=True)[0]
+
+
+def render(spec, name="diagram", binary="d2", theme_vars=True, wrap_edges=None):
     """Spec -> embeddable SVG, for a host page that ships `page_css()`.
 
     `name` namespaces the SVG's ids, so it must be unique within a page. For a file to open
@@ -344,10 +384,13 @@ def render(spec, name="diagram", binary="d2", theme_vars=True):
     The layout is chosen by measurement unless the spec pins a `direction` — see
     `_pick_layout`. A `sequence` is exempt: d2's sequence engine ignores `direction`, so
     there is nothing to choose between.
+
+    `wrap_edges` pins the edge-label wrap that the search would otherwise pick, and is only
+    meaningful alongside a pinned `direction`. `place` uses the pair to hold one layout still.
     """
     if not spec.get("direction") and spec.get("kind") != "sequence":
-        return _pick_layout(spec, name, binary, theme_vars)
-    raw = compile_source(d2mod.emit(spec), binary=binary)
+        return _pick_layout(spec, name, binary, theme_vars)[1]
+    raw = compile_source(d2mod.emit(spec, wrap_edges=wrap_edges), binary=binary)
     return postprocess(_maybe_compact(raw, spec, name), name, theme_vars=theme_vars)
 
 

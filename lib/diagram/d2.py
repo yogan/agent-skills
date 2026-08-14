@@ -81,16 +81,62 @@ MAX_DETAIL_LINES = 3
 #   the same three read better wide: an ER diagram runs along its foreign keys instead of
 #   swooping between stacked tables, and a state machine's terminal sits at the end.
 #
-#   `architecture` is the exception, and it is the only kind with containers: dagre packs
-#   nested groups differently, and `right` leaves a dead quadrant while crowding the
-#   callouts. It stays `down` for both.
+#   `architecture` is the exception, and it is the only kind with containers: nested groups
+#   are packed differently from plain boxes, and `right` leaves a dead quadrant while
+#   crowding the callouts. It stays `down` for both, and still measures that way under ELK.
 #
-# `sequence` is absent because d2's sequence engine ignores `direction` entirely.
+# The per-kind numbers above were measured under dagre, before the renderer settled on one
+# engine. They are kept because they are what the defaults were chosen from, not because they
+# describe today's output — and the embedded default is now only a starting point anyway,
+# since `render._pick_layout` measures both orientations and may pick the other.
+#
+# `sequence` is absent because d2's sequence engine ignores `direction` entirely — and, as it
+# turns out, ignores the layout engine too: dagre and ELK produce byte-identical output there.
 DIRECTION = {
     "er": ("down", "right"),
     "class": ("down", "right"),
     "state": ("down", "right"),
     "architecture": ("down", "down"),
+}
+
+# The layout engine, and the spacing it is given.
+#
+# `elk`, not d2's default `dagre`, for every box-and-arrow diagram here. Three reasons, and only
+# the last is a matter of taste:
+#
+#   * **it can anchor an edge to a single ROW of a table, and dagre cannot.** dagre accepts
+#     `documents.owner_id` as an endpoint and silently ignores it — proven by rendering `T`,
+#     `T.r1` and `T.r3` and getting a byte-identical edge path. So every ER diagram here spent
+#     a long time asserting a column-level relationship that was drawn table-to-table, and a
+#     class diagram could not say WHICH method raises. That is a correctness gap, not a look.
+#   * **bigger text.** Measured across the reference corpus, elk needs less width, so less of
+#     it is scaled away in the content column: architecture 11.4px -> 13.0px, class 12.1px ->
+#     14.0px, ER 11.6px -> 12.6px, state unchanged at 13.0px.
+#   * orthogonal routes read more cleanly than dagre's curves.
+#
+# What it costs: elk spends page height where dagre spent width. Architecture is 887x771 under
+# dagre but only 675px tall once scaled into the column, against elk's 579x767 at full size.
+# That is the trade, made deliberately in favour of legible text.
+#
+# Running BOTH and picking by measurement was built first and then removed. It doubled the
+# candidate count for a decision that came out the same way on every figure anyone preferred,
+# and it made row anchoring conditional on a measurement — a diagram could silently lose its
+# column-level arrows because some other candidate measured shorter. One engine, always, means
+# `documents.owner_id` draws what it says every time.
+#
+# ELK's own spacing defaults are built for a canvas with room to spare and make the reference
+# architecture 1306px tall. These are the measured replacements; `edgeNodeBetweenLayers` is the
+# one with real leverage — at ELK's default 40 that drawing is 1117px, at 15 it is 767px.
+#
+# What is NOT tunable, researched rather than assumed: d2 exposes exactly five ELK options
+# (`ConfigurableOpts` in d2elklayout). The ones that would fix the last two cosmetic flaws —
+# `elk.edgeLabels.inline` for an edge label landing on a container's border, and the port and
+# routing options for a 90-degree turn arriving too close to an arrowhead — are set internally
+# by d2 and never exposed. Reaching them needs a fork, so those two are accepted as they are.
+ELK_OPTS = {
+    "nodeNodeBetweenLayers": 15,   # ELK default 70
+    "edgeNodeBetweenLayers": 15,   # ELK default 40 — the expensive one
+    "padding": 10,                 # ELK default 50, applied to every container alike
 }
 
 # A table's own base font. d2 renders a sql_table/class header at ~1.3x this and ignores
@@ -303,6 +349,11 @@ def _node(node, indent=0, height=None):
         # A node with children is a container and takes the container styling; spec.py
         # rejects a `role` on one so the two cannot silently disagree.
         body.append(f"{pad}  class: grp")
+        # d2 centres a container's label along its top edge, which is exactly where an edge
+        # entering the container from above arrives — so "Kubernetes cluster" and the arrow
+        # into the box beneath it collided. Pushing the label into the corner costs no canvas
+        # at all, which is the whole reason it is done this way rather than with padding.
+        body.append(f"{pad}  label.near: top-left")
     else:
         body.append(f"{pad}  class: {_classes_for(node)}")
         # d2 sets node labels bold. Turned off because a box already announces itself with a

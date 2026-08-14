@@ -338,6 +338,35 @@ class TestTables(unittest.TestCase):
         with self.assertRaisesRegex(SpecError, "members"):
             validate({"kind": "class", "classes": [{"id": "Gateway", "role": "svc"}]})
 
+    def two_classes(self, **edge):
+        return {"kind": "class",
+                "classes": [{"id": "Svc", "role": "svc",
+                             "members": [{"name": "+ lookup(id, data?)", "type": "Row"}]},
+                            {"id": "Err", "role": "ext",
+                             "members": [{"name": "status", "type": "400"}]}],
+                "edges": [dict({"label": "raises"}, **edge)]}
+
+    def test_an_edge_may_start_at_a_member(self):
+        """`raises` leaving the whole box does not say which of four methods raises. Members
+        were unaddressable for a while, but that was a layout-engine limit, not a syntax one."""
+        validate(self.two_classes(**{"from": "Svc.+ lookup(id, data?)", "to": "Err"}))
+
+    def test_a_member_that_does_not_exist_is_still_rejected(self):
+        with self.assertRaisesRegex(SpecError, "nosuch"):
+            validate(self.two_classes(**{"from": "Svc.nosuch()", "to": "Err"}))
+
+    def test_a_member_name_containing_a_dot_is_not_addressable(self):
+        """An endpoint is split on dots to build the path, so `a.b` as a member name would
+        address a row `b` inside a table `a`. Excluded rather than escaped."""
+        spec = {"kind": "class",
+                "classes": [{"id": "Svc", "role": "svc",
+                             "members": [{"name": "self.cache", "type": "dict"}]},
+                            {"id": "Err", "role": "ext",
+                             "members": [{"name": "status", "type": "400"}]}],
+                "edges": [{"from": "Svc.self.cache", "to": "Err", "label": "raises"}]}
+        with self.assertRaises(SpecError):
+            validate(spec)
+
 
 class TestState(unittest.TestCase):
     def test_valid_state_passes(self):

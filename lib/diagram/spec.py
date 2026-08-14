@@ -58,9 +58,11 @@ SHAPES = (
 )
 
 # d2 accepts exactly these `tooltip.near` constants and rejects everything else --
-# `right-center` and `outside-*` are both errors, and `near: <some other object>` is
-# rejected under the dagre layout engine. The placement pass (gates/browser side) picks
-# one of these by measuring; a spec may also pin one explicitly.
+# `right-center` and `outside-*` are both errors, and so is `near: <some other object>`,
+# which this file used to blame on the dagre layout engine. It is not engine-specific: d2
+# refuses it at compile time under both engines ("invalid \"near\" field"), which is worth
+# knowing before anyone tries to anchor a callout to a neighbour. The placement pass
+# (gates/browser side) picks one of these by measuring; a spec may also pin one explicitly.
 NEAR = (
     "top-left", "top-center", "top-right",
     "center-left", "center-right",
@@ -98,10 +100,12 @@ MAX_TRANSITIONS_PER_STATE = 2
 
 # Disconnected components above which a diagram is worth splitting. Two is ordinary — a schema
 # can hold an unrelated table. At three the picture is several unrelated graphs sharing a canvas,
-# and dagre packs them along the CROSS axis, so the width is the sum of all of them and no
-# `direction` fixes it: a real CI pipeline came out 3433x693 (aspect 5.0) as four components,
-# most of the canvas being jobs with no edges at all. Advisory, because sometimes the answer
-# really is "here is everything at once".
+# packed along the CROSS axis, so the width is the sum of all of them and no `direction` fixes
+# it: a real CI pipeline came out 3433x693 (aspect 5.0) as four components, most of the canvas
+# being jobs with no edges at all. That was measured under dagre; the layout engine has changed
+# since, and the packing is a property of hierarchical layout rather than of one engine, so the
+# shape of the problem holds even though the exact numbers would differ. Advisory either way,
+# because sometimes the answer really is "here is everything at once".
 MAX_COMPONENTS = 2
 
 # Boxes below which a barely-connected diagram is left alone. Counting groups is not enough on
@@ -275,10 +279,16 @@ def _check_edges(spec, ids, where, key="edges", required=True, allow_push=False)
 def _check_rows(spec, key, where, ids, row_key, row_extra=(), addressable=True):
     """Shared shape of the two table-like kinds (`er` tables, `class` classes).
 
-    `addressable` is what separates them. An ER column is a real identifier and d2
-    resolves `documents.owner_id` as an edge endpoint, which is how a relationship can
-    point at one column instead of the whole table. A class member is free text — `+
-    handleUpgrade()` — so it is a row label and nothing more; edges connect classes.
+    `addressable` used to be what separated them: an ER column is a plain identifier, while a
+    class member is free text (`+ handleUpgrade()`), so members were labels and nothing more.
+    That turned out to be a limitation of the LAYOUT ENGINE rather than of d2's syntax — quoted,
+    a member resolves as an endpoint like any other row — and it cost a real figure: `raises`
+    left the whole box, so a reader of four methods could not tell which one raised. Both kinds
+    are addressable now, and the renderer's one layout engine honours it — see `d2.ELK_OPTS`.
+
+    A name containing a dot is still not addressable, because an endpoint is split on dots to
+    build the path — `a.b` as a member name would address a row called `b` inside a table
+    called `a`. Rare enough to exclude rather than escape.
     """
     items = _list(spec, key, where)
     for item in items:
@@ -309,7 +319,7 @@ def _check_rows(spec, key, where, ids, row_key, row_extra=(), addressable=True):
             for extra, allowed in row_extra:
                 if extra in row:
                     _one_of(row[extra], allowed, f"{where}: {tid}.{name} {extra}")
-            if addressable:
+            if addressable and "." not in name:
                 ids.add(f"{tid}.{name}")
         ids.add(tid)
     return items
@@ -360,7 +370,7 @@ def validate(spec):
         _check_rows(spec, "tables", kind, ids, "columns", row_extra=(("key", KEYS),))
         _check_edges(spec, ids, kind, required=False)
     elif kind == "class":
-        _check_rows(spec, "classes", kind, ids, "members", addressable=False)
+        _check_rows(spec, "classes", kind, ids, "members")
         _check_edges(spec, ids, kind, required=False)
     elif kind == "state":
         _check_flat(_list(spec, "states", kind), "state", "states")

@@ -101,16 +101,23 @@ def _score(measurement):
     return clip * CLIP_PENALTY + overlap, clip, overlap
 
 
-def _measure_candidates(spec, name, combos, theme, standalone=False):
+def _measure_candidates(spec, name, combos, theme, standalone=False, layout=None):
     """Render and measure one anchor combination per entry in `combos`.
+
+    `layout` is the `(direction, wrap)` to hold every candidate at — see `place`. Without it
+    each candidate went through the whole layout search, so one could be measured portrait and
+    the next landscape, and their overlap scores were then compared across different drawings.
 
     A candidate d2 refuses to compile is dropped rather than fatal — some anchor
     combinations are simply invalid for a given shape, and the remaining ones still give a
     usable answer.
     """
+    direction, wrap = layout if layout else (None, None)
     jobs, kept = [], []
     for index, anchors in enumerate(combos):
         trial = _apply(spec, anchors)
+        if direction:
+            trial["direction"] = direction
         try:
             # Render the form this diagram will actually ship in. It matters: a standalone
             # image is padded far more generously (nothing else gives a callout's shadow
@@ -119,7 +126,7 @@ def _measure_candidates(spec, name, combos, theme, standalone=False):
             if standalone:
                 svg = render_mod.standalone(trial, name=f"{name}-p{index}", theme=theme)
             else:
-                svg = render_mod.render(trial, name=f"{name}-p{index}")
+                svg = render_mod.render(trial, name=f"{name}-p{index}", wrap_edges=wrap)
         except render_mod.RenderError:
             continue
         jobs.append({"key": str(index),
@@ -159,7 +166,7 @@ def _report(chosen, clip, overlap, strategy, candidates):
             for i in range(len(chosen))]
 
 
-def _greedy(spec, name, sites, theme, anchors, standalone=False):
+def _greedy(spec, name, sites, theme, anchors, standalone=False, layout=None):
     """Settle one callout at a time, holding the others where they are.
 
     Starts from whatever the spec already pinned, so a hand-chosen anchor is a starting
@@ -174,17 +181,18 @@ def _greedy(spec, name, sites, theme, anchors, standalone=False):
             trial = list(current)
             trial[i] = anchor
             combos.append(tuple(trial))
-        measured = _measure_candidates(spec, f"{name}-{i}", combos, theme, standalone)
+        measured = _measure_candidates(spec, f"{name}-{i}", combos, theme,
+                                       standalone, layout)
         _, chosen, clip, overlap = _best(measured)
         current = list(chosen)
         candidates += len(combos)
     return tuple(current), clip, overlap, candidates
 
 
-def _joint(spec, name, sites, theme, anchors, standalone=False):
+def _joint(spec, name, sites, theme, anchors, standalone=False, layout=None):
     """Exhaustive: every anchor for every callout. 8^n, so only for small n."""
     combos = list(itertools.product(anchors, repeat=len(sites)))
-    measured = _measure_candidates(spec, name, combos, theme, standalone)
+    measured = _measure_candidates(spec, name, combos, theme, standalone, layout)
     _, chosen, clip, overlap = _best(measured)
     return chosen, clip, overlap, len(combos)
 
@@ -217,8 +225,20 @@ def place(spec, name="diagram", theme="light", joint_max=JOINT_MAX, anchors=NEAR
     if not sites:
         return spec, []
 
+    # One layout, held still for the whole anchor search. Two reasons, and the first is
+    # correctness: rendering each candidate through the full layout search let one be measured
+    # portrait and the next landscape, so their overlap scores were compared across different
+    # drawings, and the winning anchor could have been chosen against a shape the final diagram
+    # does not have. The anchor genuinely can flip the layout — `center-left` on the reference
+    # ER gives 949x207 where the others give 862x257 — which is exactly why this must be fixed
+    # once rather than re-decided per candidate.
+    #
+    # The second reason is cost. A two-callout diagram is 64 candidates, each of which was
+    # running a ~4-compile search at ~330ms per ELK compile.
+    layout = None if standalone else render_mod.choose_layout(spec, name)
     search = _joint if len(sites) <= joint_max else _greedy
-    chosen, clip, overlap, candidates = search(spec, name, sites, theme, anchors, standalone)
+    chosen, clip, overlap, candidates = search(spec, name, sites, theme, anchors, standalone,
+                                               layout)
     strategy = "joint" if search is _joint else "greedy"
     return _apply(spec, chosen), _report(chosen, clip, overlap, strategy, candidates)
 

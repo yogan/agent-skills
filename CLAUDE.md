@@ -74,13 +74,13 @@ Real skill runs are NOT tidied up. `/tmp/<date>-diagram-<slug>.svg` is somebody'
 
 `test_repo_hygiene.py` enforces both halves, statically and by measuring.
 
-**`--slow` costs about four minutes. Do not put it in an edit-test loop.** A `*_slow.py` file
+**`--slow` costs about two minutes. Do not put it in an edit-test loop.** A `*_slow.py` file
 is one whose cost is irreducible, and there are two, which is the thing to know before typing
 the flag:
 
 | file | cost | why it cannot be faster |
 |---|---|---|
-| `lib/diagram/test_place_slow.py` | ~3m50s | every assertion is a real callout-placement search — 64 d2 compiles per two-callout diagram, each measured in a real browser. Faking it would test the fake. |
+| `lib/diagram/test_place_slow.py` | ~2m | every assertion is a real callout-placement search — 64 d2 compiles per two-callout diagram, each measured in a real browser. Faking it would test the fake. |
 | `hooks/test_paste_gate_slow.py` | ~36s | real `time.sleep()` in a subprocess, unmockable from the test. |
 
 Run `--slow` **once**, at the end, and only if you touched `place.py`, the harness geometry,

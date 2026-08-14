@@ -364,6 +364,20 @@ class TestStateRoles(unittest.TestCase):
         self.assertIn("class: svc", source)
 
 
+class TestContainerLabels(unittest.TestCase):
+    def test_a_container_label_sits_in_the_corner(self):
+        """Centred along the top edge is where an edge entering from above arrives, and the
+        two collided on the reference architecture."""
+        source = d2.emit(ARCHITECTURE)
+        self.assertIn("label.near: top-left", source)
+
+    def test_a_leaf_box_gets_no_label_placement(self):
+        source = d2.emit({"kind": "state",
+                          "states": [{"id": "a", "start": True}, {"id": "b"}],
+                          "transitions": [{"from": "a", "to": "b", "label": "x"}]})
+        self.assertNotIn("label.near", source)
+
+
 class TestDirectionPerTarget(unittest.TestCase):
     """One case per cell of `d2.DIRECTION`. The two targets want opposite layouts: embedded
     is scaled into a content column until its text breaks the 11px floor, standalone is
@@ -377,8 +391,9 @@ class TestDirectionPerTarget(unittest.TestCase):
                               f"{name} standalone")
 
     def test_architecture_stays_down_for_both(self):
-        """The only kind with containers: dagre packs nested groups differently, and `right`
-        leaves a dead quadrant while crowding the callouts."""
+        """The only kind with containers: nested groups pack differently from plain boxes, and
+        `right` leaves a dead quadrant while crowding the callouts. Measured under dagre
+        originally and still the way it comes out under ELK."""
         self.assertIn("direction: down", d2.emit(ARCHITECTURE))
         self.assertIn("direction: down", d2.emit(ARCHITECTURE, standalone=True))
 

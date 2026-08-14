@@ -14,7 +14,7 @@ import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
-from lib.diagram import render
+from lib.diagram import d2, render
 
 
 class TestPinIntrinsic(unittest.TestCase):
@@ -165,7 +165,7 @@ class TestHostCss(unittest.TestCase):
 
 
 class TestLayoutChoice(unittest.TestCase):
-    """`render()` measures both orientations and keeps the better one. Choosing by kind was
+    """`render()` measures every candidate layout and keeps the better one. Choosing by kind was
     a guess that had to be wrong half the time: the reference diagrams are too big to lay out
     wide, a four-box one is too small to lay out tall."""
 
@@ -237,8 +237,21 @@ class TestLayoutChoice(unittest.TestCase):
     def test_every_candidate_is_measured_rather_than_stopping_at_the_first_that_fits(self):
         """An early exit got this exactly wrong once: a four-box chain fits stacked downward,
         so the search stopped and never found that wrapping fits it landscape and 7x shorter."""
+        spec = {"kind": "architecture",
+                "nodes": [{"id": "a", "role": "svc"}, {"id": "b", "role": "svc"}],
+                "edges": [{"from": "a", "to": "b", "label": "a rather long edge label"}]}
+        render.render(spec, name="x")
+        self.assertEqual(len(self.calls), len(render.CANDIDATES),
+                         "every candidate that differs must still be measured")
+
+    def test_a_wrap_level_that_changes_nothing_is_not_compiled_twice(self):
+        """`self.ARCH` has no edges at all, so no wrap width can alter its source. Compiling
+        the same characters again cannot measure differently, so the rung is skipped — two
+        renders for two directions instead of six. Not a heuristic: a dedup on the emitted
+        source, which is why it cannot change which layout wins."""
         render.render(self.ARCH, name="x")
-        self.assertEqual(len(self.calls), len(render.CANDIDATES))
+        self.assertEqual(len(self.calls), 2)
+        self.assertEqual(len(set(self.calls)), 2, "and they are the two directions")
 
 
 class TestToolchain(unittest.TestCase):

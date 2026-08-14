@@ -137,11 +137,17 @@ class TestSearchStrategy(unittest.TestCase):
         self.calls = []
         self.real = place._measure_candidates
         place._measure_candidates = self.spy
+        # `place` asks the renderer which layout to hold the anchor search at, and that is a
+        # real d2 run. These tests are deliberately free of d2 and of a browser — see the
+        # module docstring — so the answer is stubbed rather than computed.
+        self.real_layout = place.render_mod.choose_layout
+        place.render_mod.choose_layout = lambda spec, name="d", binary="d2": ("down", None)
 
     def tearDown(self):
         place._measure_candidates = self.real
+        place.render_mod.choose_layout = self.real_layout
 
-    def spy(self, spec, name, combos, theme, standalone=False):
+    def spy(self, spec, name, combos, theme, standalone=False, layout=None):
         self.calls.append(list(combos))
         # Prefer "bottom-left" wherever it appears; everything else is worse. Nothing clips,
         # so greedy always succeeds and the joint fallback stays untouched.
@@ -250,11 +256,17 @@ class TestJointEscalation(unittest.TestCase):
         self.calls = []
         self.real = place._measure_candidates
         place._measure_candidates = self.spy
+        # `place` asks the renderer which layout to hold the anchor search at, and that is a
+        # real d2 run. These tests are deliberately free of d2 and of a browser — see the
+        # module docstring — so the answer is stubbed rather than computed.
+        self.real_layout = place.render_mod.choose_layout
+        place.render_mod.choose_layout = lambda spec, name="d", binary="d2": ("down", None)
 
     def tearDown(self):
         place._measure_candidates = self.real
+        place.render_mod.choose_layout = self.real_layout
 
-    def spy(self, spec, name, combos, theme, standalone=False):
+    def spy(self, spec, name, combos, theme, standalone=False, layout=None):
         self.calls.append(list(combos))
         out = []
         for anchors in combos:
