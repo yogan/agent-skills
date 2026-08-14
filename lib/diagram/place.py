@@ -142,9 +142,15 @@ def _score(measurement):
     at `hiddenByLayout` — the callout's contribution excluded, since no amount of widening moves
     an anchor. Which left the callout's contribution belonging to exactly one place: here.
 
-    Total hidden text, not the callout's share of it. The layout is pinned for the whole search,
-    so what a candidate adds is what varies, and minimising the total is the same ranking with
-    one less thing to get wrong.
+    The callout's OWN share, not the page total. The layout's share is mostly a constant across
+    the search — the drawing is pinned — and a constant added to every candidate changes no
+    ranking, which is why the total very nearly works. It is not reliably constant: an anchor
+    can change the canvas (`center-left` on the reference ER gives 949x207 where the others give
+    862x257), and a different canvas can hide a different amount by itself. Scored on the total,
+    an anchor that buries 100px² of a label while incidentally relieving 200px² of the layout's
+    own damage would beat one that buries nothing — credit for repairing something it was never
+    responsible for. `measure.js` reports both numbers from one loop, so the anchor's share is a
+    subtraction and not an approximation.
 
     **Glyph size** is here because an anchor can grow the drawing, and a wider drawing is
     scaled further down inside the content column — so a callout can make EVERY letter in the
@@ -170,7 +176,10 @@ def _score(measurement):
     """
     clip = sum(c["clipVsCard"] for c in measurement["callouts"])
     overlap = sum(c["overlap"] for c in measurement["callouts"])
-    hidden = measurement.get("hiddenText") or 0
+    # What this ANCHOR hides, which is the total less the part the layout hides on its own.
+    # `measure.js` banks both under one threshold, so the subtraction is exact rather than an
+    # estimate — see there.
+    hidden = (measurement.get("hiddenText") or 0) - (measurement.get("hiddenByLayout") or 0)
     fmin = measurement.get("fmin") or 0
     height = measurement.get("rend_h") or 0
     return ((clip * CLIP_PENALTY, hidden, -round(fmin * 2) / 2,

@@ -139,6 +139,19 @@ class TestScoring(unittest.TestCase):
         self.assertLess(place._score(clean)[0], place._score(buried)[0],
                         "a clean anchor must win however tall and however much it covers")
 
+    def test_only_what_the_ANCHOR_hides_counts_against_it(self):
+        """Scored on the page total, an anchor could earn credit for damage it did not cause.
+        The layout's share is near-constant across a search and cancels — but only near: an
+        anchor can change the canvas, and a different canvas hides a different amount by
+        itself. So the anchor that buries nothing must win even when the page total says
+        otherwise."""
+        clean = fake_measurement([(0, 0)])
+        clean["hiddenText"], clean["hiddenByLayout"] = 500, 500      # all of it the layout's
+        buries = fake_measurement([(0, 0)])
+        buries["hiddenText"], buries["hiddenByLayout"] = 400, 300    # 100 of it its own
+        self.assertLess(place._score(clean)[0], place._score(buries)[0],
+                        "the anchor covering nothing must win on a worse page total")
+
     def test_a_clip_still_outranks_hidden_text(self):
         """Both mean a reader loses something; a clipped callout can lose ALL of it, and it is
         the one the placement report can act on by asking for a shorter note."""
