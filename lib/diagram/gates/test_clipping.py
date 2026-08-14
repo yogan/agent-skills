@@ -174,6 +174,32 @@ class TestAgainstRealDiagrams(unittest.TestCase):
         self.assertTrue(any("HIDDEN TEXT" in p and "max attempts" in p for p in result.problems),
                         result.problems)
 
+    def test_the_standalone_target_gets_the_spacing_ladder_too(self):
+        """The defect this exists for. The ladder lived only in `_pick_layout`, which the
+        standalone path does not go through — so every image the `visualize` skill wrote of the
+        reference ER had its cardinality label sitting on the `presence_sessions` table, while
+        the same diagram came out clean in the explainers. The gate said so on every run; the
+        renderer simply had no answer for it.
+
+        The ER alone, because it is the one figure in the corpus that needs a rung, and every
+        rung is a compile plus a browser measurement — checking all five would spend seconds of
+        the fast suite to assert `15` four more times.
+        """
+        svg = render.standalone(REFERENCE["er"], name="alone", theme="dark")
+        result = clipping.check(svg, "alone", theme="dark", standalone=True)
+        self.assertEqual([p for p in result.problems if "HIDDEN TEXT" in p], [],
+                         result.problems)
+
+        # Proof it can fail, and proof `layers` pins rather than measures: the same diagram
+        # held at the tight default is the picture the skill used to write.
+        tight = render.standalone(REFERENCE["er"], name="tight", theme="dark", layers=15)
+        self.assertLess(render.natural_size(tight)[0], render.natural_size(svg)[0],
+                        "the ladder must have escalated to something wider than 15")
+        tight_result = clipping.check(tight, "tight", theme="dark", standalone=True)
+        self.assertTrue(any("HIDDEN TEXT" in p for p in tight_result.problems),
+                        f"at 15 this diagram hides text, or the test proves nothing: "
+                        f"{tight_result.problems}")
+
     def test_a_label_merely_crossing_a_pale_container_is_not_called_hidden(self):
         """The other half, and the reason this is not just an overlap check. The architecture's
         `GraphQL` and `WebSocket` labels stray onto the Kubernetes cluster's pale fill, and are

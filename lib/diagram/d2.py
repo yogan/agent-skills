@@ -145,9 +145,13 @@ ELK_OPTS = {
 # layers is also where ELK puts an edge label: the ER cardinality `n sessions : 1 doc` needs 30,
 # or it overlaps the `presence_sessions` table and its first glyph sits grey-on-purple.
 #
-# Escalated rather than raised, because it is not free: every px of width is scaled back out of
-# the glyphs inside the content column, and ER goes 862x257 at 12.6px to 892x257 at 12.2px.
-# Not worth paying on a diagram that reads fine at 15.
+# Escalated rather than raised, because it is not free — but what it costs depends entirely on
+# the target, and only one of the two pays:
+#
+#   * EMBEDDED, every px of width is scaled back out of the glyphs inside the content column.
+#     ER goes 862x257 at 12.6px to 892x257 at 12.2px.
+#   * STANDALONE, the image is shown at its natural size and there is nothing to scale it.
+#     ER goes 886x281 to 916x281 with its text unmoved at 12.5px.
 #
 # Wrapping the label instead does NOT help — measured, it changes the covered area not at all,
 # since a folded label is still wider than a 15px gap. That is what demoted the unconditional

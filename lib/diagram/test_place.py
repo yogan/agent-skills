@@ -356,6 +356,51 @@ class TestJointEscalation(unittest.TestCase):
                         "a placement that could not avoid clipping must say so")
 
 
+class TestOneDrawingForTheWholeSearch(unittest.TestCase):
+    """Every candidate has to be measured on the SAME drawing, or their overlaps are being
+    compared across different pictures.
+
+    Embedded that means one `(direction, wrap)` and one layer spacing. Standalone there is no
+    layout to choose — the direction is a per-kind default and nothing wraps — but there IS
+    still a spacing, and it used not to be chosen at all: the ladder lived in `_pick_layout`,
+    which `render.standalone` does not go through, so every image the skill wrote of the
+    reference ER had its cardinality label on the `presence_sessions` table.
+
+    Chosen ONCE and passed down, never escalated per candidate: `_measure_candidates` measures
+    all 64 in a single browser launch, and a ladder inside the loop would launch 64.
+    """
+
+    def setUp(self):
+        self.seen = []
+        self.real = place._measure_candidates
+        self.real_layout = place.render_mod.choose_layout
+        self.real_alone = place.render_mod.choose_standalone_layers
+        place._measure_candidates = self.spy
+        place.render_mod.choose_layout = (
+            lambda spec, name="d", binary="d2": (("down", None), 15))
+        place.render_mod.choose_standalone_layers = (
+            lambda spec, name="d", theme="dark", binary="d2": 30)
+
+    def tearDown(self):
+        place._measure_candidates = self.real
+        place.render_mod.choose_layout = self.real_layout
+        place.render_mod.choose_standalone_layers = self.real_alone
+
+    def spy(self, spec, name, combos, theme, standalone=False, layout=None, layers=None):
+        self.seen.append({"standalone": standalone, "layout": layout, "layers": layers})
+        return [(anchors, fake_measurement([(0, 100)])) for anchors in combos]
+
+    def test_the_embedded_search_is_held_at_one_layout_and_one_spacing(self):
+        place.place(ER, name="er")
+        self.assertEqual(self.seen,
+                         [{"standalone": False, "layout": ("down", None), "layers": 15}])
+
+    def test_the_standalone_search_is_held_at_one_spacing_and_asks_for_no_layout(self):
+        place.place(ER, name="er", standalone=True)
+        self.assertEqual(self.seen,
+                         [{"standalone": True, "layout": None, "layers": 30}])
+
+
 class TestUnplaceable(unittest.TestCase):
     def test_a_clip_free_report_has_no_unplaceable_entries(self):
         self.assertEqual(place.unplaceable([{"clip": 0, "index": 0}]), [])

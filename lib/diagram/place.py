@@ -164,7 +164,8 @@ def _measure_candidates(spec, name, combos, theme, standalone=False, layout=None
             # room), and that padding changes the canvas the clip is measured against — so
             # measuring the embedded form would pick anchors for a different geometry.
             if standalone:
-                svg = render_mod.standalone(trial, name=f"{name}-p{index}", theme=theme)
+                svg = render_mod.standalone(trial, name=f"{name}-p{index}", theme=theme,
+                                            layers=layers)
             else:
                 svg = render_mod.render(trial, name=f"{name}-p{index}",
                                         wrap_edges=wrap, layers=layers)
@@ -290,8 +291,17 @@ def place(spec, name="diagram", theme="light", joint_max=JOINT_MAX, anchors=NEAR
     #
     # The second reason is cost. A two-callout diagram is 64 candidates, each of which was
     # running a ~4-compile search at ~330ms per ELK compile.
-    chosen = None if standalone else render_mod.choose_layout(spec, name)
-    layout, layers = chosen if chosen else (None, None)
+    #
+    # The standalone target has no layout to choose — its direction is a per-kind default in
+    # `d2.DIRECTION` and it does not wrap — but it does have a spacing to settle, and for the
+    # same two reasons: candidates measured at different spacings are candidates measured on
+    # different drawings, and escalating inside each one would put a browser launch inside the
+    # 64-candidate loop that exists to need only one.
+    if standalone:
+        layout, layers = None, render_mod.choose_standalone_layers(spec, name, theme)
+    else:
+        chosen = render_mod.choose_layout(spec, name)
+        layout, layers = chosen if chosen else (None, None)
     search = _joint if len(sites) <= joint_max else _greedy
     chosen, clip, overlap, candidates = search(spec, name, sites, theme, anchors,
                                                standalone, layout, layers)

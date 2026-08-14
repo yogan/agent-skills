@@ -333,22 +333,28 @@ def _pick_layout(spec, name, binary, theme_vars):
         # whatever borders that space. Escalated rather than raised for everyone, because it
         # costs — see `d2.ELK_SPACING_LADDER`. Without a browser this cannot be measured, so
         # the tight spacing stands and the clipping gate reports the consequence later.
-        if not _hides_text(svg, theme_vars):
+        if not _hides_text(svg, enabled=theme_vars):
             return layout, svg, layers
     return layout, svg, layers
 
 
-def _hides_text(svg, theme_vars):
+def _hides_text(svg, enabled=True, theme="light", standalone=False):
     """Whether the LAYOUT has made any text unreadable — covered by geometry it is not inside,
     or printed on a background it has no contrast against.
 
     False when there is no browser to ask — the measurement needs real laid-out glyph boxes,
     and guessing would be worse than the gate that reports it afterwards.
+
+    `standalone` picks the boundary, and it has to match the target the SVG is FOR: a
+    standalone image is measured against its own canvas at natural size, an embedded one
+    inside the content column that scales it. See `harness_html`.
     """
-    if not theme_vars or not browser.available():
+    if not enabled or not browser.available():
         return False
     try:
-        measured = browser.measure([{"key": "t", "html": harness_html(svg, theme="light")}])
+        measured = browser.measure([{"key": "t",
+                                     "html": harness_html(svg, theme=theme,
+                                                          standalone=standalone)}])
     except browser.BrowserError:
         return False
     # Only what the LAYOUT hid. Text buried by a callout is the placement pass's problem and
@@ -455,7 +461,59 @@ STANDALONE_CALLOUT = {
 STANDALONE_PAD = 20
 
 
-def standalone(spec, name="diagram", theme="dark", binary="d2"):
+def _standalone_at(spec, name, theme, binary, layers):
+    """One standalone SVG, compiled at exactly `layers` of layer spacing."""
+    source = d2mod.emit(spec, background=palette.CANVAS, standalone=True)
+    raw = compile_source(source, pad=STANDALONE_PAD, binary=binary, layers=layers)
+    # Substitute to vars first, then resolve them down to one theme. The detour exists so
+    # mappability can be checked while it still means something: once the colours are
+    # concrete, every one of them is a non-key and `unmapped()` can no longer tell an
+    # un-themeable literal from a correctly baked one. So the theming gate has no standalone
+    # equivalent — this check replaces it, at the only moment it can run.
+    svg = postprocess(_maybe_compact(raw, spec, name, standalone=True), name, theme_vars=True)
+    missing = palette.unmapped(svg)
+    if missing:
+        listed = ", ".join(f"{colour} x{count}" for colour, count in missing.items())
+        raise RenderError(
+            f"{name}: d2 emitted colour(s) with no palette mapping: {listed}. A standalone "
+            "image bakes one theme, so an unmapped literal would be frozen at its light-mode "
+            "value. Add it to palette.py, or stop using the d2 feature that emits it.")
+    svg = palette.resolve(svg, theme)
+    return _inline_style(svg, STANDALONE_CSS + STANDALONE_CALLOUT[theme])
+
+
+def _standalone_ladder(spec, name, theme, binary):
+    """`(svg, layers)` at the tightest spacing that leaves no text unreadable.
+
+    The same escalation `_pick_layout` does for the embedded target, and it has to be done
+    separately because the two targets are different drawings: standalone has its own
+    direction default (`d2.DIRECTION`), its own far more generous padding, and no content
+    column, so neither the layout nor the measurement carries across.
+
+    What does NOT carry across is the cost. Embedded, every px of width is scaled back out of
+    the glyphs, which is why the ladder is escalated rather than raised for everyone; a
+    standalone image is shown at natural size, so the reference ER goes from 886x281 to
+    916x281 with its text still at 12.5px. The gap is close to free here.
+    """
+    for layers in d2mod.ELK_SPACING_LADDER:
+        svg = _standalone_at(spec, name, theme, binary, layers)
+        if not _hides_text(svg, theme=theme, standalone=True):
+            break
+    return svg, layers
+
+
+def choose_standalone_layers(spec, name="diagram", theme="dark", binary="d2"):
+    """The layer spacing this spec needs as a standalone image.
+
+    Exposed for the placement pass, for the same reason `choose_layout` is: the spacing has to
+    be decided ONCE and then held still while anchors vary. Escalating inside `standalone()`
+    during the search would put a browser launch inside a 64-candidate loop, where the whole
+    point of `_measure_candidates` is that all 64 are measured in one.
+    """
+    return _standalone_ladder(spec, name, theme, binary)[1]
+
+
+def standalone(spec, name="diagram", theme="dark", binary="d2", layers=None):
     """Spec -> a self-contained SVG that can be opened on its own.
 
     Three things separate this from `render()`, and all three are what make an SVG file
@@ -478,26 +536,22 @@ def standalone(spec, name="diagram", theme="dark", binary="d2"):
     chrome follows the OS appearance, so on a dark desktop a light drawing is the slab that
     fights its surroundings. A caller that really is embedding into a light page should ask for
     `theme="light"` — or use `render()`, which follows the page's own toggle.
+
+    The layer spacing is escalated up `d2.ELK_SPACING_LADDER` until no text is unreadable,
+    exactly as `_pick_layout` does for the embedded target — see `_standalone_ladder`. This
+    path went without it at first, and the consequence was not theoretical: the reference ER's
+    cardinality label sat on the `presence_sessions` table in every image the `visualize` skill
+    wrote, while the same diagram came out clean in the explainers. The gate reported it on
+    every run; the renderer just had no answer for it.
+
+    `layers` pins that spacing instead of measuring it, for `place`, which must hold one
+    drawing still while it varies anchors.
     """
     if theme not in ("light", "dark"):
         raise RenderError(f"theme must be 'light' or 'dark', not {theme!r}")
-    source = d2mod.emit(spec, background=palette.CANVAS, standalone=True)
-    raw = compile_source(source, pad=STANDALONE_PAD, binary=binary)
-    # Substitute to vars first, then resolve them down to one theme. The detour exists so
-    # mappability can be checked while it still means something: once the colours are
-    # concrete, every one of them is a non-key and `unmapped()` can no longer tell an
-    # un-themeable literal from a correctly baked one. So the theming gate has no standalone
-    # equivalent — this check replaces it, at the only moment it can run.
-    svg = postprocess(_maybe_compact(raw, spec, name, standalone=True), name, theme_vars=True)
-    missing = palette.unmapped(svg)
-    if missing:
-        listed = ", ".join(f"{colour} x{count}" for colour, count in missing.items())
-        raise RenderError(
-            f"{name}: d2 emitted colour(s) with no palette mapping: {listed}. A standalone "
-            "image bakes one theme, so an unmapped literal would be frozen at its light-mode "
-            "value. Add it to palette.py, or stop using the d2 feature that emits it.")
-    svg = palette.resolve(svg, theme)
-    return _inline_style(svg, STANDALONE_CSS + STANDALONE_CALLOUT[theme])
+    if layers is not None:
+        return _standalone_at(spec, name, theme, binary, layers)
+    return _standalone_ladder(spec, name, theme, binary)[0]
 
 
 # A title strip above the drawing, in the raster only. d2 has no page-title and adding one to
