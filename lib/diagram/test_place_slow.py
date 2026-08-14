@@ -42,51 +42,41 @@ class TestPlacementAgainstRealDiagrams(unittest.TestCase):
         cls.placed = {name: place.place(spec, name=name)
                       for name, spec in REFERENCE.items()}
 
-    def test_placement_is_never_worse_than_the_hand_picked_reference_anchors(self):
-        """The justification for having a search at all.
+    def test_placement_covers_nothing_on_a_diagram_where_something_could_be_covered(self):
+        """The justification for having a search at all, and it has been rewritten twice as
+        what the search is measuring got more honest.
 
-        The reference ER diagram's anchors were chosen by eye. This test asked the search to
-        BEAT them, and for a long time it did — by a factor of fourteen under dagre (216
-        against 3123), by 1.3 under ELK at the tight default spacing.
+        It began by asking the search to BEAT the ER's hand-picked anchors, and for a long time
+        it did — by a factor of fourteen under dagre (216 against 3123), by 1.3 under ELK at the
+        tight default spacing. Then the hidden-text check moved this diagram a rung up
+        `d2.ELK_SPACING_LADDER` and the by-eye anchors became the optimum, so it asked only that
+        the search never do WORSE.
 
-        It no longer beats them: it agrees with them exactly. The hidden-text check moved this
-        one diagram a rung up `d2.ELK_SPACING_LADDER`, and at 30 the drawing is roomy enough
-        that `top-left` / `top-right` is simply the optimum — the search measures 3121 and so
-        does the hand pick, the same number, because they are the same two anchors. Asserting a
-        strict improvement was asserting that the author had got it wrong, which is not a
-        property worth pinning; what must hold is that a measured anchor never covers MORE than
-        one chosen by eye.
+        Now it cannot ask either, because `examples.ER` pins what the search finds and comparing
+        those is comparing the search against itself. What is left is the claim that actually
+        matters: on this diagram the search lands a callout where it covers NOTHING — not a
+        little, none — and it is not getting that for free, because an anchor is available that
+        covers a great deal.
 
-        This compared CLIPPING until the day `_score` started measuring against the card
-        rather than the svg box, at which point the hand-picked anchors stopped clipping too:
-        they overhang the canvas, but not the card, so nothing is cut off on the page. That
-        left overlap as the honest comparison — and it is the sharper one anyway, since it is
-        what the reader actually loses.
-
-        A tie against the hand pick could equally mean the search has stopped discriminating,
-        so the second half measures the spread it is choosing within: `center-left` for the new
-        table is the anchor the module docstrings keep citing, and it is six times worse (19132
-        against 3121) while shrinking every glyph in the figure from 12.7px to 11.5px. The
-        search has plenty to get wrong here and does not.
+        Overlap became this stark when it stopped being measured against the callout's grown
+        box; see `js/measure.js`. Before that a callout was charged for its own drop-shadow
+        grazing a neighbour, so seven anchors that occlude nothing at all scored between 2907
+        and 5280 and the search was ranking them by blur radius.
         """
         _, report = self.placed["er"]
         self.assertEqual(place.unplaceable(report), [], f"search still clips: {report}")
         self.assertEqual(max(row["clip"] for row in report), 0)
         found = sum(row["overlap"] for row in report) / len(report)
+        self.assertLess(found, 1, f"the search should cover nothing here, not {found:.0f}")
 
-        # Both alternatives in one call: the cost here is the browser launch, not the extra
-        # candidate.
-        measured = place._measure_candidates(
-            ER, "er", [("top-left", "top-right"), ("bottom-left", "center-left")], "light")
-        _, hand_clip, hand_overlap = place._score(measured[0][1])
-        _, _, poor_overlap = place._score(measured[1][1])
-        self.assertEqual(hand_clip, 0, "the hand pick overhangs the canvas but not the card")
-        self.assertLessEqual(found, hand_overlap,
-                             f"search {found:.0f} vs hand {hand_overlap:.0f} — a measured "
-                             "anchor must not cover more of the drawing than one chosen by eye")
-        self.assertLess(found * 2, poor_overlap,
-                        f"search {found:.0f} vs a poor anchor {poor_overlap:.0f} — the spread "
-                        "has collapsed, so the tie above no longer says anything")
+        # Proof it had something to get wrong. `center-right` puts the new-table callout across
+        # both arrows leaving `presence_sessions`, and paths are weighted 2.
+        measured = place._measure_candidates(ER, "er", [("top-left", "center-right")], "light")
+        _, poor_clip, poor_overlap = place._score(measured[0][1])
+        self.assertEqual(poor_clip, 0, "the point is that it covers, not that it clips")
+        self.assertGreater(poor_overlap, 1000,
+                           f"an anchor across both arrows measured {poor_overlap:.0f} — if "
+                           "nothing on this diagram can be covered, the search proves nothing")
 
     def test_every_reference_diagram_places_without_clipping(self):
         for name, (_placed, report) in self.placed.items():

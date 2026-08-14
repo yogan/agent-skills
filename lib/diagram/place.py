@@ -25,6 +25,11 @@ text cut off, text shrunk, text covered:
      callout off the bottom makes the figure taller without shrinking any text, so neither
      glyph size nor overlap can see it.
 
+And then, often, nothing — because on a diagram with room in it most anchors cover nothing at
+all and the three terms above tie. That is not a gap in the model, it is the model saying there
+is no readability argument left to make, and the tie falls through to the order of `spec.NEAR`.
+See there, and `_score`.
+
 Greedy per-callout is not always enough — two callouts can each look fine alone and only fit
 in a particular combination — so a diagram with few enough of them gets an exhaustive search
 instead. Eight anchors means 8^n candidates, which is affordable at n=2 (64) and not at n=3
@@ -129,6 +134,18 @@ def _score(measurement):
 
     **Overlap and height share one term**, priced against each other — see `HEIGHT_PRICE`.
     They cannot be ordered: whichever goes first, the other becomes free.
+
+    Overlap means OCCLUSION, not proximity, and the distinction is load-bearing. It is measured
+    against the callout as painted, while clipping above is measured against that box plus the
+    drop-shadow's reach — see `js/measure.js`, which explains why the two questions get
+    different boxes. Measured against the grown box, as it was at first, a callout was charged
+    for its halo grazing a bounding box: on the reference ER that made the difference between
+    every anchor in the top row, all of which cover nothing whatsoever.
+
+    Which means this tuple frequently ties, and the tie is settled by the order of `spec.NEAR`
+    — top row first, left first. That is deliberate; see the comment there. When several
+    anchors are equally free, "put them where the last one went" is a better answer than any
+    number this can produce.
     """
     clip = sum(c["clipVsCard"] for c in measurement["callouts"])
     overlap = sum(c["overlap"] for c in measurement["callouts"])

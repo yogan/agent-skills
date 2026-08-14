@@ -63,6 +63,12 @@ SHAPES = (
 # refuses it at compile time under both engines ("invalid \"near\" field"), which is worth
 # knowing before anyone tries to anchor a callout to a neighbour. The placement pass
 # (gates/browser side) picks one of these by measuring; a spec may also pin one explicitly.
+#
+# THE ORDER IS THE TIE-BREAK, and it is deliberate. Several anchors on one diagram routinely
+# cover nothing at all — on the reference ER, seven of these eight do — and among those the
+# search has nothing left to measure, so it keeps the first one it saw. Reading order (top row
+# first, left first) is what that resolves to, and the effect is that callouts which are all
+# equally free land on the same side as each other rather than scattering. See `place._score`.
 NEAR = (
     "top-left", "top-center", "top-right",
     "center-left", "center-right",

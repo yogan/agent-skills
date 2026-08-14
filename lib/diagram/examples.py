@@ -96,8 +96,13 @@ ER = {
              {"name": "title", "type": "text"},
              {"name": "revision", "type": "bigint"},
          ]},
+        # `top-left`, like the callout above `documents`: both are free to sit anywhere along
+        # their table's top edge, and the placement pass lands them on the same side rather
+        # than scattering them — see `spec.NEAR` on why the tie-break is reading order. This
+        # pinned `top-right` until then, which the search agreed with only because a callout
+        # used to be charged for its own drop-shadow grazing the table's title.
         {"id": "presence_sessions", "role": "svc",
-         "note": "new table", "near": "top-right", "columns": [
+         "note": "new table", "near": "top-left", "columns": [
              {"name": "id", "type": "uuid", "key": "pk"},
              {"name": "document_id", "type": "uuid", "key": "fk"},
              {"name": "user_id", "type": "uuid", "key": "fk"},
