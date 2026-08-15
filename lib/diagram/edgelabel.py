@@ -102,7 +102,7 @@ HEAD_WEIGHT = 5
 # Rounding, in px² of area and px of distance, before two candidates are compared. Without it
 # a quarter-pixel of shape overlap outranks a whole leg of hidden line, since the terms are
 # compared in order rather than priced against each other.
-ROUND = (1, 4, 8, 4)
+ROUND = (1, 4, 1, 8, 4, 4)
 
 _ROOT = re.compile(r"<svg\b[^>]*>")
 _MASK_RECT = re.compile(r'<rect x="([-\d.]+)" y="([-\d.]+)" width="([\d.]+)" '
@@ -252,24 +252,60 @@ def _shapes(svg, body_start):
     return boxes
 
 
-def _key(box, canvas, shapes, lines, zones, others, target):
+def _key(box, canvas, shapes, lines, zones, others, adrift, home, target):
     """How bad a candidate is, compared term by term rather than priced against each other.
 
-    The order is the argument. Off the canvas is not a placement at all. On a box is the defect
-    this module was written for — a cardinality with its left half inside the table it points
-    at — and no amount of tidiness elsewhere buys it back. Hidden line is the thing being
-    minimised once the label is somewhere legal, and the px of it that sit right before an
-    arrowhead count `HEAD_WEIGHT` times over, because losing those costs the arrow its meaning
-    rather than a little of its length. Drift is the tie-break, and it ties often: keep the
-    label near the middle of its own route, because that is where a reader looks for it.
+    Six terms, in this order, and the order is the argument.
+
+    **Off the canvas** is not a placement at all. **On a box** is the defect this module was
+    written for — a cardinality with its left half inside the table it points at — and no
+    amount of tidiness elsewhere buys it back.
+
+    **`adrift`** — whether the label hangs off the end of its own leg instead of sitting within
+    it. This is the module's founding rule ("a label stays centred on its line") defended
+    against the term below, which quietly contradicts it: a label half past the end of its leg
+    COVERS LESS OF THAT LEG, so hiding-line pays it to be in the wrong place. `measure every
+    anchor` ended 3px from the end of a 95px leg that way, and a label off its leg is a label
+    with no leg to slide along, which silently removes it from the row alignment. Ranking a
+    legal position above the quantity being minimised is what fixed four separate complaints at
+    once — a minimisation term can always be satisfied by leaving the domain it measures.
+
+    **Hidden line** is the thing being minimised once the label is somewhere legal, and the px
+    of it that sit right before an arrowhead count `HEAD_WEIGHT` times over, because losing
+    those costs the arrow its meaning rather than a little of its length.
+
+    Then two tie-breaks, and their order is a correction. **`home`** is the middle of the room
+    the label has on its own leg — equal arrow showing above and below it. **`target`** is the
+    middle of the whole route, which is where a reader looks. They agree on a plain straight
+    arrow and disagree whenever the route continues past the leg the label sits on: the route's
+    middle is then beyond the leg's end, so preferring it slid the label hard against whatever
+    stopped it first and left every px the leg later gained piling up on the other side. Two
+    labels in the repo architecture sat with 74px of line above them and 4px below.
     """
     shape_area = sum(box.overlap(s) for s in shapes) + sum(box.overlap(o) for o in others)
     line_area = (sum(box.overlap(line) for line in lines)
                  + HEAD_WEIGHT * STROKE * shortfall(box, zones))
-    drift = (((box[0] + box[2]) / 2 - target[0]) ** 2
-             + ((box[1] + box[3]) / 2 - target[1]) ** 2) ** 0.5
-    terms = (box.outside(canvas), shape_area, line_area, drift)
+    centre = ((box[0] + box[2]) / 2, (box[1] + box[3]) / 2)
+    off = _distance(centre, home)
+    drift = _distance(centre, target)
+    terms = (box.outside(canvas), shape_area, bool(adrift), line_area, off, drift)
     return tuple(round(v / step) for v, step in zip(terms, ROUND))
+
+
+def _distance(a, b):
+    return ((a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2) ** 0.5
+
+
+def _home(box, axis, lo, hi, target):
+    """The middle of the room this candidate has on its leg — where the arrow shows equally.
+
+    `target` where there is no leg to be in the middle of: a label ELK placed somewhere this
+    module would not offer has no room of its own to be centred in.
+    """
+    if axis is None:
+        return target
+    middle = (lo + hi) / 2
+    return ((box[0] + box[2]) / 2, middle) if axis == "y" else (middle, (box[1] + box[3]) / 2)
 
 
 def reposition(svg):
@@ -316,15 +352,17 @@ def reposition(svg):
         others = drawn + [b for i, b in enumerate(boxes) if i not in used]
         target = _midpoint(pts)
 
-        def score(candidate, _o=others, _t=target):
-            return _key(candidate, canvas, shapes, lines, zones, _o, _t)
+        def score(candidate, adrift, home, _o=others, _t=target):
+            return _key(candidate, canvas, shapes, lines, zones, _o, adrift, home, _t)
 
         best, best_key, axis, lo, hi = box, None, None, 0.0, 0.0
         for candidate, candidate_axis, low, high in _candidates(box, legs(pts)):
-            key = score(candidate)
+            key = score(candidate, candidate_axis is None,
+                        _home(candidate, candidate_axis, low, high, target))
             if best_key is None or key < best_key:
                 best, best_key, axis, lo, hi = candidate, key, candidate_axis, low, high
-        placed.append(_Placed(label, index, box, best, best_key, axis, lo, hi, score))
+        placed.append(_Placed(label, index, box, best, best_key, axis, lo, hi, score,
+                              _home(best, axis, lo, hi, target)))
         drawn.append(best)
 
     # The mask always travels with the label. It is the hole the label punches in its own
@@ -384,7 +422,7 @@ def _cut_gaps(svg, boxes):
     return svg[:mask.end(6)] + rects + svg[mask.end(6):]
 
 
-class _Placed(namedtuple("_Placed", "label index was box key axis lo hi score")):
+class _Placed(namedtuple("_Placed", "label index was box key axis lo hi score home")):
     """One label after the search, and everything the row alignment needs to move it again."""
 
     @property
@@ -460,7 +498,8 @@ def _align_rows(placed):
                         continue
                     # Everything above drift, whatever that is today — a term added to `_key`
                     # is a thing alignment must not be allowed to spend.
-                    if member.score(moved)[:-1] != member.key[:-1]:
+                    if member.score(moved, member.axis is None,
+                                    member.home)[:-2] != member.key[:-2]:
                         continue
                     if any(moved.overlap(other) > 0 for other in taken):
                         continue
