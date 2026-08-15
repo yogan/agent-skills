@@ -229,6 +229,110 @@ class TestGeometryHelpers(unittest.TestCase):
         self.assertEqual(edgelabel._midpoint([(0, 0), (0, 100), (100, 100)]), (0.0, 100.0))
 
 
+CONTAINER = ('<rect x="100.000000" y="10.000000" width="200.000000" height="120.000000" '
+             'stroke="var(--d-grp-br)" fill="var(--d-grp-bg)" style="stroke-width:2;" />'
+             '</g><text x="140.000000" y="28.000000" fill="var(--d-fg)" class="text" '
+             'style="text-anchor:middle;font-size:13px">a title</text>')
+
+
+class TestTitleGaps(unittest.TestCase):
+    """A connection crossing a container title gets the break an edge label already gets.
+
+    d2 punches a hole in the line under every edge label and under nothing else, so an arrow
+    entering a container runs straight through its title. The title's width is not in the SVG,
+    but it is derivable: d2 centres the text, so its half-width is the anchor's distance from
+    the container's left edge less a fixed padding.
+    """
+
+    def test_the_box_comes_out_of_the_two_numbers_d2_gives(self):
+        box, = edgelabel.title_boxes(CONTAINER)
+        half = 140 - 100 - edgelabel.TITLE_PAD
+        self.assertAlmostEqual(box[0], 140 - half, delta=0.01)
+        self.assertAlmostEqual(box[2], 140 + half, delta=0.01)
+
+    def test_the_band_matches_the_gaps_d2_cuts_for_its_own_labels(self):
+        box, = edgelabel.title_boxes(CONTAINER)
+        self.assertEqual((box[1], box.h), (28 - edgelabel.TITLE_RISE, edgelabel.TITLE_HEIGHT))
+
+    def test_a_leaf_nodes_label_is_not_treated_as_a_title(self):
+        """A leaf's label is centred in its BOX, so the same arithmetic returns half the box
+        width — a hole in the arrow as wide as the node."""
+        leaf = CONTAINER.replace("--d-grp-br", "--d-svc-br")
+        self.assertEqual(edgelabel.title_boxes(leaf), [])
+
+    def test_the_gap_is_cut_into_the_mask_every_connection_is_drawn_through(self):
+        out = edgelabel.reposition(
+            svg([("M 150 200 L 150 380", 150, 294, "x")], [(130, 281, 40, 17)],
+                canvas=(0, 0, 400, 400), shapes=CONTAINER))
+        self.assertIn('data-gap="title"', out)
+
+    def test_a_gap_that_would_strand_an_arrowhead_is_not_cut(self):
+        """The defect this rule exists for. On the reference architecture the `WebSocket` line
+        ended 4px below `presence deploy x2`, so cutting the title out of it left the arrowhead
+        floating — a triangle pointing at a box it was no longer joined to. Pushing the box
+        down to make room is not available either: the container padding that buys an 8px stub
+        takes that figure past the 800px viewport limit. So the title keeps its hairline.
+        """
+        out = edgelabel.reposition(
+            svg([("M 150 5 L 150 38", 150, 60, "x")], [(130, 52, 40, 17)],
+                canvas=(0, 0, 400, 400), shapes=CONTAINER))
+        self.assertNotIn('data-gap="title"', out)
+
+    def test_a_declined_gap_is_counted_as_an_unfixable_crossing(self):
+        """What the layout search ranks on, so it knows a taller candidate is worth the rescue
+        budget. Counting it needs no browser: the same geometry that declines the gap says the
+        title is left with a line through it."""
+        page = svg([("M 150 5 L 150 38", 150, 60, "x")], [(130, 52, 40, 17)],
+                   canvas=(0, 0, 400, 400), shapes=CONTAINER)
+        self.assertEqual(edgelabel.unfixable_crossings(page), 1)
+
+    def test_a_title_nothing_crosses_is_not_counted(self):
+        page = svg([("M 380 5 L 380 380", 380, 200, "x")], [(360, 187, 40, 17)],
+                   canvas=(0, 0, 400, 400), shapes=CONTAINER)
+        self.assertEqual(edgelabel.unfixable_crossings(page), 0)
+
+    def test_a_crossing_that_gets_its_gap_is_not_counted(self):
+        page = svg([("M 150 5 L 150 380", 150, 294, "x")], [(130, 281, 40, 17)],
+                   canvas=(0, 0, 400, 400), shapes=CONTAINER)
+        self.assertEqual(edgelabel.unfixable_crossings(page), 0)
+
+    def test_a_gap_with_room_on_both_sides_is_cut(self):
+        """Proof the rule above is not simply refusing everything."""
+        out = edgelabel.reposition(
+            svg([("M 150 5 L 150 380", 150, 294, "x")], [(130, 281, 40, 17)],
+                canvas=(0, 0, 400, 400), shapes=CONTAINER))
+        self.assertIn('data-gap="title"', out)
+
+    def test_the_head_of_a_two_ended_arrow_counts_at_its_start_too(self):
+        """A `<->` edge is painted with an arrowhead at each end, so the first px of the line
+        are no more a stub than the last."""
+        conn = ('<path d="M 150 8 L 150 380" stroke="var(--d-muted)" fill="none" '
+                'class="connection" style="stroke-width:2;" marker-start="url(#m2)" '
+                'mask="url(#m)" />'
+                '<text x="150" y="294" fill="var(--d-muted)" class="text-italic" '
+                'style="text-anchor:middle;font-size:13px">x</text>')
+        page = svg([], [(130, 281, 40, 17)], canvas=(0, 0, 400, 400),
+                   shapes=CONTAINER + conn)
+        self.assertNotIn('data-gap="title"', edgelabel.reposition(page))
+
+    def test_a_title_gap_is_not_read_back_as_a_label_box(self):
+        """It sits in the same mask as the label boxes and would otherwise match one by centre
+        and baseline — moving that label to fit a box that is not its own."""
+        once = edgelabel.reposition(
+            svg([("M 150 200 L 150 380", 150, 294, "x")], [(130, 281, 40, 17)],
+                canvas=(0, 0, 400, 400), shapes=CONTAINER))
+        self.assertEqual(edgelabel.reposition(once), once)
+
+    def test_a_title_keeps_edge_labels_off_it(self):
+        """The second use of the same box: a label may not settle on a container's title."""
+        box, = edgelabel.title_boxes(CONTAINER)
+        out = edgelabel.reposition(
+            svg([("M 150 12 L 150 380", 150, 32, "x")], [(130, 19, 40, 17)],
+                canvas=(0, 0, 400, 400), shapes=CONTAINER))
+        (_dx, dy), = moved(out)
+        self.assertGreater(19 + dy, box[3] - 1, "the label must clear the title's band")
+
+
 class TestTermination(unittest.TestCase):
     """The property that rules out the bug this module had twice: it never iterates.
 
@@ -271,6 +375,79 @@ class TestSafety(unittest.TestCase):
             f'<rect x="170.000000" y="121.000000" width="60" height="17" fill="black">'
             f"</rect>\n</mask></svg>")
         self.assertEqual(moved(out), [])
+
+
+class TestAgainstTheCorpus(unittest.TestCase):
+    """The two tests here that cost a browser, and the only ones that check the real thing.
+
+    Everything above is geometry on hand-built SVGs. These render the corpus and ask a browser
+    what it sees, because the defect this module exists for — a line drawn through a word — is
+    invisible to every other check in the repo.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        from lib.diagram import browser, render
+        if render.d2_version() is None or not browser.available():
+            raise unittest.SkipTest("needs d2 and a browser")
+        cls.browser, cls.render = browser, render
+        from lib.diagram.examples import REFERENCE
+        from lib.diagram.examples_repo import REPO
+        cls.corpus = [(f"{group}/{name}", spec)
+                      for group, specs in (("reference", REFERENCE), ("repo", REPO))
+                      for name, spec in specs.items()]
+
+    def test_every_crossing_it_has_room_to_clear_is_cleared(self):
+        """The whole point, end to end. `measure.js` follows every connection and reports where
+        a painted stretch lands inside a text box that is not its own label; a stretch hidden by
+        a gap is not painted, so a crossing survives only where no gap was cut.
+
+        Not "no crossings at all", because that is not achievable from here: where an arrow
+        terminates immediately below a container title there is no room to break the line
+        without stranding the arrowhead, and the renderer correctly declines (`MIN_RUN`). What
+        must hold is that every crossing left standing is one of those — anything else means a
+        gap that should have been cut was not.
+        """
+        drawn = {key: self.render.render(spec, name=key.replace("/", "-"))
+                 for key, spec in self.corpus}
+        jobs = [{"key": key,
+                 "html": self.render.harness_html(svg, theme="light")}
+                for key, svg in drawn.items()]
+        for result in self.browser.measure(jobs):
+            svg = drawn[result["key"]]
+            declined = [box for box in edgelabel.title_boxes(svg)
+                        if not edgelabel._leaves_a_stub(
+                            box, edgelabel._CONNECTION.finditer(svg))]
+            for crossing in (result.get("crossed") or []):
+                if crossing["depth"] < 2:
+                    continue
+                self.assertTrue(
+                    declined,
+                    f"{result['key']}: an arrow is drawn {crossing['depth']:.0f}px into "
+                    f"{crossing['text'][:30]!r} and nothing declined a gap there")
+
+    def test_the_derived_title_box_matches_what_the_browser_lays_out(self):
+        """`TITLE_PAD` is the one number here that was measured rather than read out of the
+        SVG, so a d2 upgrade could move it and quietly cut gaps that no longer fit their words.
+        """
+        for key, spec in self.corpus:
+            drawn = self.render.render(spec, name=key.replace("/", "-"))
+            titles = [m for m in edgelabel._TITLE.finditer(drawn)
+                      if edgelabel._GRP.search(m.group(0))]
+            if not titles:
+                continue
+            tagged = re.sub(r"<text ", '<text data-w="1" ', drawn)
+            measured = dict(zip(
+                re.findall(r"<text [^>]*>(?:<tspan[^>]*>)?([^<]*)", drawn),
+                self.browser.text_widths(
+                    self.render.harness_html(tagged, theme="light", standalone=True))))
+            for match, box in zip(titles, edgelabel.title_boxes(drawn)):
+                start = drawn.index(">", match.end()) + 1
+                text = drawn[start:drawn.index("<", start)]
+                self.assertAlmostEqual(
+                    box.w, measured[text], delta=2.5,
+                    msg=f"{text!r}: derived {box.w:.1f}px, browser {measured[text]:.1f}px — "
+                        f"edgelabel.TITLE_PAD needs re-measuring")
 
 
 if __name__ == "__main__":

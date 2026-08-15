@@ -27,6 +27,16 @@ from . import GateError, Result
 
 AVAIL_W = 777.0        # usable px inside a .diagram card on the real page
 MAX_H = 800.0          # one viewport, with room left for browser chrome
+
+# Height a figure may borrow beyond MAX_H, and only ever to buy a fix. The layout search will
+# not spend it on a drawing that merely comes out taller — among candidates that read equally
+# well it still takes the shortest — but it will take a taller candidate that resolves a defect
+# the shorter one cannot, such as an arrow left running through a container's title because
+# there was no room to break the line without stranding its arrowhead.
+#
+# Enforced by `render._pick_at_spacing`, which ranks a candidate's unfixable defects above its
+# height. This gate cannot see that distinction and does not try to: it holds the ceiling.
+RESCUE_H = 40.0
 H2_PX = 26.6           # 1.4rem at a 19px root
 BODY_PX = 19.0         # 1rem at a 19px root
 MIN_READABLE = 11.0    # below this, text in body copy is effectively unreadable
@@ -125,7 +135,8 @@ def analyse(svg, avail_w=AVAIL_W, standalone=False):
     }
 
 
-def check(svg, name="diagram", avail_w=AVAIL_W, max_h=MAX_H, standalone=False):
+def check(svg, name="diagram", avail_w=AVAIL_W, max_h=MAX_H + RESCUE_H,
+          standalone=False):
     """Every size gate, in one Result.
 
     `standalone=True` drops the height, maximum-glyph and modal-glyph checks — not as a

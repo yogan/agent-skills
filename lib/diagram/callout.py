@@ -1,27 +1,19 @@
 """Shrinking a callout box to the text it actually holds.
 
-d2 sizes a `tooltip.near` box by measuring the note with its OWN font, and then the box is
-filled by a browser laying the same note out in the host page's font — `system-ui` at 12.5px,
-which `render.HOST_CSS` sets because the alternative is the text re-wrapping out of its
-24px-high `<foreignObject>`. The two measurements do not agree, and they cannot: the second
-font is not known to the first program.
+d2 sizes a `tooltip.near` box by measuring the note in its OWN font, and the box is then filled
+by a browser laying the same note out in the host page's font (`render.HOST_CSS`). The two
+measurements cannot agree, and because `.md` is a flex row all of the difference collects on
+one side — the callout reads as a box with a hole in one end.
 
-What the difference looks like: the note "the only entry point" gets a 152px box holding a
-132px `<foreignObject>` — 10px of padding a side, which is what d2 intends — and renders about
-110px of glyphs inside it. `.md` is a flex row, so all 22px of slack collects on the right and
-the callout reads as a box with a hole in one end of it.
+So the box is re-cut from the width the text really takes. That number can only come from a
+browser, and it depends on nothing but the string, so it is measured once per document and
+cached: `figure.draw` primes the cache and every later render — the anchor search alone is 64
+of them — is a dictionary lookup.
 
-So the box is re-cut here, from the width the text really takes. That number can only come
-from a browser (`browser.text_widths`), and it depends on nothing but the string, so it is
-measured once per document and cached: `figure.draw` primes the cache with every note in the
-document in one launch, and every subsequent render — the placement search alone is 64 of
-them — is a dictionary lookup.
-
-**Unmeasured text is left alone.** A render with no primed cache (every fast unit test, and
-anything calling `render.render` directly) comes out exactly as d2 drew it. Guessing the width
-from a character count was the alternative and it is the wrong risk: the text is `nowrap`
-inside an `overflow:visible` box, so an underestimate does not clip, it spills the note out
-past its own border and over the drawing.
+**Unmeasured text is left alone**, which is what keeps every fast test browser-free. Guessing
+the width from a character count is the wrong risk: the text is `nowrap` inside an
+`overflow:visible` box, so an underestimate spills the note over the drawing rather than
+clipping it.
 """
 import re
 
@@ -128,7 +120,7 @@ def fit(svg):
     A callout whose note was never measured, or whose text is already wider than the box d2
     gave it, is left exactly as it was.
     """
-    out, cursor = [], 0
+    out = []
     for group in _GROUP.finditer(svg):
         body = group.group(1)
         rect, pointer, fo, text = (_RECT.search(body), _POINTER.search(body),

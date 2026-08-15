@@ -43,10 +43,11 @@ from lib.diagram.spec import content_warnings
 MEASURED = {
     # dagre: 887x771 at 11.4px, scaled to 0.88. 579 while the two callouts were pinned
     # `center-right`, which is not where the pass puts them.
-    # 767 before the container top padding was raised to clear an arrowhead off a container
-    # title (`d2.ELK_OPTS["paddingTop"]`). 15px of page height for a `WebSocket` arrowhead that
-    # was being drawn across `presence deploy x2`.
-    "arch": (493, 782),
+    # 767 while containers had an even padding. The top now carries enough room for an arrow
+    # to clear a container title and still keep a length of line above its arrowhead
+    # (`d2.ELK_OPTS["paddingTop"]`), which takes this past MAX_H — see `gates/size.RESCUE_H`
+    # for why that is allowed here and not in general.
+    "arch": (493, 818),
     # d2's own sequence engine lays this one out; the layout engine never touches it, and
     # dagre and elk output are byte-identical. 420 before the group legend added LEGEND_BAND.
     "sequence": (663, 442),

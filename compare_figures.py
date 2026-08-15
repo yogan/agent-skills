@@ -127,14 +127,21 @@ def _load(tag):
     return svgs, meta
 
 
-def panel_order(before, after, notes):
+def panel_order(before, after, notes, changed_only=True):
     """The figures to show, notes order first, then whatever both captures have left.
 
     The figure a change is FOR should be the one the reader sees first and the regression
     checks after it — which is the order the notes were written in, and never alphabetical.
     A note naming a figure neither capture holds is dropped rather than shown empty.
+
+    `changed_only` drops the figures that came out byte-identical, because a sheet where eight
+    of ten panels are the same picture twice buries the two that are not. What was dropped is
+    PRINTED rather than silently omitted: "these did not change" is a result, and a sheet that
+    quietly shows a subset reads as a sheet that shows everything.
     """
     shared = set(before) & set(after)
+    if changed_only:
+        shared = {k for k in shared if before[k] != after[k]}
     return [k for k in notes if k in shared] + sorted(shared - set(notes))
 
 
@@ -159,13 +166,16 @@ def _side(kind, column, svg, lines, gates):
             f'<div class="card diagram">{svg}</div>{_bullets(lines, gates)}</div>')
 
 
-def sheet(before_tag, after_tag, notes, out, theme):
+def sheet(before_tag, after_tag, notes, out, theme, changed_only=True):
     """Write one PNG comparing two captures, and open it."""
     before, before_meta = _load(before_tag)
     after, after_meta = _load(after_tag)
-    keys = panel_order(before, after, notes)
+    keys = panel_order(before, after, notes, changed_only)
+    same = sorted(k for k in set(before) & set(after) if k not in keys)
+    if same:
+        print(f"unchanged, not shown: {', '.join(same)}")
     if not keys:
-        sys.exit(f"{before_tag} and {after_tag} have no figure in common")
+        sys.exit(f"{before_tag} and {after_tag} differ in no figure at all")
 
     panels, width = [], 0
     for key in keys:
@@ -215,6 +225,8 @@ def main(argv=None):
     show.add_argument("notes", nargs="?", help="JSON, keyed <corpus>/<name>")
     show.add_argument("-o", "--out", default=os.path.join(ROOT, "sheet.png"))
     show.add_argument("--theme", choices=("light", "dark"), default="light")
+    show.add_argument("--all", action="store_true",
+                      help="show every figure, not only the ones that changed")
 
     args = parser.parse_args(argv)
     if args.command == "capture":
@@ -225,7 +237,8 @@ def main(argv=None):
     if args.notes:
         with open(args.notes) as handle:
             notes = json.load(handle)
-    sheet(args.before, args.after, notes, args.out, args.theme)
+    sheet(args.before, args.after, notes, args.out, args.theme,
+          changed_only=not args.all)
     return 0
 
 

@@ -22,24 +22,45 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import compare_figures as cf  # noqa: E402
 
 
+def pair(*keys):
+    """A (before, after) pair in which every named figure differs — the only ones a sheet
+    shows, so the ordering cases have to be built from them."""
+    return ({k: "before" for k in keys}, {k: "after" for k in keys})
+
+
 class TestPanelOrder(unittest.TestCase):
     def test_notes_order_wins_over_alphabetical(self):
         """The figure the change is FOR comes first, whatever it is called."""
-        both = {"reference/arch": "", "repo/arch": ""}
-        order = cf.panel_order(both, both, {"repo/arch": {}, "reference/arch": {}})
+        before, after = pair("reference/arch", "repo/arch")
+        order = cf.panel_order(before, after, {"repo/arch": {}, "reference/arch": {}})
         self.assertEqual(order, ["repo/arch", "reference/arch"])
 
     def test_unnoted_figures_still_appear_after_the_noted_ones(self):
-        both = {"repo/er": "", "repo/arch": "", "repo/state": ""}
-        self.assertEqual(cf.panel_order(both, both, {"repo/er": {}}),
+        before, after = pair("repo/er", "repo/arch", "repo/state")
+        self.assertEqual(cf.panel_order(before, after, {"repo/er": {}}),
                          ["repo/er", "repo/arch", "repo/state"])
 
     def test_a_figure_missing_from_either_capture_is_dropped(self):
         """Half a pair is not a comparison, and showing it as one would imply it changed."""
-        self.assertEqual(cf.panel_order({"a": "", "b": ""}, {"a": ""}, {}), ["a"])
+        before, after = pair("a", "b")
+        del after["b"]
+        self.assertEqual(cf.panel_order(before, after, {}), ["a"])
 
     def test_a_note_for_a_figure_nobody_captured_is_ignored(self):
-        self.assertEqual(cf.panel_order({"a": ""}, {"a": ""}, {"ghost": {}, "a": {}}), ["a"])
+        before, after = pair("a")
+        self.assertEqual(cf.panel_order(before, after, {"ghost": {}, "a": {}}), ["a"])
+
+    def test_figures_that_did_not_change_are_dropped(self):
+        """A sheet where eight of ten panels are the same picture twice buries the two that
+        are not."""
+        before = {"a": "<svg/>", "b": "<svg/>"}
+        after = {"a": "<svg/>", "b": "<svg id='2'/>"}
+        self.assertEqual(cf.panel_order(before, after, {}), ["b"])
+
+    def test_showing_everything_is_still_possible(self):
+        before = {"a": "<svg/>", "b": "<svg/>"}
+        after = {"a": "<svg/>", "b": "<svg id='2'/>"}
+        self.assertEqual(cf.panel_order(before, after, {}, changed_only=False), ["a", "b"])
 
 
 class TestColumn(unittest.TestCase):

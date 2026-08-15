@@ -395,9 +395,15 @@ def _pick_at_spacing(spec, name, binary, theme_vars, layers):
         except GateError:
             # Unmeasurable is not a reason to render nothing; the gates report it later.
             return (direction, wrap), svg
+        # Ranked on defects before height, which is what makes `size.RESCUE_H` a budget rather
+        # than a raised ceiling: among candidates that read equally well the shortest still
+        # wins, so the extra height is never spent for nothing — but a taller candidate that
+        # resolves a crossing no gap can rescue beats a shorter one that leaves it.
+        #
         # Gentler wrapping ranks better only among layouts that read equally well, so a
         # diagram spends lines when that buys glyph size and not otherwise.
-        rank = (len(result.problems), round(metrics["rend_h"] / HEIGHT_BUCKET),
+        rank = (len(result.problems), edgelabel.unfixable_crossings(svg),
+                round(metrics["rend_h"] / HEIGHT_BUCKET),
                 CANDIDATES.index((direction, wrap)), -metrics["fmin"])
         if best is None or rank < best[0]:
             best = (rank, (direction, wrap), svg)

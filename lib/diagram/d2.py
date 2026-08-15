@@ -132,25 +132,21 @@ ELK_OPTS = {
     "nodeNodeBetweenLayers": 15,   # ELK default 70
     "edgeNodeBetweenLayers": 15,   # ELK default 40 — the expensive one
     "padding": 10,                 # ELK default 50, applied to every container alike
-    # The top gets more, and only for the ARROWHEAD's sake. A container's title is drawn
-    # inside it — baseline 18px below the top edge, 13px type, so glyphs occupy roughly
-    # top+8 to top+21 — and an edge entering the container from above ends at its first
-    # child's top edge, with a 12px arrowhead hanging back from the tip. At 10 the tip lands
-    # at top+23 and the head sits squarely on the title: on the reference architecture the
-    # `WebSocket` arrowhead is drawn across `presence deploy x2`.
+    # The top gets more, for the ARROWHEAD's sake. A container's title is drawn inside it, and
+    # an edge entering from above ends at the first child's top edge with the arrowhead hanging
+    # back from the tip — so with an even padding the head is drawn on top of the title.
     #
-    # 32 is the first rung that clears it, and it is a cliff rather than a slope — ELK ignores
-    # everything up to about 28 because d2 has already reserved a band for the label, then the
-    # tip moves 3px per unit. It buys 5px between the title's descenders and the top of the
-    # head, for 15px of page height on the reference architecture and 10px here.
+    # This is the smallest value that leaves the head clear of the title's descenders AND a
+    # length of plain line above it, which is what `edgelabel` needs before it will cut a gap
+    # for the title (see MIN_RUN there). ELK ignores small increases, d2 having already
+    # reserved a band for the label, so the useful range starts well above `padding`.
     #
-    # The line itself still crosses the title where the two share an x, and that is not fixable
-    # from here: the routing options that would avoid it are set internally by d2 and never
-    # exposed (see below). A hairline through a word is legible; an arrowhead on it is not.
+    # On a deeply nested figure it makes the portrait layout taller than the page-height gate
+    # would allow on its own; `gates/size.RESCUE_H` is the budget that covers exactly this,
+    # spendable only because the extra height removes a defect.
     #
-    # Costs nothing on any other kind, measured: `architecture` is the only one with
-    # containers, and er/class/state/sequence come out byte-identical in size.
-    "paddingTop": 32,
+    # Only `architecture` has containers, so no other kind moves.
+    "paddingTop": 44,
 }
 
 # Layer spacings to try, tightest first, when the tight one leaves TEXT UNREADABLE.

@@ -223,5 +223,28 @@ class TestThresholdsMatchThePageGeometry(unittest.TestCase):
         self.assertGreater(size.H2_PX, size.BODY_PX)
 
 
+class TestTheRescueBudget(unittest.TestCase):
+    """A figure may run past MAX_H, but only as far as the budget and only to buy a fix.
+
+    This gate holds the ceiling; it cannot tell whether the extra height was earned. What stops
+    it being simply a higher ceiling is `render._pick_at_spacing`, which ranks a candidate's
+    unfixable defects above its height — so among candidates that read equally well the
+    shortest still wins and the budget goes unspent.
+    """
+
+    def test_a_figure_inside_the_budget_passes(self):
+        result = size.check(svg(400, size.MAX_H + size.RESCUE_H - 10))
+        self.assertEqual([p for p in result.problems if "TALL" in p.upper()], [])
+
+    def test_a_figure_past_the_budget_still_fails(self):
+        result = size.check(svg(400, size.MAX_H + size.RESCUE_H + 10))
+        self.assertFalse(result.ok)
+
+    def test_the_budget_is_a_fraction_of_the_page(self):
+        """Big enough to rescue a defect, small enough that a figure using it is still one
+        screen. If it ever needs to grow, that is a sign the figure should be split."""
+        self.assertLess(size.RESCUE_H, size.MAX_H * 0.1)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
