@@ -38,6 +38,7 @@ import argparse
 import html as html_mod
 import json
 import os
+import re
 import subprocess
 import sys
 
@@ -160,10 +161,32 @@ def _bullets(lines, gates):
     return f"<ul>{items}</ul>" if items else '<p class="none">nothing noted</p>'
 
 
+def rescope(svg, tag):
+    """Re-prefix every id in `svg`, and every reference to one, with `tag`.
+
+    Both sides of a panel are the SAME figure, so `render._namespace_ids` — which scopes ids
+    per figure NAME — gives them identical ones. Put two such SVGs on one page and every
+    `url(#…)` resolves to whichever came first: the AFTER drawing's connections are then masked
+    with the BEFORE drawing's holes, and its arrowheads come from the BEFORE marker.
+
+    That is not a subtle wrongness. A sheet built without this shows the after side with its
+    labels moved and the gaps in its lines left where the before side had them — which reads
+    exactly like a renderer that forgot to move a mask, and cost a session's confidence in
+    every sheet before it was found.
+    """
+    ids = set(re.findall(r'\sid="([^"]+)"', svg))
+    for name in sorted(ids, key=len, reverse=True):
+        svg = (svg.replace(f'id="{name}"', f'id="{tag}--{name}"')
+                  .replace(f"url(#{name})", f"url(#{tag}--{name})")
+                  .replace(f'href="#{name}"', f'href="#{tag}--{name}"'))
+    return svg
+
+
 def _side(kind, column, svg, lines, gates):
     return (f'<div class="side" style="width:{column:.0f}px">'
             f'<p class="tag {kind}">{kind}</p>'
-            f'<div class="card diagram">{svg}</div>{_bullets(lines, gates)}</div>')
+            f'<div class="card diagram">{rescope(svg, kind)}</div>'
+            f"{_bullets(lines, gates)}</div>")
 
 
 def sheet(before_tag, after_tag, notes, out, theme, changed_only=True):
