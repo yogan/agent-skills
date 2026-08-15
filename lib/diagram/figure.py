@@ -31,6 +31,7 @@ from collections import namedtuple
 
 from . import browser as browser_mod
 from . import callout as callout_mod
+from . import d2
 from . import place as place_mod
 from . import render as render_mod
 from .gates import GateError
@@ -99,11 +100,9 @@ def draw(specs, target="embed", theme="dark", place_callouts=True, gates=True, b
         # render would re-run the search on a spec that by then has its `near` values, and a
         # callout changes the geometry the search ranks on. See `render.choose_drawing`.
         pinned = render_mod.choose_drawing(spec, name, theme, standalone, binary)
-
-        placement = []
-        if place_callouts:
-            spec, placement = _place(spec, name, theme, standalone, pinned)
-        svg = _render(spec, name, theme, standalone, pinned, binary)
+        svg, placed, placement = _settle(spec, name, theme, standalone, pinned, binary,
+                                         place_callouts)
+        spec = placed
 
         results, blocked = ([], [])
         if gates:
@@ -127,7 +126,7 @@ INTERNAL_KEYS = {
                  "the one that stays legible. Pinning it turns that off, and takes the "
                  "spacing escalation that keeps text readable with it: the reference ER "
                  "pinned to its own measured direction comes out 862x257 with a cardinality "
-                 "sitting on a table, where the same spec unpinned comes out 892x257 and "
+                 "sitting on a table, where the same spec unpinned comes out 902x257 and "
                  "clean. A standalone image is laid out wide by default; a sequence has its "
                  "own engine and ignores this entirely",
 }
@@ -147,6 +146,34 @@ def _reject_internal_keys(name, spec):
             raise SpecError(f"{name}: `{key}` is not yours to set — {why}. Remove it.")
 
 
+def _settle(spec, name, theme, standalone, pinned, binary, place_callouts):
+    """Place the callouts, draw, and step back off the wide edge spacing if it spoilt the page.
+
+    The one thing `choose_drawing` cannot know. A callout takes up canvas only once it HAS an
+    anchor, so the drawing the edge-spacing rung was chosen on is not quite the drawing that
+    ships: on the repo state machine the wider rung sends the anchor search to a different
+    corner, and the drawing that comes back has its bottom row of boxes off the canvas.
+
+    The retry redoes the ANCHORS too, and has to. Re-rendering alone was tried and keeps the
+    anchor the wide rung chose, which is the mismatch `choose_drawing` exists to prevent — the
+    figure came back the narrow rung's size and clipped by the same 24px.
+
+    Only the figure that needs it pays, and it pays one placement pass.
+    """
+    placed, placement = ((spec, []) if not place_callouts
+                         else _place(spec, name, theme, standalone, pinned))
+    svg = _render(placed, name, theme, standalone, pinned, binary)
+    base = d2.ELK_EDGE_LADDER[0]
+    if pinned[2] in (None, base) or render_mod.spills(svg, theme=theme,
+                                                      standalone=standalone) <= 1:
+        return svg, placed, placement
+    narrow = render_mod.choose_drawing(spec, name, theme, standalone, binary,
+                                       edge_rungs=(base,))
+    placed, placement = ((spec, []) if not place_callouts
+                         else _place(spec, name, theme, standalone, narrow))
+    return _render(placed, name, theme, standalone, narrow, binary), placed, placement
+
+
 def _render(spec, name, theme, standalone, pinned, binary):
     """The finished SVG, held to the drawing `choose_drawing` picked.
 
@@ -156,15 +183,15 @@ def _render(spec, name, theme, standalone, pinned, binary):
     choose (a sequence, or a spec that pins its own `direction`), and then the renderer's own
     default path is already the right one.
     """
-    layout, layers = pinned
+    layout, layers, edges = pinned
     if standalone:
         return render_mod.standalone(spec, name=name, theme=theme, binary=binary,
-                                     layers=layers)
+                                     layers=layers, edges=edges)
     if not layout:
         return render_mod.render(spec, name=name, binary=binary)
     direction, wrap = layout
     return render_mod.render(dict(spec, direction=direction), name=name, wrap_edges=wrap,
-                             layers=layers, binary=binary)
+                             layers=layers, edges=edges, binary=binary)
 
 
 def _place(spec, name, theme, standalone, pinned):

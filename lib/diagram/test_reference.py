@@ -61,18 +61,24 @@ MEASURED = {
     # spacing. On one line the labels cost 37px of width and half a pixel of glyph, and read
     # as the single phrase they are. See `d2.wrap_edge_label`.
     #
-    # 892 while this was the one figure that climbed the spacing ladder. It no longer needs to:
-    # `edgelabel.reposition` slides the cardinality along its own leg until it is off the
-    # table, which is what the extra 30px of layer gap was buying. Same drawing, 30px narrower,
-    # and its glyphs are 12.6px rather than 12.2px because less of it is scaled away.
-    "er": (862, 257),
+    # 892 while this was the one figure that climbed the LAYER spacing ladder. It no longer
+    # needs to: `edgelabel.reposition` slides the cardinality along its own leg until it is off
+    # the table, which is what the extra 30px of layer gap was buying.
+    #
+    # 862 while `n sessions : 1 doc` cut the line 2px INTO the arrowhead it names and two more
+    # heads were painted across their corner. The 40px here are a rung of `d2.ELK_EDGE_LADDER`,
+    # bought for exactly that and priced in glyph size: 12.6px becomes 12.4px.
+    "er": (902, 257),
     # dagre: 899x357 at 12.1px. This is the biggest single gain in the corpus — barely half
     # the width, and 14.0px text because none of it is scaled away. 411 while its callout was
     # pinned `bottom-left`; `center-right`, where the pass puts it, reaches out to the side.
-    "class": (498, 450),
+    # 450 before the edge-spacing rung that takes the arrowhead on `implements` off its corner.
+    "class": (498, 490),
     # dagre: 376x796, same 13.0px text. 205px shorter for nothing given up. 327 while this
     # pinned no anchor at all, which put its callout across 26% of `transport error`.
-    "state": (432, 591),
+    # 591 before the edge-spacing rung — three arrowheads here were painted across their turn,
+    # and this is the figure that pays most for them (`d2.ELK_EDGE_LADDER`).
+    "state": (432, 691),
 }
 
 HAVE_D2 = render.d2_version() is not None
@@ -126,7 +132,13 @@ class TestReferenceCorpus(unittest.TestCase):
         The per-kind default is therefore checked as EMITTED SOURCE, in test_d2's
         TestDirectionPerTarget, which is where the claim can be stated exactly. What is worth
         pinning geometrically is only what survives that: `state` really does flip between the
-        targets, and `architecture` really does not change at all.
+        targets, and `architecture` keeps its portrait shape on both.
+
+        It does NOT keep its exact aspect any more, and the reason is a real difference rather
+        than a drift: `d2.ELK_EDGE_LADDER` is bought with page height, and only a file has any
+        to spend. Embedded, the architecture is already at the ceiling and keeps two arrowheads
+        sitting on their corner; as a file there is no viewport rule to break, so it climbs and
+        comes out taller and clean.
         """
         width, height = render.natural_size(
             render.standalone(REFERENCE["state"], name="s--state"))
@@ -134,8 +146,9 @@ class TestReferenceCorpus(unittest.TestCase):
         self.assertLess(*MEASURED["state"], msg="state embedded should be portrait")
         arch = render.standalone(REFERENCE["arch"], name="s--arch")
         width, height = render.natural_size(arch)
-        self.assertAlmostEqual(width / height, MEASURED["arch"][0] / MEASURED["arch"][1],
-                               delta=0.05, msg="architecture should not change with target")
+        self.assertLess(width, height, "architecture should stay portrait on both targets")
+        self.assertGreater(height / width, MEASURED["arch"][1] / MEASURED["arch"][0],
+                           "as a file it can afford the edge-spacing rung the page cannot")
 
     def test_the_standalone_start_marker_spends_height_not_width(self):
         """The standalone target's direction is a default in `d2.DIRECTION`, not a key in the

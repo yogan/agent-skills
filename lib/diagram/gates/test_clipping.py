@@ -203,8 +203,8 @@ class TestAgainstRealDiagrams(unittest.TestCase):
         result = clipping.check(svg, "alone", theme="dark", standalone=True)
         self.assertEqual([p for p in result.problems if "HIDDEN TEXT" in p], [],
                          result.problems)
-        self.assertEqual(render.choose_standalone_layers(REFERENCE["er"], name="alone",
-                                                         theme="dark"),
+        self.assertEqual(render.choose_standalone_spacing(REFERENCE["er"], name="alone",
+                                                          theme="dark")[0],
                          d2.ELK_SPACING_LADDER[0],
                          "the ER is clean at the tight rung now; if this ever escalates again, "
                          "the label pass has stopped covering a case it used to")
@@ -212,16 +212,17 @@ class TestAgainstRealDiagrams(unittest.TestCase):
         # The wiring, driven directly: with the measurement forced to report hidden text, the
         # standalone path must climb. Without this the assertion above is equally satisfied by
         # a ladder that was deleted.
-        original = render._hides_text
+        original = render._faults
         seen = []
         try:
-            render._hides_text = lambda svg, **kw: seen.append(kw.get("standalone")) or True
-            self.assertEqual(render.choose_standalone_layers(REFERENCE["er"], name="rung",
-                                                             theme="dark"),
+            render._faults = (
+                lambda svg, **kw: (seen.append(kw.get("standalone")) or True, 0.0))
+            self.assertEqual(render.choose_standalone_spacing(REFERENCE["er"], name="rung",
+                                                              theme="dark")[0],
                              d2.ELK_SPACING_LADDER[-1],
                              "hidden text at every rung must exhaust the ladder, not stop")
         finally:
-            render._hides_text = original
+            render._faults = original
         self.assertEqual(len(seen), len(d2.ELK_SPACING_LADDER))
         self.assertTrue(all(seen), "the standalone path must measure against its own canvas")
 

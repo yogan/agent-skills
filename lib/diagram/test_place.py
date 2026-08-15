@@ -222,14 +222,14 @@ class TestSearchStrategy(unittest.TestCase):
         # module docstring — so the answer is stubbed rather than computed.
         self.real_layout = place.render_mod.choose_layout
         place.render_mod.choose_layout = (
-            lambda spec, name="d", binary="d2": (("down", None), 15))
+            lambda spec, name="d", binary="d2", *a: (("down", None), 15, 15))
 
     def tearDown(self):
         place._measure_candidates = self.real
         place.render_mod.choose_layout = self.real_layout
 
     def spy(self, spec, name, combos, theme, standalone=False, layout=None,
-            layers=None):
+            layers=None, edges=None):
         self.calls.append(list(combos))
         # Prefer "bottom-left" wherever it appears; everything else is worse. Nothing clips,
         # so greedy always succeeds and the joint fallback stays untouched.
@@ -353,14 +353,14 @@ class TestJointEscalation(unittest.TestCase):
         # module docstring — so the answer is stubbed rather than computed.
         self.real_layout = place.render_mod.choose_layout
         place.render_mod.choose_layout = (
-            lambda spec, name="d", binary="d2": (("down", None), 15))
+            lambda spec, name="d", binary="d2", *a: (("down", None), 15, 15))
 
     def tearDown(self):
         place._measure_candidates = self.real
         place.render_mod.choose_layout = self.real_layout
 
     def spy(self, spec, name, combos, theme, standalone=False, layout=None,
-            layers=None):
+            layers=None, edges=None):
         self.calls.append(list(combos))
         out = []
         for anchors in combos:
@@ -424,19 +424,20 @@ class TestOneDrawingForTheWholeSearch(unittest.TestCase):
         self.seen = []
         self.real = place._measure_candidates
         self.real_layout = place.render_mod.choose_layout
-        self.real_alone = place.render_mod.choose_standalone_layers
+        self.real_alone = place.render_mod.choose_standalone_spacing
         place._measure_candidates = self.spy
         place.render_mod.choose_layout = (
-            lambda spec, name="d", binary="d2": (("down", None), 15))
-        place.render_mod.choose_standalone_layers = (
-            lambda spec, name="d", theme="dark", binary="d2": 30)
+            lambda spec, name="d", binary="d2", *a: (("down", None), 15, 15))
+        place.render_mod.choose_standalone_spacing = (
+            lambda spec, name="d", theme="dark", binary="d2", *a: (30, 15))
 
     def tearDown(self):
         place._measure_candidates = self.real
         place.render_mod.choose_layout = self.real_layout
-        place.render_mod.choose_standalone_layers = self.real_alone
+        place.render_mod.choose_standalone_spacing = self.real_alone
 
-    def spy(self, spec, name, combos, theme, standalone=False, layout=None, layers=None):
+    def spy(self, spec, name, combos, theme, standalone=False, layout=None, layers=None,
+            edges=None):
         self.seen.append({"standalone": standalone, "layout": layout, "layers": layers})
         return [(anchors, fake_measurement([(0, 100)])) for anchors in combos]
 

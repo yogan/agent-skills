@@ -131,7 +131,7 @@ def _score(measurement):
 
 
 def _measure_candidates(spec, name, combos, theme, standalone=False, layout=None,
-                        layers=None):
+                        layers=None, edges=None):
     """Render and measure one anchor combination per entry in `combos`.
 
     `layout` is the `(direction, wrap)` to hold every candidate at — see `place`. Without it
@@ -157,10 +157,10 @@ def _measure_candidates(spec, name, combos, theme, standalone=False, layout=None
             # measuring the embedded form would pick anchors for a different geometry.
             if standalone:
                 svg = render_mod.standalone(trial, name=f"{name}-p{index}", theme=theme,
-                                            layers=layers)
+                                            layers=layers, edges=edges)
             else:
                 svg = render_mod.render(trial, name=f"{name}-p{index}",
-                                        wrap_edges=wrap, layers=layers)
+                                        wrap_edges=wrap, layers=layers, edges=edges)
         except render_mod.RenderError:
             continue
         jobs.append({"key": str(index),
@@ -212,7 +212,7 @@ def _report(chosen, clip, overlap, strategy, candidates):
 
 
 def _greedy(spec, name, sites, theme, anchors, standalone=False, layout=None,
-            layers=None):
+            layers=None, edges=None):
     """Settle one callout at a time, holding the others where they are.
 
     Starts from whatever the spec already pinned, so a hand-chosen anchor is a starting
@@ -228,7 +228,7 @@ def _greedy(spec, name, sites, theme, anchors, standalone=False, layout=None,
             trial[i] = anchor
             combos.append(tuple(trial))
         measured = _measure_candidates(spec, f"{name}-{i}", combos, theme,
-                                       standalone, layout, layers)
+                                       standalone, layout, layers, edges)
         _, chosen, clip, overlap = _best(measured)
         current = list(chosen)
         candidates += len(combos)
@@ -236,11 +236,11 @@ def _greedy(spec, name, sites, theme, anchors, standalone=False, layout=None,
 
 
 def _joint(spec, name, sites, theme, anchors, standalone=False, layout=None,
-           layers=None):
+           layers=None, edges=None):
     """Exhaustive: every anchor for every callout. 8^n, so only for small n."""
     combos = list(itertools.product(anchors, repeat=len(sites)))
     measured = _measure_candidates(spec, name, combos, theme, standalone, layout,
-                                   layers)
+                                   layers, edges)
     _, chosen, clip, overlap = _best(measured)
     return chosen, clip, overlap, len(combos)
 
@@ -284,11 +284,11 @@ def place(spec, name="diagram", theme="light", joint_max=JOINT_MAX, anchors=NEAR
     # `pinned` lets a caller that has already decided hand it over, which `figure.draw` does —
     # it needs the same pair for the FINAL render, and working it out twice was both the cost
     # and a correctness hole. See `render.choose_drawing`.
-    layout, layers = (pinned if pinned is not None
-                      else render_mod.choose_drawing(spec, name, theme, standalone))
+    layout, layers, edges = (pinned if pinned is not None
+                             else render_mod.choose_drawing(spec, name, theme, standalone))
     search = _joint if len(sites) <= joint_max else _greedy
     chosen, clip, overlap, candidates = search(spec, name, sites, theme, anchors,
-                                               standalone, layout, layers)
+                                               standalone, layout, layers, edges)
     strategy = "joint" if search is _joint else "greedy"
     return _apply(spec, chosen), _report(chosen, clip, overlap, strategy, candidates)
 

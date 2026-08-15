@@ -28,6 +28,7 @@ import subprocess
 import sys
 import tempfile
 
+from . import arrows
 from . import browser
 from . import callout
 from . import compact
@@ -122,15 +123,17 @@ def check_toolchain(binary="d2"):
     return []
 
 
-def compile_source(source, pad=8, binary="d2", layers=None):
+def compile_source(source, pad=8, binary="d2", layers=None, edges=None):
     """d2 source -> raw SVG text, laid out by ELK.
 
     `--theme 0` is deliberate: the palette is applied by our own literals and by the
     substitution below, so d2's themes would only add colours nothing maps.
 
     `--layout elk` is not an option a caller chooses — see `d2.ELK_OPTS` for why this repo uses
-    one engine and which one. `layers` overrides the layer spacing, which `_pick_layout`
-    escalates when the tight default leaves text unreadable; see `d2.ELK_SPACING_LADDER`.
+    one engine and which one. Two of its spacings are, because both are escalated per figure by
+    `_pick_layout`: `layers` when the tight default leaves text unreadable
+    (`d2.ELK_SPACING_LADDER`), `edges` when an arrowhead has no straight line to sit on
+    (`d2.ELK_EDGE_LADDER`).
 
     Output goes to a temp file rather than stdout: it costs a temp dir and it is the one
     form d2 will write in every case, including outputs it refuses to send to stdout.
@@ -141,7 +144,7 @@ def compile_source(source, pad=8, binary="d2", layers=None):
     with tempfile.TemporaryDirectory(prefix="lib-diagram-") as tmp:
         target = os.path.join(tmp, "out.svg")
         layers = d2mod.ELK_OPTS["nodeNodeBetweenLayers"] if layers is None else layers
-        edges = d2mod.ELK_OPTS["edgeNodeBetweenLayers"]
+        edges = d2mod.ELK_OPTS["edgeNodeBetweenLayers"] if edges is None else edges
         box = d2mod.ELK_OPTS["padding"]
         top = d2mod.ELK_OPTS["paddingTop"]
         cmd = [binary, "--pad", str(pad), "--theme", "0", "--layout", "elk",
@@ -310,7 +313,7 @@ CANDIDATES = tuple((direction, wrap)
 HEIGHT_BUCKET = 100
 
 
-def _pick_layout(spec, name, binary, theme_vars):
+def _pick_layout(spec, name, binary, theme_vars, edge_rungs=None):
     """Render each candidate layout and keep the one that measures best.
 
     Choosing between portrait and landscape by kind was a guess that had to be wrong half the
@@ -332,44 +335,107 @@ def _pick_layout(spec, name, binary, theme_vars):
     tried and got the case this exists for wrong: a four-box chain fits the column stacked
     downward at 164x643, so the search stopped and never learned that wrapping its labels
     fits the same content landscape at 916x93 — seven times shorter.
+
+    Around all of that sits the edge-spacing ladder, which is the one lever on ELK's routing
+    this repo has: room between an edge and the box it points at. It is climbed only for a
+    figure that needs it, and only as far as its size gate still passes — see `_afford`.
     """
+    best = None
+    for edges in (edge_rungs or d2mod.ELK_EDGE_LADDER):
+        layout, svg, layers, spill = _at_layer_spacing(spec, name, binary, theme_vars, edges)
+        rank = _afford(svg, name, spill)
+        if best is None or rank < best[0]:
+            best = (rank, layout, svg, layers, edges)
+        # Nothing to buy: the ladder exists to put straight line in front of an arrowhead,
+        # so a drawing with none of that wrong never pays for a second compile of itself —
+        # whatever else the size gate thinks of it.
+        if not rank[1]:
+            break
+    return best[1], best[2], best[3], best[4]
+
+
+def _afford(svg, name, spill, standalone=False):
+    """`(is the drawing spoilt, how many arrow defects)` — what a wider rung has to beat.
+
+    Spoilt first, and absolutely. The wider rung buys straight line in front of every arrowhead
+    and spends 40 to 100px of the page for it, which most figures can pay — but two cannot. The
+    reference architecture comes out 958px tall against an 840px ceiling, and the repo state
+    machine grows past the canvas d2 sized for it, with the bottom row of its boxes cut off. A
+    drawing the reader is told to split in two, or one with a box sliced in half, is not an
+    improvement on an arrowhead sitting on a curve.
+    """
+    from .gates import GateError, size as size_gate   # local: gates.clipping imports this
+    try:
+        problems = bool(size_gate.check(svg, name, standalone=standalone).problems)
+    except GateError:
+        problems = False
+    return (problems or spill > 1, len(arrows.defects(svg)))
+
+
+def _at_layer_spacing(spec, name, binary, theme_vars, edges):
+    spill = 0.0
     for layers in d2mod.ELK_SPACING_LADDER:
-        layout, svg = _pick_at_spacing(spec, name, binary, theme_vars, layers)
+        layout, svg = _pick_at_spacing(spec, name, binary, theme_vars, layers, edges)
+        hidden, spill = _faults(svg, enabled=theme_vars)
         # Unreadable text is the one defect worth re-laying-out for, and the only fix is a
         # wider gap: a label lands in the space between two layers, so at 15px it overlaps
         # whatever borders that space. Escalated rather than raised for everyone, because it
         # costs — see `d2.ELK_SPACING_LADDER`. Without a browser this cannot be measured, so
         # the tight spacing stands and the clipping gate reports the consequence later.
-        if not _hides_text(svg, enabled=theme_vars):
-            return layout, svg, layers
-    return layout, svg, layers
+        if not hidden:
+            return layout, svg, layers, spill
+    return layout, svg, layers, spill
 
 
-def _hides_text(svg, enabled=True, theme="light", standalone=False):
-    """Whether the LAYOUT has made any text unreadable — covered by geometry it is not inside,
-    or printed on a background it has no contrast against.
+def _faults(svg, enabled=True, theme="light", standalone=False):
+    """`(the LAYOUT hid some text, px of drawing outside its own canvas)`, in one measurement.
 
-    False when there is no browser to ask — the measurement needs real laid-out glyph boxes,
-    and guessing would be worse than the gate that reports it afterwards.
+    Two questions, one browser launch, because launching Chrome costs more than measuring
+    anything on the page — and both ladders ask their question per rung, so measuring twice
+    doubled the cost of the whole corpus.
+
+    Hidden text is what the LAYER spacing escalates for. Text buried by a callout is not
+    counted: that is the placement pass's problem and it has its own term for it, and widening
+    the diagram would not move an anchor.
+
+    Spilling is what the EDGE spacing must not cause. A wider rung can push a landscape state
+    machine past the height d2 wrote into its viewBox and cut the bottom row of boxes off; the
+    clipping gate says so afterwards, which is too late to choose a rung. Callouts are excluded
+    here too — d2 reserves them no canvas space at all, so one reaching into the card's padding
+    is ordinary.
+
+    Both come back false/zero when there is no browser to ask. The measurement needs real
+    laid-out glyph boxes, and guessing would be worse than the gate that reports it later.
 
     `standalone` picks the boundary, and it has to match the target the SVG is FOR: a
     standalone image is measured against its own canvas at natural size, an embedded one
     inside the content column that scales it. See `harness_html`.
     """
     if not enabled or not browser.available():
-        return False
+        return False, 0.0
     try:
         measured = browser.measure([{"key": "t",
                                      "html": harness_html(svg, theme=theme,
                                                           standalone=standalone)}])
     except browser.BrowserError:
-        return False
-    # Only what the LAYOUT hid. Text buried by a callout is the placement pass's problem and
-    # it has its own term for it — widening the whole diagram would not move the anchor.
-    return bool(measured and measured[0].get("hiddenByLayout"))
+        return False, 0.0
+    if not measured:
+        return False, 0.0
+    spill = max([sum(o["over"].values()) for o in measured[0].get("offenders") or []
+                 if not o["callout"]] or [0.0])
+    return bool(measured[0].get("hiddenByLayout")), spill
 
 
-def _pick_at_spacing(spec, name, binary, theme_vars, layers):
+def spills(svg, theme="light", standalone=False):
+    """How far the drawing reaches outside its own canvas, in px. See `_faults`.
+
+    Public because `figure` needs it after PLACEMENT, which is the one thing the ladder in
+    here cannot see: a callout takes up canvas only once it has an anchor.
+    """
+    return _faults(svg, theme=theme, standalone=standalone)[1]
+
+
+def _pick_at_spacing(spec, name, binary, theme_vars, layers, edges=None):
     from .gates import GateError, size as size_gate   # local: gates.clipping imports this
 
     best = None
@@ -387,7 +453,7 @@ def _pick_at_spacing(spec, name, binary, theme_vars, layers):
         if source in seen:
             continue
         seen.add(source)
-        raw = compile_source(source, binary=binary, layers=layers)
+        raw = compile_source(source, binary=binary, layers=layers, edges=edges)
         svg = postprocess(_maybe_compact(raw, variant, name), name, theme_vars=theme_vars)
         try:
             result = size_gate.check(svg, name)
@@ -395,23 +461,33 @@ def _pick_at_spacing(spec, name, binary, theme_vars, layers):
         except GateError:
             # Unmeasurable is not a reason to render nothing; the gates report it later.
             return (direction, wrap), svg
-        # Ranked on defects before height, which is what makes `size.RESCUE_H` a budget rather
-        # than a raised ceiling: among candidates that read equally well the shortest still
-        # wins, so the extra height is never spent for nothing — but a taller candidate that
-        # resolves a crossing no gap can rescue beats a shorter one that leaves it.
+        # Ranked on crossings before height, which is what makes `size.RESCUE_H` a budget
+        # rather than a raised ceiling: among candidates that read equally well the shortest
+        # still wins, so the extra height is never spent for nothing — but a taller candidate
+        # that resolves a crossing no gap can rescue beats a shorter one that leaves it.
         #
         # Gentler wrapping ranks better only among layouts that read equally well, so a
         # diagram spends lines when that buys glyph size and not otherwise.
+        #
+        # `arrows.defects` sits BELOW both, and that position was measured twice. Ranked
+        # above height it does buy real fixes — and it buys them at a price no reader would
+        # agree to: the repo architecture loses one stranded arrowhead by breaking every edge
+        # label in the figure across four lines, the reference ER goes from 902x257 to 820x592,
+        # and the reference class diagram from 498x490 to 753x814. What pays for a route's
+        # flaws is the edge-spacing ladder in `_pick_layout`, which buys the same fix with 40
+        # to 100px of page instead of with the shape of the whole drawing. Here they only break
+        # ties between candidates that are otherwise equal.
         rank = (len(result.problems), edgelabel.unfixable_crossings(svg),
                 round(metrics["rend_h"] / HEIGHT_BUCKET),
-                CANDIDATES.index((direction, wrap)), -metrics["fmin"])
+                CANDIDATES.index((direction, wrap)),
+                len(arrows.defects(svg)), -metrics["fmin"])
         if best is None or rank < best[0]:
             best = (rank, (direction, wrap), svg)
     return best[1], best[2]
 
 
-def choose_layout(spec, name="diagram", binary="d2"):
-    """The `((direction, wrap), layers)` this spec measures best at, or None if nothing to pick.
+def choose_layout(spec, name="diagram", binary="d2", edge_rungs=None):
+    """`((direction, wrap), layers, edges)` this spec measures best at, or None if nothing to pick.
 
     Exposed for the callout placement pass, which needs to hold the layout STILL while it
     varies anchors. Without it, `place` rendered every anchor candidate through the full search
@@ -423,12 +499,14 @@ def choose_layout(spec, name="diagram", binary="d2"):
     """
     if spec.get("direction") or spec.get("kind") == "sequence":
         return None
-    layout, _svg, layers = _pick_layout(spec, name, binary, theme_vars=True)
-    return layout, layers
+    layout, _svg, layers, edges = _pick_layout(spec, name, binary, theme_vars=True,
+                                              edge_rungs=edge_rungs)
+    return layout, layers, edges
 
 
-def choose_drawing(spec, name="diagram", theme="dark", standalone=False, binary="d2"):
-    """`(layout, layers)` this spec should be drawn at — decided ONCE, for the whole pipeline.
+def choose_drawing(spec, name="diagram", theme="dark", standalone=False, binary="d2",
+                   edge_rungs=None):
+    """`(layout, layers, edges)` this spec is drawn at — decided ONCE, for the whole pipeline.
 
     `layout` is the `(direction, wrap)` pair, or None where there is nothing to choose: a
     standalone image takes its direction from `d2.DIRECTION` and does not wrap, and a sequence
@@ -447,13 +525,13 @@ def choose_drawing(spec, name="diagram", theme="dark", standalone=False, binary=
     and a ladder of compiles plus browser launches on the standalone one, per figure.
     """
     if standalone:
-        return None, choose_standalone_layers(spec, name, theme, binary)
-    chosen = choose_layout(spec, name, binary)
-    return chosen if chosen else (None, None)
+        return (None, *choose_standalone_spacing(spec, name, theme, binary, edge_rungs))
+    chosen = choose_layout(spec, name, binary, edge_rungs)
+    return chosen if chosen else (None, None, None)
 
 
 def render(spec, name="diagram", binary="d2", theme_vars=True, wrap_edges=None,
-           layers=None):
+           layers=None, edges=None):
     """Spec -> embeddable SVG, for a host page that ships `page_css()`.
 
     `name` namespaces the SVG's ids, so it must be unique within a page. For a file to open
@@ -469,7 +547,7 @@ def render(spec, name="diagram", binary="d2", theme_vars=True, wrap_edges=None,
     if not spec.get("direction") and spec.get("kind") != "sequence":
         return _pick_layout(spec, name, binary, theme_vars)[1]  # noqa: E501  (svg)
     raw = compile_source(d2mod.emit(spec, wrap_edges=wrap_edges), binary=binary,
-                         layers=layers)
+                         layers=layers, edges=edges)
     return postprocess(_maybe_compact(raw, spec, name), name, theme_vars=theme_vars)
 
 
@@ -499,10 +577,10 @@ STANDALONE_CALLOUT = {
 STANDALONE_PAD = 20
 
 
-def _standalone_at(spec, name, theme, binary, layers):
-    """One standalone SVG, compiled at exactly `layers` of layer spacing."""
+def _standalone_at(spec, name, theme, binary, layers, edges=None):
+    """One standalone SVG, compiled at exactly these two ELK spacings."""
     source = d2mod.emit(spec, background=palette.CANVAS, standalone=True)
-    raw = compile_source(source, pad=STANDALONE_PAD, binary=binary, layers=layers)
+    raw = compile_source(source, pad=STANDALONE_PAD, binary=binary, layers=layers, edges=edges)
     # Substitute to vars first, then resolve them down to one theme. The detour exists so
     # mappability can be checked while it still means something: once the colours are
     # concrete, every one of them is a non-key and `unmapped()` can no longer tell an
@@ -520,38 +598,48 @@ def _standalone_at(spec, name, theme, binary, layers):
     return _inline_style(svg, STANDALONE_CSS + STANDALONE_CALLOUT[theme])
 
 
-def _standalone_ladder(spec, name, theme, binary):
-    """`(svg, layers)` at the tightest spacing that leaves no text unreadable.
+def _standalone_ladder(spec, name, theme, binary, edge_rungs=None):
+    """`(svg, layers, edges)` at the tightest spacings that leave the drawing sound.
 
-    The same escalation `_pick_layout` does for the embedded target, and it has to be done
-    separately because the two targets are different drawings: standalone has its own
-    direction default (`d2.DIRECTION`), its own far more generous padding, and no content
-    column, so neither the layout nor the measurement carries across.
+    The same two escalations `_pick_layout` does for the embedded target — layer spacing until
+    no text is unreadable, edge spacing until no arrowhead sits on a curve — done separately
+    because the two targets are different drawings: standalone has its own direction default
+    (`d2.DIRECTION`), its own far more generous padding, and no content column, so neither the
+    layout nor the measurement carries across.
 
     What does NOT carry across is the cost. Embedded, every px of width is scaled back out of
-    the glyphs, which is why the ladder is escalated rather than raised for everyone; a
+    the glyphs, which is why the ladders are escalated rather than raised for everyone; a
     standalone image is shown at natural size, so the reference ER goes from 886x281 to
     916x281 with its text still at 12.5px. The gap is close to free here.
     """
-    for layers in d2mod.ELK_SPACING_LADDER:
-        svg = _standalone_at(spec, name, theme, binary, layers)
-        if not _hides_text(svg, theme=theme, standalone=True):
+    best = None
+    for edges in (edge_rungs or d2mod.ELK_EDGE_LADDER):
+        for layers in d2mod.ELK_SPACING_LADDER:
+            svg = _standalone_at(spec, name, theme, binary, layers, edges)
+            hidden, spill = _faults(svg, theme=theme, standalone=True)
+            if not hidden:
+                break
+        rank = _afford(svg, name, spill, standalone=True)
+        if best is None or rank < best[0]:
+            best = (rank, svg, layers, edges)
+        if not rank[1]:
             break
-    return svg, layers
+    return best[1], best[2], best[3]
 
 
-def choose_standalone_layers(spec, name="diagram", theme="dark", binary="d2"):
-    """The layer spacing this spec needs as a standalone image.
+def choose_standalone_spacing(spec, name="diagram", theme="dark", binary="d2",
+                              edge_rungs=None):
+    """The `(layers, edges)` spacing this spec needs as a standalone image.
 
     Exposed for the placement pass, for the same reason `choose_layout` is: the spacing has to
     be decided ONCE and then held still while anchors vary. Escalating inside `standalone()`
     during the search would put a browser launch inside a 64-candidate loop, where the whole
     point of `_measure_candidates` is that all 64 are measured in one.
     """
-    return _standalone_ladder(spec, name, theme, binary)[1]
+    return _standalone_ladder(spec, name, theme, binary, edge_rungs)[1:]
 
 
-def standalone(spec, name="diagram", theme="dark", binary="d2", layers=None):
+def standalone(spec, name="diagram", theme="dark", binary="d2", layers=None, edges=None):
     """Spec -> a self-contained SVG that can be opened on its own.
 
     Three things separate this from `render()`, and all three are what make a file work by
@@ -579,7 +667,7 @@ def standalone(spec, name="diagram", theme="dark", binary="d2", layers=None):
     if theme not in ("light", "dark"):
         raise RenderError(f"theme must be 'light' or 'dark', not {theme!r}")
     if layers is not None:
-        return _standalone_at(spec, name, theme, binary, layers)
+        return _standalone_at(spec, name, theme, binary, layers, edges)
     return _standalone_ladder(spec, name, theme, binary)[0]
 
 

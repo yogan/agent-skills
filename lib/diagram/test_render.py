@@ -174,7 +174,7 @@ class TestLayoutChoice(unittest.TestCase):
         self._compile = render.compile_source
         self._post = render.postprocess
 
-        def compile_source(source, pad=8, binary="d2", layers=None):
+        def compile_source(source, pad=8, binary="d2", layers=None, edges=None):
             self.calls.append(source)
             # Landscape comes out wide and short, portrait tall and narrow — enough for the
             # ranking to have something to prefer. `self.natural` scales both, so a test can

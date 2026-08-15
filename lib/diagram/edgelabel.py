@@ -30,6 +30,10 @@ Two passes follow. `_align_rows` pulls labels that landed near the same height o
 that height. `_cut_gaps` gives a connection crossing a container's TITLE the same break d2
 already cuts for its own labels.
 
+What an arrow has to look like underneath all this — where its head may not be broken, what
+counts as a straight leg — is `arrows`, and both modules read it from there. This one only
+decides where the words go.
+
 A `sequence` is excluded by its caller: its labels come from d2's own sequence engine and its
 rows are re-stacked by `compact.py`, so this must not be a third opinion about that geometry.
 """
@@ -37,10 +41,8 @@ import re
 from collections import namedtuple
 
 from . import palette
-
-# How far off-axis a leg may be and still count as straight. ELK's long legs drift a fraction
-# of a pixel, and calling those diagonal would exclude the very legs this module needs.
-AXIS_EPS = 1.5
+from .arrows import (CONNECTION, MASK, STROKE, Box, ends, leaves_a_stub, leg_boxes, legs,
+                     pairs, points, shortfall)
 
 # Line a leg must keep showing beyond the label, in px total. A label centred on a leg barely
 # its own length leaves no arrow either side of it, and then the break IS the leg.
@@ -51,14 +53,20 @@ CENTRE_SLACK = 8
 # included: pushed hard against one end is the answer when the obstacle is at the other.
 SLIDE = tuple(i / 16 for i in range(17))
 
-# How far a label will travel to line up with one already placed, in px. Bounded: alignment is
-# worth a few px of drift, not a diagram's worth — past this the label is no longer near the
-# middle of its own arrow, which is the thing the alignment was tidying.
-ALIGN_REACH = 40
-
-# A stroke's width for the purpose of "how much line does this label cover" — d2 draws
-# connections at 2 and the mask is what actually hides them.
-STROKE = 2
+# How far along its own leg a label may end up from the middle of it, as a fraction, when it
+# moves to join a row. Bounded, because alignment is worth some drift and not a diagram's worth
+# — past this the label is no longer near the middle of the arrow it names, which is the thing
+# the alignment was tidying.
+#
+# Relative, and that replaced a flat 40px. The px version asked the wrong question: it refused
+# two labels 44px apart that had 480px of leg to move in, and admitted two 39px apart whose legs
+# gave them 20px of travel between them. What a drift COSTS depends on the leg it happens on.
+#
+# Two numbers, because the axes are not alike — the legs are not. A figure's horizontal runs are
+# far longer than its vertical ones, so one fraction buys a much larger ABSOLUTE travel sideways:
+# 40% of a 563px run is 225px, where 40% of a 150px one is 60. A label sliding a fifth of the
+# page along the reading direction is a bigger event than the same fraction going up.
+ALIGN_FRACTION = {"y": 0.4, "x": 0.2}
 
 # A container's border, as a strip this thick. The interior is not an obstacle: a label
 # crossing the empty part of a group is ordinary and ELK routes through it all the time. The
@@ -76,15 +84,20 @@ TITLE_PAD = 5
 # baseline and are 17px tall, so a gap cut for a title matches the gaps already in the drawing.
 TITLE_RISE, TITLE_HEIGHT = 13, 17
 
-# How much of the connection has to survive on EACH side of a gap, in px, and how far d2's
-# arrowhead reaches back from the tip.
+# What a px of line hidden right before an arrowhead is worth, in px hidden anywhere else. The
+# one place in this module where two things are priced against each other rather than compared
+# in order, and it is priced because neither order is right: rank it above hidden line and a
+# label will delete a whole leg to win 4px of clearance; rank it below and it never wins
+# anything.
 #
-# Without this a gap can be cut right where an arrow terminates, leaving the head floating —
-# a triangle pointing at a box it is no longer joined to, which is worse than the crossing it
-# replaced. `d2.ELK_OPTS["paddingTop"]` is what makes the room for the head; this is the rule
-# that declines the gap when the room is not there anyway.
-MIN_RUN = 6
-HEAD_REACH = 10
+# Both bounds are measured, on `repo/arch`, where one label's only two spots are 4px into an
+# arrowhead or across the route's horizontal jog. Hiding the jog costs 103px² more than the leg
+# it would otherwise cover, so anything from 13 up buys that trade — and looking at it settles
+# it: the arrow then leaves its box as a 6px stub and reappears below the words. 5 keeps the
+# label on the leg and leaves the stranded head standing as a defect, which is the honest
+# outcome: no placement on THAT layout is right, and `render._pick_at_spacing` is what can
+# choose a different one.
+HEAD_WEIGHT = 5
 
 # Rounding, in px² of area and px of distance, before two candidates are compared. Without it
 # a quarter-pixel of shape overlap outranks a whole leg of hidden line, since the terms are
@@ -92,11 +105,6 @@ HEAD_REACH = 10
 ROUND = (1, 4, 8, 4)
 
 _ROOT = re.compile(r"<svg\b[^>]*>")
-# The mask's own box, NOT the root's viewBox, is the canvas every coordinate here is expressed
-# in. They are not the same rectangle and the offset between them is not constant, so a label
-# scored against the viewBox can be given room on one side that does not exist.
-_MASK = re.compile(r'(<mask\b[^>]*\bx="([-\d.]+)" y="([-\d.]+)" width="([\d.]+)" '
-                   r'height="([\d.]+)"[^>]*>)(.*?)(</mask>)', re.S)
 _MASK_RECT = re.compile(r'<rect x="([-\d.]+)" y="([-\d.]+)" width="([\d.]+)" '
                         r'height="([\d.]+)" fill="black">\s*</rect>')
 # The holes this module cuts itself, as opposed to the ones d2 cut for its edge labels. Tagged
@@ -115,10 +123,8 @@ _RECT = re.compile(r'<rect x="([-\d.]+)" y="([-\d.]+)" width="([\d.]+)" height="
 # closing tag between them.
 _TITLE = re.compile(r'<rect x="([-\d.]+)" y="([-\d.]+)" width="([\d.]+)" height="[\d.]+"'
                     r'[^>]*?/>(?:</g>)*<text x="([-\d.]+)" y="([-\d.]+)"[^>]*?class="text"')
-_CONNECTION = re.compile(r'<path d="([^"]*)"[^>]*class="connection"[^>]*/>')
 _POLY = re.compile(r'<polygon points="([^"]*)"[^>]*/>')
 _PATH = re.compile(r'<path d="([^"]*)"[^>]*/>')
-_NUM = re.compile(r"-?\d+(?:\.\d+)?")
 # A group container's border, in EITHER form. This pass runs before `palette.to_vars`, so what
 # it sees is the literal; matching only the `var()` spelling recognised no container at all,
 # which counted every one as a solid box and drove labels out of their containers entirely.
@@ -127,71 +133,6 @@ _GRP = re.compile("|".join(re.escape(s) for s in
                            ["var(--d-grp-br)"]
                            + [lit for lit, (var, *_) in palette.ROLES.items()
                               if var == "--d-grp-br"]))
-_CMD = re.compile(r"([MmLlSsCcQqZz])([^A-Za-z]*)")
-
-
-class _Box(tuple):
-    """(x0, y0, x1, y1), with the two operations the search needs."""
-
-    @property
-    def w(self):
-        return self[2] - self[0]
-
-    @property
-    def h(self):
-        return self[3] - self[1]
-
-    def overlap(self, other):
-        dx = min(self[2], other[2]) - max(self[0], other[0])
-        dy = min(self[3], other[3]) - max(self[1], other[1])
-        return dx * dy if dx > 0 and dy > 0 else 0.0
-
-    def outside(self, canvas):
-        return self.w * self.h - self.overlap(canvas)
-
-
-def _pairs(text):
-    nums = [float(n) for n in _NUM.findall(text)]
-    return list(zip(nums[::2], nums[1::2]))
-
-
-def points(d):
-    """The polyline a d2 connection path visits, absolute, in order.
-
-    The control points of a curve are dropped and only its endpoint is kept, which turns each
-    of ELK's rounded corners into one short diagonal between the two straight legs it joins.
-    That is the right reading here: a corner is not a leg and must never host a label, and
-    being off-axis is exactly what excludes it below.
-    """
-    out, current = [], (0.0, 0.0)
-    for cmd, body in _CMD.findall(d):
-        pts = _pairs(body)
-        upper = cmd.upper()
-        if upper == "Z" or not pts:
-            continue
-        if cmd.islower():
-            absolute, cursor = [], current
-            for px, py in pts:
-                cursor = (cursor[0] + px, cursor[1] + py)
-                absolute.append(cursor)
-            pts = absolute
-        if upper in ("M", "L"):
-            out += pts
-        else:
-            out.append(pts[-1])       # curve: endpoint only
-        current = out[-1]
-    return out
-
-
-def _legs(pts):
-    """(kind, x, y, length) per straight leg, `kind` being 'v' or 'h'."""
-    legs = []
-    for (x0, y0), (x1, y1) in zip(pts, pts[1:]):
-        if abs(x1 - x0) <= AXIS_EPS and abs(y1 - y0) > AXIS_EPS:
-            legs.append(("v", (x0 + x1) / 2, (y0 + y1) / 2, abs(y1 - y0)))
-        elif abs(y1 - y0) <= AXIS_EPS and abs(x1 - x0) > AXIS_EPS:
-            legs.append(("h", (x0 + x1) / 2, (y0 + y1) / 2, abs(x1 - x0)))
-    return legs
 
 
 def _midpoint(pts):
@@ -234,7 +175,7 @@ def _candidates(box, legs):
         for step in SLIDE:
             coord = lo + span * step
             x, y = (cx, coord) if kind == "v" else (coord, cy)
-            out.append((_Box((x - w / 2, y - h / 2, x + w / 2, y + h / 2)),
+            out.append((Box((x - w / 2, y - h / 2, x + w / 2, y + h / 2)),
                         "y" if kind == "v" else "x", lo, hi))
     return out
 
@@ -259,7 +200,7 @@ def title_boxes(svg, body_start=0):
             continue
         left, anchor, baseline = (float(match.group(i)) for i in (1, 4, 5))
         half = max(0.0, anchor - left - TITLE_PAD)
-        boxes.append(_Box((anchor - half, baseline - TITLE_RISE,
+        boxes.append(Box((anchor - half, baseline - TITLE_RISE,
                            anchor + half, baseline - TITLE_RISE + TITLE_HEIGHT)))
     return boxes
 
@@ -276,26 +217,6 @@ def _on_leg(box, legs):
     return (None, 0.0, 0.0)
 
 
-def _path_boxes(d):
-    """A connection's straight legs as thin boxes, so a label can be charged for crossing one.
-
-    The label's OWN path is charged too, and that is the whole of the "hidden line" term. It
-    was excluded at first, on the reasoning that covering the line a label names is what the
-    mask exists for — which is true of the leg the label sits on and false of every other leg
-    of the same route. A four-leg route offset beside its first vertical then lay across its
-    own horizontal, and the drawing came out with a line struck through the words.
-    """
-    boxes = []
-    for kind, cx, cy, length in _legs(points(d)):
-        if kind == "v":
-            boxes.append(_Box((cx - STROKE / 2, cy - length / 2,
-                               cx + STROKE / 2, cy + length / 2)))
-        else:
-            boxes.append(_Box((cx - length / 2, cy - STROKE / 2,
-                               cx + length / 2, cy + STROKE / 2)))
-    return boxes
-
-
 def _shapes(svg, body_start):
     """Everything a label must not sit on: node boxes, table rows, callouts, group borders.
 
@@ -310,39 +231,41 @@ def _shapes(svg, body_start):
         if 'fill="transparent"' in match.group(0):
             continue
         if _GRP.search(match.group(0)):
-            boxes += [_Box((x, y, x + w, y + BORDER)),
-                      _Box((x, y + h - BORDER, x + w, y + h)),
-                      _Box((x, y, x + BORDER, y + h)),
-                      _Box((x + w - BORDER, y, x + w, y + h))]
+            boxes += [Box((x, y, x + w, y + BORDER)),
+                      Box((x, y + h - BORDER, x + w, y + h)),
+                      Box((x, y, x + BORDER, y + h)),
+                      Box((x + w - BORDER, y, x + w, y + h))]
         else:
-            boxes.append(_Box((x, y, x + w, y + h)))
+            boxes.append(Box((x, y, x + w, y + h)))
     for match in _POLY.finditer(svg, body_start):
-        pts = _pairs(match.group(1))
+        pts = pairs(match.group(1))
         if pts and "connection" not in match.group(0):
-            boxes.append(_Box((min(p[0] for p in pts), min(p[1] for p in pts),
+            boxes.append(Box((min(p[0] for p in pts), min(p[1] for p in pts),
                                max(p[0] for p in pts), max(p[1] for p in pts))))
     for match in _PATH.finditer(svg, body_start):
         if "connection" in match.group(0) or "Z" not in match.group(1):
             continue
         pts = points(match.group(1))
         if pts:
-            boxes.append(_Box((min(p[0] for p in pts), min(p[1] for p in pts),
+            boxes.append(Box((min(p[0] for p in pts), min(p[1] for p in pts),
                                max(p[0] for p in pts), max(p[1] for p in pts))))
     return boxes
 
 
-def _key(box, canvas, shapes, lines, others, target):
+def _key(box, canvas, shapes, lines, zones, others, target):
     """How bad a candidate is, compared term by term rather than priced against each other.
 
     The order is the argument. Off the canvas is not a placement at all. On a box is the defect
     this module was written for — a cardinality with its left half inside the table it points
     at — and no amount of tidiness elsewhere buys it back. Hidden line is the thing being
-    minimised once the label is somewhere legal. Drift is the tie-break, and it ties often:
-    keep the label near the middle of its own route, because that is where a reader looks for
-    it.
+    minimised once the label is somewhere legal, and the px of it that sit right before an
+    arrowhead count `HEAD_WEIGHT` times over, because losing those costs the arrow its meaning
+    rather than a little of its length. Drift is the tie-break, and it ties often: keep the
+    label near the middle of its own route, because that is where a reader looks for it.
     """
     shape_area = sum(box.overlap(s) for s in shapes) + sum(box.overlap(o) for o in others)
-    line_area = sum(box.overlap(line) for line in lines)
+    line_area = (sum(box.overlap(line) for line in lines)
+                 + HEAD_WEIGHT * STROKE * shortfall(box, zones))
     drift = (((box[0] + box[2]) / 2 - target[0]) ** 2
              + ((box[1] + box[3]) / 2 - target[1]) ** 2) ** 0.5
     terms = (box.outside(canvas), shape_area, line_area, drift)
@@ -360,11 +283,11 @@ def reposition(svg):
     so leaving it behind would delete a piece of line the label has vacated.
     """
     root = _ROOT.search(svg)
-    mask = _MASK.search(svg)
+    mask = MASK.search(svg)
     if not root or not mask:
         return svg
     cx, cy, cw, ch = (float(g) for g in mask.group(2, 3, 4, 5))
-    canvas = _Box((cx, cy, cx + cw, cy + ch))
+    canvas = Box((cx, cy, cx + cw, cy + ch))
 
     rects = list(_MASK_RECT.finditer(mask.group(6)))
     labels = [m for m in _LABELLED.finditer(svg) if m.start() < mask.start()]
@@ -374,11 +297,14 @@ def reposition(svg):
     titles = title_boxes(svg, root.end())
     shapes = _shapes(svg, root.end()) + titles
     all_paths = [m.group("d") for m in labels] + _unlabelled_paths(svg, labels)
-    boxes = [_Box((float(r.group(1)), float(r.group(2)),
+    boxes = [Box((float(r.group(1)), float(r.group(2)),
                    float(r.group(1)) + float(r.group(3)),
                    float(r.group(2)) + float(r.group(4)))) for r in rects]
 
-    lines = [b for d in all_paths for b in _path_boxes(d)]
+    lines = [b for d in all_paths for b in leg_boxes(d)]
+    # The arrow ends, read once. Every candidate of every label is scored against them, and
+    # they do not move: this pass edits words and mask rectangles, never a route.
+    zones = ends(svg)
     placed, used, drawn = [], set(), []
     for label in labels:
         index = _match(label, boxes, used)
@@ -391,10 +317,10 @@ def reposition(svg):
         target = _midpoint(pts)
 
         def score(candidate, _o=others, _t=target):
-            return _key(candidate, canvas, shapes, lines, _o, _t)
+            return _key(candidate, canvas, shapes, lines, zones, _o, _t)
 
         best, best_key, axis, lo, hi = box, None, None, 0.0, 0.0
-        for candidate, candidate_axis, low, high in _candidates(box, _legs(pts)):
+        for candidate, candidate_axis, low, high in _candidates(box, legs(pts)):
             key = score(candidate)
             if best_key is None or key < best_key:
                 best, best_key, axis, lo, hi = candidate, key, candidate_axis, low, high
@@ -419,14 +345,11 @@ def unfixable_crossings(svg):
     may not have that problem at all, which is what makes this worth counting per candidate —
     see `render._pick_at_spacing` and the rescue budget in `gates/size`.
     """
-    count = 0
-    for box in title_boxes(svg):
-        crossed = any(box.overlap(leg) > 0
-                      for m in _CONNECTION.finditer(svg)
-                      for leg in _path_boxes(m.group(1)))
-        if crossed and not _leaves_a_stub(box, _CONNECTION.finditer(svg)):
-            count += 1
-    return count
+    zones = ends(svg)
+    lines = [leg for m in CONNECTION.finditer(svg) for leg in leg_boxes(m.group(1))]
+    return sum(1 for box in title_boxes(svg)
+               if any(box.overlap(leg) > 0 for leg in lines)
+               and not leaves_a_stub(box, zones))
 
 
 def _cut_gaps(svg, boxes):
@@ -447,48 +370,18 @@ def _cut_gaps(svg, boxes):
     svg = _GAP_RECT.sub("", svg)
     if not boxes:
         return svg
-    mask = _MASK.search(svg)
+    mask = MASK.search(svg)
     if not mask:
         return svg
-    keep = [b for b in boxes if b.w > 1 and _leaves_a_stub(b, _CONNECTION.finditer(svg))]
+    # One rectangle hides every connection that crosses it — the mask is not per-edge — so one
+    # stranded arrowhead vetoes the whole gap. That is the right granularity anyway: a title is
+    # either cleared or it is not. The rule is `arrows.leaves_a_stub`, the same one that stops
+    # a LABEL's gap landing on an arrowhead; there is only one such rule in the renderer.
+    zones = ends(svg)
+    keep = [b for b in boxes if b.w > 1 and leaves_a_stub(b, zones)]
     rects = "".join(f'<rect x="{b[0]:f}" y="{b[1]:f}" width="{b.w:f}" height="{b.h:f}" '
                     f'fill="black" data-gap="title"></rect>\n' for b in keep)
     return svg[:mask.end(6)] + rects + svg[mask.end(6):]
-
-
-def _leaves_a_stub(box, connections):
-    """Whether cutting `box` leaves every connection through it visible on both sides.
-
-    One rectangle hides every connection that crosses it — the mask is not per-edge — so one
-    stranded arrowhead vetoes the whole gap. That is the right granularity anyway: a title is
-    either cleared or it is not.
-    """
-    for match in connections:
-        pts = points(match.group(1))
-        inside = [i for i, point in enumerate(_walk(pts))
-                  if box[0] <= point[0] <= box[2] and box[1] <= point[1] <= box[3]]
-        if not inside:
-            continue
-        # An arrowhead is painted over the last `HEAD_REACH` px of the line, and a `<->` edge
-        # has one at each end, so those px are not a stub — they are the head itself.
-        before = inside[0] - (HEAD_REACH if "marker-start" in match.group(0) else 0)
-        after = (len(list(_walk(pts))) - 1 - inside[-1]) - HEAD_REACH
-        if before < MIN_RUN or after < MIN_RUN:
-            return False
-    return True
-
-
-def _walk(pts, step=1.0):
-    """The polyline sampled at ~`step` px, so an index into it is a distance along the line."""
-    out = []
-    for (x0, y0), (x1, y1) in zip(pts, pts[1:]):
-        span = ((x1 - x0) ** 2 + (y1 - y0) ** 2) ** 0.5
-        for i in range(max(1, int(span / step))):
-            t = i / max(1, int(span / step))
-            out.append((x0 + (x1 - x0) * t, y0 + (y1 - y0) * t))
-    if pts:
-        out.append(pts[-1])
-    return out
 
 
 class _Placed(namedtuple("_Placed", "label index was box key axis lo hi score")):
@@ -499,11 +392,29 @@ class _Placed(namedtuple("_Placed", "label index was box key axis lo hi score"))
         return ((self.box[1] + self.box[3]) / 2 if self.axis == "y"
                 else (self.box[0] + self.box[2]) / 2)
 
+    @property
+    def reach(self):
+        """How far this label may TRAVEL to join a row, in px.
+
+        Travel, not distance from the leg's centre, and that distinction is the whole rule. On
+        the reference architecture `GraphQL` has already been slid clear of the Kubernetes
+        container's border by the base search, so it sits well off its leg's centre for a good
+        reason; measured from the centre it then had budget to be dragged 138px back down INTO
+        the container to join a row with a third label. Measured as travel it has none, the
+        far row is refused, and it keeps `WebSocket` level with it outside the box.
+
+        Relative to the leg, not a fixed number, because the same drift means different things
+        on a 70px leg and a 500px one: a third of the way along a short leg is nearly at the
+        arrowhead, where the same px on a long leg is still comfortably in the middle third.
+        """
+        along = self.box.h if self.axis == "y" else self.box.w
+        return ALIGN_FRACTION[self.axis] * (self.hi - self.lo + along + CENTRE_SLACK)
+
     def at(self, coord):
         """The same box with its slide coordinate set to `coord`."""
         shift = coord - self.coord
         dx, dy = (0, shift) if self.axis == "y" else (shift, 0)
-        return _Box((self.box[0] + dx, self.box[1] + dy,
+        return Box((self.box[0] + dx, self.box[1] + dy,
                      self.box[2] + dx, self.box[3] + dy))
 
 
@@ -525,6 +436,12 @@ def _align_rows(placed):
     labels that would touch at a shared height are the case this has to survive, and it does it
     by admitting them one at a time, nearest first: the second one is refused and simply keeps
     the position it already had. A partial row beats a collision, and beats abandoning the row.
+
+    No label travels further than `_Placed.reach`, and a row that only exists at a coordinate
+    beyond that simply does not form. That is what keeps a distant third label from dragging a
+    pair that was already level: on the reference architecture the only height all three could
+    share was inside the Kubernetes cluster, and `GraphQL` and `WebSocket` would have been
+    pulled in to reach it.
     """
     out = list(placed)
     for axis in ("x", "y"):
@@ -537,7 +454,13 @@ def _align_rows(placed):
                     moved = member.at(target)
                     if not (member.lo <= target <= member.hi):
                         continue
-                    if member.score(moved)[:3] != member.key[:3]:
+                    # And not so far along its own leg that the label has stopped being in the
+                    # middle of the arrow it names — which is the thing the row was tidying.
+                    if abs(target - member.coord) > member.reach:
+                        continue
+                    # Everything above drift, whatever that is today — a term added to `_key`
+                    # is a thing alignment must not be allowed to spend.
+                    if member.score(moved)[:-1] != member.key[:-1]:
                         continue
                     if any(moved.overlap(other) > 0 for other in taken):
                         continue
@@ -553,13 +476,23 @@ def _align_rows(placed):
 
 
 def _rows(members):
-    """Runs of labels, sorted by coordinate, each within `ALIGN_REACH` of the run's first."""
-    rows, run = [], []
+    """Runs of labels, sorted by coordinate, that can all reach one shared coordinate.
+
+    Reachability rather than a fixed window, because a window is the wrong question asked in
+    px: two labels 44px apart with 480px of leg between them are trivially one row and were
+    refused, while two 39px apart on two 50px legs were grouped and then could not move. What
+    decides it is whether their slide ranges overlap at all — and how far each may travel is
+    `_Placed.reach`, which is a fraction of its own leg.
+    """
+    rows, run, lo, hi = [], [], None, None
     for member in members:
-        if run and member.coord - run[0].coord > ALIGN_REACH:
+        low = member.lo if lo is None else max(lo, member.lo)
+        high = member.hi if hi is None else min(hi, member.hi)
+        if run and low > high:
             rows.append(run)
-            run = []
+            run, low, high = [], member.lo, member.hi
         run.append(member)
+        lo, hi = low, high
     rows.append(run)
     return [row for row in rows if len(row) > 1]
 
@@ -571,11 +504,19 @@ def _targets(row):
     — a container's edge between two labels is enough — and the row then gives up on a height
     that was available a few px away. The midpoint comes first, then each member's own current
     height, then the ends of the range they can all reach.
+
+    A member's own height is offered RAW, not clamped into the range the whole row can reach.
+    Clamping made every proposal feasible for everyone, and in doing so deleted the only useful
+    ones: on the reference architecture a third label 150px away dragged the common range down
+    inside the Kubernetes container, so `GraphQL`'s own height — where its neighbour wanted to
+    be, and where two of the three could meet — was never even proposed. `_align_rows` already
+    counts how many members actually take a target, so an unreachable proposal costs nothing
+    and a partial row is a result.
     """
     lo, hi = max(p.lo for p in row), min(p.hi for p in row)
     clamp = (lambda v: min(max(v, lo), hi)) if lo <= hi else (lambda v: v)
     wanted = [clamp((row[0].coord + row[-1].coord) / 2)]
-    wanted += [clamp(p.coord) for p in row]
+    wanted += [p.coord for p in row]
     if lo <= hi:
         wanted += [lo, hi]
     return list(dict.fromkeys(wanted))

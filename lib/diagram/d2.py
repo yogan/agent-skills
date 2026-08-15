@@ -174,6 +174,22 @@ ELK_OPTS = {
 # that shipped, where paint order decides which test applies, the architecture is clean at 15.
 ELK_SPACING_LADDER = (15, 30, 40)
 
+# Room between an edge and the box it points at, tightest first, when the tight one leaves an
+# ARROWHEAD with no straight line to sit on.
+#
+# This is the only lever the repo has on ELK's routing. At 15 the last cross-run of an edge is
+# parked about 12px from its target, d2 spends 8 of those rounding the corner, and the 10px
+# arrowhead is then painted along the curve — so it leans out to one side and reads as a shape
+# stuck on the line rather than the end of it. Eleven arrows across the two corpora looked like
+# that. At 25 there are none, in either corpus.
+#
+# 20 is not a rung because it fixes nothing: measured, the corpus still has all eleven, and the
+# reference architecture flips to a 1006px-wide landscape whose text fails the 11px floor.
+#
+# Escalated rather than raised, because it costs 40 to 100px of page per figure, and one figure
+# cannot pay: `render._afford` keeps a rung only while the size gate still passes.
+ELK_EDGE_LADDER = (15, 25)
+
 # A table's own base font. d2 renders a sql_table/class header at ~1.3x this and ignores
 # the global `**.style.font-size` for it, so 14 gives 14px rows and an ~18px header —
 # both under the 19px body text. At the global 13 the header lands at 17px, which reads

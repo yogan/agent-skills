@@ -20,10 +20,13 @@ import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
-from lib.diagram import edgelabel  # noqa: E402
+from lib.diagram import arrows, edgelabel  # noqa: E402
 
+# `marker-end` is not decoration: d2 puts one on every connection it draws as an arrow, and the
+# rules about what may sit near an arrowhead are read off exactly that attribute. A fixture
+# without one is a lifeline, not an arrow — see `TestTitleGaps`.
 CONN = ('<path d="{d}" stroke="var(--d-muted)" fill="none" class="connection" '
-        'style="stroke-width:2;" mask="url(#m)" />'
+        'style="stroke-width:2;" marker-end="url(#head)" mask="url(#m)" />'
         '<text x="{x}" y="{y}" fill="var(--d-muted)" class="text-italic" '
         'style="text-anchor:middle;font-size:13px">{text}</text>')
 
@@ -50,7 +53,7 @@ def moved(out):
 
 
 def holes_of(out):
-    mask = edgelabel._MASK.search(out)
+    mask = arrows.MASK.search(out)
     return [tuple(float(g) for g in r.group(1, 2, 3, 4))
             for r in edgelabel._MASK_RECT.finditer(mask.group(6))]
 
@@ -84,10 +87,10 @@ class TestMovesOffAHorizontalLeg(unittest.TestCase):
         is 30px of straight line between two 10px corner curves, and the label ate all of it.
         On a vertical leg it costs its own 17px of height instead.
         """
-        before = edgelabel._Box((85, 121, 165, 138))
+        before = arrows.Box((85, 121, 165, 138))
         (dx, dy), = moved(self.out)
-        after = edgelabel._Box((85 + dx, 121 + dy, 165 + dx, 138 + dy))
-        legs = edgelabel._path_boxes(TURNING)
+        after = arrows.Box((85 + dx, 121 + dy, 165 + dx, 138 + dy))
+        legs = arrows.leg_boxes(TURNING)
         self.assertAlmostEqual(sum(before.overlap(leg) for leg in legs) / 2, 30, delta=1)
         self.assertAlmostEqual(sum(after.overlap(leg) for leg in legs) / 2, 17, delta=1)
 
@@ -203,26 +206,37 @@ class TestRowAlignment(unittest.TestCase):
         self.assertNotEqual(heights[0], heights[1],
                             "two labels overlapping in x must not share a height")
 
-    def test_a_label_that_cannot_reach_the_row_keeps_its_own_place(self):
-        """Its leg is 40px long, so its label can travel 7.5px; the row is 90px away."""
+    def test_a_short_legged_label_is_not_dragged_to_a_distant_row(self):
+        """What bounds a move is the label's OWN leg, as a fraction of it.
+
+        The short one here has 40px of leg and can travel 7.5px of it; its neighbour has 280px
+        and can travel 82. So the row forms at the short one's end of the range and the LONG
+        label is the one that goes to meet it. That asymmetry is the point of the bound being
+        relative: the same 82px is a different event on the two legs.
+        """
         labels = [(100, 20, 300, 50, "long"), (250, 50, 90, 50, "short")]
         out = edgelabel.reposition(self.runs(labels))
-        for _dx, dy in moved(out):
-            self.assertLessEqual(abs(dy), 8, "a short leg cannot reach a distant row")
+        heights = self.centres(out, labels)
+        # 64.4 rather than its 70px midpoint: the base search has already slid it clear of the
+        # arrowhead at the end of its 40px leg. Alignment then takes the row to where it sits.
+        self.assertAlmostEqual(heights[1], 64.4, delta=1, msg="the short leg barely moves")
+        self.assertLessEqual(max(heights) - min(heights), 0.01, f"still a row: {heights}")
+
+    def test_two_short_legs_far_apart_do_not_become_a_row(self):
+        """The hard bound, with nobody able to spend it: 40px of leg each, 110px apart.
+
+        Both labels DO shift a little — the base search slides each clear of the arrowhead at
+        the end of its own leg — but neither travels toward the other, so no row forms.
+        """
+        labels = [(100, 150, 190, 50, "one"), (250, 260, 300, 50, "two")]
+        out = edgelabel.reposition(self.runs(labels))
+        heights = self.centres(out, labels)
+        self.assertAlmostEqual(heights[1] - heights[0], 110, delta=1,
+                               msg=f"they must stay 110px apart, got {heights}")
 
 
 class TestGeometryHelpers(unittest.TestCase):
-    def test_a_near_vertical_leg_still_counts_as_vertical(self):
-        """ELK drifts a fraction of a px over a long leg (`M 344.49 439 L 344.02 546`), and
-        calling those diagonal would exclude exactly the legs this module exists to use."""
-        legs = edgelabel._legs(edgelabel.points("M 344.49 439 L 344.02 546"))
-        self.assertEqual([leg[0] for leg in legs], ["v"])
-
-    def test_a_corner_curve_contributes_no_leg(self):
-        """Only the endpoint of a curve is kept, so a rounded corner becomes one short
-        diagonal — which is off-axis and can never host a label."""
-        legs = edgelabel._legs(edgelabel.points("M 0 0 L 0 100 S 0 110 10 110 L 60 110"))
-        self.assertEqual([(leg[0], round(leg[3])) for leg in legs], [("v", 100), ("h", 50)])
+    """What reading a route gives back is `arrows`' business and `test_arrows` covers it."""
 
     def test_the_midpoint_is_measured_along_the_route_not_across_it(self):
         """It is the tie-break that keeps a label near where ELK meant it to be."""
@@ -416,8 +430,7 @@ class TestAgainstTheCorpus(unittest.TestCase):
         for result in self.browser.measure(jobs):
             svg = drawn[result["key"]]
             declined = [box for box in edgelabel.title_boxes(svg)
-                        if not edgelabel._leaves_a_stub(
-                            box, edgelabel._CONNECTION.finditer(svg))]
+                        if not arrows.leaves_a_stub(box, arrows.ends(svg))]
             for crossing in (result.get("crossed") or []):
                 if crossing["depth"] < 2:
                     continue

@@ -56,7 +56,8 @@ class Base(unittest.TestCase):
         # Real, this is a d2 run per figure and took this file from 1ms to 28s. What it
         # decides is `render`'s business and is tested there; what matters here is that it is
         # decided once and handed on.
-        figure.render_mod.choose_drawing = lambda spec, name="d", *a, **kw: (("down", None), 15)
+        figure.render_mod.choose_drawing = (
+            lambda spec, name="d", *a, **kw: (("down", None), 15, 15))
         figure.browser_mod.available = lambda: True
         figure._size.check = lambda svg, name, **kw: Result(name, "size")
         # Contrast is scaled by what this reports; the stub SVGs have no measurable geometry.
@@ -188,7 +189,7 @@ class TestInternalKeys(Base):
     What it bought an author was a way to switch off the check that keeps text readable. A
     pinned direction skips `render._pick_layout`, and the spacing escalation lives there: the
     reference ER pinned to its OWN measured direction renders 862x257 with `n sessions : 1 doc`
-    on top of a table, where the same spec unpinned renders 892x257 and clean.
+    on top of a table, where the same spec unpinned renders 902x257 and clean.
     """
 
     def test_a_spec_that_pins_a_direction_is_refused(self):
