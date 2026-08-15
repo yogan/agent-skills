@@ -126,7 +126,8 @@ def measure(jobs, viewport=None, shadow=SHADOW_PX, weights=None, timeout=180):
 RASTER_SCALE = 2
 
 
-def rasterise(html, out, width, height, scale=RASTER_SCALE, timeout=180):
+def rasterise(html, out, width, height=None, scale=RASTER_SCALE, timeout=180,
+              full=False):
     """Screenshot one page to `out` as a PNG. Returns the path.
 
     Only the standalone path needs this, and it needs it because macOS cannot render our SVG:
@@ -136,13 +137,17 @@ def rasterise(html, out, width, height, scale=RASTER_SCALE, timeout=180):
 
     `width`/`height` are CSS px — the diagram's natural size — and the PNG comes out
     `scale`x that in device pixels.
+
+    `full=True` shoots the whole scrolled page instead and `height` is only the viewport it is
+    laid out in. That is for a page whose height nobody computed; a diagram's height is known
+    and pinning it is the point, so the diagram path never asks for this.
     """
     problems = requirements()
     if problems:
         raise BrowserError("; ".join(problems))
     payload = json.dumps({"jobs": [], "shots": [
-        {"key": "raster", "html": html, "out": str(out),
-         "width": width, "height": height, "scale": scale}]})
+        {"key": "raster", "html": html, "out": str(out), "width": width,
+         "height": height, "scale": scale, "fullPage": bool(full)}]})
     try:
         proc = subprocess.run(["node", MEASURE_JS], input=payload, capture_output=True,
                               text=True, timeout=timeout)

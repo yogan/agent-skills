@@ -56,6 +56,23 @@ only look similar but encode a different per-skill state machine.
 Don't force the second kind into `lib/` — that trades duplication for a worse problem:
 per-skill conditionals inside code meant to be shared.
 
+## Looking at what the renderer drew
+
+`compare_figures.py` is the loop for any change to `lib/diagram` that has a look to it:
+
+    python3 compare_figures.py capture before          # BEFORE the first edit
+    python3 compare_figures.py capture after
+    python3 compare_figures.py sheet before after notes.json
+
+It renders both corpora through `figure.draw` and writes one annotated before/after PNG. The
+notes file is not optional in spirit: each side says what was wrong and what was done, so the
+sheet still means something when it is re-read later, and gate problems are appended from the
+capture so a picture that looks better while a gate complains cannot pass for a win.
+
+Use it rather than eyeballing one figure. Every defect this repo has fixed by hand — a label
+masking the arrow it sits on, a cardinality inside a table, a callout on the start marker —
+passed every gate, and several were introduced by a change that improved a different figure.
+
 ## Testing
 
 Plain `unittest`, colocated as `test_<module>.py` next to the module it covers. Run one
