@@ -53,7 +53,21 @@ tooling:
   The ack comes after the owner has run it, so step 2's "prove it" is unit tests plus a
   precise claim about the new behaviour.
 
-No intermediate results — show when you believe you are done.
+No intermediate results — show when you believe you are done. **Opening something is the LAST
+step, not a step.** Look at intermediate renders yourself; the owner's screen is not a
+scratchpad, and an image opened mid-investigation is one more window they have to close. Where
+an image genuinely settles a question mid-topic, open exactly one and say so.
+
+Whatever is opened, the message that goes with it carries, near the end:
+
+- **the file name**, so it can be told apart from whatever else is on screen;
+- **what should be better in it**, as a short list;
+- **what is worse, or was traded away**, on the same list — a compromise the owner has to find
+  for themselves reads as one you hoped they would not.
+
+And every claim on that list is re-measured against the artefact being opened. A conclusion
+drawn from an earlier variant does not carry: the same lever moved twice in one session, and a
+"win" that was real in the second capture was reported off the fourth, where it had been undone.
 
 **Committing.** Never commit or push without an explicit go-ahead for that specific action;
 consent does not carry to the next one. Do not raise committing before the owner has
