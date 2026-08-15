@@ -16,6 +16,67 @@ covered, three anchors hid nothing" — while the *name* of the thing measured i
 Commit messages matter most, because a file can be edited later and history cannot. Grep the
 diff before committing.
 
+## Working agreement
+
+How work runs here, whatever it touches. One topic at a time:
+
+1. Fix the reported flaw on the example(s) it was reported on — all of them if the report
+   named several.
+2. Prove those are fixed, by the cheapest means that could disprove it.
+3. **Only then** check the other example(s) of the same kind. If one is broken, fix it
+   against that example alone, then re-verify the set.
+4. **Only then** judge whether the change can realistically affect other kinds, and check
+   those only if it realistically can.
+5. Show the result in the form it can be judged in, and wait. Feedback sends you back to 1;
+   an ack moves to 6.
+6. Run the full quality checks. A commit is never created with a failing test.
+7. Commit, then the next topic.
+
+The full suite belongs *after* the ack, not before showing — otherwise it is paid for on
+work that may be rejected.
+
+**Verifying.** Verify the claim you are about to make, by the cheapest means that could
+disprove it: a measurement beats a render, a render beats a full capture. Never present a
+visual result you have not looked at yourself. Say what you did not check.
+
+**Showing.** What "show" means depends on what changed, and only the first of these has
+tooling:
+
+- **A rendered figure** — one before/after image per topic, opened, with unchanged cases
+  named rather than shown. `compare_figures.py` builds it.
+- **A generated document** (the `explain-*` skills) — open the document and say what to look
+  at in it. There is no before/after tooling here; if a comparison is worth building, that is
+  its own topic, not something to improvise mid-change.
+- **A skill's behaviour inside a session** (`review-mr`, `rework-mr`, hooks) — there is no
+  artefact to show, and you cannot test it yourself: the change only proves out in a fresh
+  session. Say exactly what to run and what should be different from last time, then wait.
+  The ack comes after the owner has run it, so step 2's "prove it" is unit tests plus a
+  precise claim about the new behaviour.
+
+No intermediate results — show when you believe you are done.
+
+**Committing.** Never commit or push without an explicit go-ahead for that specific action;
+consent does not carry to the next one. Do not raise committing before the owner has
+responded to what you showed them. Mid-session the owner may switch to "keep working, commits
+when I say" — then stop asking after each chunk and wait to be asked.
+
+**Reporting.** Short, high level, from a usage perspective; technical detail to a minimum.
+Always report anyway: architectural changes, shortcuts, hacks, compromises, significant
+changes to performance (test suite or runtime), and anything you could not deliver.
+
+**Asking.** When the wish is not clear, grill before starting. Never ask about implementation
+choices — use best practice. Do ask when the options lead to visibly different outcomes, when
+a wish cannot be met without a compromise, or when it is risky. Non-trivial changes get
+discussed; trivial ones just get done.
+
+**Scope.** Keep the structure the owner chose: when something does not fit, adjust the
+arrangement rather than proposing to change what is being built. A rule stated about one case
+applies to all of them — fix the class of defect, not the instance.
+
+**As you go.** Comments carry what the code cannot say — the reasoning and the constraint,
+described generally, not a story or a number from one case. Delete what has become stale or
+wrong rather than leaving it beside the new thing.
+
 ## Layout
 
 - `skills/<name>/` — one skill each, independently symlink-installable (see README.md).
@@ -25,20 +86,11 @@ diff before committing.
 - `lib/` — Python shared repo-wide (skill scripts and `e2e/` both import from it).
   Only for logic that's provably identical across its consumers, modulo a trivial
   parameter — see below.
-- `lib/diagram/` — the diagram renderer (D2), shared by the explainers and `visualize`.
-  The one place in `lib/` that isn't pure Python: `lib/diagram/js/` holds a Node script
-  because measuring a rendered diagram needs a real browser — see that module's docstring
-  for why there's no substitute. The Python side decides; the JS only measures.
-
-  **`figure.draw()` is the entry point. A skill calls that and nothing else.** It says what
-  the picture is FOR (`target="embed"` for a host page, `"file"` for a standalone image) and
-  gets back the SVG plus what is wrong with it. Which gates that implies, whether the layer
-  spacing needs escalating, where each callout goes, how many browser launches it takes — all
-  of it is behind that call. A skill that imports `gates`, `place` or `spec` directly is
-  re-deciding something `figure` already decided: both skills used to, they disagreed about
-  which gates apply, and the one `explain-diff` omitted was the only one that can see a label
-  buried under a callout. `render` is fair game for `HOST_CSS`/`page_css` — that is what a
-  host page must ship, which really is the caller's business.
+- `lib/diagram/` — the diagram renderer (D2), shared by the explainers and `visualize`. Its
+  entry point, the rules its output must satisfy and the loop for changing it are in
+  [lib/diagram/README.md](lib/diagram/README.md). The one place in `lib/` that isn't pure
+  Python: `lib/diagram/js/` holds a Node script because measuring a rendered diagram needs a
+  real browser. The Python side decides; the JS only measures.
 - `e2e/` — local GitLab demo/test rig for `review-mr`/`rework-mr` (see `e2e/README.md`).
 
 ## Sharing vs. duplication
@@ -55,23 +107,6 @@ only look similar but encode a different per-skill state machine.
 
 Don't force the second kind into `lib/` — that trades duplication for a worse problem:
 per-skill conditionals inside code meant to be shared.
-
-## Looking at what the renderer drew
-
-`compare_figures.py` is the loop for any change to `lib/diagram` that has a look to it:
-
-    python3 compare_figures.py capture before          # BEFORE the first edit
-    python3 compare_figures.py capture after
-    python3 compare_figures.py sheet before after notes.json
-
-It renders both corpora through `figure.draw` and writes one annotated before/after PNG. The
-notes file is not optional in spirit: each side says what was wrong and what was done, so the
-sheet still means something when it is re-read later, and gate problems are appended from the
-capture so a picture that looks better while a gate complains cannot pass for a win.
-
-Use it rather than eyeballing one figure. Every defect this repo has fixed by hand — a label
-masking the arrow it sits on, a cardinality inside a table, a callout on the start marker —
-passed every gate, and several were introduced by a change that improved a different figure.
 
 ## Testing
 
