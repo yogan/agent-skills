@@ -410,6 +410,11 @@ class TestAgainstTheCorpus(unittest.TestCase):
         cls.corpus = [(f"{group}/{name}", spec)
                       for group, specs in (("reference", REFERENCE), ("repo", REPO))
                       for name, spec in specs.items()]
+        # Rendered ONCE for the whole class. Both tests below want the same ten drawings, and
+        # producing them costs 45 seconds of d2 compiles and Chrome launches — the single
+        # largest duplicated cost in the suite when each test made its own.
+        cls.drawn = {key: render.render(spec, name=key.replace("/", "-"))
+                     for key, spec in cls.corpus}
 
     def test_every_crossing_it_has_room_to_clear_is_cleared(self):
         """The whole point, end to end. `measure.js` follows every connection and reports where
@@ -422,8 +427,7 @@ class TestAgainstTheCorpus(unittest.TestCase):
         must hold is that every crossing left standing is one of those — anything else means a
         gap that should have been cut was not.
         """
-        drawn = {key: self.render.render(spec, name=key.replace("/", "-"))
-                 for key, spec in self.corpus}
+        drawn = self.drawn
         jobs = [{"key": key,
                  "html": self.render.harness_html(svg, theme="light")}
                 for key, svg in drawn.items()]
@@ -443,8 +447,8 @@ class TestAgainstTheCorpus(unittest.TestCase):
         """`TITLE_PAD` is the one number here that was measured rather than read out of the
         SVG, so a d2 upgrade could move it and quietly cut gaps that no longer fit their words.
         """
-        for key, spec in self.corpus:
-            drawn = self.render.render(spec, name=key.replace("/", "-"))
+        for key, _spec in self.corpus:
+            drawn = self.drawn[key]
             titles = [m for m in edgelabel._TITLE.finditer(drawn)
                       if edgelabel._GRP.search(m.group(0))]
             if not titles:

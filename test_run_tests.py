@@ -98,8 +98,13 @@ class TestItDeclinesRatherThanGuess(unittest.TestCase):
         self.assertIn(rt.REPO_ROOT / "lib/diagram/test_browser.py", selected)
 
     def test_no_changes_selects_nothing_rather_than_everything(self):
+        """Its name was right and its assertion was not: `None` here means "run everything",
+        so asking a clean tree what it affects used to cost the whole suite. An empty selection
+        is the answer — there are no edits, so nothing can be affected by them. Only a change
+        it CANNOT map deserves the fallback, which the two tests above pin.
+        """
         selected, note = self._changed()
-        self.assertIsNone(selected)
+        self.assertEqual(selected, set())
         self.assertIn("nothing changed", note)
 
 

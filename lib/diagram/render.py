@@ -349,9 +349,28 @@ def _pick_layout(spec, name, binary, theme_vars, edge_rungs=None):
         # Nothing to buy: the ladder exists to put straight line in front of an arrowhead,
         # so a drawing with none of that wrong never pays for a second compile of itself —
         # whatever else the size gate thinks of it.
-        if not rank[1]:
+        #
+        # And nothing to buy it WITH: the rung is paid for in page height, and a figure already
+        # past `size.MAX_H` is spending the rescue budget just to exist. It cannot also spend
+        # 40 to 100px on its arrowheads, so the wider rung would be rendered, measured and
+        # refused every single time. The reference architecture is that figure, and this is a
+        # whole candidate search per run.
+        if not rank[1] or _out_of_pocket(svg):
             break
     return best[1], best[2], best[3], best[4]
+
+
+def _out_of_pocket(svg):
+    """Whether this drawing is already taller than the page rule allows on its own.
+
+    Not a failure — `size.RESCUE_H` exists precisely so a figure may exceed `MAX_H` to buy a
+    fix. It is a statement about what is left: nothing.
+    """
+    from .gates import GateError, size as size_gate
+    try:
+        return size_gate.analyse(svg)["rend_h"] > size_gate.MAX_H
+    except GateError:
+        return False
 
 
 def _afford(svg, name, spill, standalone=False):

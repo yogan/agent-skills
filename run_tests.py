@@ -41,6 +41,7 @@ suite before you call something done, and run `--slow` once at the end if you to
 covers. Not in a loop. Ever.
 """
 import ast
+import hashlib
 import json
 import re
 import subprocess
@@ -60,6 +61,8 @@ SLOW_ENOUGH_TO_MENTION = 5.0
 # Per-file seconds from the last run, so the next one knows what to shard. Gitignored: it is
 # a cache of this machine's timings, not a fact about the repo.
 TIMINGS = REPO_ROOT / ".run_tests_timings.json"
+# The last passing run, so an unchanged repo is not tested twice. See `_fingerprint`.
+PASSED = REPO_ROOT / ".run_tests_passed.json"
 
 # Seconds above which a file is split into one job per test class. Comfortably above the
 # handful of files in the 5-8s range, so only the genuinely dominant ones are split.
@@ -99,6 +102,61 @@ def _classes(path):
         return []
     return [n.name for n in tree.body
             if isinstance(n, ast.ClassDef) and n.name.startswith("Test")]
+
+
+def _fingerprint(mode):
+    """What a pass was a pass OF: every non-ignored file, plus the two tools that lay it out.
+
+    Git decides what counts, so the ignore rules are not duplicated here and a build artefact
+    can never fingerprint as source. The d2 and node versions are in it because most of this
+    suite is a claim about what THEY produce — an upgraded d2 with unchanged source is a
+    different repo as far as these tests are concerned.
+
+    Returns None when git cannot answer, and a None fingerprint is never cached and never
+    honoured: not knowing what changed is not the same as knowing nothing did.
+    """
+    listed = []
+    for cmd in (["git", "ls-files", "-s"],
+                ["git", "ls-files", "--others", "--exclude-standard"]):
+        proc = subprocess.run(cmd, capture_output=True, text=True, cwd=REPO_ROOT)
+        if proc.returncode != 0:
+            return None
+        listed.append(proc.stdout)
+    digest = hashlib.sha256(listed[0].encode())
+    # Untracked files have no blob in the index, so they are hashed by content here.
+    for rel in sorted(line for line in listed[1].split("\n") if line.strip()):
+        path = REPO_ROOT / rel
+        digest.update(rel.encode())
+        try:
+            digest.update(path.read_bytes())
+        except OSError:
+            return None
+    for tool in (["d2", "--version"], ["node", "--version"]):
+        proc = subprocess.run(tool, capture_output=True, text=True)
+        digest.update((proc.stdout if proc.returncode == 0 else "missing").encode())
+    return f"{mode}:{digest.hexdigest()}"
+
+
+def _cached_pass(fingerprint):
+    """The record of an identical run that passed TODAY, or None.
+
+    Bounded to the day on purpose. A cache is a claim about the past, and `gates/__init__.py`
+    is emphatic that a check which did not run must never report success — the fingerprint
+    covers source and the two tool versions and cannot cover a browser that updated overnight
+    or a font that changed. A day is the smallest bound that still kills the case this exists
+    for: the same suite twice within one sitting.
+    """
+    if not fingerprint:
+        return None
+    try:
+        record = json.loads(PASSED.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if record.get("fingerprint") != fingerprint:
+        return None
+    if record.get("day") != time.strftime("%Y-%m-%d"):
+        return None
+    return record
 
 
 def _load_timings():
@@ -252,7 +310,11 @@ def select_changed(files):
     """
     raw = changed_files()
     if not raw:
-        return None, "nothing changed against HEAD"
+        # An EMPTY selection, not a refusal. "There are no edits" and "I cannot map an edit"
+        # are different answers and only the second one deserves the whole suite: this used to
+        # conflate them, so asking what a clean tree affects cost 125 seconds to be told
+        # "everything", which is the one answer that cannot be true.
+        return set(), "nothing changed against HEAD"
     changed, unknown = set(), []
     for rel in raw:
         path = (REPO_ROOT / rel).resolve()
@@ -275,10 +337,11 @@ def main():
     args = sys.argv[1:]
     include_slow = "--slow" in args
     only_changed = "--changed" in args
+    force = "--force" in args
     workers = 8
     patterns = []
     for arg in args:
-        if arg in ("--slow", "--changed"):
+        if arg in ("--slow", "--changed", "--force"):
             continue
         if arg.startswith("-j"):
             try:
@@ -293,6 +356,19 @@ def main():
     if not files:
         print(f"no test_*.py files matched {patterns or 'anything'}", file=sys.stderr)
         return 1
+
+    # Only a WHOLE run is cached, and only a passing one. A filtered or `--changed` run proves
+    # less than it looks like it does, and caching it would let a green from four files stand
+    # in for the suite.
+    whole = not patterns and not only_changed
+    fingerprint = _fingerprint("slow" if include_slow else "fast") if whole else None
+    if not force:
+        record = _cached_pass(fingerprint)
+        if record:
+            print(f"skipped: {record['files']} file(s), {record['tests']} tests passed at "
+                  f"{record['at']} today, and nothing has changed since — not source, not d2, "
+                  f"not node.\nrun `python3 run_tests.py --force` to run them anyway.")
+            return 0
 
     if only_changed:
         every = [p for p in REPO_ROOT.rglob("*.py") if "__pycache__" not in p.parts]
@@ -365,6 +441,15 @@ def main():
         print(f"FAILED: {len(failures)}/{len(jobs)} job(s), {total_tests} tests attempted "
               f"in {wall:.0f}s")
         return 1
+
+    if fingerprint:
+        try:
+            PASSED.write_text(json.dumps(
+                {"fingerprint": fingerprint, "day": time.strftime("%Y-%m-%d"),
+                 "at": time.strftime("%H:%M"), "files": len(files), "tests": total_tests}),
+                encoding="utf-8")
+        except OSError:
+            pass                                  # a missing cache only costs one full run
 
     print(f"OK: {len(files)} file(s), {total_tests} tests in {wall:.0f}s"
           + ("" if include_slow else " (fast only — see the docstring before you add --slow)"))
