@@ -126,8 +126,34 @@ def measure(jobs, viewport=None, shadow=SHADOW_PX, weights=None, timeout=180):
 RASTER_SCALE = 2
 
 
-def rasterise(html, out, width, height=None, scale=RASTER_SCALE, timeout=180,
-              full=False):
+def text_widths(html, timeout=60):
+    """Rendered width, in CSS px, of every `[data-w]` element in `html`, in document order.
+
+    The one measurement here that is about a STRING rather than about a drawing. It exists
+    because d2 sizes a callout's box with its own font while the box is filled by the host
+    page's, so the only program that knows how wide the note really is is the one laying it
+    out — see `callout.py`.
+    """
+    problems = requirements()
+    if problems:
+        raise BrowserError("; ".join(problems))
+    payload = json.dumps({"jobs": [], "widths": [{"key": "w", "html": html}]})
+    try:
+        proc = subprocess.run(["node", MEASURE_JS], input=payload, capture_output=True,
+                              text=True, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        raise BrowserError(f"the browser did not measure the text within {timeout}s")
+    if proc.returncode != 0:
+        raise BrowserError(proc.stderr.strip() or
+                           f"node exited {proc.returncode} with no message")
+    try:
+        return json.loads(proc.stdout)["results"][0]["widths"]
+    except (ValueError, KeyError, IndexError) as exc:
+        raise BrowserError(f"could not read the measured widths ({exc}): "
+                           f"{proc.stdout[:400]!r}")
+
+
+def rasterise(html, out, width, height=None, scale=RASTER_SCALE, timeout=180, full=False):
     """Screenshot one page to `out` as a PNG. Returns the path.
 
     Only the standalone path needs this, and it needs it because macOS cannot render our SVG:

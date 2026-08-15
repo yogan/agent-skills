@@ -172,9 +172,14 @@ class TestMessageOutcome(unittest.TestCase):
                       d2.emit(self.spec("ok")))
 
     def test_a_message_without_one_keeps_the_muted_default(self):
+        """Split on the last GLOBAL line rather than on an arrow selector: there are two of
+        those now (`->` and `<->`) and both set a stroke, so splitting on one of them left the
+        other's global in the tail and this passed for the wrong reason.
+        """
         spec = {"kind": "sequence", "participants": [{"id": "a"}, {"id": "b"}],
                 "messages": [{"from": "a", "to": "b", "label": "x"}]}
-        self.assertNotIn("style.stroke:", d2.emit(spec).split("(** -> **)")[-1])
+        self.assertNotIn("style.stroke:", d2.emit(spec).split("classes: {")[-1]
+                         .split("}\n")[-1])
 
     def test_a_push_can_also_carry_one(self):
         """The dash says nobody asked for it, the colour says how it went — different facts."""
@@ -471,9 +476,35 @@ class TestEdges(unittest.TestCase):
     def test_a_dashed_edge_carries_the_stroke_dash_style(self):
         self.assertIn("{style.stroke-dash: 3}", d2.emit(CLASS))
 
-    def test_an_unlabelled_edge_emits_no_colon(self):
+    def test_a_bidirectional_edge_uses_d2s_two_headed_arrow(self):
+        source = d2.emit({"kind": "architecture",
+                          "nodes": [{"id": "api", "role": "svc"},
+                                    {"id": "db", "role": "store"}],
+                          "edges": [{"from": "api", "to": "db", "label": "read · write",
+                                     "bidirectional": True}]})
+        self.assertIn('"api" <-> "db": "read · write"', source)
+
+    def test_both_arrow_forms_get_the_muted_styling(self):
+        """d2's connection glob matches the arrow AS WRITTEN, so `(** -> **)` does not select a
+        `<->` edge. Missing that, a two-headed arrow came out in d2's near-black at its own
+        font size next to six muted grey ones — and no gate caught it, because the colour it
+        falls back to is one the palette already maps.
+        """
         source = d2.emit(ARCHITECTURE)
-        self.assertIn('"k8s"."api"."pod" -> "pg"\n', source)
+        for arrow in ("->", "<->"):
+            self.assertIn(f'(** {arrow} **)[*].style.stroke: "{palette.MUTED}"', source)
+            self.assertIn(f"(** {arrow} **)[*].style.font-size: {d2.BASE_FONT}", source)
+
+    def test_an_unlabelled_edge_emits_no_colon(self):
+        """Its own spec, not the corpus. This used to read the reference architecture's one
+        bare edge — which was a defect the corpus happened to be carrying (`spec.py` warns
+        about an unlabelled architecture edge now), so labelling it broke a test of something
+        else entirely. A fixture that exists by accident is a fixture that vanishes by accident.
+        """
+        source = d2.emit({"kind": "architecture",
+                          "nodes": [{"id": "a", "role": "svc"}, {"id": "b", "role": "store"}],
+                          "edges": [{"from": "a", "to": "b"}]})
+        self.assertIn('"a" -> "b"\n', source)
 
     def test_emit_validates_first(self):
         from lib.diagram.spec import SpecError

@@ -253,6 +253,22 @@ class TestSequence(unittest.TestCase):
         validate(self.base(messages=[{"from": "gw", "to": "editor", "label": "peer joined",
                                       "push": True}]))
 
+    def test_an_architecture_edge_may_go_both_ways(self):
+        validate(arch(edges=[{"from": "browser.editor", "to": "pg", "label": "read · write",
+                              "bidirectional": True}]))
+
+    def test_a_non_boolean_bidirectional_is_rejected(self):
+        with self.assertRaisesRegex(SpecError, "bidirectional must be"):
+            validate(arch(edges=[{"from": "browser.editor", "to": "pg", "label": "x",
+                                  "bidirectional": "yes"}]))
+
+    def test_an_unlabelled_architecture_edge_warns(self):
+        """The check already existed for er and class and was written inside their branch, so
+        architecture never got it — and the reference corpus carried a bare edge for a long
+        time as a result."""
+        spec = arch(edges=[{"from": "browser.editor", "to": "pg"}])
+        self.assertTrue(any("has no label" in w for w in content_warnings(spec)))
+
     def test_push_is_rejected_on_a_non_sequence_edge(self):
         """An arrow is only a *call* in a sequence, which is what makes "B never asked" a
         distinction. Elsewhere it is a relationship and `dashed` covers it."""
@@ -262,6 +278,15 @@ class TestSequence(unittest.TestCase):
     def test_a_non_boolean_push_is_rejected(self):
         with self.assertRaisesRegex(SpecError, "push must be"):
             validate(self.base(messages=[{"from": "gw", "to": "editor", "push": "yes"}]))
+
+    def test_bidirectional_is_rejected_on_a_sequence_message(self):
+        """The mirror of `push`, and rejected everywhere for the same kind of reason: a
+        message is one call, a transition goes one way by definition and a foreign key has a
+        direction. Only an architecture edge can carry traffic both ways.
+        """
+        with self.assertRaisesRegex(SpecError, "only meaningful on an architecture edge"):
+            validate(self.base(messages=[{"from": "gw", "to": "editor", "label": "x",
+                                          "bidirectional": True}]))
 
     def test_self_message_is_allowed(self):
         validate(self.base(messages=[{"from": "gw", "to": "gw", "label": "authenticate()"}]))

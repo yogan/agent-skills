@@ -43,7 +43,10 @@ from lib.diagram.spec import content_warnings
 MEASURED = {
     # dagre: 887x771 at 11.4px, scaled to 0.88. 579 while the two callouts were pinned
     # `center-right`, which is not where the pass puts them.
-    "arch": (493, 767),
+    # 767 before the container top padding was raised to clear an arrowhead off a container
+    # title (`d2.ELK_OPTS["paddingTop"]`). 15px of page height for a `WebSocket` arrowhead that
+    # was being drawn across `presence deploy x2`.
+    "arch": (493, 782),
     # d2's own sequence engine lays this one out; the layout engine never touches it, and
     # dagre and elk output are byte-identical. 420 before the group legend added LEGEND_BAND.
     "sequence": (663, 442),
@@ -56,7 +59,12 @@ MEASURED = {
     # `presence_sessions` table, and the thing that actually keeps it clear is the layer
     # spacing. On one line the labels cost 37px of width and half a pixel of glyph, and read
     # as the single phrase they are. See `d2.wrap_edge_label`.
-    "er": (892, 257),
+    #
+    # 892 while this was the one figure that climbed the spacing ladder. It no longer needs to:
+    # `edgelabel.reposition` slides the cardinality along its own leg until it is off the
+    # table, which is what the extra 30px of layer gap was buying. Same drawing, 30px narrower,
+    # and its glyphs are 12.6px rather than 12.2px because less of it is scaled away.
+    "er": (862, 257),
     # dagre: 899x357 at 12.1px. This is the biggest single gain in the corpus — barely half
     # the width, and 14.0px text because none of it is scaled away. 411 while its callout was
     # pinned `bottom-left`; `center-right`, where the pass puts it, reaches out to the side.

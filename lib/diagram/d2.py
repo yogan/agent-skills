@@ -132,6 +132,25 @@ ELK_OPTS = {
     "nodeNodeBetweenLayers": 15,   # ELK default 70
     "edgeNodeBetweenLayers": 15,   # ELK default 40 — the expensive one
     "padding": 10,                 # ELK default 50, applied to every container alike
+    # The top gets more, and only for the ARROWHEAD's sake. A container's title is drawn
+    # inside it — baseline 18px below the top edge, 13px type, so glyphs occupy roughly
+    # top+8 to top+21 — and an edge entering the container from above ends at its first
+    # child's top edge, with a 12px arrowhead hanging back from the tip. At 10 the tip lands
+    # at top+23 and the head sits squarely on the title: on the reference architecture the
+    # `WebSocket` arrowhead is drawn across `presence deploy x2`.
+    #
+    # 32 is the first rung that clears it, and it is a cliff rather than a slope — ELK ignores
+    # everything up to about 28 because d2 has already reserved a band for the label, then the
+    # tip moves 3px per unit. It buys 5px between the title's descenders and the top of the
+    # head, for 15px of page height on the reference architecture and 10px here.
+    #
+    # The line itself still crosses the title where the two share an x, and that is not fixable
+    # from here: the routing options that would avoid it are set internally by d2 and never
+    # exposed (see below). A hairline through a word is legible; an arrowhead on it is not.
+    #
+    # Costs nothing on any other kind, measured: `architecture` is the only one with
+    # containers, and er/class/state/sequence come out byte-identical in size.
+    "paddingTop": 32,
 }
 
 # Layer spacings to try, tightest first, when the tight one leaves TEXT UNREADABLE.
@@ -222,11 +241,19 @@ def _prelude(background=None):
         f'style.fill: "{background}"' if background else "style.fill: transparent",
         f"**.style.font-size: {BASE_FONT}",
         f'**.style.font-color: "{palette.FG}"',
-        f'(** -> **)[*].style.stroke: "{palette.MUTED}"',
-        f'(** -> **)[*].style.font-color: "{palette.MUTED}"',
-        f"(** -> **)[*].style.font-size: {BASE_FONT}",
-        "classes: {",
     ]
+    # Once per arrow syntax, because d2's connection glob matches the ARROW as written: a
+    # `<->` edge is not selected by `(** -> **)` and comes out in d2's own near-black at its
+    # own font size, next to six muted grey ones. Nothing catches that — the colour it falls
+    # back to is a literal the palette already maps, so the theming gate is satisfied and the
+    # drawing is still wrong. Any further arrow form has to be added here too.
+    for arrow in ("->", "<->"):
+        lines += [
+            f'(** {arrow} **)[*].style.stroke: "{palette.MUTED}"',
+            f'(** {arrow} **)[*].style.font-color: "{palette.MUTED}"',
+            f"(** {arrow} **)[*].style.font-size: {BASE_FONT}",
+        ]
+    lines.append("classes: {")
     for role in ("client", "svc", "store", "cache", "ext", "neutral"):
         fill, stroke = palette.vars_for(role)
         lines.append(f'  {role}: {{ style: {{ fill: "{fill}"; stroke: "{stroke}"; '
@@ -483,7 +510,10 @@ def _tidy(lines):
 
 
 def _edge(edge, wrap=None):
-    line = f"{_path(edge['from'])} -> {_path(edge['to'])}"
+    # `<->` is d2's own two-headed connection, so the second arrowhead is drawn by the layout
+    # engine and routed with the line rather than pasted on afterwards.
+    arrow = "<->" if edge.get("bidirectional") else "->"
+    line = f"{_path(edge['from'])} {arrow} {_path(edge['to'])}"
     if edge.get("label"):
         label = wrap_edge_label(edge["label"], wrap) if wrap else edge["label"]
         line += f": {_q(label)}"

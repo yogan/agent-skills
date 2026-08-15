@@ -62,7 +62,8 @@ ARCHITECTURE = {
     "edges": [
         {"from": "browser.editor", "to": "k8s.api.pod", "label": "GraphQL"},
         {"from": "browser.wsc", "to": "k8s.presence.pod", "label": "WebSocket"},
-        {"from": "k8s.api.pod", "to": "pg"},
+        {"from": "k8s.api.pod", "to": "pg", "label": "read · write",
+         "bidirectional": True},
         {"from": "k8s.presence.pod", "to": "k8s.redis", "label": "publish"},
         {"from": "k8s.redis", "to": "k8s.presence.pod", "label": "fan-out"},
         {"from": "k8s.presence.pod", "to": "pg", "label": "upsert"},

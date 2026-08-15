@@ -19,7 +19,7 @@ import unittest
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(
     os.path.dirname(os.path.abspath(__file__))))))
 
-from lib.diagram import browser, render
+from lib.diagram import browser, d2, render
 from lib.diagram.examples import REFERENCE
 from lib.diagram.gates import GateError
 from lib.diagram.gates import clipping
@@ -185,24 +185,50 @@ class TestAgainstRealDiagrams(unittest.TestCase):
         the same diagram came out clean in the explainers. The gate said so on every run; the
         renderer simply had no answer for it.
 
-        The ER alone, because it is the one figure in the corpus that needs a rung, and every
-        rung is a compile plus a browser measurement — checking all five would spend seconds of
-        the fast suite to assert `15` four more times.
+        The ER alone, because it was the one figure in the corpus that ever needed a rung, and
+        every rung is a compile plus a browser measurement — checking all five would spend
+        seconds of the fast suite to assert `15` four more times.
+
+        **It no longer needs one, and nothing in the corpus does.** `edgelabel.reposition`
+        slides a label along its own leg until it is clear, which is what the extra 30px of
+        layer gap used to buy, and buys it without the 30px — the ER is clean at the tight
+        default at 886px where escalating made it 916px. That is why the second half of this
+        test drives the ladder directly rather than through a figure: there is no longer a real
+        spec that climbs it, and a manufactured one was tried (a long cardinality between two
+        tables, a three-table chain) and came out clean too. The ladder stays as the fallback
+        for a label with nowhere on its route to go; this pins that the standalone path still
+        REACHES it, which is the defect that prompted it.
         """
         svg = render.standalone(REFERENCE["er"], name="alone", theme="dark")
         result = clipping.check(svg, "alone", theme="dark", standalone=True)
         self.assertEqual([p for p in result.problems if "HIDDEN TEXT" in p], [],
                          result.problems)
+        self.assertEqual(render.choose_standalone_layers(REFERENCE["er"], name="alone",
+                                                         theme="dark"),
+                         d2.ELK_SPACING_LADDER[0],
+                         "the ER is clean at the tight rung now; if this ever escalates again, "
+                         "the label pass has stopped covering a case it used to")
 
-        # Proof it can fail, and proof `layers` pins rather than measures: the same diagram
-        # held at the tight default is the picture the skill used to write.
-        tight = render.standalone(REFERENCE["er"], name="tight", theme="dark", layers=15)
-        self.assertLess(render.natural_size(tight)[0], render.natural_size(svg)[0],
-                        "the ladder must have escalated to something wider than 15")
-        tight_result = clipping.check(tight, "tight", theme="dark", standalone=True)
-        self.assertTrue(any("HIDDEN TEXT" in p for p in tight_result.problems),
-                        f"at 15 this diagram hides text, or the test proves nothing: "
-                        f"{tight_result.problems}")
+        # The wiring, driven directly: with the measurement forced to report hidden text, the
+        # standalone path must climb. Without this the assertion above is equally satisfied by
+        # a ladder that was deleted.
+        original = render._hides_text
+        seen = []
+        try:
+            render._hides_text = lambda svg, **kw: seen.append(kw.get("standalone")) or True
+            self.assertEqual(render.choose_standalone_layers(REFERENCE["er"], name="rung",
+                                                             theme="dark"),
+                             d2.ELK_SPACING_LADDER[-1],
+                             "hidden text at every rung must exhaust the ladder, not stop")
+        finally:
+            render._hides_text = original
+        self.assertEqual(len(seen), len(d2.ELK_SPACING_LADDER))
+        self.assertTrue(all(seen), "the standalone path must measure against its own canvas")
+
+        # `layers` pins rather than measures — the ladder can only choose if a caller can hold
+        # a rung still.
+        wide = render.standalone(REFERENCE["er"], name="wide", theme="dark", layers=40)
+        self.assertGreater(render.natural_size(wide)[0], render.natural_size(svg)[0])
 
     def test_a_label_merely_crossing_a_pale_container_is_not_called_hidden(self):
         """The other half, and the reason this is not just an overlap check. The architecture's

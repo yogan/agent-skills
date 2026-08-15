@@ -250,7 +250,8 @@ def _check_tree(nodes, where, roles=ROLES):
             _check_tree(children, f"{where}: {nid}")
 
 
-def _check_edges(spec, ids, where, key="edges", required=True, allow_push=False):
+def _check_edges(spec, ids, where, key="edges", required=True, allow_push=False,
+                 allow_both=False):
     edges = spec.get(key) or []
     if required:
         _require(isinstance(edges, list) and edges, f"{where} needs a non-empty {key!r} list")
@@ -276,6 +277,20 @@ def _check_edges(spec, ids, where, key="edges", required=True, allow_push=False)
                      "relationship — use `dashed`)")
             _require(isinstance(edge["push"], bool),
                      f"{where}: {key}[{i}] push must be true or false")
+        if "bidirectional" in edge:
+            # Architecture only, and for the same reason `push` is sequence only: it has to
+            # mean something there and nothing anywhere else. On an architecture edge it means
+            # traffic crosses both ways — `read · write` against a database, a request and its
+            # reply — and drawing that as one arrow understates it while drawing two arrows
+            # doubles the ink and the label. A `state` transition goes one way by definition, a
+            # sequence message is one call, an ER foreign key has a direction, and a class
+            # relationship that is symmetric is better said in the label.
+            _require(allow_both,
+                     f"{where}: {key}[{i}] sets `bidirectional`, which is only meaningful on "
+                     "an architecture edge (a transition, a message and a foreign key all go "
+                     "one way by definition)")
+            _require(isinstance(edge["bidirectional"], bool),
+                     f"{where}: {key}[{i}] bidirectional must be true or false")
         if "outcome" in edge:
             # Same reasoning as `push`: it is about a call succeeding or failing, and only a
             # sequence has calls. Elsewhere an edge is a relationship, which has no outcome.
@@ -358,7 +373,7 @@ def validate(spec):
         # unrenderable and only showed up when splitting a real pipeline: a CI stage whose five
         # jobs have no dependencies between them is a picture of that stage, and refusing it
         # forced the whole pipeline back into one 3433px-wide canvas.
-        _check_edges(spec, ids, kind, required=False)
+        _check_edges(spec, ids, kind, required=False, allow_both=True)
     elif kind == "sequence":
         # Participants are columns and d2 orders them as written -- the one thing
         # graphviz could not do at all, and the reason d2 is the engine.
@@ -607,6 +622,19 @@ def content_warnings(spec):
                            f"(>{MAX_NOTE_WORDS}): {note!r} — a wide callout has fewer "
                            "places it can sit without being clipped")
 
+    def check_edge_labels(edges, noun):
+        """An edge with no label repeats the one thing the line already said.
+
+        Shared by every kind that has one, which now includes `architecture`. It did not, and
+        the reference corpus carried a bare `GraphQL API -> PostgreSQL` for a long time next to
+        a `verify JWT` that says what its arrow is for — a gap nobody saw because the check
+        that would have caught it lived inside the er/class branch.
+        """
+        for edge in edges:
+            if not str(edge.get("label") or "").strip():
+                out.append(f"{edge.get('from')} -> {edge.get('to')} has no label — an "
+                           f"unlabelled {noun} is the least interesting half of the answer")
+
     def check_islands(names, edges, what, boxes):
         """Several barely-related graphs on one canvas is the widest a diagram ever gets, and
         the one oversize the author can always fix: they are nearly separate pictures already.
@@ -647,6 +675,7 @@ def content_warnings(spec):
         check_labels(flat, "node")
         check_notes(flat, "node")
         check_labels(spec.get("edges") or [], "edge")
+        check_edge_labels(spec.get("edges") or [], "connection")
         check_islands([n["id"] for n in nodes], spec.get("edges") or [], "nodes",
                       sum(1 for _, node in _walk(nodes) if not node.get("children")))
     elif kind == "sequence":
@@ -719,13 +748,13 @@ def content_warnings(spec):
         # ratio does not carry it: "n : 1" leaves them working out which end is which and then
         # mapping it back to the table names. "1 doc : n sessions" reads by itself. This is
         # checkable because a label that names its entities necessarily contains a word.
+        check_edge_labels(spec.get("edges") or [], "relationship")
         for edge in spec.get("edges") or []:
             label = (edge.get("label") or "").strip()
             where = f"{edge.get('from')} -> {edge.get('to')}"
             if not label:
-                out.append(f"{where} has no label — an unlabelled relationship is the least "
-                           "interesting half of the answer")
-            elif kind == "er" and not _names_something(label):
+                continue
+            if kind == "er" and not _names_something(label):
                 out.append(f"{where} is labelled {label!r} — name the entities instead "
                            "(\"n sessions : 1 doc\"), so the reader does not have to work out "
                            "which end is which")

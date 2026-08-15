@@ -96,6 +96,13 @@ search, not an instruction — and hand-picked anchors have measurably lost to i
   `page` · `cloud`. Anything else is rejected; `code` in particular carries its own colour
   scheme that the theming cannot follow.
 - `edges`: `from`, `to`, optional `label`, optional `dashed`.
+- **Label every edge.** An unlabelled arrow only repeats what the line already says. Name what
+  crosses it — a protocol, a call, a direction of data. The renderer warns when one has none.
+- `bidirectional` (optional, architecture only): draws an arrowhead at both ends, for traffic
+  that genuinely crosses both ways — `read · write` against a database, a request and its
+  reply. Not for "they talk to each other" in general: if one side initiates, one arrow is the
+  truer picture. A transition, a message and a foreign key all go one way by definition, so
+  this is rejected on the other kinds.
 - `detail` (optional, any box): smaller muted lines under the name. On an architecture box it
   names what is inside an area that has been collapsed to one node — see `--overview` in
   SKILL.md, which fills it in for you, most-connected member first and `+N more` for the rest.

@@ -29,8 +29,10 @@ import sys
 import tempfile
 
 from . import browser
+from . import callout
 from . import compact
 from . import d2 as d2mod
+from . import edgelabel
 from . import palette
 
 # d2 version this recipe was measured against. Several behaviours it relies on are
@@ -141,10 +143,11 @@ def compile_source(source, pad=8, binary="d2", layers=None):
         layers = d2mod.ELK_OPTS["nodeNodeBetweenLayers"] if layers is None else layers
         edges = d2mod.ELK_OPTS["edgeNodeBetweenLayers"]
         box = d2mod.ELK_OPTS["padding"]
+        top = d2mod.ELK_OPTS["paddingTop"]
         cmd = [binary, "--pad", str(pad), "--theme", "0", "--layout", "elk",
                "--elk-nodeNodeBetweenLayers", str(layers),
                "--elk-edgeNodeBetweenLayers", str(edges),
-               "--elk-padding", f"[top={box},left={box},bottom={box},right={box}]",
+               "--elk-padding", f"[top={top},left={box},bottom={box},right={box}]",
                "-", target]
         proc = subprocess.run(cmd, input=source, capture_output=True, text=True)
         if proc.returncode != 0 or not os.path.exists(target):
@@ -229,11 +232,15 @@ def _maybe_compact(raw, spec, name, standalone=False):
     # Both annotations are placed against the canvas edge, so they need the pad d2 was
     # actually run with — which is not the same on the two targets.
     pad = STANDALONE_PAD if standalone else compact.D2_PAD
-    svg = compact.style_detail_lines(raw)
+    # Before anything measures or moves: a re-cut callout is a smaller obstacle, and both the
+    # edge-label pass below and the anchor search above must see the box that ships.
+    svg = compact.style_detail_lines(callout.fit(raw))
     if spec.get("kind") == "state":
-        return _maybe_mark_start(svg, spec, name, standalone, pad)
+        # After the marker, not before: it moves the canvas top edge, and an edge label may
+        # not be nudged past a boundary that is about to change.
+        return edgelabel.reposition(_maybe_mark_start(svg, spec, name, standalone, pad))
     if spec.get("kind") != "sequence":
-        return svg
+        return edgelabel.reposition(svg)
     try:
         svg = compact.compact_sequence(svg)
     except compact.CompactError as exc:
