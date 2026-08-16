@@ -55,7 +55,7 @@ preference: the goal is for every line here to be a check.
 | Text is never unreadable, clipped, or under a callout | `gates/` |
 | **No run of an arrow is diagonal** — every straight stretch is vertical or horizontal | `arrows.defects` + `test_arrows` |
 | **An arrowhead sits on straight line**, never across the turn it just came round | `d2.ELK_EDGE_LADDER` + `test_arrows` |
-| **No gap immediately before an arrowhead**, including the ones d2 cuts for its own labels | `arrows.shortfall` in `edgelabel._key` + `test_arrows` |
+| **No gap immediately before an arrowhead**, including the ones d2 cuts for its own labels | `arrows.shortfall` in `edgelabel._key`, `render._climb_layers` + `test_arrows` |
 
 [`arrows.py`](arrows.py) is where the last three live, because they are about the arrow itself
 rather than about the words on it. It **measures and never redraws**: a route is ELK's, and
@@ -69,8 +69,16 @@ the reference architecture is 958px tall at the wider spacing against a 900px ce
 repo state machine's callout then lands somewhere that pushes the drawing off its own canvas —
 `figure._settle` catches that one after placement, which is the only moment it is visible.
 
-What is left over is reported rather than paid for: the arrowheads on a curve and the gap
-named in `test_arrows`, which fails if the list grows. Ranking arrow defects above height in
+A gap that lands on an arrowhead is the same shortage seen from the other end, and it is
+bought with the OTHER ladder. ELK sizes the space between two layers to hold the edge label and
+no more, so a long label can end up on a leg with no spot that both leaves the line a beginning
+and keeps clear of the head — the repo ER had 126px of label on a 146px leg, needing 148, and
+whichever end it gave up the words ended against a 5px stub of line. `d2.ELK_SPACING_LADDER`
+already climbed for unreadable text; `render._climb_layers` climbs it for this too, on the same
+`_afford` test, and that figure is 60px wider for it.
+
+What is left over is reported rather than paid for: the arrowheads on a curve named in
+`test_arrows`, which fails if the list grows. Ranking arrow defects above height in
 `render._pick_at_spacing` was also tried and reverted — it removes one stranded head from the
 repo architecture by breaking every edge label in the figure across four lines, and a wrapped
 diagram is the defect a reader meets first.

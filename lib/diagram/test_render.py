@@ -254,6 +254,90 @@ class TestLayoutChoice(unittest.TestCase):
         self.assertEqual(len(set(self.calls)), 2, "and they are the two directions")
 
 
+def _page(hole=None, height=400):
+    """One arrow with a head at the bottom, optionally with a gap cut into the line.
+
+    `(70, 285, 60, 17)` sits over the last px of a line that ends at 300, which is the shape
+    of a label that could not fit its leg: 5px of line survive past the head where 6 are
+    wanted. A hole in the middle of the same line is an ordinary edge label.
+    """
+    rect = ("" if hole is None else
+            f'<rect x="{hole[0]}" y="{hole[1]}" width="{hole[2]}" height="{hole[3]}" '
+            'fill="black"></rect>')
+    return (f'<svg viewBox="0 0 400 {height}" width="400" height="{height}">'
+            '<path d="M 100 0 L 100 300" stroke="grey" fill="none" class="connection" '
+            'style="stroke-width:2;" marker-end="url(#head)" mask="url(#m)" />'
+            '<text font-size="13">x</text>'
+            f'<mask id="m" maskUnits="userSpaceOnUse" x="0" y="0" width="400" height="{height}">'
+            f'<rect x="0" y="0" width="400" height="{height}" fill="white"></rect>'
+            f"{rect}</mask></svg>")
+
+
+class TestLayerLadder(unittest.TestCase):
+    """How much space a figure is given between its layers, and what it is allowed to buy.
+
+    The rungs are the expensive part of a render — each one is a whole candidate search plus a
+    browser launch — so what is tested here is as much when the ladder STOPS as when it climbs.
+    """
+
+    CLEAN = _page((70, 140, 60, 17))
+    CRAMPED = _page((70, 285, 60, 17))
+
+    def climb(self, *pages, **kwargs):
+        """Serve one prepared `(svg, hidden)` per rung, recording which rungs were asked for."""
+        self.asked = []
+
+        def rung(layers):
+            svg, hidden = pages[min(len(self.asked), len(pages) - 1)]
+            self.asked.append(layers)
+            return svg, hidden, 0.0, layers
+
+        return render._climb_layers(rung, "x", **kwargs)
+
+    def test_a_sound_drawing_is_not_laid_out_a_second_time(self):
+        layers, svg, _spill, _payload = self.climb((self.CLEAN, False))
+        self.assertEqual((self.asked, layers), ([d2.ELK_SPACING_LADDER[0]],
+                                                d2.ELK_SPACING_LADDER[0]))
+        self.assertEqual(svg, self.CLEAN)
+
+    def test_unreadable_text_climbs(self):
+        """The original reason for the ladder, and still the absolute one: a label lands in the
+        gap between two layers, so at the tightest rung it can overlap what borders it."""
+        layers, svg, _spill, _payload = self.climb((self.CLEAN, True), (self.CLEAN, False))
+        self.assertEqual(layers, d2.ELK_SPACING_LADDER[1])
+
+    def test_a_label_with_nowhere_to_sit_climbs_too(self):
+        """The second reason, added because the repo ER had 126px of label on a 146px leg and
+        needed 148: whichever end it gave up, the words ended against a 5px stub of line."""
+        layers, svg, _spill, _payload = self.climb((self.CRAMPED, False), (self.CLEAN, False))
+        self.assertEqual(self.asked, list(d2.ELK_SPACING_LADDER[:2]))
+        self.assertEqual((layers, svg), (d2.ELK_SPACING_LADDER[1], self.CLEAN))
+
+    def test_a_rung_that_fixes_nothing_is_not_kept(self):
+        """Width is not spent on a defect it does not remove — the whole ladder is tried and
+        the tightest rung still wins."""
+        layers, _svg, _spill, _payload = self.climb((self.CRAMPED, False))
+        self.assertEqual(self.asked, list(d2.ELK_SPACING_LADDER))
+        self.assertEqual(layers, d2.ELK_SPACING_LADDER[0])
+
+    def test_a_figure_already_past_the_page_rule_does_not_pay(self):
+        """`size.RESCUE_H` lets a figure exceed the height gate to buy a fix, so one already
+        over it has nothing left to spend — and the wider rung would be rendered, measured and
+        refused on every single run."""
+        tall = _page((70, 285, 60, 17), height=1400)
+        layers, _svg, _spill, _payload = self.climb((tall, False))
+        self.assertEqual(self.asked, [d2.ELK_SPACING_LADDER[0]])
+        self.assertEqual(layers, d2.ELK_SPACING_LADDER[0])
+
+    def test_a_standalone_image_has_no_height_to_be_out_of_pocket_against(self):
+        """Same drawing, other target: a file is shown at natural size and the size gate drops
+        the height rule for it, so the rung it could not afford embedded is available here."""
+        tall = _page((70, 285, 60, 17), height=1400)
+        layers, _svg, _spill, _payload = self.climb((tall, False), (self.CLEAN, False),
+                                                    standalone=True)
+        self.assertEqual(layers, d2.ELK_SPACING_LADDER[1])
+
+
 class TestToolchain(unittest.TestCase):
     def test_a_missing_binary_is_reported_not_raised(self):
         problems = render.check_toolchain(binary="d2-does-not-exist")

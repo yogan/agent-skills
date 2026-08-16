@@ -149,11 +149,19 @@ ELK_OPTS = {
     "paddingTop": 44,
 }
 
-# Layer spacings to try, tightest first, when the tight one leaves TEXT UNREADABLE.
+# Layer spacings to try, tightest first, when the tight one leaves TEXT UNREADABLE or a LABEL
+# WITH NOWHERE TO SIT (`render._climb_layers`).
 #
 # 15 is right for four of the five reference figures and wrong for one, because the gap between
 # layers is also where ELK puts an edge label: the ER cardinality `n sessions : 1 doc` needs 30,
 # or it overlaps the `presence_sessions` table and its first glyph sits grey-on-purple.
+#
+# The second reason is the same shortage measured on the arrow instead of on the words. ELK
+# sizes the gap to hold the label and no more, so a long cardinality can end up on a leg with
+# no spot that both leaves the line a beginning and keeps clear of the arrowhead — the repo ER
+# had 126px of label on a 146px leg, needing 148, and whichever end it gave up hung the label
+# off a 5px stub of line. 30 makes that leg 176px. The cost is the same 60px of width the
+# reason above pays.
 #
 # Escalated rather than raised, because it is not free — but what it costs depends entirely on
 # the target, and only one of the two pays:

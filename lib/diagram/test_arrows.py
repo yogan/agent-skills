@@ -155,8 +155,7 @@ class TestAgainstTheCorpus(unittest.TestCase):
     and it ships with the two arrowheads this measures as fixed.
     """
 
-    KNOWN = {"reference/arch": {"turn": 2},   # 958px tall at the wider rung, ceiling is 840
-             "repo/er": {"gap": 1}}           # no spot on its leg both clears the head and fits
+    KNOWN = {"reference/arch": {"turn": 2}}   # 958px tall at the wider rung, ceiling is 840
 
     @classmethod
     def setUpClass(cls):

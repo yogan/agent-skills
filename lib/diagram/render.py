@@ -132,9 +132,9 @@ def compile_source(source, pad=8, binary="d2", layers=None, edges=None):
 
     `--layout elk` is not an option a caller chooses — see `d2.ELK_OPTS` for why this repo uses
     one engine and which one. Two of its spacings are, because both are escalated per figure by
-    `_pick_layout`: `layers` when the tight default leaves text unreadable
-    (`d2.ELK_SPACING_LADDER`), `edges` when an arrowhead has no straight line to sit on
-    (`d2.ELK_EDGE_LADDER`).
+    `_pick_layout`: `layers` when the tight default leaves text unreadable or a label with
+    nowhere to sit on its own leg (`d2.ELK_SPACING_LADDER`), `edges` when an arrowhead has no
+    straight line to sit on (`d2.ELK_EDGE_LADDER`).
 
     Output goes to a temp file rather than stdout: it costs a temp dir and it is the one
     form d2 will write in every case, including outputs it refuses to send to stdout.
@@ -426,18 +426,61 @@ def _afford(svg, name, spill, standalone=False):
 
 
 def _at_layer_spacing(spec, name, binary, theme_vars, edges):
-    spill = 0.0
-    for layers in d2mod.ELK_SPACING_LADDER:
+    def rung(layers):
         layout, svg = _pick_at_spacing(spec, name, binary, theme_vars, layers, edges)
         hidden, spill = _faults(svg, enabled=theme_vars)
-        # Unreadable text is the one defect worth re-laying-out for, and the only fix is a
-        # wider gap: a label lands in the space between two layers, so at 15px it overlaps
-        # whatever borders that space. Escalated rather than raised for everyone, because it
-        # costs — see `d2.ELK_SPACING_LADDER`. Without a browser this cannot be measured, so
-        # the tight spacing stands and the clipping gate reports the consequence later.
-        if not hidden:
-            return layout, svg, layers, spill
+        return svg, hidden, spill, layout
+
+    layers, svg, spill, layout = _climb_layers(rung, name)
     return layout, svg, layers, spill
+
+
+def _climb_layers(rung, name, standalone=False):
+    """`(layers, svg, spill, payload)` at the tightest layer spacing that draws soundly.
+
+    `rung(layers)` renders at one spacing and hands back `(svg, hidden, spill, payload)`; the
+    payload is whatever else its caller wants to keep from the rung it settles on.
+
+    Two defects climb this ladder, and one gap between two layers pays for both.
+
+    **Unreadable text** is absolute, because a label lands in that gap and at 15px it overlaps
+    whatever borders it. Without a browser it cannot be measured, so the tight spacing stands
+    and the clipping gate reports the consequence later.
+
+    **A label with nowhere to sit** is the second, and it is the same shortage seen from the
+    other side: ELK sizes the gap to hold the label and nothing more, so on a leg that short
+    there is no spot that both leaves the line a beginning and keeps clear of the arrowhead at
+    the end. `edgelabel` takes the least bad one and `arrows` reports what it cost. Unlike
+    hidden text this one is only worth buying while it is affordable, so the rung is kept on
+    `_afford` — the same test the edge ladder is held to — and a figure already out of pocket
+    on height does not pay for a candidate search it will refuse.
+    """
+    best = last = None
+    for layers in d2mod.ELK_SPACING_LADDER:
+        svg, hidden, spill, payload = rung(layers)
+        last = (layers, svg, spill, payload)
+        if hidden:
+            continue
+        rank = _afford(svg, name, spill, standalone=standalone)
+        if best is None or rank < best[0]:
+            best = (rank, layers, svg, spill, payload)
+        # A standalone image has no height rule to be out of pocket against — see
+        # `gates/size.check` — so there the question does not arise.
+        if not _cramped(svg) or (not standalone and _out_of_pocket(svg)):
+            break
+    return best[1:] if best else last
+
+
+def _cramped(svg):
+    """Whether a label's own gap is eating line an arrow needs at one of its ends.
+
+    Only `gap`, and that is the split between the two ladders. A gap is what a LABEL costs the
+    line it sits on, and how much room the label has is decided by the space between two layers
+    — this ladder. A `turn` is where the route ends up pointing, which is the edge ladder's
+    lever; climbing this one for a turn would cost a candidate search per rung on a figure it
+    cannot help.
+    """
+    return any(defect.rule == "gap" for defect in arrows.defects(svg))
 
 
 def _faults(svg, enabled=True, theme="light", standalone=False):
@@ -656,10 +699,10 @@ def _standalone_ladder(spec, name, theme, binary, edge_rungs=None):
     """`(svg, layers, edges)` at the tightest spacings that leave the drawing sound.
 
     The same two escalations `_pick_layout` does for the embedded target — layer spacing until
-    no text is unreadable, edge spacing until no arrowhead sits on a curve — done separately
-    because the two targets are different drawings: standalone has its own direction default
-    (`d2.DIRECTION`), its own far more generous padding, and no content column, so neither the
-    layout nor the measurement carries across.
+    the text is readable and every label fits its leg (`_climb_layers`), edge spacing until no
+    arrowhead sits on a curve — done separately because the two targets are different drawings:
+    standalone has its own direction default (`d2.DIRECTION`), its own far more generous
+    padding, and no content column, so neither the layout nor the measurement carries across.
 
     What does NOT carry across is the cost. Embedded, every px of width is scaled back out of
     the glyphs, which is why the ladders are escalated rather than raised for everyone; a
@@ -668,11 +711,12 @@ def _standalone_ladder(spec, name, theme, binary, edge_rungs=None):
     """
     best = None
     for edges in (edge_rungs or d2mod.ELK_EDGE_LADDER):
-        for layers in d2mod.ELK_SPACING_LADDER:
+        def rung(layers, edges=edges):
             svg = _standalone_at(spec, name, theme, binary, layers, edges)
             hidden, spill = _faults(svg, theme=theme, standalone=True)
-            if not hidden:
-                break
+            return svg, hidden, spill, None
+
+        layers, svg, spill, _payload = _climb_layers(rung, name, standalone=True)
         rank = _afford(svg, name, spill, standalone=True)
         if best is None or rank < best[0]:
             best = (rank, svg, layers, edges)
