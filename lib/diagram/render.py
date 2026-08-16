@@ -29,6 +29,7 @@ import subprocess
 import sys
 import tempfile
 
+from .. import parallel
 from . import arrows
 from . import browser
 from . import callout
@@ -534,8 +535,7 @@ def spills(svg, theme="light", standalone=False):
 def _pick_at_spacing(spec, name, binary, theme_vars, layers, edges=None):
     from .gates import GateError, size as size_gate   # local: gates.clipping imports this
 
-    best = None
-    seen = set()
+    seen, wanted = set(), []
     for direction, wrap in CANDIDATES:
         variant = dict(spec, direction=direction)
         source = d2mod.emit(variant, wrap_edges=wrap)
@@ -549,8 +549,19 @@ def _pick_at_spacing(spec, name, binary, theme_vars, layers, edges=None):
         if source in seen:
             continue
         seen.add(source)
+        wanted.append((direction, wrap, variant, source))
+
+    # Emitting is pure string work and stays in order, because the dedup above depends on it.
+    # COMPILING is a subprocess per candidate and they are independent, so they go at once —
+    # see `lib/parallel.py`. The ranking below is unchanged and still runs in candidate order,
+    # which is what keeps `CANDIDATES.index` meaningful as a tie-break.
+    def draw(job):
+        _direction, _wrap, variant, source = job
         raw = compile_source(source, binary=binary, layers=layers, edges=edges)
-        svg = postprocess(_maybe_compact(raw, variant, name), name, theme_vars=theme_vars)
+        return postprocess(_maybe_compact(raw, variant, name), name, theme_vars=theme_vars)
+
+    best = None
+    for (direction, wrap, _variant, _source), svg in zip(wanted, parallel.each(draw, wanted)):
         try:
             result = size_gate.check(svg, name)
             metrics = size_gate.analyse(svg)

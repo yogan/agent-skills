@@ -27,6 +27,7 @@ Where no anchor is clip-free the fix is editorial: shorten the note.
 import copy
 import itertools
 
+from .. import parallel
 from . import browser as browser_mod
 from . import render as render_mod
 from .spec import NEAR, validate
@@ -141,12 +142,21 @@ def _measure_candidates(spec, name, combos, theme, standalone=False, layout=None
     A candidate d2 refuses to compile is dropped rather than fatal — some anchor
     combinations are simply invalid for a given shape, and the remaining ones still give a
     usable answer.
+
+    The candidates are compiled CONCURRENTLY, and this is the fan-out that made it worth having
+    a helper for: it is the biggest single cost in the renderer — a two-callout figure is 64 d2
+    runs, which is more compiling than the rest of a draw put together. They are independent by
+    construction, each working on its own deep copy of the spec, so the only thing the order
+    buys is being able to zip the results back against the anchors that produced them, which
+    `parallel.each` preserves. See `lib/parallel.py` for why threads.
     """
     from .gates import GateError, size as size_gate   # local: gates import render
 
     direction, wrap = layout if layout else (None, None)
     jobs, kept, smallest = [], [], []
-    for index, anchors in enumerate(combos):
+
+    def compile_one(job):
+        index, anchors = job
         trial = _apply(spec, anchors)
         if direction:
             trial["direction"] = direction
@@ -162,19 +172,26 @@ def _measure_candidates(spec, name, combos, theme, standalone=False, layout=None
                 svg = render_mod.render(trial, name=f"{name}-p{index}",
                                         wrap_edges=wrap, layers=layers, edges=edges)
         except render_mod.RenderError:
-            continue
-        jobs.append({"key": str(index),
-                     "html": render_mod.harness_html(svg, theme=theme,
-                                                     standalone=standalone)})
+            return None
         # The smallest glyph this candidate ends up with, so `_score` can see when an anchor
         # has grown the drawing and shrunk every letter in it. Measured from the SVG rather
         # than in the browser because the size gate already knows how — and it is the same
         # number the layout search ranks on, so the two agree about what "smaller" means.
         try:
             metrics = size_gate.analyse(svg)
-            smallest.append((metrics["fmin"], metrics["rend_h"]))
+            small = (metrics["fmin"], metrics["rend_h"])
         except GateError:
-            smallest.append((None, None))
+            small = (None, None)
+        return index, anchors, svg, small
+
+    for outcome in parallel.each(compile_one, enumerate(combos)):
+        if outcome is None:
+            continue
+        index, anchors, svg, small = outcome
+        jobs.append({"key": str(index),
+                     "html": render_mod.harness_html(svg, theme=theme,
+                                                     standalone=standalone)})
+        smallest.append(small)
         kept.append(anchors)
     if not jobs:
         raise PlacementError(f"{name}: d2 compiled none of the {len(combos)} candidate "

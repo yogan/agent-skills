@@ -13,6 +13,7 @@ import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
+from lib import parallel
 from lib.diagram import browser, render
 from lib.diagram.examples import STATE
 
@@ -82,6 +83,22 @@ class TestRealMeasurement(unittest.TestCase):
         svg = render.render(STATE, name="state")
         jobs = [{"key": f"j{i}", "html": render.harness_html(svg)} for i in range(3)]
         self.assertEqual([r["key"] for r in browser.measure(jobs)], ["j0", "j1", "j2"])
+
+    def test_a_batch_split_across_browsers_still_comes_back_in_order(self):
+        """Past `SHARD_MIN` the batch runs in several browsers at once, and the placement
+        search zips the results against the anchors that produced them — so a shard landing
+        out of order would pair a measurement with somebody else's candidate.
+
+        Small pages rather than real diagrams: what is under test is the splitting, and 24
+        real renders would make this the slowest test in the file for no extra coverage.
+        """
+        svg = render.render(STATE, name="state")
+        count = 3 * browser.SHARD_MIN
+        jobs = [{"key": f"j{i:02d}", "html": render.harness_html(svg)} for i in range(count)]
+        self.assertGreater(min(parallel.WORKERS, count // browser.SHARD_MIN), 1,
+                           "this machine must shard for the test to mean anything")
+        self.assertEqual([r["key"] for r in browser.measure(jobs)],
+                         [j["key"] for j in jobs])
 
     def test_the_card_is_wider_than_the_svg_it_contains(self):
         """The harness has to reproduce the real card, since the card is what clips."""

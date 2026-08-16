@@ -24,6 +24,8 @@ import os
 import shutil
 import subprocess
 
+from .. import parallel
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 MEASURE_JS = os.path.join(HERE, "js", "measure.js")
 
@@ -74,16 +76,26 @@ def requirements():
     return problems
 
 
+# Pages per browser, once there are enough of them to be worth a second one. A launch costs
+# about as much as measuring eight pages, so splitting below that spends more on Chrome than it
+# saves; above it the batch divides across `parallel.WORKERS` browsers, which is what takes the
+# 64-candidate placement search off the critical path. Chrome instances are independent — the
+# test runner has relied on that from the start.
+SHARD_MIN = 8
+
+
 def measure(jobs, viewport=None, shadow=SHADOW_PX, weights=None, timeout=180):
-    """Measure a batch of harness pages in one browser launch.
+    """Measure a batch of harness pages, in as few browser launches as pay for themselves.
 
     `jobs` is a list of `{"key": ..., "html": ...}`. Returns a list of measurement dicts in
     the same order, each carrying the `key` back.
 
-    Batched on purpose: launching Chrome costs far more than measuring one more page, and
-    the placement search wants to compare eight candidates at a time. Raises BrowserError
-    rather than returning partial results — a half-measured placement search would silently
-    pick a worse anchor.
+    Batched on purpose: launching Chrome costs far more than measuring one more page, and the
+    placement search wants to compare 64 candidates at a time. Past `SHARD_MIN` per browser the
+    batch is split and the browsers run at once, because at 64 pages the per-page cost is what
+    dominates and a single launch measures them one after another. Raises BrowserError rather
+    than returning partial results — a half-measured placement search would silently pick a
+    worse anchor.
     """
     jobs = list(jobs)
     if not jobs:
@@ -92,6 +104,19 @@ def measure(jobs, viewport=None, shadow=SHADOW_PX, weights=None, timeout=180):
     if problems:
         raise BrowserError("; ".join(problems))
 
+    shards = min(parallel.WORKERS, max(1, len(jobs) // SHARD_MIN))
+    if shards > 1:
+        # Contiguous slices, so flattening restores the order every caller zips against.
+        size = -(-len(jobs) // shards)
+        chunks = [jobs[i:i + size] for i in range(0, len(jobs), size)]
+        measured = parallel.each(
+            lambda chunk: _measure(chunk, viewport, shadow, weights, timeout), chunks)
+        return [result for chunk in measured for result in chunk]
+    return _measure(jobs, viewport, shadow, weights, timeout)
+
+
+def _measure(jobs, viewport, shadow, weights, timeout):
+    """One browser launch, measuring every page in `jobs`."""
     payload = json.dumps({
         "viewport": viewport or VIEWPORT,
         "shadow": shadow,

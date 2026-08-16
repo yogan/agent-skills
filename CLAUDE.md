@@ -97,6 +97,25 @@ applies to all of them — fix the class of defect, not the instance.
 described generally, not a story or a number from one case. Delete what has become stale or
 wrong rather than leaving it beside the new thing.
 
+**Independent work runs at the same time.** A typical developer machine has cores to spare and
+nearly everything expensive here is a subprocess — a d2 compile, a node measurement, a Chrome
+launch — so a serial loop over independent items is wasted wall clock, in the repo's own code
+and in a throwaway script alike. `lib/parallel.py` is the helper and says where it does and does not
+apply; `run_tests.py` has always run its files this way.
+
+The two rules that keep it honest:
+
+- **Fan out at the innermost place that has independent work**, not at every level. Nesting
+  pools puts more subprocesses on the machine than it has cores and spends the win on
+  contention.
+- **Order is not optional.** Results are zipped back against the inputs that produced them
+  almost everywhere here, so `parallel.each` preserves it — and a batch split across workers
+  reassembles in the order it was given.
+
+A sequential dependency is not a fan-out: the spacing ladders decide whether to try the next
+rung FROM the result of this one, and rendering all rungs speculatively burns cores on answers
+that are usually thrown away.
+
 ## Layout
 
 - `skills/<name>/` — one skill each, independently symlink-installable (see README.md).
@@ -135,7 +154,7 @@ directly, e.g.:
 
     python3 skills/rework-mr/scripts/test_threads.py
 
-To run everything: `python3 run_tests.py` (~95s, most of it d2 and browser launches). While
+To run everything: `python3 run_tests.py` (~125s, most of it browser launches and d2). While
 editing, run less:
 
 - `python3 run_tests.py --changed` — resolves your uncommitted edits through the repo's import
@@ -186,7 +205,7 @@ the flag:
 
 | file | cost | why it cannot be faster |
 |---|---|---|
-| `lib/diagram/test_place_slow.py` | ~2m | every assertion is a real callout-placement search — 64 d2 compiles per two-callout diagram, each measured in a real browser. Faking it would test the fake. |
+| `lib/diagram/test_place_slow.py` | ~100s alone, ~3m inside a full `--slow` run | every assertion is a real callout-placement search — 64 d2 compiles per two-callout diagram, each measured in a real browser. Faking it would test the fake. The compiles run concurrently now, which is why it costs so much more when the rest of the suite is competing for the same cores. |
 | `hooks/test_paste_gate_slow.py` | ~36s | real `time.sleep()` in a subprocess, unmockable from the test. |
 
 Run `--slow` **once**, at the end, and only if you touched `place.py`, the harness geometry,
