@@ -217,6 +217,38 @@ class TestEdgeLabelWrapping(unittest.TestCase):
     def test_a_short_label_is_left_alone(self):
         self.assertEqual(d2.wrap_edge_label("GraphQL", 8), "GraphQL")
 
+    def test_a_line_runs_over_rather_than_the_label_spending_another(self):
+        """The reference state machine's `retry (max 30s)`, which folded onto three lines whose
+        longest was five characters. A label's box is as wide as its longest line, so that third
+        break bought the figure 5px and cost it a line — see `WRAP_SLACK`."""
+        self.assertEqual(d2.wrap_edge_label("retry (max 30s)", 8), "retry\n(max 30s)")
+
+    def test_the_overrun_is_spent_only_where_it_saves_a_line(self):
+        """Otherwise it is just a wider wrap width wearing a disguise: a label that folds to the
+        same number of lines either way keeps the tighter fold and the narrower box."""
+        self.assertEqual(d2.wrap_edge_label("transport error", 8), "transport\nerror")
+        self.assertEqual(d2.wrap_edge_label("socket open", 8), "socket\nopen")
+
+    def test_a_per_label_fold_spares_the_labels_it_names(self):
+        """`(width, spared)` is what `render._relax` produces: one width for the figure, and
+        the labels it measured as affordable on one line left alone."""
+        self.assertEqual(d2.fold_for("transport error", (8, frozenset({"transport error"}))),
+                         "transport error")
+        self.assertEqual(d2.fold_for("socket open", (8, frozenset({"transport error"}))),
+                         "socket\nopen")
+
+    def test_a_plain_width_still_folds_everything(self):
+        self.assertEqual(d2.fold_for("socket open", 8), "socket\nopen")
+
+    def test_no_width_folds_nothing(self):
+        self.assertEqual(d2.fold_for("a label that is really quite long", None),
+                         "a label that is really quite long")
+
+    def test_the_allowance_is_one_character(self):
+        """Stated as a relationship: every fold above was measured at this value, and two was
+        never measured at all."""
+        self.assertEqual(d2.WRAP_SLACK, 1)
+
     def test_an_authored_newline_is_kept(self):
         self.assertEqual(d2.wrap_edge_label("one\ntwo", 40), "one\ntwo")
 

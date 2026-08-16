@@ -328,6 +328,12 @@ HEIGHT_BUCKET = 100
 # scaled down to 10.7px, while a wrapped candidate of the same height bucket was 796x215 at
 # 12.7px. The wide one is not wrong so much as unpleasant: a 4.5:1 drawing reads as a banner.
 #
+# That is still the rule, but it no longer decides THAT case. It used to buy the better shape
+# by folding every edge label in the figure, and a fold is a cost to a reader that this term
+# cannot see — so `_folds` now sits above it and the shape is chosen only among candidates
+# that break their labels equally. The repo state machine ships at 917x211 with two of its
+# five labels folded, rather than 796x215 with all five.
+#
 # 2.0 rather than 16:9, because the band has to hold BOTH orientations and a portrait diagram
 # at 1:2 is perfectly ordinary. Distances are measured in logs so that 4:1 is as far outside as
 # 1:4, and bucketed, so two candidates of much the same shape tie and the terms below decide.
@@ -340,6 +346,23 @@ HEIGHT_BUCKET = 100
 # height, it does not turn a landscape figure portrait.
 ASPECT_BAND = (0.5, 2.0)
 ASPECT_BUCKET = 0.1
+
+
+def _folds(wrap):
+    """How hard this candidate folds its edge labels — 0 for not at all.
+
+    Ranked ABOVE the aspect band, which is what makes an unfolded label the default rather
+    than a tie-break nothing ever reaches. A fold is a real cost to a reader: it is decided for
+    the whole FIGURE, so a label that is not setting the width anywhere gets broken along with
+    the one that is, and `edgelabel` may then slide it somewhere roomy — where the break has
+    no visible reason at all. Two figures were doing exactly that, with an unfolded candidate
+    sitting right there passing every gate.
+
+    It sits below HEIGHT, so this does not turn a figure portrait to save a line break, and
+    below the two correctness terms, so it can never buy a fold out of a clipped or crossed
+    drawing. It only decides among candidates that read equally well and fit equally well.
+    """
+    return 0 if wrap is None else 1 + d2mod.EDGE_WRAPS.index(wrap)
 
 
 def _out_of_shape(width, height):
@@ -594,6 +617,7 @@ def _pick_at_spacing(spec, name, binary, theme_vars, layers, edges=None):
         # ties between candidates that are otherwise equal.
         rank = (len(result.problems), edgelabel.unfixable_crossings(svg),
                 round(metrics["rend_h"] / HEIGHT_BUCKET),
+                _folds(wrap),
                 round(_out_of_shape(metrics["nat_w"], metrics["nat_h"]) / ASPECT_BUCKET),
                 CANDIDATES.index((direction, wrap)),
                 len(arrows.defects(svg)), -metrics["fmin"])
@@ -617,7 +641,65 @@ def choose_layout(spec, name="diagram", binary="d2", edge_rungs=None):
         return None
     layout, _svg, layers, edges = _pick_layout(spec, name, binary, theme_vars=True,
                                               edge_rungs=edge_rungs)
-    return layout, layers, edges
+    return _relax(spec, name, binary, layout, layers, edges), layers, edges
+
+
+def _relax(spec, name, binary, layout, layers, edges):
+    """`layout` with every edge label put back on one line that the drawing can afford.
+
+    The fold width is chosen for a whole FIGURE, and a reader judges each label where it sits.
+    So the two disagree constantly: the reference state machine folded six labels to keep its
+    text above the floor, when only two of them were paying for it — `401 invalid` sat broken
+    across two lines with 300px of empty canvas beside it, for no reason a reader could see.
+
+    Longest first, because a long label buys the most width back and is the one whose fold is
+    most obvious. Each is offered on its own and kept only while the whole drawing still passes
+    the size gate, so this can loosen a figure but never spoil one.
+
+    Sequential on purpose, and not a fan-out: each answer depends on what the previous one was
+    allowed to keep. It costs one d2 compile per folded label, on the figures that fold at all
+    — three of ten today — and buys back four labels on one of them.
+    """
+    direction, wrap = layout
+    if wrap is None:
+        return layout
+    folded = [label for label in _edge_labels(spec)
+              if "\n" in d2mod.wrap_edge_label(label, wrap)]
+    spared = frozenset()
+    for label in sorted(folded, key=len, reverse=True):
+        trial = spared | {label}
+        if _sound(_one(spec, name, binary, direction, (wrap, trial), layers, edges), name):
+            spared = trial
+    return (direction, (wrap, spared) if spared else wrap)
+
+
+def _one(spec, name, binary, direction, wrap, layers, edges):
+    """One candidate drawn, at a pinned direction and fold. No search and no ladder."""
+    source = d2mod.emit(dict(spec, direction=direction), wrap_edges=wrap)
+    raw = compile_source(source, binary=binary, layers=layers, edges=edges)
+    return postprocess(_maybe_compact(raw, dict(spec, direction=direction), name), name)
+
+
+def _edge_labels(spec):
+    """Every edge label in a spec, in document order, whatever the kind calls its edges."""
+    seen = []
+    for key in ("edges", "transitions", "messages", "relations"):
+        for item in spec.get(key) or []:
+            if item.get("label") and item["label"] not in seen:
+                seen.append(item["label"])
+    return seen
+
+
+def _sound(svg, name):
+    """Whether this drawing passes the size gate. Mirrors `figure._fits`, and answers the
+    OPPOSITE way when it cannot measure: unmeasurable means a label is not spared here, and
+    means no extra fold is spent there. Both are the cautious answer, because the two are
+    deciding opposite actions — a change to one is a reason to look at the other."""
+    from .gates import GateError, size as size_gate
+    try:
+        return not size_gate.check(svg, name).problems
+    except GateError:
+        return False
 
 
 def choose_drawing(spec, name="diagram", theme="dark", standalone=False, binary="d2",

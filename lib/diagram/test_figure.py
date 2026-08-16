@@ -273,5 +273,58 @@ class TestPlacement(Base):
         self.assertEqual(self.clipping_calls, [])
 
 
+
+
+class TestFoldingIsAFallback(unittest.TestCase):
+    """A line break in an edge label is spent only when the finished drawing needs it.
+
+    `render._folds` makes an unbroken label the default among candidates, but "needed" is
+    measured before the callouts exist and a callout takes canvas: the repo state machine is
+    947px unwrapped and 1014px once its callout has an anchor, which puts its smallest label
+    at 10.0px against a 10px floor. `figure._settle` is the only place that can see that, so
+    the escalation happens there — one step at a time, and no further than it takes.
+
+    Pure arithmetic on the pinned tuple, so no d2 and no browser: the corpus-level claim is
+    `test_reference.MEASURED` and the captures.
+    """
+
+    def test_it_steps_one_level_at_a_time(self):
+        from lib.diagram import d2
+        gentlest, harder = None, d2.EDGE_WRAPS[0]
+        self.assertEqual(figure._next_fold((("right", gentlest), 15, 15)),
+                         (("right", harder), 15, 15))
+
+    def test_it_keeps_the_direction_and_the_spacings(self):
+        """Only the fold escalates. A retry that also re-picked the direction would be
+        answering a different question from the one the size gate asked."""
+        self.assertEqual(figure._next_fold((("down", None), 30, 25))[0][0], "down")
+        self.assertEqual(figure._next_fold((("down", None), 30, 25))[1:], (30, 25))
+
+    def test_it_escalates_from_a_relaxed_fold_and_gives_the_sparing_up(self):
+        """`render._relax` spares labels it measured as affordable. If the finished drawing
+        then does not fit, that measurement no longer holds, so the sparing goes with the
+        step. Reading the width out of the pair is also what stops this raising."""
+        from lib.diagram import d2
+        relaxed = (d2.EDGE_WRAPS[0], frozenset({"a label"}))
+        self.assertEqual(figure._next_fold((("right", relaxed), 15, 15)),
+                         (("right", d2.EDGE_WRAPS[1]), 15, 15))
+
+    def test_the_hardest_fold_has_nowhere_left_to_go(self):
+        from lib.diagram import d2
+        self.assertIsNone(figure._next_fold((("right", d2.EDGE_WRAPS[-1]), 15, 15)))
+        self.assertIsNone(figure._next_fold(
+            (("right", (d2.EDGE_WRAPS[-1], frozenset({"a label"}))), 15, 15)))
+
+    def test_a_figure_with_no_layout_to_pin_never_folds(self):
+        """A standalone image and a sequence diagram: neither is laid out into a column that
+        could make its text too small, so neither has a fold to escalate."""
+        self.assertIsNone(figure._next_fold((None, 15, 15)))
+
+    def test_an_unmeasurable_drawing_is_not_folded_over(self):
+        """Spending a reader's line break on a parse failure would be a guess; the gates say
+        so properly a step later."""
+        self.assertTrue(figure._fits("not an svg at all", "x", False))
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

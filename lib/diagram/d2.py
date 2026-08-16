@@ -61,6 +61,12 @@ DETAIL_WRAP = 34
 # content, and height is nearly free since the label sits beside a line that is already there.
 # `render._pick_layout` tries them in order and keeps the gentlest one that fits, because each
 # step down buys width by spending lines, and a four-line edge label is its own kind of ugly.
+#
+# A middle rung at 11 was measured and removed: `WRAP_SLACK` makes 14 fold nothing at all on the
+# reference state machine, so its ladder really does jump from no folds to six — but 11 fails
+# that figure's size gate anyway, and it changed no other figure in either corpus. A rung that
+# buys nothing is a compile per candidate for nothing. What closes that gap is `render._relax`,
+# which unfolds label by label from the level below rather than looking for a level in between.
 EDGE_WRAPS = (14, 8)
 
 # Lines a detail may occupy after wrapping — four in the box counting the title. Past this the
@@ -460,6 +466,21 @@ OUTCOME_COLOUR = {"ok": palette.vars_for("store", table=True),
                   "error": palette.vars_for("ext", table=True)}
 
 
+def fold_for(label, wrap):
+    """How this one label should be broken, for whatever `wrap_edges` was asked for.
+
+    Three forms, because folding started as one decision for a whole figure and is not one any
+    more. `None` leaves everything alone; a WIDTH folds every label to it; and `(width, spared)`
+    folds every label to it EXCEPT the ones named — which is what lets a figure fold only the
+    labels that are actually setting its width. `render._relax` decides who is spared, by
+    measuring; see there for why a per-figure width alone reads as arbitrary.
+    """
+    if isinstance(wrap, tuple):
+        width, spared = wrap
+        return label if label in spared else wrap_edge_label(label, width)
+    return wrap_edge_label(label, wrap) if wrap else label
+
+
 def wrap_edge_label(text, width=EDGE_WRAPS[0]):
     """Break a long edge label onto several lines, at the places a reader already sees.
 
@@ -480,25 +501,52 @@ def wrap_edge_label(text, width=EDGE_WRAPS[0]):
     """
     out = []
     for paragraph in str(text).split("\n"):
-        words = paragraph.split()
-        head, rest = _split_at_colon(words)
-        lines = [" ".join(head)] if head else []
-        current = ""
-        for word in rest:
-            candidate = f"{current} {word}".strip()
-            if current and len(candidate) > width:
-                lines.append(current)
-                current = word
-            else:
-                current = candidate
-        if current:
-            lines.append(current)
-        out += _tidy(lines)
+        tight = _fold(paragraph, width)
+        # A fold is bought to save WIDTH, and past a couple of lines it stops buying much: a
+        # label's box is as wide as its longest line, so the third break on `retry (max 30s)`
+        # takes it from 9 characters to 5 and the figure from 940px to 935 — five px, for a
+        # line. Letting one line run over by `WRAP_SLACK` rather than spending another is the
+        # same trade `_tidy` already makes for a stranded short word, and the state machine
+        # gets 6px of height back for it.
+        loose = _fold(paragraph, width + WRAP_SLACK)
+        out += loose if len(loose) < len(tight) else tight
     return "\n".join(out)
+
+
+def _fold(paragraph, width):
+    """One paragraph greedily broken to `width`, tidied. `[]` for an empty one."""
+    head, rest = _split_at_colon(paragraph.split())
+    lines = [" ".join(head)] if head else []
+    current = ""
+    for word in rest:
+        candidate = f"{current} {word}".strip()
+        if current and len(candidate) > width:
+            lines.append(current)
+            current = word
+        else:
+            current = candidate
+    if current:
+        lines.append(current)
+    return _tidy(lines)
 
 
 # Words no longer than this are never left alone on a line — see wrap_edge_label.
 ORPHAN = 2
+
+# How far one line may run over the wrap width rather than the label spending another line.
+# Measured over all 52 edge labels in both corpora at both wrap widths — 104 folds, of which
+# one character changes five, every one of them a line saved:
+#
+#   retry (max 30s)          at 8    retry|(max|30s|)      -> retry|(max 30s)
+#   presenceToken (60s TTL)  at 8    …|(60s|TTL)           -> …|(60s TTL)
+#   compile each rung        at 8    compile|each|rung     -> compile|each rung
+#   retry (max 30s)          at 14   retry (max|30s)       -> one line
+#   transport error          at 14   transport|error       -> one line
+#
+# All five are a bracket or a two-word tail that greedy filling split one character early. Two
+# is not obviously wrong and was not measured; one was enough for every case the corpora have,
+# and a wider allowance buys width back from labels nobody has looked at.
+WRAP_SLACK = 1
 
 
 def _split_at_colon(words):
@@ -540,8 +588,7 @@ def _edge(edge, wrap=None):
     arrow = "<->" if edge.get("bidirectional") else "->"
     line = f"{_path(edge['from'])} {arrow} {_path(edge['to'])}"
     if edge.get("label"):
-        label = wrap_edge_label(edge["label"], wrap) if wrap else edge["label"]
-        line += f": {_q(label)}"
+        line += f": {_q(fold_for(edge['label'], wrap))}"
     style = []
     if edge.get("push"):
         style += ["style.stroke-dash: 4", "target-arrowhead.shape: arrow"]

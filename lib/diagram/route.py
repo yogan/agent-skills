@@ -83,6 +83,11 @@ STEP_DEPTH = 25
 # machine, where the gap was 0.4px over 214px of the line's length.
 CALLOUT_CLEARANCE = 10
 
+# The least daylight worth stepping a run out for. Two corners cost a reader something, so a
+# gap they cannot see is not worth them — and the corners need the room in any case, since the
+# drop IS the clearance and two of them plus `STRAIGHT_MIN` will not fit in less.
+MIN_DAYLIGHT = arrows.MIN_RUN
+
 # How close two parallel runs may get before they read as one thick line rather than two
 # arrows. Only relevant when something here MOVES a run, since ELK spaces its own channels far
 # wider than this — 30px apart on the figure that needed the move. Below about this the two
@@ -254,23 +259,39 @@ def _clear(d, callouts, others, canvas, obstacles):
     perp = 1 - index
     span = (min(start[index], end[index]), max(start[index], end[index]))
 
-    line = start[perp]
+    # `-STROKE` and not `0`: a line whose centre is a hair OUTSIDE the box still overlaps it,
+    # the stroke having width. The two cases are the same defect and the boundary between them
+    # is not a place to put a decision. A line properly UNDER a callout is left alone — that is
+    # `place` covering something deliberately, and it is nowhere near this allowance.
+    line, edges = start[perp], []
     for box in callouts:
         if box[index + 2] <= span[0] or box[index] >= span[1]:
             continue                     # nowhere near it along the run
         for edge, way in ((box[perp + 2], 1.0), (box[perp], -1.0)):
-            if 0 <= (line - edge) * way < CALLOUT_CLEARANCE:
+            if -arrows.STROKE <= (line - edge) * way < CALLOUT_CLEARANCE:
                 line = edge + way * CALLOUT_CLEARANCE
-    if line == start[perp]:
+                edges.append((edge, way))
+    if not edges:
         return None
 
-    if canvas and not (canvas[perp] + CORNER_REACH <= line <= canvas[perp + 2] - CORNER_REACH):
-        return None
+    # Take the best position the corridor allows rather than refusing outright. Asking for
+    # `CALLOUT_CLEARANCE` and giving up when the channel beyond cannot spare it is a cliff:
+    # measured, the reference state machine's target landed 19.9px from the next channel
+    # against a 20px minimum and the whole fix was abandoned over a tenth of a pixel.
+    push = 1.0 if line > start[perp] else -1.0
+    want = (line - start[perp]) * push
     for leg in others:                   # not onto another arrow's channel
         flat = leg[perp + 2] - leg[perp] <= arrows.STROKE + 1
         if flat and leg[index] < span[1] and leg[index + 2] > span[0]:
-            if abs(leg[perp] - line) < MIN_SEPARATION:
-                return None
+            beyond = (leg[perp] - start[perp]) * push
+            if beyond > 0:
+                want = min(want, beyond - MIN_SEPARATION)
+    line = start[perp] + push * want
+    if any((line - edge) * way < MIN_DAYLIGHT for edge, way in edges):
+        return None                      # not enough room to be worth two corners
+
+    if canvas and not (canvas[perp] + CORNER_REACH <= line <= canvas[perp + 2] - CORNER_REACH):
+        return None
 
     way = 1.0 if run > 0 else -1.0
     down = 1.0 if line > start[perp] else -1.0

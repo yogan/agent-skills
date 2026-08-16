@@ -76,11 +76,15 @@ MEASURED = {
     # 902x257 until the layout search learned to prefer a less extreme shape
     # (`render.ASPECT_BAND`): 3.51:1 becomes 3.35:1 for 3px of height.
     #
-    # 871 while the 40px above were still being paid. They are not: `route.straighten` slides
-    # the last step of a route back along the run it comes off, which puts the same arrowheads
-    # on straight line out of space the drawing already had. The rung is given back and the
-    # figure is 10px narrower than the one that bought it.
-    "er": (861, 260),
+    # 871 while the extra edge spacing above was still being paid. It is not: `route.straighten`
+    # slides the last step of a route back along the run it comes off, which puts the same
+    # arrowheads on straight line out of space the drawing already had.
+    #
+    # 861x260 while its cardinalities were folded. Nothing made them fold — an unwrapped
+    # candidate was sitting there passing every gate, and the fold was bought for a slightly
+    # less extreme SHAPE. `render._folds` ranks an unbroken label above that, so all three read
+    # on one line now and the figure is 31px wider for it.
+    "er": (892, 257),
     # dagre: 899x357 at 12.1px. This is the biggest single gain in the corpus — barely half
     # the width, and 14.0px text because none of it is scaled away. 411 while its callout was
     # pinned `bottom-left`; `center-right`, where the pass puts it, reaches out to the side.
@@ -98,9 +102,14 @@ MEASURED = {
     # by being the only one left, not by being preferred. `route.straighten` fixes the heads at
     # the tight rung, the accident goes, and the ranking's actual choice ships: 505px shorter
     # for text at 10.8px instead of 13.0, which is the trade `render.HEIGHT_BUCKET` exists to
-    # make. The wrapping that comes with it is not free either — see `d2.wrap_edge_label`, and
-    # `retry (max 30s)` folds onto three lines where nothing was constraining the width.
-    "state": (980, 235),
+    # make. The wrapping that comes with it is not free either — see `d2.wrap_edge_label`.
+    #
+    # 980x235 while `retry (max 30s)` folded onto THREE lines. It was not folded for nothing:
+    # measured, putting it back on one line costs 32px of width, so the fold is paying for
+    # itself. But the THIRD break took its longest line from 9 characters to 5 and bought only
+    # 5px for it. `d2.WRAP_SLACK` lets one line run over rather than spend another, so it folds
+    # in two now — 5px wider, 6px shorter, and the only figure in either corpus that moves.
+    "state": (985, 229),
 }
 
 HAVE_D2 = render.d2_version() is not None

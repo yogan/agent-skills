@@ -14,7 +14,7 @@ import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
-from lib.diagram import d2, render
+from lib.diagram import d2, d2 as d2mod, render
 
 
 class TestPinIntrinsic(unittest.TestCase):
@@ -351,6 +351,42 @@ class TestToolchain(unittest.TestCase):
     def test_the_pinned_version_is_recorded(self):
         """The recipe leans on undocumented behaviour, so the version is part of it."""
         self.assertEqual(render.PINNED_VERSION, "0.8.1")
+
+
+
+
+class TestEdgeLabelsOfASpec(unittest.TestCase):
+    """What `render._relax` offers back to one line, and in what order it finds them."""
+
+    def test_it_finds_labels_whatever_the_kind_calls_its_edges(self):
+        for key in ("edges", "transitions", "messages"):
+            spec = {"kind": "x", key: [{"label": "one"}, {"label": "two"}]}
+            self.assertEqual(render._edge_labels(spec), ["one", "two"], key)
+
+    def test_a_repeated_label_is_offered_once(self):
+        """Folding is decided per TEXT, not per edge — the repo state machine says
+        `nothing hidden` on two different transitions."""
+        spec = {"kind": "state", "transitions": [{"label": "same"}, {"label": "same"}]}
+        self.assertEqual(render._edge_labels(spec), ["same"])
+
+    def test_an_edge_with_no_label_contributes_nothing(self):
+        spec = {"kind": "state", "transitions": [{"from": "a", "to": "b"}]}
+        self.assertEqual(render._edge_labels(spec), [])
+
+
+class TestFoldsRankAboveShape(unittest.TestCase):
+    """An unbroken label beats a tidier aspect ratio — see `render._folds`."""
+
+    def test_not_folding_at_all_ranks_best(self):
+        self.assertEqual(render._folds(None), 0)
+
+    def test_a_harder_fold_ranks_worse_than_a_gentler_one(self):
+        gentle, hard = d2mod.EDGE_WRAPS[0], d2mod.EDGE_WRAPS[-1]
+        self.assertLess(render._folds(gentle), render._folds(hard))
+
+    def test_every_fold_ranks_worse_than_none(self):
+        for wrap in d2mod.EDGE_WRAPS:
+            self.assertGreater(render._folds(wrap), render._folds(None), wrap)
 
 
 if __name__ == "__main__":

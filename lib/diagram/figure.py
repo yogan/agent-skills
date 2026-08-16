@@ -159,19 +159,71 @@ def _settle(spec, name, theme, standalone, pinned, binary, place_callouts):
     figure came back the narrow rung's size and clipped by the same 24px.
 
     Only the figure that needs it pays, and it pays one placement pass.
+
+    **Folding the edge labels is the second thing that has to happen here**, and for the same
+    reason. `render._folds` makes an unwrapped drawing the default, so a figure only breaks its
+    labels when it must — but "must" is measured before the callouts exist, and a callout takes
+    canvas. The repo state machine is 947px unwrapped and 1014px once its callout has an
+    anchor, which puts the smallest label at 10.0px against a 10px floor. So the fold is
+    escalated HERE, where the finished drawing can be measured, one step at a time and only as
+    far as it takes: that is what makes a line break a fallback rather than a default.
     """
-    placed, placement = ((spec, []) if not place_callouts
-                         else _place(spec, name, theme, standalone, pinned))
-    svg = _render(placed, name, theme, standalone, pinned, binary)
+    def draw(at):
+        placed, placement = ((spec, []) if not place_callouts
+                             else _place(spec, name, theme, standalone, at))
+        return _render(placed, name, theme, standalone, at, binary), placed, placement
+
+    svg, placed, placement = draw(pinned)
     base = d2.ELK_EDGE_LADDER[0]
-    if pinned[2] in (None, base) or render_mod.spills(svg, theme=theme,
-                                                      standalone=standalone) <= 1:
-        return svg, placed, placement
-    narrow = render_mod.choose_drawing(spec, name, theme, standalone, binary,
-                                       edge_rungs=(base,))
-    placed, placement = ((spec, []) if not place_callouts
-                         else _place(spec, name, theme, standalone, narrow))
-    return _render(placed, name, theme, standalone, narrow, binary), placed, placement
+    if pinned[2] not in (None, base) and render_mod.spills(
+            svg, theme=theme, standalone=standalone) > 1:
+        pinned = render_mod.choose_drawing(spec, name, theme, standalone, binary,
+                                           edge_rungs=(base,))
+        svg, placed, placement = draw(pinned)
+
+    while not _fits(svg, name, standalone):
+        harder = _next_fold(pinned)
+        if harder is None:
+            break
+        pinned = harder
+        svg, placed, placement = draw(pinned)
+    return svg, placed, placement
+
+
+def _fits(svg, name, standalone):
+    """Whether the finished drawing passes the size gate. Unmeasurable counts as fitting —
+    the gates report it properly later, and folding a label over a parse failure would be
+    spending a reader's line break on a guess.
+
+    Mirrors `render._sound`, which answers the opposite way for the same reason: it decides
+    whether to UNFOLD, so caution there is to leave the fold alone."""
+    try:
+        return not _size.check(svg, name, standalone=standalone).problems
+    except GateError:
+        return True
+
+
+def _next_fold(pinned):
+    """`pinned` with its edge labels broken one step harder, or None at the last step.
+
+    Standalone and sequence figures have no layout to pin and so no fold to escalate, which is
+    correct: neither is laid out into a column that could make its text too small.
+    """
+    layout, layers, edges = pinned
+    if not layout:
+        return None
+    direction, wrap = layout
+    # `render._relax` hands back `(width, spared)` — a width for the figure and the labels it
+    # measured as affordable on one line. Escalating from one means folding harder AND giving
+    # the sparing up: those labels were spared on a drawing that has since turned out not to
+    # fit, so the measurement behind them no longer holds. Reading the width straight out of
+    # the pair is also the only thing that keeps this from raising on a relaxed figure, which
+    # no figure in either corpus is today — so it would have shipped as a crash waiting for
+    # the first spec that relaxes and then outgrows its column.
+    width = wrap[0] if isinstance(wrap, tuple) else wrap
+    ladder = (None,) + d2.EDGE_WRAPS
+    step = ladder.index(width) + 1
+    return ((direction, ladder[step]), layers, edges) if step < len(ladder) else None
 
 
 def _render(spec, name, theme, standalone, pinned, binary):
