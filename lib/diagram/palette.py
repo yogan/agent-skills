@@ -104,9 +104,15 @@ ENGINE_LOCKED = {
     "#fffffd": ("--d-tbl-title", "#ffffff", "#16181d"),
 }
 
-# Vars with no literal of their own. d2 paints a `tooltip.near` callout plain
-# `fill="white" stroke="#DEE1EB"` and exposes no styling hook for it at all, so
-# render.py retargets that exact attribute pair — see `CALLOUT_ATTRS` there.
+# How d2 paints a `tooltip.near` callout, exactly. It exposes no styling hook for one at all,
+# so `render.postprocess` retargets this attribute pair — and it lives HERE rather than there
+# because it is also the only way to RECOGNISE a callout before that retarget has happened.
+# Two passes need to, and both run first: `edgelabel._kind`, and `route._clear` through it.
+# Matching only the `class="d2-callout"` spelling recognised no callout at all, which is the
+# same trap `edgelabel._GRP` documents for container borders.
+CALLOUT_PAINT = 'fill="white" stroke="#DEE1EB"'
+
+# Vars with no literal of their own — see `CALLOUT_PAINT` above for how d2 paints one.
 EXTRA_VARS = {
     "--d-callout-bg": ("#fff4e8", "#2a2114"),
     "--d-callout-br": ("#b5541f", "#e0895a"),

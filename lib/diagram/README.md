@@ -57,6 +57,7 @@ preference: the goal is for every line here to be a check.
 | **An arrowhead sits on straight line**, never across the turn it just came round | `d2.ELK_EDGE_LADDER` + `test_arrows` |
 | **No gap immediately before an arrowhead**, including the ones d2 cuts for its own labels | `arrows.shortfall` in `edgelabel._key`, `render._climb_layers` + `test_arrows` |
 | **No arrow is drawn across a box it does not begin or end at** | `arrows.through` + `test_arrows` |
+| **A callout never rests against a line it does not cover** | `route._clear` + `test_route` |
 
 [`arrows.py`](arrows.py) is where the last four live, because they are about the arrow itself
 rather than about the words on it.
@@ -82,6 +83,14 @@ STEP of a route back along the run it comes off, so the head sits on line the dr
 had — no page, no layout change, and the corners still d2's. It is the one place here that
 moves a line, which is why it is its own module and why `arrows.crosses` is offered every move
 before it is kept. Eleven of the twelve short approaches in the two corpora take it.
+
+It also steps a run out from under a callout **resting** on it. `place` decides where a callout
+goes by measuring what it OCCLUDES, so a box that stops a fraction of a px short of a line pays
+nothing for it and still reads as sitting on it — the reference state machine had 0.4px of gap
+over 214px of `user leaves`. Moving the callout instead was measured and is the more expensive
+answer: the only anchor on that figure free of every line is above the box rather than below it,
+and costs 43px of page. The line moves for nothing. What bounds it is the channel beyond: pushed
+further than it must be, a run starts crowding the next one, and there they are 30px apart.
 
 The same module repairs one other thing, and the tell for it is a single character. d2 draws an
 orthogonal corner as an `S` and a diagonal one as a `C`, so **a cubic in a connection path is a

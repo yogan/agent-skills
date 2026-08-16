@@ -47,7 +47,7 @@ PINNED_VERSION = "0.8.1"
 # d2's own callout paint, matched verbatim. Plain white with a grey hairline: invisible
 # against a dark page and too timid against a light one. Tagging it `d2-callout` at the
 # same time is what gives HOST_CSS something to select — d2 offers no class of its own.
-CALLOUT_ATTRS = 'fill="white" stroke="#DEE1EB"'
+CALLOUT_ATTRS = palette.CALLOUT_PAINT
 CALLOUT_REPLACEMENT = ('class="d2-callout" fill="var(--d-callout-bg)" '
                        'stroke="var(--d-callout-br)"')
 

@@ -293,6 +293,16 @@ def crosses(d, obstacles):
     return found
 
 
+def terminals(pts, obstacles):
+    """Which of `obstacles` a route begins or ends at, by index.
+
+    What an arrow POINTS AT is its whole meaning, so anything that moves a route has to be able
+    to prove it still points at the same things. Comparing this before and after is that proof,
+    and it is cheaper and less error-prone than reasoning about which end moved.
+    """
+    return {i for i, box in enumerate(obstacles) if _ends_at(box, pts)}
+
+
 def _ends_at(box, pts):
     """Whether either end of the route belongs to `box`. See `TERMINAL_REACH`."""
     near = Box((box[0] - TERMINAL_REACH, box[1] - TERMINAL_REACH,

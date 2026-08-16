@@ -183,6 +183,72 @@ class TestADiagonalChannelChange(unittest.TestCase):
             "M 100 100 L 200 100 C 205 100 210 106 206 106 L 400 106", self.CANVAS, []))
 
 
+class TestACalloutRestingOnALine(unittest.TestCase):
+    """`user leaves` on the reference state machine: a callout 0.4px above it for 214px.
+
+    `place` charges a callout for what it OCCLUDES, and a box that stops short of a line
+    occludes nothing — so it pays nothing and still reads as sitting on it. Moving the callout
+    was measured instead and costs 43px of page on that figure; moving the line costs none.
+    """
+
+    RUN = "M 100.000000 200.000000 L 500.000000 200.000000"
+    ABOVE = arrows.Box((200, 150, 300, 199))        # rests on the run from above
+    BIG = arrows.Box((0, 0, 600, 400))
+
+    def cleared(self, callouts=None, others=(), canvas=None, obstacles=()):
+        return route._clear(self.RUN, callouts or [self.ABOVE], list(others),
+                            canvas or self.BIG, list(obstacles))
+
+    def test_the_run_is_pushed_clear(self):
+        line = arrows.points(self.cleared())[-1][1]
+        self.assertGreaterEqual(line - self.ABOVE[3], route.CALLOUT_CLEARANCE)
+
+    def test_it_pushes_the_least_it_can(self):
+        """Pushed further the run starts crowding whatever channel is beyond it, and on the
+        figure this exists for the next one is only 30px away."""
+        self.assertAlmostEqual(arrows.points(self.cleared())[-1][1],
+                               self.ABOVE[3] + route.CALLOUT_CLEARANCE, places=3)
+
+    def test_it_pushes_away_from_the_callout_whichever_side_it_is_on(self):
+        below = arrows.Box((200, 201, 300, 260))
+        self.assertAlmostEqual(arrows.points(self.cleared([below]))[-1][1],
+                               below[1] - route.CALLOUT_CLEARANCE, places=3)
+
+    def test_the_corners_are_sized_to_the_room(self):
+        """The push is ~10px and two full corners are 20, so they have to shrink — otherwise
+        the straight between them runs BACKWARDS, which is what the first attempt did."""
+        points = arrows.points(self.cleared())
+        for a, b in zip(points, points[1:]):
+            self.assertGreaterEqual((b[0] - a[0]) * 1.0, 0, f"{a} -> {b} doubles back")
+
+    def test_the_far_end_still_arrives_where_it_did(self):
+        self.assertEqual(arrows.points(self.cleared())[-1][0],
+                         arrows.points(self.RUN)[-1][0])
+
+    def test_a_run_already_clear_is_left_alone(self):
+        self.assertIsNone(self.cleared([arrows.Box((200, 20, 300, 60))]))
+
+    def test_a_callout_nowhere_near_it_along_the_run_is_ignored(self):
+        self.assertIsNone(self.cleared([arrows.Box((520, 150, 580, 199))]))
+
+    def test_it_will_not_push_onto_another_arrows_channel(self):
+        """Two parallel runs into one box stop being separately followable — see
+        `MIN_SEPARATION`."""
+        neighbour = arrows.Box((100, 214, 500, 216))
+        self.assertIsNone(self.cleared(others=[neighbour]))
+
+    def test_it_will_not_push_the_run_off_the_canvas(self):
+        self.assertIsNone(self.cleared(canvas=arrows.Box((0, 0, 600, 205))))
+
+    def test_it_will_not_push_the_run_through_a_shape(self):
+        self.assertIsNone(self.cleared(obstacles=[arrows.Box((300, 205, 400, 215))]))
+
+    def test_a_route_with_more_than_one_run_is_left_alone(self):
+        """The single-run shape is the one where stepping out needs no corner rebuilt at the
+        far end. Anything else is refused rather than guessed at."""
+        self.assertIsNone(route._clear(TAIL, [self.ABOVE], [], self.BIG, []))
+
+
 class TestItMayNotCrossAShape(unittest.TestCase):
     """The invariant guarding the move — see `arrows.crosses`, which also audits the result."""
 

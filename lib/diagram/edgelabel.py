@@ -248,10 +248,17 @@ def _shape_boxes(svg, body_start):
 
 
 def _kind(tag):
-    """A shape's kind, from how it is painted. Containers first: only they carry `_GRP`."""
+    """A shape's kind, from how it is painted. Containers first: only they carry `_GRP`.
+
+    A callout is recognised in EITHER spelling, and that is not belt and braces. This pass runs
+    before `render.postprocess`, which is where the `d2-callout` class is added — so matching
+    only the class recognises no callout at all, reads every one as a solid node, and leaves
+    `route._clear` with nothing to keep a line off. Exactly the trap `_GRP` documents above,
+    found again the same way: a check that silently measured nothing.
+    """
     if _GRP.search(tag):
         return "group"
-    return "callout" if "d2-callout" in tag else "node"
+    return "callout" if ("d2-callout" in tag or palette.CALLOUT_PAINT in tag) else "node"
 
 
 def _bounds(pts):
@@ -274,6 +281,16 @@ def _shapes(svg, body_start):
         else:
             boxes.append(box)
     return boxes
+
+
+def callout_boxes(svg, body_start=0):
+    """Just the callouts, for something that needs to keep clear of one rather than off it.
+
+    The other half of `route_obstacles`, from the same parse. A route may be drawn UNDER a
+    callout — `place` weighs that against everything else it has to — but resting against one
+    is not a decision anybody took, it is what a search that measures occlusion cannot see.
+    """
+    return [box for box, kind in _shape_boxes(svg, body_start) if kind == "callout"]
 
 
 def route_obstacles(svg, body_start=0):

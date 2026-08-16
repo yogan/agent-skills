@@ -176,6 +176,15 @@ class TestARouteAcrossAShape(unittest.TestCase):
     def test_a_box_the_route_misses_is_not_reported(self):
         self.assertEqual(arrows.through(svg([("M 0 300 L 400 300", HEAD)]), [self.BOX]), [])
 
+    def test_terminals_names_the_boxes_a_route_belongs_to(self):
+        """What an arrow POINTS AT is its whole meaning, so anything that moves a route has to
+        be able to prove it still points at the same things. `route._clear` compares this
+        before and after; at today's push distance it is insurance rather than a live guard,
+        which is why the primitive is pinned here instead of through a move that triggers it."""
+        mine, other = arrows.Box((0, 140, 90, 160)), arrows.Box((300, 140, 400, 160))
+        self.assertEqual(arrows.terminals([(95, 150), (250, 150)], [mine, other]), {0})
+        self.assertEqual(arrows.terminals([(95, 150), (295, 150)], [mine, other]), {0, 1})
+
     def test_the_reach_covers_the_gap_d2_really_leaves_at_an_end(self):
         """Measured off the reference architecture: `read · write` stops 3.1px short of
         PostgreSQL's border and starts 4px clear of the GraphQL API's. Stated as a

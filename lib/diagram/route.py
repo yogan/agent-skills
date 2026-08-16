@@ -4,10 +4,16 @@ This is the one place in the renderer that changes where a line goes, and it is 
 not in [`arrows.py`](arrows.py) — that module measures and does not redraw, and keeping the two
 apart is what stops "nudge it" becoming the answer to every route complaint.
 
-Two repairs, on two different parts of a route, and each is described at the function that
-does it: `_slide` moves the step at the END of a route so its arrowhead sits on straight line,
-and `_square` deepens a sideways transition in the MIDDLE of one so d2 can draw it as two turns
-instead of a wobble. Neither costs any page.
+Three repairs, each described at the function that does it, and none of them costs any page:
+
+  * `_slide` moves the step at the END of a route, so its arrowhead sits on straight line;
+  * `_square` deepens a sideways transition in the MIDDLE of one, so d2 can draw it as two
+    turns instead of a wobble;
+  * `_clear` steps a run out from under a callout resting against it.
+
+The last is the odd one, because nothing about that route is malformed — it is `place` that
+cannot see the problem, having been asked what a callout COVERS rather than what it touches.
+The line moves because moving it is free and moving the callout is not.
 
 **What the first one does.** ELK brings an edge across the drawing on one long run, steps
 sideways at the very last moment, and arrives with about 3.5px of straight line for a 10px
@@ -45,7 +51,7 @@ one ELK proposed. Only `marker-end` tails are moved: the twelve are all at that 
 the end that arrives at a box, and a `marker-start` needing this would still be reported by
 `arrows.defects` for someone to come back to.
 
-**Both repairs refuse what they do not recognise.** Each checks every part of the shape it is
+**All three refuse what they do not recognise.** Each checks every part of the shape it is
 about to rewrite rather than assuming it, and returns the route untouched otherwise — a defect
 left reported is a great deal better than a line moved somewhere nobody measured.
 """
@@ -70,6 +76,24 @@ COMFORTABLE = arrows.APPROACH + arrows.MIN_RUN
 # rather than as a kink in one. Measured on the single route in either corpus that needs it.
 STEP_DEPTH = 25
 
+# Daylight a line needs from a callout lying over it. `place` charges a callout for OCCLUSION,
+# so one whose box stops a fraction of a px short of a line pays nothing and still reads as
+# resting on it — and it is worse than the boxes say, because a callout is drawn with a shadow
+# that reaches a few px past its own edge (`render.HOST_CSS`). Measured on the reference state
+# machine, where the gap was 0.4px over 214px of the line's length.
+CALLOUT_CLEARANCE = 10
+
+# How close two parallel runs may get before they read as one thick line rather than two
+# arrows. Only relevant when something here MOVES a run, since ELK spaces its own channels far
+# wider than this — 30px apart on the figure that needed the move. Below about this the two
+# arrows arriving at one box stop being separately followable.
+MIN_SEPARATION = 20
+
+# The shortest straight run left between two rebuilt corners. Its job is structural rather than
+# visual: every `S` must be preceded by an `L` or SVG takes its first control point from the
+# reflection of the previous one and draws a tighter curve — see `_clear`.
+STRAIGHT_MIN = 2
+
 # How far a rebuilt corner reaches on each axis. d2's own span 7.5 to 17.2px across the corpus,
 # sized to the room each has; 10 is what it uses on an unconstrained turn, so a corner rebuilt
 # at this reach sits in the same visual family as the ones around it.
@@ -88,16 +112,24 @@ _NUM = re.compile(r"-?\d+(?:\.\d+)?")
 def straighten(svg, obstacles):
     """`svg` with every route repaired that can be, given the shapes a route may not cross.
 
-    Two repairs, applied in that order because they touch different parts of a route: `_square`
-    deepens a sideways transition in the middle of one, `_slide` moves the step at the end of
-    one. Rewrites the `d` of the connections it changes and nothing else, so a drawing that
-    needs neither comes back byte-identical.
+    The three run in this order because they touch different parts of a route and the later
+    ones want the earlier ones' result: `_square` fixes a transition in the middle, `_clear`
+    may then move a whole run, and `_slide` works on whatever tail that left. Rewrites the `d`
+    of the connections it changes and nothing else, so a drawing needing none of it comes back
+    byte-identical.
     """
     holes, canvas = arrows.holes(svg), _canvas(svg)
+    callouts = edgelabel.callout_boxes(svg)
+    # By POSITION, not keyed by the path data: two connections can be drawn identically — a
+    # sequence diagram's lifelines routinely are — and keying on `d` would then hide each from
+    # the other, so a run could be pushed onto a channel it was supposed to keep off.
+    runs = [arrows.leg_boxes(m.group(1)) for m in arrows.CONNECTION.finditer(svg)]
     out, end = [], 0
-    for match in arrows.CONNECTION.finditer(svg):
+    for where, match in enumerate(arrows.CONNECTION.finditer(svg)):
         original = match.group(1)
+        others = [leg for i, legs in enumerate(runs) if i != where for leg in legs]
         fixed = _square(original, canvas, obstacles) or original
+        fixed = _clear(fixed, callouts, others, canvas, obstacles) or fixed
         fixed = _slide(fixed, holes, obstacles) or fixed
         if fixed != original:
             out.append(svg[end:match.start()])
@@ -191,6 +223,80 @@ def _backing_off(least, most, steps=4):
     if most <= least:
         return [most]
     return [most - (most - least) * i / steps for i in range(steps + 1)]
+
+
+def _clear(d, callouts, others, canvas, obstacles):
+    """A straight run stepped out from under a callout resting on it, or None.
+
+    `place` decides where a callout goes by measuring what it OCCLUDES, and a box that stops a
+    fraction of a px short of a line occludes nothing at all. So a callout can sit on a line
+    for hundreds of px and pay for none of it — which is what happens to the reference state
+    machine's `user leaves`, at a gap of 0.4px over 214px.
+
+    Moving the callout instead is the placement pass's business and was measured: on that
+    figure the only anchor free of every line is above the box rather than below it, and costs
+    43px of page. This moves the LINE, which costs none.
+
+    Only a route that is ONE straight run is recognised, which is the shape the case has and
+    the only one where stepping out needs no corner rebuilt at the far end. The step goes in
+    whichever direction is away from the callout, and only as far as it must: pushed further,
+    the run starts crowding whatever channel is beyond it, and on that figure the next one is
+    only 30px away.
+    """
+    commands = _commands(d)
+    if [c for c, _p in commands] != ["M", "L"]:
+        return None
+    start, end = commands[0][1][-1], commands[1][1][-1]
+    run_axis, run = _axis(start, end)
+    if run_axis is None:
+        return None
+    index = 0 if run_axis == "x" else 1
+    perp = 1 - index
+    span = (min(start[index], end[index]), max(start[index], end[index]))
+
+    line = start[perp]
+    for box in callouts:
+        if box[index + 2] <= span[0] or box[index] >= span[1]:
+            continue                     # nowhere near it along the run
+        for edge, way in ((box[perp + 2], 1.0), (box[perp], -1.0)):
+            if 0 <= (line - edge) * way < CALLOUT_CLEARANCE:
+                line = edge + way * CALLOUT_CLEARANCE
+    if line == start[perp]:
+        return None
+
+    if canvas and not (canvas[perp] + CORNER_REACH <= line <= canvas[perp + 2] - CORNER_REACH):
+        return None
+    for leg in others:                   # not onto another arrow's channel
+        flat = leg[perp + 2] - leg[perp] <= arrows.STROKE + 1
+        if flat and leg[index] < span[1] and leg[index + 2] > span[0]:
+            if abs(leg[perp] - line) < MIN_SEPARATION:
+                return None
+
+    way = 1.0 if run > 0 else -1.0
+    down = 1.0 if line > start[perp] else -1.0
+    # Sized to the room, as d2 sizes its own, and ALWAYS with a straight run between the two
+    # corners. That run is not cosmetic: an `S` takes its first control point from the
+    # reflection of the previous one, so an `S` following an `S` collapses both controls onto
+    # the elbow and draws a visibly tighter turn than its twin. d2 never does it — every corner
+    # it emits is preceded by an `L` — and the first version here, which dropped the run when
+    # the step was shallow, produced exactly that mismatched pair.
+    drop = abs(line - start[perp])
+    reach = min(CORNER_REACH, (drop - STRAIGHT_MIN) / 2)
+    if reach < STRAIGHT_MIN:
+        return None                      # too shallow to draw as two turns at all
+    elbow = start[index] + way * (reach + arrows.MIN_RUN)
+    turn, out = elbow + way * reach, elbow + way * reach * 2
+    moved = _emit([
+        ("M", [start]),
+        ("L", [_at(start, index, elbow)]),
+        ("S", [_at(start, index, turn), _pair(index, turn, start[perp] + down * reach)]),
+        ("L", [_pair(index, turn, line - down * reach)]),
+        ("S", [_pair(index, turn, line), _pair(index, out, line)]),
+        ("L", [_at(end, perp, line)])])
+    if arrows.terminals(arrows.points(moved), obstacles) != \
+            arrows.terminals([start, end], obstacles):
+        return None                      # it would stop pointing at what it points at
+    return None if arrows.crosses(moved, obstacles) else moved
 
 
 def _square(d, canvas, obstacles):
