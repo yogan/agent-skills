@@ -24,6 +24,11 @@ TAIL = ("M 470.000000 153.332993 L 779.000000 153.332993 S 789.000000 153.332993
         "163.332993 L 789.000000 177.248958 S 789.000000 184.750000 796.500000 184.875000 "
         "L 800.000555 184.933343")
 STRAIGHT = "M 100.000000 100.000000 L 100.000000 400.000000"
+# `fan-out` leaving Redis: 6px across and 6px down at once, which d2 can only draw as a cubic.
+BUMP = ("M 591.000493 385.044390 L 580.999261 385.266423 C 575.000739 385.399593 581.000000 "
+        "391.333008 575.000000 391.333008 L 307.000000 391.333008 S 297.000000 391.333008 "
+        "297.000000 381.333008 L 297.000000 317.333008 S 297.000000 307.333008 307.000000 "
+        "307.333008 L 323.000000 307.333008")
 
 CONN = ('<path d="{d}" stroke="var(--d-muted)" fill="none" class="connection" '
         'style="stroke-width:2;" marker-end="url(#head)" mask="url(#m)" />')
@@ -116,6 +121,66 @@ class TestWhatBoundsTheMove(unittest.TestCase):
         """`KEEP_RUN` — what is left still has to hold the corner at the end of it."""
         out = route._commands(moved(TAIL))
         self.assertGreaterEqual(abs(out[-5][1][-1][0] - out[0][1][-1][0]), route.KEEP_RUN)
+
+
+class TestADiagonalChannelChange(unittest.TestCase):
+    """`fan-out` leaving Redis — the only cubic in either corpus, and the bump you can see.
+
+    d2 draws an orthogonal corner as `S` and a diagonal one as `C`, so the command letter is
+    the whole detector. This route moves 6px across and 6px down at once, which is a run that
+    is neither vertical nor horizontal — the rule `arrows.defects` states and cannot enforce
+    here, because `CORNER` has to tolerate 20px of off-axis before it calls anything diagonal.
+    """
+
+    CANVAS = arrows.Box((3, 3, 968, 437))
+
+    def squared(self, canvas=None, obstacles=()):
+        return route._square(BUMP, canvas or self.CANVAS,
+                             [arrows.Box(o) for o in obstacles])
+
+    def test_the_cubic_is_gone(self):
+        self.assertTrue(any(c in "Cc" for c, _p in route._commands(BUMP)))
+        self.assertFalse(any(c in "Cc" for c, _p in route._commands(self.squared())))
+
+    def test_what_is_left_off_axis_is_a_corner_and_not_a_run(self):
+        """`arrows.points` reads every rounded corner as one short off-axis step, so "no step
+        is off axis" is false of every route ever drawn here. What can be said is that each
+        one is corner-sized, and that the two runs it joins really are axis-aligned."""
+        points = arrows.points(self.squared())
+        for a, b in zip(points, points[1:]):
+            if route._axis(a, b)[0] is None:
+                self.assertLessEqual(max(abs(b[0] - a[0]), abs(b[1] - a[1])), arrows.CORNER,
+                                     f"{a} -> {b} is long enough to read as a diagonal run")
+        self.assertEqual(arrows.defects(svg([self.squared()])), [])
+
+    def test_the_step_ends_up_deep_enough_to_turn_twice_in(self):
+        points = arrows.points(self.squared())
+        self.assertAlmostEqual(points[-5][1] - points[0][1], route.STEP_DEPTH, delta=1)
+
+    def test_neither_end_of_the_route_moves(self):
+        """The port on the box is ELK's and the arrowhead is pointing at something."""
+        points, was = arrows.points(self.squared()), arrows.points(BUMP)
+        self.assertEqual((points[0], points[-1]), (was[0], was[-1]))
+
+    def test_the_corner_at_the_far_end_comes_with_it(self):
+        """The run after the transition is what moves, so whatever it turns into has to
+        follow — otherwise the route acquires a second diagonal where the first one was."""
+        points = arrows.points(self.squared())
+        self.assertAlmostEqual(points[-5][1], points[-4][1] + route.CORNER_REACH, delta=1)
+
+    def test_a_route_with_no_cubic_is_left_alone(self):
+        self.assertIsNone(route._square(TAIL, self.CANVAS, []))
+
+    def test_it_will_not_push_the_channel_off_the_canvas(self):
+        self.assertIsNone(self.squared(canvas=arrows.Box((3, 3, 968, 400))))
+
+    def test_it_will_not_push_the_channel_through_a_shape(self):
+        self.assertIsNone(self.squared(obstacles=[(400, 400, 500, 420)]))
+
+    def test_a_transition_whose_second_run_ends_the_route_is_refused(self):
+        """Moving that run would drag the arrowhead off the box it points at."""
+        self.assertIsNone(route._square(
+            "M 100 100 L 200 100 C 205 100 210 106 206 106 L 400 106", self.CANVAS, []))
 
 
 class TestItMayNotCrossAShape(unittest.TestCase):

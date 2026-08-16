@@ -1,10 +1,15 @@
-"""Moving the tail of a route, where ELK turned too late for the arrowhead to sit on line.
+"""Moving part of a route the engine drew, where what it drew cannot be painted well.
 
 This is the one place in the renderer that changes where a line goes, and it is deliberately
 not in [`arrows.py`](arrows.py) — that module measures and does not redraw, and keeping the two
 apart is what stops "nudge it" becoming the answer to every route complaint.
 
-**What it does, and only this.** ELK brings an edge across the drawing on one long run, steps
+Two repairs, on two different parts of a route, and each is described at the function that
+does it: `_slide` moves the step at the END of a route so its arrowhead sits on straight line,
+and `_square` deepens a sideways transition in the MIDDLE of one so d2 can draw it as two turns
+instead of a wobble. Neither costs any page.
+
+**What the first one does.** ELK brings an edge across the drawing on one long run, steps
 sideways at the very last moment, and arrives with about 3.5px of straight line for a 10px
 arrowhead — so the head is painted along the curve and reads as a shape stuck on the line. Both
 corpora produce that shape and nothing else: measured across all twelve, the tail is always
@@ -39,6 +44,10 @@ It runs BEFORE `edgelabel`, so the words are placed on the route that ships rath
 one ELK proposed. Only `marker-end` tails are moved: the twelve are all at that end, which is
 the end that arrives at a box, and a `marker-start` needing this would still be reported by
 `arrows.defects` for someone to come back to.
+
+**Both repairs refuse what they do not recognise.** Each checks every part of the shape it is
+about to rewrite rather than assuming it, and returns the route untouched otherwise — a defect
+left reported is a great deal better than a line moved somewhere nobody measured.
 """
 import re
 
@@ -55,6 +64,17 @@ KEEP_RUN = arrows.CORNER + arrows.MIN_RUN
 # being reported, which is a floor and a poor thing to aim at.
 COMFORTABLE = arrows.APPROACH + arrows.MIN_RUN
 
+# How deep a sideways transition has to be before d2 draws it as two turns instead of one
+# wobble. Not a threshold above which corners fit — d2 sizes a corner to the room it has — but
+# the depth at which the two corners and the line between them read as a route changing channel
+# rather than as a kink in one. Measured on the single route in either corpus that needs it.
+STEP_DEPTH = 25
+
+# How far a rebuilt corner reaches on each axis. d2's own span 7.5 to 17.2px across the corpus,
+# sized to the room each has; 10 is what it uses on an unconstrained turn, so a corner rebuilt
+# at this reach sits in the same visual family as the ones around it.
+CORNER_REACH = 10
+
 # Where in the room available the step is put, once `COMFORTABLE` is met. Halfway, because both
 # ends of that room are somewhere a turn should not be: hard against the label it just passed,
 # or hard against the box it is about to reach. Measured on the reference architecture, half of
@@ -66,19 +86,33 @@ _NUM = re.compile(r"-?\d+(?:\.\d+)?")
 
 
 def straighten(svg, obstacles):
-    """`svg` with every tail moved that can be, given the shapes a route may not cross.
+    """`svg` with every route repaired that can be, given the shapes a route may not cross.
 
-    Rewrites the `d` of the connections it moves and nothing else, so a drawing with no short
-    approach comes back byte-identical.
+    Two repairs, applied in that order because they touch different parts of a route: `_square`
+    deepens a sideways transition in the middle of one, `_slide` moves the step at the end of
+    one. Rewrites the `d` of the connections it changes and nothing else, so a drawing that
+    needs neither comes back byte-identical.
     """
+    holes, canvas = arrows.holes(svg), _canvas(svg)
     out, end = [], 0
     for match in arrows.CONNECTION.finditer(svg):
-        moved = _slide(match.group(1), arrows.holes(svg), obstacles)
-        if moved:
+        original = match.group(1)
+        fixed = _square(original, canvas, obstacles) or original
+        fixed = _slide(fixed, holes, obstacles) or fixed
+        if fixed != original:
             out.append(svg[end:match.start()])
-            out.append(match.group(0).replace(match.group(1), moved))
+            out.append(match.group(0).replace(original, fixed))
             end = match.end()
     return "".join(out) + svg[end:] if out else svg
+
+
+def _canvas(svg):
+    """The box every coordinate in a d2 SVG is expressed in — the MASK's, not the viewBox's."""
+    mask = arrows.MASK.search(svg)
+    if not mask:
+        return None
+    x, y, w, h = (float(mask.group(i)) for i in (2, 3, 4, 5))
+    return arrows.Box((x, y, x + w, y + h))
 
 
 def _commands(d):
@@ -157,6 +191,82 @@ def _backing_off(least, most, steps=4):
     if most <= least:
         return [most]
     return [most - (most - least) * i / steps for i in range(steps + 1)]
+
+
+def _square(d, canvas, obstacles):
+    """A diagonal channel change turned into two proper turns, or None.
+
+    d2 draws an orthogonal corner as `S` and a DIAGONAL one as `C`, so a cubic in a connection
+    is the tell: the route moved on both axes at once with no straight run between. On the
+    reference architecture's `fan-out` that is 6px across and 6px down as it leaves Redis, and
+    the cubic's control points run out past the turn and back again — which is the small bump
+    you can see on the line. It breaks the rule that every straight stretch is vertical or
+    horizontal, and escapes `arrows.defects` only because `CORNER` has to tolerate 20px of
+    off-axis before it will call anything diagonal.
+
+    Six px is too little to turn twice in, so the fix is room: the run AFTER the transition
+    moves out to `STEP_DEPTH`, in the direction the route was already heading, and the corner
+    at its far end follows it. Which way needs no deciding and no knowledge of what else is on
+    the page — the route already chose, this only makes it commit.
+
+    The run BEFORE cannot move: its far end is where ELK put the port on the box, and that is
+    not up for revision here. So a transition whose second run ends the route is refused rather
+    than moved, since moving it would drag the arrowhead off the thing it points at.
+    """
+    commands = _commands(d)
+    at = next((i for i, (letter, _p) in enumerate(commands) if letter in "Cc"), None)
+    if at is None or at < 2 or at + 2 >= len(commands):
+        return None
+    if commands[at - 1][0] != "L" or commands[at + 1][0] != "L" or commands[at + 2][0] != "S":
+        return None
+
+    start, before, corner, after = (commands[at - 2][1][-1], commands[at - 1][1][-1],
+                                    commands[at][1][-1], commands[at + 1][1][-1])
+    run_axis, run = _axis(start, before)
+    out_axis, out = _axis(corner, after)
+    if run_axis is None or run_axis != out_axis or run * out <= 0:
+        return None
+    index = 0 if run_axis == "x" else 1
+    perp = 1 - index
+    depth = corner[perp] - before[perp]
+    if abs(depth) <= arrows.AXIS_EPS or abs(depth) >= STEP_DEPTH:
+        return None                      # already a real step, or no step at all
+
+    way = 1.0 if run > 0 else -1.0                  # along the axis, in the travel direction
+    down = 1.0 if depth > 0 else -1.0               # across it, the way the route already went
+    line = before[perp] + down * STEP_DEPTH         # where the second run ends up
+    extra = line - corner[perp]
+    if canvas and not (canvas[perp] + CORNER_REACH <= line <= canvas[perp + 2] - CORNER_REACH):
+        return None                      # the deeper channel would leave the drawing
+
+    # Two corners with a straight step between them, in d2's own shape: an `L` to the end of the
+    # run, an `S` whose control is the elbow, the step, and a second `S` turning back onto the
+    # axis. Both corners sit on one line across, so the step really is straight.
+    elbow = before[index] + way * CORNER_REACH
+    rebuilt = (commands[:at]
+               + [("S", [_at(before, index, elbow),
+                         _pair(index, elbow, before[perp] + down * CORNER_REACH)]),
+                  ("L", [_pair(index, elbow, line - down * CORNER_REACH)]),
+                  ("S", [_pair(index, elbow, line),
+                         _pair(index, elbow + way * CORNER_REACH, line)]),
+                  ("L", [_at(after, perp, line)]),
+                  (commands[at + 2][0], [_at(commands[at + 2][1][0], perp, line),
+                                         _shift(commands[at + 2][1][1], perp, -extra)])]
+               + commands[at + 3:])
+    if at + 3 < len(commands):
+        _kind, tail = _axis(rebuilt[at + 4][1][-1], commands[at + 3][1][-1])
+        if abs(tail) < KEEP_RUN:
+            return None                  # the run it turns into would be eaten by the move
+    moved = _emit(rebuilt)
+    return None if arrows.crosses(moved, obstacles) else moved
+
+
+def _at(point, index, value):
+    return (value, point[1]) if index == 0 else (point[0], value)
+
+
+def _pair(index, along, across):
+    return (along, across) if index == 0 else (across, along)
 
 
 def _shift(point, index, by):

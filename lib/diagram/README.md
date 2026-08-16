@@ -53,7 +53,7 @@ preference: the goal is for every line here to be a check.
 | Edge labels near the same height share one, where they can | `edgelabel._align_rows` |
 | A label never sits on a box, a container border or a container title | `edgelabel._key` |
 | Text is never unreadable, clipped, or under a callout | `gates/` |
-| **No run of an arrow is diagonal** — every straight stretch is vertical or horizontal | `arrows.defects` + `test_arrows` |
+| **No run of an arrow is diagonal** — every straight stretch is vertical or horizontal | `arrows.defects` + `test_arrows`, and `route._square` below its threshold |
 | **An arrowhead sits on straight line**, never across the turn it just came round | `d2.ELK_EDGE_LADDER` + `test_arrows` |
 | **No gap immediately before an arrowhead**, including the ones d2 cuts for its own labels | `arrows.shortfall` in `edgelabel._key`, `render._climb_layers` + `test_arrows` |
 | **No arrow is drawn across a box it does not begin or end at** | `arrows.through` + `test_arrows` |
@@ -82,6 +82,15 @@ STEP of a route back along the run it comes off, so the head sits on line the dr
 had — no page, no layout change, and the corners still d2's. It is the one place here that
 moves a line, which is why it is its own module and why `arrows.crosses` is offered every move
 before it is kept. Eleven of the twelve short approaches in the two corpora take it.
+
+The same module repairs one other thing, and the tell for it is a single character. d2 draws an
+orthogonal corner as an `S` and a diagonal one as a `C`, so **a cubic in a connection path is a
+route that moved on both axes at once** — a run that is neither vertical nor horizontal, which
+`arrows.defects` cannot report because `CORNER` has to tolerate 20px of off-axis before it calls
+anything diagonal. There is exactly one in either corpus: `fan-out` leaving Redis 6px across and
+6px down, drawn as a cubic whose control points run out past the turn and back, which is the
+small bump on that line. `route._square` gives it `STEP_DEPTH` to turn twice in, in the
+direction the route was already heading, so no rule is needed for which way to go.
 
 `d2.ELK_EDGE_LADDER` is the fallback for the twelfth. It widens the gap ELK leaves between an
 edge and the box it points at, per figure, only where there is something left to fix and only
