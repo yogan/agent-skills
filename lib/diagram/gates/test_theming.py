@@ -15,6 +15,34 @@ from lib.diagram.gates import GateError
 from lib.diagram.gates import theming
 
 
+class TestTextWithNoFontToTake(unittest.TestCase):
+    """d2 scopes its embedded font to `.text` / `.text-italic` and to nothing else, so any
+    <text> this repo adds without one of those classes inherits whatever font the HOST PAGE
+    sets. On the explainer that is Georgia — a serif — and it shipped that way in a sequence
+    diagram's group legend for as long as the legend has existed.
+
+    It survived because both of the places you would look are clean: the standalone render has
+    no page to inherit from, and every review sheet is built on a sans-bodied page of its own.
+    """
+
+    def test_a_text_with_no_class_fails(self):
+        result = theming.check('<svg><text x="1" y="2">library</text></svg>')
+        self.assertFalse(result.ok)
+        self.assertIn("no class", result.problems[0])
+
+    def test_the_failure_says_what_it_will_look_like(self):
+        result = theming.check('<svg><text x="1" y="2">library</text></svg>')
+        self.assertIn("serif", result.problems[0])
+
+    def test_d2s_own_classes_pass(self):
+        for cls in ("text", "text-italic"):
+            self.assertTrue(theming.check(f'<svg><text class="{cls}">a</text></svg>').ok, cls)
+
+    def test_it_does_not_fire_on_a_textpath(self):
+        """`<textPath>` starts with the same five characters and is not a text element."""
+        self.assertTrue(theming.check('<svg><textPath href="#p">a</textPath></svg>').ok)
+
+
 class TestUnmappedLiterals(unittest.TestCase):
     def test_a_fully_substituted_svg_passes(self):
         self.assertTrue(theming.check('<svg><rect fill="var(--d-client-bg)"/></svg>').ok)

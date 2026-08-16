@@ -1,4 +1,6 @@
-"""Every colour in the SVG must be themeable.
+"""Nothing in the SVG may quietly take its appearance from the page around it.
+
+Colours, mostly — and one thing that is not a colour, at the bottom.
 
 The cheapest gate here and the one most likely to catch a d2 upgrade. Theming works by
 rewriting d2's baked-in colour literals to CSS vars; a literal with no mapping simply stays
@@ -19,10 +21,13 @@ from .. import palette
 from . import GateError, Result
 
 _VAR = re.compile(r"var\((--[\w-]+)\)")
+# A <text> with no class of its own. `\b` keeps it off `<textPath>`.
+_UNCLASSED = re.compile(r"<text\b(?![^>]*\bclass=)[^>]*>")
 
 
 def check(svg, name="diagram"):
-    """Report colour literals with no CSS-var mapping, and var refs with no definition."""
+    """Report colour literals with no CSS-var mapping, var refs with no definition, and text
+    with no class to take a font from."""
     if "<svg" not in svg:
         raise GateError("no <svg> element to check")
     problems = []
@@ -42,5 +47,18 @@ def check(svg, name="diagram"):
         problems.append(f"undefined CSS var(s): {', '.join(undefined)} — "
                         "not defined by palette.css_block()")
 
+    # The same failure in a property that is not a colour. d2 scopes its embedded font to
+    # `.text` / `.text-italic` and gives those classes nothing else, so a <text> WE add
+    # without one inherits whatever font the host page sets — Georgia on the explainer, which
+    # shipped a sequence diagram's group names in a serif while every label d2 drew was sans.
+    # It survived because it looks like a design choice rather than a bug, and because a
+    # standalone render has no page to inherit from and comes out right.
+    bare = len(_UNCLASSED.findall(svg))
+    if bare:
+        problems.append(f"{bare} <text> element(s) with no class — d2 scopes its font to "
+                        "`.text`, so these inherit the host page's font instead (a serif, on "
+                        "the explainer page). Whatever adds them must set `class=\"text\"`")
+
     used = len({m.group(1) for m in _VAR.finditer(svg)})
-    return Result(name, "theming", problems, f"{used} vars, {sum(missing.values())} unmapped")
+    return Result(name, "theming", problems,
+                  f"{used} vars, {sum(missing.values())} unmapped, {bare} unclassed text")

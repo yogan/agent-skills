@@ -282,8 +282,14 @@ def add_group_legend(svg, lanes, pad=D2_PAD):
             f'<rect x="{x0:.1f}" y="{foot + LEGEND_GAP:.1f}" width="{x1 - x0:.1f}" '
             f'height="{LEGEND_RULE}" rx="{LEGEND_RULE / 2:g}" fill="{rule}" '
             f'fill-opacity="{LEGEND_OPACITY}"/>'
+            # `class="text"` is not decoration: d2 scopes its embedded font to that class and
+            # nothing else, so a <text> without it inherits the HOST PAGE's font — Georgia on
+            # the explainer, which put these three group names in a serif while every other
+            # label in the drawing was sans. The class sets font-family and nothing more, so
+            # the fill and size written here still win.
             f'<text x="{(x0 + x1) / 2:.1f}" y="{foot + LEGEND_BASELINE:.1f}" fill="{name}" '
-            f'style="text-anchor:middle;font-size:{LEGEND_FONT}px">{_escape(group)}</text>')
+            f'class="text" style="text-anchor:middle;font-size:{LEGEND_FONT}px">'
+            f"{_escape(group)}</text>")
 
     return _append(_grown(svg, bottom=LEGEND_BAND), marks)
 

@@ -240,8 +240,22 @@ class TestGroupLegend(unittest.TestCase):
         """A border colour painting a name is what a two-group figure never caught: the third
         group is green, and #3f9142 is 3.76:1 on white."""
         out = compact.add_group_legend(self.svg(), self.LANES)
-        self.assertIn('fill="#3b6fd4" fill-opacity=', out)      # rule: the lane's border
-        self.assertIn('fill="#27548f" style="text-anchor', out)  # name: text-grade
+        self.assertIn('fill="#3b6fd4" fill-opacity=', out)       # rule: the lane's border
+        # Matched on the ELEMENT rather than on what follows the fill: written as adjacent
+        # attributes this broke the day a class was added between them, which says nothing
+        # about the colours it exists to check.
+        self.assertRegex(out, r'<text[^>]*fill="#27548f"')       # name: text-grade
+
+    def test_the_name_carries_d2s_own_text_class(self):
+        """Without it the name inherits the HOST PAGE's font. On the explainer that is Georgia,
+        so `skill` / `library` / `tools` shipped in a serif while every label d2 drew beside
+        them was sans — and it looked like a design choice rather than a bug. d2 scopes its
+        embedded font to `.text` and gives that class nothing else, so the fill and size
+        written here still win."""
+        out = compact.add_group_legend(self.svg(), self.LANES)
+        self.assertRegex(out, r'<text[^>]*class="text"')
+        self.assertEqual(re.findall(r'<text\b(?![^>]*\bclass=)', out), [],
+                         "every <text> this adds must carry a class to take a font from")
 
     def test_the_rule_has_rounded_ends(self):
         out = compact.add_group_legend(self.svg(), self.LANES)
