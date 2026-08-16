@@ -160,8 +160,16 @@ def check(svg, name="diagram", avail_w=AVAIL_W, max_h=MAX_H + RESCUE_H,
     surrounding prose. Applying the page's width to a file makes any wide diagram "fail", and
     the only fix an author has is to split a schema that was perfectly legible at full size.
 
-    What survives is the floor, which is about the drawing itself: nothing may render below
-    ~11px, ~10px for an edge label, ~9px for a subtitle.
+    What survives is the floors, which are about the drawing itself. Three of them, because
+    what a glyph is FOR decides how small it may get, and each is a RENDERED size — after the
+    embedded column has scaled the drawing down, not the size it was authored at:
+
+      * `MIN_READABLE` 10px — primary text: node labels, table rows, container titles;
+      * `MIN_READABLE_EDGE` 9px — an edge label, which qualifies an arrow already drawn;
+      * `MIN_READABLE_DETAIL` 7.5px — a subtitle, the muted second line under a name.
+
+    On a standalone render they are present but cannot fire: the scale is fixed at 1.0, so
+    every glyph renders at the size it was authored and that is above all three.
     """
     m = analyse(svg, avail_w=avail_w, standalone=standalone)
     problems = []

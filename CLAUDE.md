@@ -84,6 +84,32 @@ when I say" — then stop asking after each chunk and wait to be asked.
 Always report anyway: architectural changes, shortcuts, hacks, compromises, significant
 changes to performance (test suite or runtime), and anything you could not deliver.
 
+**Name a measurement, never just its number.** "The 10px floor", "the 777px column", "the 880px
+body" are meaningless to anyone not currently inside the file they come from — 10px of *what
+text*, 777px of *what*, and in which of the two targets? A number offered for a decision carries
+what it measures, on which target, and for which element, the first time it appears in a
+conversation, and again whenever the thread has moved on. Not:
+
+> it needs rung 24, where the text is 9.4px against a 10px floor
+
+but:
+
+> it needs rung 24, and there it is 1079px wide — too wide for the 777px of drawing room inside
+> a card on the explainer page, so the browser scales it to 0.72 and the node labels come out at
+> 9.4px against the 10px floor for primary text
+
+The same applies to a number in a comment or a docstring: `size.check` claimed "~11px, ~10px for
+an edge label" for years while the constants said 10, 9 and 7.5, and nobody could tell because
+none of the three said which text it governed. **A bare number is a question the reader has to
+ask back**, and the answer is rarely one they can look up quickly.
+
+**And never in the code's own metaphor.** The internal names are fine where they are defined and
+useless anywhere else. "Rung 24" is the worst offender here and is banned outright: say *24px of
+spacing between an edge and the box it points at*. `ELK_EDGE_LADDER` and `ELK_SPACING_LADDER` are
+lists of px values for two ELK options, so a "rung" is a pixel count with a name — give the count
+and what it spaces. Same for anything else whose meaning lives in one file: name the real thing
+and its unit, not the picture the code uses to keep track of it.
+
 **Asking.** When the wish is not clear, grill before starting. Never ask about implementation
 choices — use best practice. Do ask when the options lead to visibly different outcomes, when
 a wish cannot be met without a compromise, or when it is risky. Non-trivial changes get
