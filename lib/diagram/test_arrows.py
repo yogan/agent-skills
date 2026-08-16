@@ -141,6 +141,48 @@ class TestGapsAtAHead(unittest.TestCase):
         self.assertTrue(arrows.leaves_a_stub(arrows.Box((70, 140, 130, 157)), zones))
 
 
+class TestARouteAcrossAShape(unittest.TestCase):
+    """The invariant, on boxes handed straight in — `through` reads no geometry of its own.
+
+    Zero is the answer on everything this repo draws, because ELK does not route through a
+    box. That is exactly why these exist: a check whose only observed value is zero has not
+    been shown to be capable of any other, and would go on reporting success after the day it
+    stopped working.
+    """
+
+    BOX = arrows.Box((100, 100, 200, 200))
+
+    def test_a_run_drawn_across_a_box_is_reported(self):
+        found = arrows.through(svg([("M 0 150 L 400 150", HEAD)]), [self.BOX])
+        self.assertEqual([d.rule for d in found], ["through"])
+
+    def test_a_route_that_ends_at_a_box_may_of_course_touch_it(self):
+        """Every arrow in every figure does this, so getting it wrong makes the check noise."""
+        self.assertEqual(arrows.through(svg([("M 0 150 L 150 150", HEAD)]), [self.BOX]), [])
+
+    def test_a_route_that_ends_just_short_of_its_box_is_still_its_box(self):
+        """d2 stops the line clear of the border it points at — see `TERMINAL_REACH`."""
+        self.assertEqual(arrows.through(svg([("M 0 150 L 96 150", HEAD)]), [self.BOX]), [])
+
+    def test_a_self_loop_belongs_to_the_box_at_both_ends(self):
+        route = "M 150 100 L 150 60 L 260 60 L 260 150 L 200 150"
+        self.assertEqual(arrows.through(svg([(route, HEAD)]), [self.BOX]), [])
+
+    def test_one_route_clipping_one_box_twice_is_one_thing_wrong(self):
+        route = "M 0 120 L 300 120 L 300 180 L 0 180"
+        found = arrows.through(svg([(route, HEAD)]), [self.BOX])
+        self.assertEqual(len(found), 1)
+
+    def test_a_box_the_route_misses_is_not_reported(self):
+        self.assertEqual(arrows.through(svg([("M 0 300 L 400 300", HEAD)]), [self.BOX]), [])
+
+    def test_the_reach_covers_the_gap_d2_really_leaves_at_an_end(self):
+        """Measured off the reference architecture: `read · write` stops 3.1px short of
+        PostgreSQL's border and starts 4px clear of the GraphQL API's. Stated as a
+        relationship so a reach tightened below what d2 does fails here."""
+        self.assertGreater(arrows.TERMINAL_REACH, 4)
+
+
 class TestAgainstTheCorpus(unittest.TestCase):
     """Both corpora, measured for all three rules. Zero is not the expected number.
 
@@ -184,6 +226,30 @@ class TestAgainstTheCorpus(unittest.TestCase):
         for key in self.drawn:
             self.assertEqual(self.counted(key, "gap"), self.KNOWN.get(key, {}).get("gap", 0),
                              f"{key}: {[d.detail for d in arrows.defects(self.drawn[key])]}")
+
+    def test_no_arrow_is_drawn_across_a_box_it_does_not_end_at(self):
+        """The invariant, and it has no exceptions — unlike the three rules above, nothing
+        here trades it away, and there is no figure that cannot afford it."""
+        from lib.diagram import edgelabel
+        for key, svg_text in self.drawn.items():
+            found = arrows.through(svg_text, edgelabel.route_obstacles(svg_text))
+            self.assertEqual(found, [], f"{key}: {[d.detail for d in found]}")
+
+    def test_the_invariant_can_still_report_a_real_figures_box(self):
+        """Zero everywhere is only reassuring from a check that would say otherwise. This
+        drives a run straight through the biggest box in a real drawing, using the obstacle
+        geometry the corpus test above relies on, which is what a route adjustment with its
+        bounds wrong would look like."""
+        from lib.diagram import edgelabel
+        svg_text = self.drawn["reference/arch"]
+        boxes = edgelabel.route_obstacles(svg_text)
+        target = max(boxes, key=lambda b: b.w * b.h)
+        middle = ((target[0] + target[2]) / 2, (target[1] + target[3]) / 2)
+        run = CONN.format(d=f"M {target[0] - 300:.0f} {middle[1]:.0f} "
+                            f"L {target[2] + 300:.0f} {middle[1]:.0f}", marker=HEAD)
+        found = arrows.through(svg_text.replace("</svg>", run + "</svg>"), boxes)
+        self.assertIn((round(middle[0]), round(middle[1])),
+                      [(round(d.at[0]), round(d.at[1])) for d in found])
 
 
 if __name__ == "__main__":

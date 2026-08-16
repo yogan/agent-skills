@@ -56,9 +56,24 @@ preference: the goal is for every line here to be a check.
 | **No run of an arrow is diagonal** — every straight stretch is vertical or horizontal | `arrows.defects` + `test_arrows` |
 | **An arrowhead sits on straight line**, never across the turn it just came round | `d2.ELK_EDGE_LADDER` + `test_arrows` |
 | **No gap immediately before an arrowhead**, including the ones d2 cuts for its own labels | `arrows.shortfall` in `edgelabel._key`, `render._climb_layers` + `test_arrows` |
+| **No arrow is drawn across a box it does not begin or end at** | `arrows.through` + `test_arrows` |
 
-[`arrows.py`](arrows.py) is where the last three live, because they are about the arrow itself
-rather than about the words on it. It **measures and never redraws**: a route is ELK's, and
+[`arrows.py`](arrows.py) is where the last four live, because they are about the arrow itself
+rather than about the words on it.
+
+The last of them is an INVARIANT and not a defect, which is why it is not in `arrows.defects`.
+The other three are traded: `render._pick_at_spacing` ranks candidates on how many each has,
+and two figures ship with one because they cannot afford the fix. A line through a box has no
+remedy and no price — ELK does not do it, so the check reads zero on everything here. It exists
+against the day something in this repo moves a route itself, and `test_arrows` therefore also
+pins that it can still report a non-zero answer: a check whose only observed value is zero has
+not been shown to be capable of another. `arrows.through` takes its obstacle boxes rather than
+reading them, as `shortfall` takes its zones — what counts as a shape needs d2's palette, which
+`arrows` deliberately does not know. `edgelabel.route_obstacles` is that answer, and it excludes
+containers (an edge out of a nested node crosses its parent by design) and callouts (`place`
+already prices covering a line against everything else it weighs).
+
+`arrows.py` **measures and never redraws**: a route is ELK's, and
 what a corner looks like is d2's. Squaring off the corner under an arrowhead was tried and is a
 worse drawing — the rounding is wanted, and a hard 90° turn 12px from a box reads as a mistake.
 

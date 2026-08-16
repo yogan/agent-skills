@@ -217,39 +217,80 @@ def _on_leg(box, legs):
     return (None, 0.0, 0.0)
 
 
-def _shapes(svg, body_start):
-    """Everything a label must not sit on: node boxes, table rows, callouts, group borders.
+def _shape_boxes(svg, body_start):
+    """`(box, kind)` per drawn shape, `kind` being 'group', 'callout' or 'node'.
+
+    One parse with the kinds kept, because the two questions asked of it want different
+    subsets: a LABEL has to keep off all three, while a ROUTE crosses a container by design.
+    Reading the geometry twice under two names is how the two answers would drift apart.
 
     `body_start` is where the drawing begins, so the `<mask>` block's own rectangles — which
     are label boxes, handled separately — and the root's transparent backdrop are not read as
-    geometry. A group container contributes its four border strips rather than its area: see
-    `BORDER`.
+    geometry.
     """
-    boxes = []
+    out = []
     for match in _RECT.finditer(svg, body_start):
-        x, y, w, h = (float(g) for g in match.group(1, 2, 3, 4))
         if 'fill="transparent"' in match.group(0):
             continue
-        if _GRP.search(match.group(0)):
-            boxes += [Box((x, y, x + w, y + BORDER)),
-                      Box((x, y + h - BORDER, x + w, y + h)),
-                      Box((x, y, x + BORDER, y + h)),
-                      Box((x + w - BORDER, y, x + w, y + h))]
-        else:
-            boxes.append(Box((x, y, x + w, y + h)))
+        x, y, w, h = (float(g) for g in match.group(1, 2, 3, 4))
+        out.append((Box((x, y, x + w, y + h)), _kind(match.group(0))))
     for match in _POLY.finditer(svg, body_start):
         pts = pairs(match.group(1))
         if pts and "connection" not in match.group(0):
-            boxes.append(Box((min(p[0] for p in pts), min(p[1] for p in pts),
-                               max(p[0] for p in pts), max(p[1] for p in pts))))
+            out.append((_bounds(pts), _kind(match.group(0))))
     for match in _PATH.finditer(svg, body_start):
         if "connection" in match.group(0) or "Z" not in match.group(1):
             continue
         pts = points(match.group(1))
         if pts:
-            boxes.append(Box((min(p[0] for p in pts), min(p[1] for p in pts),
-                               max(p[0] for p in pts), max(p[1] for p in pts))))
+            out.append((_bounds(pts), _kind(match.group(0))))
+    return out
+
+
+def _kind(tag):
+    """A shape's kind, from how it is painted. Containers first: only they carry `_GRP`."""
+    if _GRP.search(tag):
+        return "group"
+    return "callout" if "d2-callout" in tag else "node"
+
+
+def _bounds(pts):
+    return Box((min(p[0] for p in pts), min(p[1] for p in pts),
+                max(p[0] for p in pts), max(p[1] for p in pts)))
+
+
+def _shapes(svg, body_start):
+    """Everything a label must not sit on: node boxes, table rows, callouts, group borders.
+
+    A group container contributes its four border strips rather than its area: see `BORDER`.
+    """
+    boxes = []
+    for box, kind in _shape_boxes(svg, body_start):
+        if kind == "group":
+            boxes += [Box((box[0], box[1], box[2], box[1] + BORDER)),
+                      Box((box[0], box[3] - BORDER, box[2], box[3])),
+                      Box((box[0], box[1], box[0] + BORDER, box[3])),
+                      Box((box[2] - BORDER, box[1], box[2], box[3]))]
+        else:
+            boxes.append(box)
     return boxes
+
+
+def route_obstacles(svg, body_start=0):
+    """The shapes a ROUTE may not be drawn across — node bodies, and nothing else.
+
+    Feeds `arrows.through`. Two exclusions, and both are deliberate:
+
+    **Containers.** An edge leaving a nested node crosses its parent's border on the way out,
+    and every figure here that has containers does it several times. A container's TITLE is a
+    different matter and is already handled, as a gap in the mask — see `title_boxes`.
+
+    **Callouts.** They are placed on top of a finished drawing by `place`, which prices
+    covering a line against clipping, hidden text and glyph size. Forbidding it here would
+    overrule that search from underneath, and with a rule that cannot see any of what it
+    weighed.
+    """
+    return [box for box, kind in _shape_boxes(svg, body_start) if kind == "node"]
 
 
 def _key(box, canvas, shapes, lines, zones, others, adrift, home, target):

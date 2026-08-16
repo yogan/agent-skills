@@ -1,10 +1,19 @@
 """What an arrow has to look like once ELK has routed it and d2 has painted it.
 
-Three rules, none of them about what is WRITTEN on the arrow — that is `edgelabel`:
+Three rules about the drawing, none of them about what is WRITTEN on the arrow — that is
+`edgelabel`:
 
   * every straight run of a route is vertical or horizontal;
   * the last run into an arrowhead is long enough for the head to sit on visible line;
   * nothing hides that run — not an edge label's gap, not a gap this repo cut itself.
+
+`defects` counts those three, and `render._pick_at_spacing` ranks candidates on the count.
+
+`through` is a fourth and is deliberately NOT one of them: it is an INVARIANT rather than a
+defect to be traded. ELK never draws a line across a box, so it reads zero on everything this
+repo ships, and it exists to stay that way — nothing here has a remedy for it, and folding it
+into `defects` would put it into a ranking where a layout could be preferred for having fewer
+of something that must simply never happen.
 
 This module MEASURES and never redraws. Where an arrow goes is decided upstream — the route is
 ELK's and the rounding of its corners is d2's — and both attempts to edit that here were worse
@@ -55,6 +64,17 @@ MIN_RUN = 6
 # head — behind it is the rest of the arrow — and the extra 6px would ask a whole rung more of
 # `d2.ELK_EDGE_LADDER` for a head that already sits flat.
 APPROACH = HEAD_REACH
+
+# How far off its own shape the end of a connection sits. d2 stops the line clear of the border
+# and paints the arrowhead back from the tip, so an end is never ON the box it points at — it is
+# a few px outside it. Any shape this close to an end is that end's OWN shape, which a route may
+# of course touch; anything further is a shape the line has been drawn across.
+#
+# Generous rather than tight, because the miss that matters is the false ALARM: a route
+# correctly ending at its own box, reported as crossing it, would make the invariant noise and
+# noise gets switched off. A neighbour close enough to be wrongly excused at this distance is
+# closer to the endpoint than ELK's own edge-node spacing allows a foreign box to be.
+TERMINAL_REACH = 12.0
 
 CONNECTION = re.compile(r'<path d="([^"]*)"[^>]*class="connection"[^>]*/>')
 # The mask block, with its own box. That box — NOT the root's viewBox — is the canvas every
@@ -230,6 +250,41 @@ def shortfall(box, zones):
 def leaves_a_stub(box, zones):
     """Whether cutting `box` out of the mask leaves every arrow through it visible at its ends."""
     return not shortfall(box, zones)
+
+
+def through(svg, obstacles):
+    """Every shape a route is drawn across that is not one of its own two ends.
+
+    Takes the obstacle boxes rather than reading them, exactly as `shortfall` takes its zones:
+    what counts as a shape is the caller's business and needs to know d2's palette, which this
+    module deliberately does not. `edgelabel.route_obstacles` is that answer for a d2 drawing.
+
+    Reported once per (route, shape) pair rather than per leg, because a route that clips the
+    same box with two of its runs has one thing wrong with it, not two.
+    """
+    found = []
+    for match in CONNECTION.finditer(svg):
+        pts = points(match.group(1))
+        if len(pts) < 2:
+            continue
+        runs = leg_boxes(match.group(1))
+        for box in obstacles:
+            if _ends_at(box, pts):
+                continue
+            area = sum(run.overlap(box) for run in runs)
+            if area:
+                found.append(Defect(
+                    "through", ((box[0] + box[2]) / 2, (box[1] + box[3]) / 2),
+                    f"a run of the arrow is drawn across {area:.0f}px² of a shape it does "
+                    "not begin or end at"))
+    return found
+
+
+def _ends_at(box, pts):
+    """Whether either end of the route belongs to `box`. See `TERMINAL_REACH`."""
+    near = Box((box[0] - TERMINAL_REACH, box[1] - TERMINAL_REACH,
+                box[2] + TERMINAL_REACH, box[3] + TERMINAL_REACH))
+    return near.holds(pts[0]) or near.holds(pts[-1])
 
 
 def defects(svg):

@@ -132,6 +132,41 @@ class TestObstacles(unittest.TestCase):
         self.assertEqual(moved(out), [])
 
 
+class TestRouteObstacles(unittest.TestCase):
+    """What `arrows.through` is given. A label and a route want different subsets of the same
+    shapes, and both exclusions here are the whole reason the two are told apart."""
+
+    NODE = ('<rect x="100.000000" y="100.000000" width="80.000000" height="60.000000" '
+            'stroke="var(--d-svc-br)" fill="var(--d-svc-bg)" style="stroke-width:2;" />')
+    GROUP = ('<rect x="10.000000" y="10.000000" width="380.000000" height="300.000000" '
+             'stroke="var(--d-grp-br)" fill="var(--d-grp-bg)" style="stroke-width:2;" />')
+    CALLOUT = ('<rect x="200.000000" y="200.000000" width="90.000000" height="44.000000" '
+               'rx="4" ry="4" class="d2-callout" fill="var(--d-callout-bg)" '
+               'stroke="var(--d-callout-br)" stroke-width="1"/>')
+
+    def obstacles(self, shapes):
+        return edgelabel.route_obstacles(svg([], [], shapes=shapes))
+
+    def test_a_node_is_an_obstacle(self):
+        self.assertEqual(self.obstacles(self.NODE), [arrows.Box((100, 100, 180, 160))])
+
+    def test_a_container_is_not(self):
+        """An edge out of a nested node crosses its parent's border on the way, and every
+        figure with containers does it several times."""
+        self.assertEqual(self.obstacles(self.GROUP), [])
+
+    def test_a_callout_is_not(self):
+        """`place` prices covering a line against clipping, hidden text and glyph size.
+        Forbidding it here would overrule that search from underneath."""
+        self.assertEqual(self.obstacles(self.CALLOUT), [])
+
+    def test_a_label_still_has_to_keep_off_all_three(self):
+        """The other view of the same parse: containers as border strips, callouts included."""
+        kinds = [k for _b, k in edgelabel._shape_boxes(
+            svg([], [], shapes=self.NODE + self.GROUP + self.CALLOUT), 0)]
+        self.assertEqual(sorted(kinds), ["callout", "group", "node"])
+
+
 class TestCanvasIsTheMaskBox(unittest.TestCase):
     def test_the_mask_box_wins_over_the_viewbox(self):
         """d2 emits `viewBox="0 0 432 591"` for a drawing whose geometry runs -101..331. Read
