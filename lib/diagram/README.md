@@ -163,8 +163,22 @@ range it was allowed to be in. Do that first.
 
 ## Dead ends — measured, and not to be retried
 
-Each of these was built and reverted. None of them is visible in the code, which is why they are
-written down.
+Most of these were built and reverted; the rest were measured and refused. None of them is
+visible in the code, which is why they are written down.
+
+- **Giving the drawing more room by moving the page's limits** — widening the 880px reading
+  measure the explainer's `<body>` is capped at, or lowering the 10px floor under primary text.
+  Refused, and not on cost grounds. Those floors were derived by showing every figure in both
+  corpora inside the real column against the real body prose, from 14px down to 8px, and keeping
+  what survived; they are a legibility result, not a budget. **The lightbox is not an argument
+  against them either** — yes, every embedded diagram enlarges on click, and needing that click
+  means the inline figure has already failed, which is the whole reason the floor exists.
+
+  It will look tempting, because a figure that comes up short usually misses by very little: the
+  reference architecture needs 24px of spacing between an edge and the box it points at and can
+  only afford 20px, the reference state machine 24px against 22px. Two figures, both unusually
+  wide for their content — that is two outliers, not a wall. The renderer adapts; the page does
+  not.
 
 - **Squaring off the corner an arrowhead is painted over.** It does free the head, and it is a
   worse drawing: the rounding is wanted, and a hard 90° turn 12px from a box reads as a mistake.
