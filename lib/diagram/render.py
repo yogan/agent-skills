@@ -37,6 +37,7 @@ from . import compact
 from . import d2 as d2mod
 from . import edgelabel
 from . import palette
+from . import route
 
 # d2 version this recipe was measured against. Several behaviours it relies on are
 # undocumented (the table property coupling, the missing intrinsic size, the 1.3x header
@@ -240,6 +241,10 @@ def _maybe_compact(raw, spec, name, standalone=False):
     # Before anything measures or moves: a re-cut callout is a smaller obstacle, and both the
     # edge-label pass below and the anchor search above must see the box that ships.
     svg = compact.style_detail_lines(callout.fit(raw))
+    # Before the edge labels, so the words are placed on the route that ships rather than on
+    # the one ELK proposed — the only ordering that keeps a label off a leg that is about to
+    # get shorter. See `route.py` for what it moves and what stops it.
+    svg = route.straighten(svg, edgelabel.route_obstacles(svg))
     if spec.get("kind") == "state":
         # After the marker, not before: it moves the canvas top edge, and an edge label may
         # not be nudged past a boundary that is about to change.
@@ -412,11 +417,14 @@ def _afford(svg, name, spill, standalone=False):
     """`(is the drawing spoilt, how many arrow defects)` — what a wider rung has to beat.
 
     Spoilt first, and absolutely. The wider rung buys straight line in front of every arrowhead
-    and spends 40 to 100px of the page for it, which most figures can pay — but two cannot. The
-    reference architecture comes out 958px tall against an 840px ceiling, and the repo state
-    machine grows past the canvas d2 sized for it, with the bottom row of its boxes cut off. A
-    drawing the reader is told to split in two, or one with a box sliced in half, is not an
+    and spends 40 to 100px of the page for it, which most figures can pay — and what a figure
+    that cannot pay runs out of is WIDTH. The reference architecture needs rung 24, where it is
+    1079px wide, the content column scales it to 0.72 and its text lands at 9.4px against a 10px
+    floor; its height is 478px at every rung on the ladder. A drawing nobody can read is not an
     improvement on an arrowhead sitting on a curve.
+
+    Most of those arrowheads no longer reach here at all — `route.py` moves the step instead,
+    for nothing — so this now decides one figure's rung rather than five.
     """
     from .gates import GateError, size as size_gate   # local: gates.clipping imports this
     try:

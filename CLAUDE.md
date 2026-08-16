@@ -125,7 +125,8 @@ that are usually thrown away.
 - `lib/` — Python shared repo-wide (skill scripts and `e2e/` both import from it).
   Only for logic that's provably identical across its consumers, modulo a trivial
   parameter — see below.
-- `lib/diagram/` — the diagram renderer (D2), shared by the explainers and `visualize`. Its
+- `lib/diagram/` — the diagram renderer (D2), shared by the explainers and `visualize`. One
+  module in it, `route.py`, moves a line the engine drew; everything else measures. Its
   entry point, the rules its output must satisfy and the loop for changing it are in
   [lib/diagram/README.md](lib/diagram/README.md). The one place in `lib/` that isn't pure
   Python: `lib/diagram/js/` holds a Node script because measuring a rendered diagram needs a

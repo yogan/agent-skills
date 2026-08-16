@@ -264,19 +264,32 @@ def through(svg, obstacles):
     """
     found = []
     for match in CONNECTION.finditer(svg):
-        pts = points(match.group(1))
-        if len(pts) < 2:
+        found += crosses(match.group(1), obstacles)
+    return found
+
+
+def crosses(d, obstacles):
+    """The same question about ONE route, as its path data.
+
+    Split out because that is the form a caller has when it is deciding whether to draw a
+    route somewhere else: `route.straighten` builds a candidate `d` and asks this before
+    keeping it, so the check that guards a move and the check that audits the finished
+    drawing are the same code and cannot come apart.
+    """
+    pts = points(d)
+    if len(pts) < 2:
+        return []
+    runs = leg_boxes(d)
+    found = []
+    for box in obstacles:
+        if _ends_at(box, pts):
             continue
-        runs = leg_boxes(match.group(1))
-        for box in obstacles:
-            if _ends_at(box, pts):
-                continue
-            area = sum(run.overlap(box) for run in runs)
-            if area:
-                found.append(Defect(
-                    "through", ((box[0] + box[2]) / 2, (box[1] + box[3]) / 2),
-                    f"a run of the arrow is drawn across {area:.0f}px² of a shape it does "
-                    "not begin or end at"))
+        area = sum(run.overlap(box) for run in runs)
+        if area:
+            found.append(Defect(
+                "through", ((box[0] + box[2]) / 2, (box[1] + box[3]) / 2),
+                f"a run of the arrow is drawn across {area:.0f}px² of a shape it does "
+                "not begin or end at"))
     return found
 
 

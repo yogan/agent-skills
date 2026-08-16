@@ -185,11 +185,16 @@ ELK_SPACING_LADDER = (15, 30, 40)
 # Room between an edge and the box it points at, tightest first, when the tight one leaves an
 # ARROWHEAD with no straight line to sit on.
 #
-# This is the only lever the repo has on ELK's routing. At 15 the last cross-run of an edge is
-# parked about 12px from its target, d2 spends 8 of those rounding the corner, and the 10px
-# arrowhead is then painted along the curve — so it leans out to one side and reads as a shape
-# stuck on the line rather than the end of it. Eleven arrows across the two corpora looked like
-# that. At 25 there are none, in either corpus.
+# This is the only lever the repo has on ELK's ROUTING, and it is no longer the first one
+# reached for. At 15 the last cross-run of an edge is parked about 12px from its target, d2
+# spends 8 of those rounding the corner, and the 10px arrowhead is then painted along the curve
+# — so it leans out to one side and reads as a shape stuck on the line rather than the end of
+# it. Twelve arrows across the two corpora look like that. At 25 there are none, in either
+# corpus, and the run into the head is exactly `rung - 14`px.
+#
+# `route.straighten` now fixes eleven of the twelve by moving the step instead of buying room
+# for it, which costs no page at all. What is left is the repo state machine, whose label all
+# but fills the run it would slide along — so this stays, as the fallback for exactly that.
 #
 # 20 is not a rung because it fixes nothing: measured, the corpus still has all eleven, and the
 # reference architecture flips to a 1006px-wide landscape whose text fails the 11px floor.

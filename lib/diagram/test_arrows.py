@@ -184,20 +184,24 @@ class TestARouteAcrossAShape(unittest.TestCase):
 
 
 class TestAgainstTheCorpus(unittest.TestCase):
-    """Both corpora, measured for all three rules. Zero is not the expected number.
+    """Both corpora, measured for all three rules. Zero IS the expected number, now.
 
-    Every exception below is a figure that cannot pay for the wider edge spacing that would
-    fix it — see `d2.ELK_EDGE_LADDER` — and each is named with what it cannot pay, so a
-    change that makes one affordable fails here and gets this list shortened rather than
-    quietly banking the win. Anything NOT named is a regression.
+    It was not. Two arrowheads on the reference architecture sat on a curve because the only
+    remedy was the wider edge spacing and that figure cannot buy it at any rung — it needs 24,
+    and its text falls under the readability floor at 21. The remedy is no longer the only one:
+    `route.straighten` slides the last step of a route back along the run it comes off, which
+    costs no page at all, and eleven of the twelve tails in the two corpora take it.
+
+    The twelfth is the repo state machine, whose label is nearly as long as the run it would
+    slide along — so it still buys the fix with `d2.ELK_EDGE_LADDER`, and still ships clean.
+    That is why this list is empty rather than deleted: it is the shape an exception takes, and
+    the next figure that cannot pay goes here with what it cannot pay named.
 
     These are unplaced renders, as in `test_reference`: placement is minutes and this is
-    tenths. The repo state machine is the one figure whose ANSWER differs placed — its callout
-    moves the drawing off its own canvas at the wider rung, so `figure._settle` steps it back
-    and it ships with the two arrowheads this measures as fixed.
+    tenths.
     """
 
-    KNOWN = {"reference/arch": {"turn": 2}}   # 958px tall at the wider rung, ceiling is 840
+    KNOWN = {}
 
     @classmethod
     def setUpClass(cls):

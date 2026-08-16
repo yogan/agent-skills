@@ -166,16 +166,23 @@ class TestAgainstRealDiagrams(unittest.TestCase):
     def test_it_catches_a_label_a_callout_is_sitting_on_top_of(self):
         """The occluded half of the hidden-text check: geometry painted over a word.
 
-        Pinning the state machine's callout back to `bottom-left` reproduces it exactly — that
-        anchor puts the callout across 69% of `max attempts`, which is why `examples.py` no
-        longer pins it and lets the placement pass measure instead.
+        Pinning the state machine's callout to `center-left` reproduces it — and which anchor
+        does that is a fact about the LAYOUT, not about the anchor. This test used to pin
+        `bottom-left`, across 69% of `max attempts`, while that figure was portrait; it is
+        landscape now (see `examples.py`) and the two have swapped jobs exactly, `bottom-left`
+        being what the pass picks and `center-left` what lands on a word.
+
+        The overlap it fires on is 2% where the old one was 69%, so this is a weaker fixture
+        for the gate's sensitivity than it looks — but it is the real one for the drawing that
+        ships, and a manufactured 69% would be measuring a diagram nobody renders. Of the eight
+        anchors this is now the only one that hides anything at all.
         """
         import copy
         spec = copy.deepcopy(REFERENCE["state"])
-        next(s for s in spec["states"] if s.get("note"))["near"] = "bottom-left"
+        next(s for s in spec["states"] if s.get("note"))["near"] = "center-left"
         result = clipping.check(render.render(spec, name="buried"), "buried")
         self.assertFalse(result.ok)
-        self.assertTrue(any("HIDDEN TEXT" in p and "max attempts" in p for p in result.problems),
+        self.assertTrue(any("HIDDEN TEXT" in p and "transport" in p for p in result.problems),
                         result.problems)
 
     def test_the_standalone_target_gets_the_spacing_ladder_too(self):
@@ -189,15 +196,18 @@ class TestAgainstRealDiagrams(unittest.TestCase):
         every rung is a compile plus a browser measurement — checking all five would spend
         seconds of the fast suite to assert `15` four more times.
 
-        **It no longer needs one, and nothing in the corpus does.** `edgelabel.reposition`
-        slides a label along its own leg until it is clear, which is what the extra 30px of
-        layer gap used to buy, and buys it without the 30px — the ER is clean at the tight
-        default at 886px where escalating made it 916px. That is why the second half of this
-        test drives the ladder directly rather than through a figure: there is no longer a real
-        spec that climbs it, and a manufactured one was tried (a long cardinality between two
-        tables, a three-table chain) and came out clean too. The ladder stays as the fallback
-        for a label with nowhere on its route to go; this pins that the standalone path still
-        REACHES it, which is the defect that prompted it.
+        **It climbs one rung, and which ladder it climbs has moved twice.** `edgelabel`
+        slides a label along its own leg until it is clear, which took this figure off the
+        layer ladder entirely for a while; then it climbed the EDGE ladder instead, for an
+        arrowhead sitting on a curve. `route.straighten` fixes that arrowhead out of space the
+        drawing already has, so the edge ladder stands down — and what is left underneath is
+        the case the layer ladder is actually for: a cardinality with nowhere on its own leg
+        that both starts the line and clears the head (`render._cramped`). It climbs to 30 and
+        comes out at 916x281, which is 10px NARROWER than the 926 the edge rung cost.
+
+        Pinned as `ELK_SPACING_LADDER[1]` rather than as `30`, so the relationship survives a
+        change to the numbers. If this ever drops back to the tight rung, the label pass has
+        started covering a case it did not, and the `_cramped` branch has gone quiet.
         """
         svg = render.standalone(REFERENCE["er"], name="alone", theme="dark")
         result = clipping.check(svg, "alone", theme="dark", standalone=True)
@@ -205,9 +215,9 @@ class TestAgainstRealDiagrams(unittest.TestCase):
                          result.problems)
         self.assertEqual(render.choose_standalone_spacing(REFERENCE["er"], name="alone",
                                                           theme="dark")[0],
-                         d2.ELK_SPACING_LADDER[0],
-                         "the ER is clean at the tight rung now; if this ever escalates again, "
-                         "the label pass has stopped covering a case it used to")
+                         d2.ELK_SPACING_LADDER[1],
+                         "the ER climbs one layer rung for a cardinality with nowhere to sit; "
+                         "if that stops, `render._cramped` has stopped seeing it")
 
         # The wiring, driven directly: with the measurement forced to report hidden text, the
         # standalone path must climb. Without this the assertion above is equally satisfied by

@@ -32,9 +32,16 @@ ever sees.
 
 So the rule for this file is not "pin" or "do not pin", it is: **a pin here must be the
 anchor the pass measures, and the corpus must render cleanly with no pass at all.** The state
-machine is the proof that this needs checking rather than assuming — it once pinned
-`bottom-left`, which lies across 69% of `max attempts`, and `center-left` is the only one of
-the eight that hides nothing.
+machine is the proof that this needs checking rather than assuming, twice over. It once pinned
+`bottom-left`, which lay across 69% of `max attempts` in the PORTRAIT layout it had then, and
+`center-left` was the only one of the eight that hid nothing.
+
+That figure is now laid out landscape — `route.straighten` fixed the arrowheads that used to
+push it to a wider rung, and the rung was the only thing keeping the wide candidate out (see
+`test_reference.MEASURED`). A pin is a statement about a shape, so both anchors changed hands:
+`center-left` now lands across `transport error`, and `bottom-left` — the one that used to be
+the worst of the eight — is what the pass measures and picks. **A pin here does not survive a
+layout change and must be re-derived rather than assumed to still hold.**
 """
 
 ARCHITECTURE = {
@@ -181,7 +188,7 @@ STATE = {
         {"id": "authenticating", "role": "working"},
         {"id": "live", "role": "steady"},
         {"id": "backoff", "label": "reconnect backoff", "role": "transient",
-         "note": "new retry path", "near": "center-left"},
+         "note": "new retry path", "near": "bottom-left"},
         {"id": "closed", "role": "terminal"},
     ],
     "transitions": [

@@ -77,12 +77,23 @@ already prices covering a line against everything else it weighs).
 what a corner looks like is d2's. Squaring off the corner under an arrowhead was tried and is a
 worse drawing — the rounding is wanted, and a hard 90° turn 12px from a box reads as a mistake.
 
-So the remedy is space. `d2.ELK_EDGE_LADDER` widens the gap ELK leaves between an edge and the
-box it points at, per figure, only where there is something to fix and only as far as the size
-gate still passes (`render._afford`). It costs 40 to 100px of page. Two figures cannot pay:
-the reference architecture is 958px tall at the wider spacing against a 900px ceiling, and the
-repo state machine's callout then lands somewhere that pushes the drawing off its own canvas —
-`figure._settle` catches that one after placement, which is the only moment it is visible.
+The remedy used to be space, and mostly is not any more. [`route.py`](route.py) slides the last
+STEP of a route back along the run it comes off, so the head sits on line the drawing already
+had — no page, no layout change, and the corners still d2's. It is the one place here that
+moves a line, which is why it is its own module and why `arrows.crosses` is offered every move
+before it is kept. Eleven of the twelve short approaches in the two corpora take it.
+
+`d2.ELK_EDGE_LADDER` is the fallback for the twelfth. It widens the gap ELK leaves between an
+edge and the box it points at, per figure, only where there is something left to fix and only
+as far as the size gate still passes (`render._afford`), and it costs 40 to 100px of page. The
+repo state machine is the figure that still needs it: its label is nearly as long as the run it
+would otherwise slide along, so there is no room to move into.
+
+**What a figure cannot pay is width, not height** — the reference architecture is the one that
+proved it. Its two arrowheads needed edge rung 24, where the drawing is 1079px wide, the 777px
+content column scales it to 0.72 and the text lands at 9.4px against a 10px floor. Height never
+moves at any rung. An earlier note here, and in `render._afford`, said it was 958px tall against
+the ceiling; that was measured against a ceiling and a layout that no longer exist.
 
 A gap that lands on an arrowhead is the same shortage seen from the other end, and it is
 bought with the OTHER ladder. ELK sizes the space between two layers to hold the edge label and
@@ -92,8 +103,8 @@ whichever end it gave up the words ended against a 5px stub of line. `d2.ELK_SPA
 already climbed for unreadable text; `render._climb_layers` climbs it for this too, on the same
 `_afford` test, and that figure is 60px wider for it.
 
-What is left over is reported rather than paid for: the arrowheads on a curve named in
-`test_arrows`, which fails if the list grows. Ranking arrow defects above height in
+What is left over is reported rather than paid for, in `test_arrows.KNOWN`, which fails if the
+list grows — and which is empty now that the step can move. Ranking arrow defects above height in
 `render._pick_at_spacing` was also tried and reverted — it removes one stranded head from the
 repo architecture by breaking every edge label in the figure across four lines, and a wrapped
 diagram is the defect a reader meets first.

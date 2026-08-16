@@ -75,17 +75,32 @@ MEASURED = {
     #
     # 902x257 until the layout search learned to prefer a less extreme shape
     # (`render.ASPECT_BAND`): 3.51:1 becomes 3.35:1 for 3px of height.
-    "er": (871, 260),
+    #
+    # 871 while the 40px above were still being paid. They are not: `route.straighten` slides
+    # the last step of a route back along the run it comes off, which puts the same arrowheads
+    # on straight line out of space the drawing already had. The rung is given back and the
+    # figure is 10px narrower than the one that bought it.
+    "er": (861, 260),
     # dagre: 899x357 at 12.1px. This is the biggest single gain in the corpus — barely half
     # the width, and 14.0px text because none of it is scaled away. 411 while its callout was
     # pinned `bottom-left`; `center-right`, where the pass puts it, reaches out to the side.
     # 450 before the edge-spacing rung that takes the arrowhead on `implements` off its corner.
-    "class": (498, 490),
+    # 490 while that rung was the only way to buy it — `route.straighten` now does the same
+    # thing for nothing, so the 40px come back and this is the 450 it was before.
+    "class": (498, 450),
     # dagre: 376x796, same 13.0px text. 205px shorter for nothing given up. 327 while this
     # pinned no anchor at all, which put its callout across 26% of `transport error`.
     # 591 before the edge-spacing rung — three arrowheads here were painted across their turn,
     # and this is the figure that pays most for them (`d2.ELK_EDGE_LADDER`).
-    "state": (432, 691),
+    #
+    # 432x691 PORTRAIT, and it was that shape by accident. Those arrowheads pushed it to the
+    # wider rung, where the wide candidate's text falls under the floor — so the portrait won
+    # by being the only one left, not by being preferred. `route.straighten` fixes the heads at
+    # the tight rung, the accident goes, and the ranking's actual choice ships: 505px shorter
+    # for text at 10.8px instead of 13.0, which is the trade `render.HEIGHT_BUCKET` exists to
+    # make. The wrapping that comes with it is not free either — see `d2.wrap_edge_label`, and
+    # `retry (max 30s)` folds onto three lines where nothing was constraining the width.
+    "state": (980, 235),
 }
 
 HAVE_D2 = render.d2_version() is not None
@@ -138,24 +153,26 @@ class TestReferenceCorpus(unittest.TestCase):
 
         The per-kind default is therefore checked as EMITTED SOURCE, in test_d2's
         TestDirectionPerTarget, which is where the claim can be stated exactly. What is worth
-        pinning geometrically is only what survives that: `state` really does flip between the
-        targets, and `architecture` keeps its portrait shape on both.
+        pinning geometrically is only what survives that, and it is `architecture`: the one
+        kind that does NOT ask for `right` as a file, so it comes out portrait there, while
+        embedded the layout search has the content column to fill and lays it out wide. That
+        is a difference between the targets rather than between two runs.
 
-        It does NOT keep its exact aspect any more, and the reason is a real difference rather
-        than a drift: `d2.ELK_EDGE_LADDER` is bought with page height, and only a file has any
-        to spend. Embedded, the architecture is already at the ceiling and keeps two arrowheads
-        sitting on their corner; as a file there is no viewport rule to break, so it climbs and
-        comes out taller and clean.
+        `state` used to be pinned here too, as portrait embedded and landscape as a file. It
+        is landscape on BOTH now — `route.straighten` took away the arrowheads that pushed it
+        to a wider rung, and the rung was the only thing keeping the wide candidate out (see
+        `MEASURED`). So it no longer tells the two targets apart, and asserting it would be
+        pinning a coincidence. Its standalone half stays, because that one is the direction
+        default doing its job.
         """
         width, height = render.natural_size(
             render.standalone(REFERENCE["state"], name="s--state"))
         self.assertGreater(width, height, "state standalone should be landscape")
-        self.assertLess(*MEASURED["state"], msg="state embedded should be portrait")
         arch = render.standalone(REFERENCE["arch"], name="s--arch")
         width, height = render.natural_size(arch)
-        self.assertLess(width, height, "architecture should stay portrait on both targets")
-        self.assertGreater(height / width, MEASURED["arch"][1] / MEASURED["arch"][0],
-                           "as a file it can afford the edge-spacing rung the page cannot")
+        self.assertLess(width, height, "architecture should be portrait as a file")
+        self.assertGreater(MEASURED["arch"][0], MEASURED["arch"][1],
+                           "architecture should be landscape embedded")
 
     def test_the_standalone_start_marker_spends_height_not_width(self):
         """The standalone target's direction is a default in `d2.DIRECTION`, not a key in the
