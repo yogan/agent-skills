@@ -39,6 +39,12 @@ work that may be rejected.
 disprove it: a measurement beats a render, a render beats a full capture. Never present a
 visual result you have not looked at yourself. Say what you did not check.
 
+Diagnose the same way. Before proposing a cause, measure the thing's actual state against the
+state it was allowed to be in — where it is against where it was permitted to be, what it
+scored against what the alternatives scored. A session once guessed three causes for one
+defect, built two of them and reverted both; the measurement that found the real one took a
+minute and could have been the first move.
+
 **Showing.** What "show" means depends on what changed, and only the first of these has
 tooling:
 
@@ -129,16 +135,26 @@ directly, e.g.:
 
     python3 skills/rework-mr/scripts/test_threads.py
 
-To run everything: `python3 run_tests.py` (~30s). While editing, run less:
+To run everything: `python3 run_tests.py` (~95s, most of it d2 and browser launches). While
+editing, run less:
 
 - `python3 run_tests.py --changed` — resolves your uncommitted edits through the repo's import
   graph and runs every test that reaches them. Touching `lib/gitlab.py` runs 4 files in 0.4s;
   touching `lib/diagram/palette.py` runs 14, because that is genuinely how far it reaches. It
   **declines and runs everything** whenever it cannot map a changed file, since a selector that
   quietly skips the failing test is worse than a slow one. `test_run_tests.py` exists to pin
-  that, and every case in it is a real under-selection that was once shipped.
+  that, and every case in it is a real under-selection that was once shipped. With a CLEAN tree
+  it runs nothing — no edits, nothing they can affect.
 - `python3 run_tests.py compact` — plain substring filter on the path, when you know what you
-  want.
+  want. This is the one that keeps an edit loop cheap: selection cuts CPU, not wall clock,
+  because one slow file sets the pace whenever it is reachable.
+
+**A whole run that already passed today is skipped, and says so.** `run_tests.py` records a
+passing full run against a fingerprint of every non-ignored file plus the `d2` and `node`
+versions, and exits early on an identical one. It is bounded to the day, because the
+fingerprint cannot see a browser that updated overnight — the same reason `gates/__init__.py`
+insists a check that did not run must not report success. `--force` runs them anyway. If you
+are surprised that nothing ran, that is what happened.
 
 Neither replaces the full fast suite before you commit. Don't reach for `python3 -m unittest
 discover`: it only finds tests under directories with an `__init__.py`, which is just `lib/`

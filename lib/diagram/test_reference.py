@@ -45,9 +45,13 @@ MEASURED = {
     # `center-right`, which is not where the pass puts them.
     # 767 while containers had an even padding. The top now carries enough room for an arrow
     # to clear a container title and still keep a length of line above its arrowhead
-    # (`d2.ELK_OPTS["paddingTop"]`), which takes this past MAX_H — see `gates/size.RESCUE_H`
-    # for why that is allowed here and not in general.
-    "arch": (493, 818),
+    # (`d2.ELK_OPTS["paddingTop"]`).
+    #
+    # 493x818 portrait until the text floor came down to a measured 10px. The landscape
+    # candidate had always existed and had always been refused, for text landing at 10.4px
+    # against a floor of 11 — half the height for a quarter of the glyph size, a trade nobody
+    # had ever actually looked at. It was looked at, and this is what came back.
+    "arch": (971, 478),
     # d2's own sequence engine lays this one out; the layout engine never touches it, and
     # dagre and elk output are byte-identical. 420 before the group legend added LEGEND_BAND.
     "sequence": (663, 442),
@@ -68,7 +72,10 @@ MEASURED = {
     # 862 while `n sessions : 1 doc` cut the line 2px INTO the arrowhead it names and two more
     # heads were painted across their corner. The 40px here are a rung of `d2.ELK_EDGE_LADDER`,
     # bought for exactly that and priced in glyph size: 12.6px becomes 12.4px.
-    "er": (902, 257),
+    #
+    # 902x257 until the layout search learned to prefer a less extreme shape
+    # (`render.ASPECT_BAND`): 3.51:1 becomes 3.35:1 for 3px of height.
+    "er": (871, 260),
     # dagre: 899x357 at 12.1px. This is the biggest single gain in the corpus — barely half
     # the width, and 14.0px text because none of it is scaled away. 411 while its callout was
     # pinned `bottom-left`; `center-right`, where the pass puts it, reaches out to the side.

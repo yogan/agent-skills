@@ -21,6 +21,7 @@ d2 gives the callout no styling surface, so somebody has to own it, and the page
 only party that can.
 """
 import functools
+import math
 import os
 import re
 import shutil
@@ -312,6 +313,39 @@ CANDIDATES = tuple((direction, wrap)
 # the 16px between those two.
 HEIGHT_BUCKET = 100
 
+# The shape a drawing may have before it reads as a strip rather than a figure. Inside this
+# band nothing is charged; outside it, a candidate pays for how far outside it is.
+#
+# It exists because width is otherwise almost free. A very wide layout is short, so it wins on
+# height, and the only term that notices the width is the glyph size — which sits last and is
+# never reached. The repo state machine shipped at 947x211, a ratio of 4.5, with its text
+# scaled down to 10.7px, while a wrapped candidate of the same height bucket was 796x215 at
+# 12.7px. The wide one is not wrong so much as unpleasant: a 4.5:1 drawing reads as a banner.
+#
+# 2.0 rather than 16:9, because the band has to hold BOTH orientations and a portrait diagram
+# at 1:2 is perfectly ordinary. Distances are measured in logs so that 4:1 is as far outside as
+# 1:4, and bucketed, so two candidates of much the same shape tie and the terms below decide.
+#
+# The bucket is a tenth of a log unit, about 10% of ratio. A quarter was tried and is too coarse
+# for the case this exists for: the repo state machine's three landscape candidates are 4.77,
+# 4.31 and 3.98: all "equally bad" at that width, so the decision fell through to the wrap
+# preference, which takes the widest of them. It ships 3.98 and a whole point of glyph size
+# better. Note this term sits BELOW height on purpose — it chooses between drawings of the same
+# height, it does not turn a landscape figure portrait.
+ASPECT_BAND = (0.5, 2.0)
+ASPECT_BUCKET = 0.1
+
+
+def _out_of_shape(width, height):
+    """How far outside `ASPECT_BAND` this drawing's shape is, in log units. 0 when inside."""
+    if height <= 0 or width <= 0:
+        return 0.0
+    ratio = width / height
+    if ASPECT_BAND[0] <= ratio <= ASPECT_BAND[1]:
+        return 0.0
+    return math.log(ratio / ASPECT_BAND[1] if ratio > ASPECT_BAND[1]
+                    else ASPECT_BAND[0] / ratio)
+
 
 def _pick_layout(spec, name, binary, theme_vars, edge_rungs=None):
     """Render each candidate layout and keep the one that measures best.
@@ -498,6 +532,7 @@ def _pick_at_spacing(spec, name, binary, theme_vars, layers, edges=None):
         # ties between candidates that are otherwise equal.
         rank = (len(result.problems), edgelabel.unfixable_crossings(svg),
                 round(metrics["rend_h"] / HEIGHT_BUCKET),
+                round(_out_of_shape(metrics["nat_w"], metrics["nat_h"]) / ASPECT_BUCKET),
                 CANDIDATES.index((direction, wrap)),
                 len(arrows.defects(svg)), -metrics["fmin"])
         if best is None or rank < best[0]:

@@ -433,6 +433,13 @@ def _grown(svg, left=0, right=0, top=0, bottom=0):
     The outer tag has no height at this point in the pipeline — d2 emits a viewBox alone and
     `render.pin_intrinsic` writes the size on afterwards, from the viewBox this just grew. The
     inner tag does have one, and stale values there would crop the annotation.
+
+    Room added on the LEFT or at the TOP moves the outer viewBox's origin, and the nested
+    `<svg>` has to be moved with it or the whole drawing keeps its old position on a canvas
+    that has shifted underneath it — which crops the far side by exactly the amount added.
+    Growing at the bottom or the right does not move the origin, so this went unseen until a
+    start marker first needed room above a landscape state machine: the canvas gained 36px at
+    the top and the bottom row of boxes fell 36px outside it.
     """
     if not (left or right or top or bottom):
         return svg
@@ -451,6 +458,18 @@ def _grown(svg, left=0, right=0, top=0, bottom=0):
                + f'viewBox="{bx - left:g} {by - top:g} {bw + left + right:g} '
                  f'{bh + top + bottom:g}"' + out[box.end():])
         svg = svg.replace(tag, out, 1)
+
+    # Put the nested <svg> back on the canvas's new origin. It carries no x/y of its own, so it
+    # defaults to (0, 0) — which stops being the top-left corner the moment the outer viewBox
+    # moves. Written from the outer box rather than accumulated, so repeated growth cannot drift.
+    outer, inner = _svg_tags(svg)
+    bx, by, _bw, _bh = _viewbox(outer)
+    placed = inner
+    for attr, value in (("x", bx), ("y", by)):
+        found = re.search(rf'\s{attr}="[-\d.]+"', placed)
+        placed = (placed[:found.start()] + f' {attr}="{value:g}"' + placed[found.end():]
+                  if found else placed[:-1] + f' {attr}="{value:g}">')
+    svg = svg.replace(inner, placed, 1)
 
     # The backdrop is d2's first <rect>, immediately after the inner <svg> tag.
     inner_end = svg.index(">", svg.find("<svg", svg.find("<svg") + 1)) + 1

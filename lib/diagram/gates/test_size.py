@@ -87,13 +87,14 @@ class TestGates(unittest.TestCase):
         self.assertTrue(size.check(svg(400, 300)).ok)
 
     def test_a_too_tall_diagram_fails(self):
-        result = size.check(svg(400, 900))
+        # Past MAX_TOTAL_H, which is the hard ceiling — MAX_H plus everything it may borrow.
+        result = size.check(svg(400, 1000))
         self.assertFalse(result.ok)
         self.assertIn("TALL", result.problems[0])
 
     def test_the_height_failure_advises_splitting_rather_than_shrinking(self):
         """d2 cannot compact a diagram after the fact, so shrinking is not an option."""
-        self.assertIn("split it", size.check(svg(400, 900)).problems[0])
+        self.assertIn("split it", size.check(svg(400, 1000)).problems[0])
 
     def test_a_glyph_larger_than_an_h2_fails(self):
         result = size.check(svg(400, 300, fonts=(30,)))
@@ -122,12 +123,12 @@ class TestGates(unittest.TestCase):
     def test_a_downscaled_failure_says_how_much_narrower_it_has_to_be(self):
         """"TINY" on its own does not say whether to drop a box, shorten a label or split the
         diagram — and at half the column width, 13px text renders at 6.5px, so the width that
-        puts it back on the floor is half of what it is."""
+        puts it back on the floor is what this has to say."""
         tiny = next(p for p in size.check(svg(1554, 400, fonts=(13,))).problems if "TINY" in p)
         self.assertIn("1554px wide", tiny)
-        # 1554 * 6.5/11 — which is also 777 * 13/11, the widest a 13px-text diagram can be.
-        self.assertIn("~918px", tiny)
-        self.assertIn("41% less width", tiny)
+        # 1554 * 6.5/10 — which is also 777 * 13/10, the widest a 13px-text diagram can be.
+        self.assertIn("~1010px", tiny)
+        self.assertIn("35% less width", tiny)
 
     def test_authored_tiny_text_is_not_told_to_get_narrower(self):
         """At scale 1.0 the width is not what makes it small, so the advice would be wrong."""
@@ -178,13 +179,17 @@ class TestSubtitleFloor(unittest.TestCase):
         self.assertEqual(result.problems, [])
 
     def test_a_subtitle_under_its_own_floor_fails(self):
-        result = size.check(with_subtitle(1160, 300))      # scale 0.67 -> subtitle 7.4px
+        result = size.check(with_subtitle(1500, 300))      # scale 0.52 -> subtitle 5.7px
         self.assertTrue(any("subtitle" in p for p in result.problems), result.problems)
 
     def test_the_primary_floor_still_binds_first(self):
-        """9px is chosen so the subtitle never fails before the label does: 13px primary text
-        hits 11px at 918px of width, where an 11px subtitle is still 9.3px."""
-        result = size.check(with_subtitle(930, 300))
+        """The subtitle floor is chosen so it never fails before the primary text does. The
+        binding case is a figure authored at 14px primary, which hits ITS floor at 1088px of
+        width where an 11px subtitle has come down to 7.9 — so anything above ~7.86 would stop
+        a figure by its supplementary line. Checked here on the 13px fixture, which reaches its
+        own floor at 1010px with the subtitle still at 8.5.
+        """
+        result = size.check(with_subtitle(1020, 300))
         self.assertTrue(any(p.startswith("TINY") and "subtitle" not in p
                             for p in result.problems), result.problems)
         self.assertFalse(any("subtitle" in p for p in result.problems), result.problems)
@@ -217,7 +222,16 @@ class TestThresholdsMatchThePageGeometry(unittest.TestCase):
         self.assertEqual(size.AVAIL_W, 777.0)     # 880 - 57 - 45.6, rounded
         self.assertEqual(size.H2_PX, 26.6)        # 1.4rem at a 19px root
         self.assertEqual(size.BODY_PX, 19.0)      # 1rem at a 19px root
-        self.assertEqual(size.MIN_READABLE, 11.0)
+        # Measured, not assumed: both corpora were shown in the real column against the
+        # article's real body text at 14px down to 8px, and these are what survived.
+        self.assertEqual(size.MIN_READABLE, 10.0)
+        self.assertEqual(size.MIN_READABLE_EDGE, 9.0)
+        self.assertEqual(size.MIN_READABLE_DETAIL, 7.5)
+        # The hard ceiling governs; the goal and the allowance are derived from it, so they
+        # can never drift apart or add up to something nobody agreed to.
+        self.assertEqual(size.MAX_TOTAL_H, 900.0)
+        self.assertEqual(size.MAX_H, 820.0)
+        self.assertEqual(size.RESCUE_H, size.MAX_TOTAL_H - size.MAX_H)
 
     def test_an_h2_is_larger_than_body_text(self):
         self.assertGreater(size.H2_PX, size.BODY_PX)

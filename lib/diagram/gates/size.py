@@ -26,7 +26,12 @@ import re
 from . import GateError, Result
 
 AVAIL_W = 777.0        # usable px inside a .diagram card on the real page
-MAX_H = 800.0          # one viewport, with room left for browser chrome
+
+# The hard ceiling, and the one number that governs: nothing ships taller than this. `MAX_H` is
+# what the renderer aims at and `RESCUE_H` is the rest of the allowance, derived rather than
+# guessed so the two can never drift apart or add up to something nobody agreed to.
+MAX_TOTAL_H = 900.0
+MAX_H = 820.0          # what a figure should come in under
 
 # Height a figure may borrow beyond MAX_H, and only ever to buy a fix. The layout search will
 # not spend it on a drawing that merely comes out taller — among candidates that read equally
@@ -36,26 +41,36 @@ MAX_H = 800.0          # one viewport, with room left for browser chrome
 #
 # Enforced by `render._pick_at_spacing`, which ranks a candidate's unfixable defects above its
 # height. This gate cannot see that distinction and does not try to: it holds the ceiling.
-RESCUE_H = 40.0
+#
+# 80px, and 40 before that. The old number was fitted to the single case that existed when it
+# was written and bought nothing afterwards: the reference architecture needed 158px past the
+# ceiling to put its arrowheads on straight line, four times the allowance. It is derived from
+# the hard ceiling now, so raising one cannot silently raise the total.
+RESCUE_H = MAX_TOTAL_H - MAX_H
 H2_PX = 26.6           # 1.4rem at a 19px root
 BODY_PX = 19.0         # 1rem at a 19px root
-MIN_READABLE = 11.0    # below this, text in body copy is effectively unreadable
+# Measured rather than assumed: every figure in both corpora was shown inside the real 777px
+# column, against the article's real body text, at 14px down to 8px, and these are the sizes
+# that survived. See the ladder under "Setting the renderer's limits".
+MIN_READABLE = 10.0    # below this, text in body copy is effectively unreadable
 
 # The same floor for a box's subtitle line, which is supplementary by construction: the muted
 # second line under a name, carrying the real module or column names behind an abstract label.
 # Held apart because measuring it with the primary text made it the most expensive text in the
 # diagram — authored AT the floor (compact.DETAIL_FONT), it could not survive any downscale at
 # all, so a figure carrying a subtitle had to fit the column exactly while the same figure
-# without one had 141px of slack. 9 is chosen so it never binds first: 13px primary text hits
-# its own floor at 918px of natural width, where an 11px subtitle is still 9.3px.
-MIN_READABLE_DETAIL = 9.0
+# without one had 141px of slack. It is chosen so it never binds first, and that is what fixes
+# its value: a figure authored at 14px primary hits ITS floor at 1088px of natural width, where
+# an 11px subtitle has come down to 7.9. Anything above ~7.86 would stop such a figure by its
+# supplementary line rather than by the text a reader needs.
+MIN_READABLE_DETAIL = 7.5
 
 # And for an edge label, which is annotation of the same sort: it qualifies a relationship the
 # arrow has already drawn. It matters here because d2 sets edge labels at 13px against a table's
 # 14px rows, so in an `er` or `class` diagram the label is the smallest text and decides the
 # whole layout — on one reference diagram it was the 0.1px between a cardinality reading
 # "1 doc :" / "n sessions" and being folded onto a third line to save nine pixels of width.
-MIN_READABLE_EDGE = 10.0
+MIN_READABLE_EDGE = 9.0
 
 _FONT_ATTR = re.compile(r'font-size="([\d.]+)')
 _FONT_CSS = re.compile(r"font-size:\s*([\d.]+)px")
