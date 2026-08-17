@@ -164,6 +164,67 @@ class TestHostCss(unittest.TestCase):
         self.assertIn(".d2-callout", css)
 
 
+class TestCssPerContainer(unittest.TestCase):
+    """A page may render the same diagram in more than one container — an inline card and a
+    click-to-enlarge overlay. The rules are scoped, so each container needs its own copy, and
+    which half it needs depends on whether it sizes the drawing itself."""
+
+    def test_the_content_rules_bind_to_whatever_container_is_asked_for(self):
+        css = render.content_css(".lightbox")
+        self.assertIn(".lightbox foreignObject", css)
+        self.assertNotIn(".diagram ", css)
+
+    def test_the_content_rules_carry_everything_a_callout_needs_to_render(self):
+        """All three halves of the same bug: the paragraph reset, the font the box was measured
+        with, and room for the shadow. A container missing these draws a callout as an empty
+        box, which reads as a fault in the diagram."""
+        css = render.content_css(".lightbox")
+        self.assertIn("margin:0", css)
+        self.assertIn("font-family", css)
+        self.assertIn("overflow:visible", css)
+
+    def test_the_fitting_rule_is_not_part_of_the_content_rules(self):
+        """`max-width:100%` caps the drawing at its container's width. In an overlay meant to
+        show the figure large that undoes the enlargement, so it has to be possible to ship the
+        content rules without it."""
+        self.assertNotIn("max-width", render.content_css(".lightbox"))
+        self.assertIn("max-width", render.fit_css(".lightbox"))
+
+    def test_a_card_still_gets_both_halves_under_one_name(self):
+        self.assertEqual(render.HOST_CSS, render.content_css() + render.fit_css())
+        self.assertIn(".diagram svg{max-width:100%", render.HOST_CSS)
+
+    def test_the_dark_callout_rule_scopes_to_a_container_as_well_as_a_theme(self):
+        css = render.callout_dark_css("[data-theme=dark]", ".lightbox")
+        self.assertIn("[data-theme=dark] .lightbox .d2-callout", css)
+
+
+class TestCentreInBox(unittest.TestCase):
+    """d2 pins its drawing to the top left of whatever box it is given. Invisible in a card,
+    where the box IS the drawing's shape — and the whole defect in an overlay that sizes the
+    drawing itself, which then shows a portrait figure against the left edge."""
+
+    def test_d2s_top_left_alignment_becomes_centred(self):
+        svg = ('<svg preserveAspectRatio="xMinYMin meet" viewBox="0 0 10 20">'
+               "<svg/></svg>")
+        self.assertIn('preserveAspectRatio="xMidYMid meet"', render.centre_in_box(svg))
+        self.assertNotIn("xMinYMin", render.centre_in_box(svg))
+
+    def test_only_the_root_tag_is_touched(self):
+        """The nested <svg> d2 emits has no such attribute, so anything further in that looks
+        like one belongs to the drawing and is not this function's to move."""
+        svg = ('<svg preserveAspectRatio="xMinYMin meet"><g '
+               'data-note=\'preserveAspectRatio="xMinYMin meet"\'/></svg>')
+        out = render.centre_in_box(svg)
+        self.assertEqual(out.count("xMidYMid"), 1)
+        self.assertEqual(out.count("xMinYMin"), 1)
+
+    def test_an_svg_without_the_attribute_is_left_alone(self):
+        """The SVG default already is xMidYMid meet, so there is nothing to correct."""
+        self.assertEqual(render.centre_in_box("<svg viewBox='0 0 1 1'/>"),
+                         "<svg viewBox='0 0 1 1'/>")
+
+
 class TestLayoutChoice(unittest.TestCase):
     """`render()` measures every candidate layout and keeps the better one. Choosing by kind was
     a guess that had to be wrong half the time: the reference diagrams are too big to lay out

@@ -395,9 +395,17 @@ CSS = (
     "  }\n"
     '  [data-theme="dark"] { ' + _diagram_palette.declarations("dark") + " }\n"
     + _diagram_render.HOST_CSS
+    # This page has TWO containers a diagram renders in, and lib/diagram's content rules are
+    # scoped per container — so the lightbox needs its own copy or the enlarged figure draws
+    # every callout as an empty box. `content_css` only, never `fit_css`: the lightbox sizes the
+    # <svg> itself, and `max-width:100%` would cap the enlargement back to the inline size.
+    + _diagram_render.content_css(".diagram-lightbox-content")
     + _diagram_render.callout_dark_css('[data-theme="dark"]')
+    + _diagram_render.callout_dark_css('[data-theme="dark"]', ".diagram-lightbox-content")
     + "  @media (prefers-color-scheme: dark) {\n"
     + _diagram_render.callout_dark_css(':root:not([data-theme="light"])')
+    + _diagram_render.callout_dark_css(':root:not([data-theme="light"])',
+                                       ".diagram-lightbox-content")
     + "  }\n"
 )
 

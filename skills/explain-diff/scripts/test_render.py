@@ -420,6 +420,34 @@ class TestPrepareDiagrams(unittest.TestCase):
         self.assertEqual(len(self.calls), 1, "expanding a token must not draw it again")
 
 
+class TestBothDiagramContainers(unittest.TestCase):
+    """This page renders a diagram in two places — the inline card and the click-to-enlarge
+    overlay — and `lib/diagram`'s rules are scoped per container. The overlay went without them
+    for as long as it existed, so an enlarged figure drew every callout as an empty box: exactly
+    the clip those rules document, in the one view a reader opens to read a callout properly."""
+
+    def test_the_lightbox_gets_the_callout_rules_too(self):
+        self.assertIn(".diagram-lightbox-content foreignObject", R.CSS)
+        self.assertIn(".diagram-lightbox-content .d2-callout", R.CSS)
+
+    def test_the_lightbox_does_not_get_the_fitting_rule(self):
+        """`max-width:100%` there caps the enlargement back to the inline width, so the overlay
+        must keep sizing the <svg> itself."""
+        overlay = [line for line in R.CSS.splitlines()
+                   if ".diagram-lightbox-content" in line and "max-width" in line]
+        self.assertEqual(overlay, [])
+
+    def test_the_card_still_gets_the_fitting_rule(self):
+        self.assertIn(".diagram svg{max-width:100%", R.CSS)
+
+    def test_both_containers_follow_the_dark_toggle_and_the_system_preference(self):
+        """Emitted under both selectors for each container: a first-time reader on a dark machine
+        never touched the toggle, so a rule bound to `[data-theme=dark]` alone misses them."""
+        for selector in ('[data-theme="dark"]', ':root:not([data-theme="light"])'):
+            for scope in (".diagram", ".diagram-lightbox-content"):
+                self.assertIn(f"{selector} {scope} .d2-callout", R.CSS)
+
+
 class TestRender(unittest.TestCase):
     """render()'s overall assembly — a smoke test over a realistic spec, not an
     exhaustive HTML structure check."""

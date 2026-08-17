@@ -51,43 +51,70 @@ CALLOUT_ATTRS = palette.CALLOUT_PAINT
 CALLOUT_REPLACEMENT = ('class="d2-callout" fill="var(--d-callout-bg)" '
                        'stroke="var(--d-callout-br)"')
 
-# CSS the host page MUST ship for these SVGs to render correctly. Not optional styling.
-HOST_CSS = """\
+# What the DRAWING needs, in whatever container it is put. Not optional styling.
+#
+# Scoped rather than global, and emitted once per container: a page with two places a diagram
+# can appear — an inline card and a click-to-enlarge overlay, say — has to ship this for both.
+# A container that never got it draws a callout as an empty box, which reads as a rendering
+# fault in the diagram and is a missing rule on the page.
+CONTENT_CSS = """\
 /* d2 emits a callout as <foreignObject height="24"><div class="md"><p>…</p></div>, and
-   ships no paragraph reset. The browser default `p{margin:1em 0}` then pushes the text
+   ships no paragraph reset. The browser default `p{{margin:1em 0}}` then pushes the text
    out of its 24px box and only the top sliver of the glyphs shows — which reads as a
    colour or contrast problem and is actually a clip. The missing font-family is the
    second half of the same bug: the div otherwise inherits the page's body font, whose
    metrics differ from the font d2 measured the box with, so the text re-wraps. */
-.diagram foreignObject{overflow:visible}
-.diagram foreignObject .md{display:flex;align-items:center;height:100%;
-  font-family:system-ui,-apple-system,'Segoe UI',sans-serif}
-.diagram foreignObject .md p{margin:0;line-height:1.2;font-size:12.5px;white-space:nowrap}
+{scope} foreignObject{{overflow:visible}}
+{scope} foreignObject .md{{display:flex;align-items:center;height:100%;
+  font-family:system-ui,-apple-system,'Segoe UI',sans-serif}}
+{scope} foreignObject .md p{{margin:0;line-height:1.2;font-size:12.5px;white-space:nowrap}}
 /* A callout is an annotation ABOUT the drawing, so it should read as sitting above it.
    Depth does that; a dashed outline does not — d2 welds a solid pointer triangle onto the
    box and a dashed edge fights it at the junction. Keep fill-opacity >= 0.94: the contrast
    gate measures the solid colour, so heavier transparency drifts away from what it
    verified. A plain shadow vanishes on a dark page, hence the accent glow in dark mode. */
-.diagram .d2-callout{fill-opacity:.95;filter:drop-shadow(0 2px 5px rgba(0,0,0,.28))}
+{scope} .d2-callout{{fill-opacity:.95;filter:drop-shadow(0 2px 5px rgba(0,0,0,.28))}}
 /* The shadow paints outside the viewBox and the <svg> clips it by default, so a callout
    flush with the edge lost its glow. Diagram geometry is kept inside the viewBox by the
-   placement pass; this only frees the shadow into the card's padding. */
-.diagram svg{overflow:visible}
-.diagram svg{max-width:100%;height:auto}
+   placement pass; this only frees the shadow into the container's padding. */
+{scope} svg{{overflow:visible}}
 """
 
-# The one theme-dependent rule, kept apart from HOST_CSS so a page can emit it under whatever
-# selector its dark mode actually uses. A plain drop shadow disappears against a dark
-# background, so dark mode gets an accent glow as well.
+# And what fitting a drawing into a content column needs, which is the half that must NOT be
+# emitted for a container that sizes the drawing itself. `max-width:100%` there caps the
+# drawing at the container's width and `height:auto` then overrides the height it was given,
+# so an overlay meant to show the figure large gets it at its inline size instead.
+FIT_CSS = """\
+{scope} svg{{max-width:100%;height:auto}}
+"""
+
+# The one theme-dependent rule, kept apart so a page can emit it under whatever selector its
+# dark mode actually uses. A plain drop shadow disappears against a dark background, so dark
+# mode gets an accent glow as well.
 CALLOUT_DARK_CSS = """\
-{dark} .diagram .d2-callout{{fill-opacity:.94;
+{dark} {scope} .d2-callout{{fill-opacity:.94;
   filter:drop-shadow(0 0 5px rgba(224,137,90,.40)) drop-shadow(0 2px 4px rgba(0,0,0,.55))}}
 """
 
 
-def callout_dark_css(dark_selector="[data-theme=dark]"):
-    """`CALLOUT_DARK_CSS` bound to one dark-mode selector."""
-    return CALLOUT_DARK_CSS.format(dark=dark_selector)
+def content_css(scope=".diagram"):
+    """`CONTENT_CSS` bound to one container selector."""
+    return CONTENT_CSS.format(scope=scope)
+
+
+def fit_css(scope=".diagram"):
+    """`FIT_CSS` bound to one container selector."""
+    return FIT_CSS.format(scope=scope)
+
+
+def callout_dark_css(dark_selector="[data-theme=dark]", scope=".diagram"):
+    """`CALLOUT_DARK_CSS` bound to one dark-mode selector and one container."""
+    return CALLOUT_DARK_CSS.format(dark=dark_selector, scope=scope)
+
+
+# Everything a `.diagram` card needs, which is both halves. Kept as the name every existing
+# host uses, so a page with one container carries on saying so in one line.
+HOST_CSS = content_css() + fit_css()
 
 
 class RenderError(RuntimeError):
@@ -205,6 +232,23 @@ def pin_intrinsic(svg):
     return new + svg[end:]
 
 
+def centre_in_box(svg):
+    """Make the root `<svg>` centre its drawing when the box it is given is not its own shape.
+
+    d2 emits `preserveAspectRatio="xMinYMin meet"`, which pins the drawing to the TOP LEFT of
+    whatever box it lands in. Inside a card that is invisible, because there the box is the
+    drawing's own shape — `pin_intrinsic` wrote it on. It becomes visible the moment a container
+    sizes the drawing itself: a click-to-enlarge overlay filling most of the viewport shows a
+    portrait figure shoved against the left edge with every pixel of slack on the right.
+
+    Only the root tag, and only where d2 wrote the attribute. The nested `<svg>` d2 puts inside
+    has none, and the SVG default already is `xMidYMid meet`.
+    """
+    end = svg.find(">") + 1
+    return svg[:end].replace('preserveAspectRatio="xMinYMin meet"',
+                             'preserveAspectRatio="xMidYMid meet"') + svg[end:]
+
+
 def postprocess(raw, name, theme_vars=True):
     """Raw d2 SVG -> embeddable SVG. Order matters; see the module docstring.
 
@@ -218,6 +262,7 @@ def postprocess(raw, name, theme_vars=True):
     svg = _namespace_ids(svg, name)
     svg = svg.replace(CALLOUT_ATTRS, CALLOUT_REPLACEMENT)
     svg = pin_intrinsic(svg)
+    svg = centre_in_box(svg)
     if theme_vars:
         svg = palette.to_vars(svg)
     return svg
