@@ -38,6 +38,11 @@ from . import d2 as d2mod
 from . import edgelabel
 from . import palette
 from . import route
+# Module level, unlike the `gates` imports inside the functions below: `gates.clipping`
+# imports this file, so the package as a whole cannot be imported here — but
+# `gates.size` pulls in nothing of ours, and the page geometry it owns has to come from
+# there rather than be restated.
+from .gates import size as size_gate
 
 # d2 version this recipe was measured against. Several behaviours it relies on are
 # undocumented (the table property coupling, the missing intrinsic size, the 1.3x header
@@ -994,12 +999,16 @@ def page_css(dark_selector="[data-theme=dark]"):
 
 # The real page's geometry, which the browser gates have to reproduce exactly or they
 # measure the wrong boundary. `.diagram` is the card that clips (overflow:hidden) and its
-# padding is what a callout's shadow is allowed to bleed into; CONTENT_W is the usable
-# drawing width the size gate uses, and the root font-size is what makes 1.2rem a real
-# number of pixels.
+# padding is what a callout's shadow is allowed to bleed into, and the root font-size is what
+# makes 1.2rem a real number of pixels.
+#
+# CONTENT_W IS the size gate's width rather than a second copy of it. It was a copy, and the two
+# were wrong together: the harness built a card 55px narrower than the real one, so the clipping
+# gate and the callout placement search judged fit against a column no reader has. One name now,
+# so a correction cannot land in one of them.
 ROOT_FONT_PX = 19
 CARD_PADDING_REM = 1.2
-CONTENT_W = 777
+CONTENT_W = size_gate.AVAIL_W
 
 HARNESS = """<!DOCTYPE html><html data-theme="{theme}"><meta charset="utf-8"><style>
 html{{font-size:{root}px}}

@@ -19,7 +19,9 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 
 import render as R  # noqa: E402
+from lib.diagram import browser as _browser  # noqa: E402
 from lib.diagram.figure import Figure as _Figure  # noqa: E402
+from lib.diagram.gates import size as _size  # noqa: E402
 
 
 class TestFormatMeta(unittest.TestCase):
@@ -418,6 +420,36 @@ class TestPrepareDiagrams(unittest.TestCase):
         out = R.render_diagrams_in_html(spec["sections"][0]["html"], self.DIAGRAMS)
         self.assertIn("<svg id='flow'/>", out)
         self.assertEqual(len(self.calls), 1, "expanding a token must not draw it again")
+
+
+@unittest.skipUnless(_browser.available(), "no browser to measure the page in")
+class TestThePageIsAsWideAsTheGateBelieves(unittest.TestCase):
+    """The one test that would have caught the 55px error, and the reason it lives here.
+
+    `gates/size.AVAIL_W` is how much drawing room a diagram gets on THIS page, and for a long
+    time it was a number someone had worked out on paper: 777px, derived by subtracting the body's
+    own padding, which `max-width` on a content-box element never included, and forgetting the
+    card's border. Nothing failed, because being pessimistic about width only ever made the
+    renderer wrap and shrink harder than it had to — six edge labels across both corpora were
+    folded to survive a column that was never that narrow.
+
+    Arithmetic cannot check arithmetic. So this renders a real explainer document, puts a block
+    element where the drawing goes, and asks Chrome how wide it came out. Change the body width,
+    the card padding, the border or the root font size and this fails with the number to use.
+    """
+
+    def test_the_card_gives_a_drawing_exactly_avail_w(self):
+        doc = R.render({"title": "Geometry", "sections": [
+            {"id": "a", "heading": "H",
+             # A block child fills its parent's CONTENT box, which is the drawing room. Not an
+             # <svg>: that would be sized by the very rules under test.
+             "html": '<div class="diagram diagram-embed"><div data-w></div></div>'}]})
+        measured, = _browser.text_widths(doc)
+        self.assertAlmostEqual(
+            measured, _size.AVAIL_W, places=1,
+            msg=f"the real page gives a drawing {measured}px, gates/size.AVAIL_W says "
+                f"{_size.AVAIL_W}px — the page design moved, so re-derive it and re-capture "
+                "both corpora")
 
 
 class TestBothDiagramContainers(unittest.TestCase):

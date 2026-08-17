@@ -78,9 +78,11 @@ MAX_DETAIL_LINES = 3
 # (`figure.draw` rejects it; the search sets it on a copy). The two targets want opposite
 # layouts and only one of them has a width to fit into:
 #
-#   Embedded, a landscape drawing is scaled into the ~777px content column until its text
-#   breaks the 11px floor — measured on the reference corpus at `right`: er 9.7px, state
-#   7.6px, architecture 9.1px. So `down` is not a preference there, it is what the size gate
+#   Embedded, a landscape drawing is scaled into the ~832px content column until its text
+#   breaks the floor under primary text — sampled on the reference corpus at `right`, and
+#   sampled against a column 55px narrower than the real one, so read these as a lower bound:
+#   er 9.7px, state 7.6px, architecture 9.1px. So `down` is not a preference there, it is what
+#   the size gate
 #   leaves. Standalone has no column and is opened full-screen on a landscape monitor, where
 #   the same three read better wide: an ER diagram runs along its foreign keys instead of
 #   swooping between stacked tables, and a state machine's terminal sits at the end.

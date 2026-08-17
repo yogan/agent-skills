@@ -84,19 +84,20 @@ when I say" — then stop asking after each chunk and wait to be asked.
 Always report anyway: architectural changes, shortcuts, hacks, compromises, significant
 changes to performance (test suite or runtime), and anything you could not deliver.
 
-**Name a measurement, never just its number.** "The 10px floor", "the 777px column", "the 880px
+**Name a measurement, never just its number.** "The 10px floor", "the 832px column", "the 880px
 body" are meaningless to anyone not currently inside the file they come from — 10px of *what
-text*, 777px of *what*, and in which of the two targets? A number offered for a decision carries
+text*, 832px of *what*, and in which of the two targets? A number offered for a decision carries
 what it measures, on which target, and for which element, the first time it appears in a
 conversation, and again whenever the thread has moved on. Not:
 
-> it needs rung 24, where the text is 9.4px against a 10px floor
+> it needs rung 25, where the text is 9.9px against a 10px floor
 
 but:
 
-> it needs rung 24, and there it is 1079px wide — too wide for the 777px of drawing room inside
-> a card on the explainer page, so the browser scales it to 0.72 and the node labels come out at
-> 9.4px against the 10px floor for primary text
+> it needs 25px of spacing between an edge and the box it points at, and there the drawing comes
+> out 1091px wide — too wide for the 832px of drawing room inside a card on the explainer page, so
+> the browser scales it to 0.76 and the node labels come out at 9.9px against the 10px floor for
+> primary text
 
 The same applies to a number in a comment or a docstring: `size.check` claimed "~11px, ~10px for
 an edge label" for years while the constants said 10, 9 and 7.5, and nobody could tell because

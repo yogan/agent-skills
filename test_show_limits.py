@@ -29,6 +29,16 @@ from lib.diagram import render                                # noqa: E402
 from lib.diagram.gates import size as size_gate               # noqa: E402
 
 
+def at_scale(scale):
+    """The natural width a drawing must have to be scaled to `scale` by the real column.
+
+    Written as a ratio rather than a literal, because the literals in this file were derived from
+    a column width that turned out to be 55px short, and every one of them then described a
+    different scale than its name claimed.
+    """
+    return size_gate.AVAIL_W / scale
+
+
 def svg(width, height, primary=14.0, edge=None, detail=None):
     """A drawing with just enough in it for the size gate to measure it honestly.
 
@@ -71,7 +81,7 @@ class TestRungs(unittest.TestCase):
     def test_a_rung_the_column_would_scale_back_is_skipped_not_shown(self):
         """A drawing already scaled down on the page cannot reach a text size above the one it
         renders at there, and showing it anyway captions a rung with a lie."""
-        shown, skipped = sl.rungs_for(svg(892, 257, primary=14.0), rungs=(14, 12))
+        shown, skipped = sl.rungs_for(svg(at_scale(0.93), 257, primary=14.0), rungs=(14, 12))
         self.assertEqual([t for t, _f, _w in skipped], [14])
         self.assertEqual([t for t, _f, _w in shown], [12])
 
@@ -154,9 +164,8 @@ class TestHeightLines(unittest.TestCase):
         narrow = sl.height_variants([(15, svg(497, 744, primary=14.0))],
                                     svg(497, 744, primary=14.0))
         self.assertNotIn("1.00", narrow[0][4])
-        wide = sl.height_variants([(15, svg(1554, 744, primary=14.0))],
-                                  svg(1554, 744, primary=14.0))
-        self.assertIn("scaled to 0.50", wide[0][4])
+        wide = svg(at_scale(0.5), 744, primary=14.0)
+        self.assertIn("scaled to 0.50", sl.height_variants([(15, wide)], wide)[0][4])
 
     def test_the_width_is_not_reported_at_all(self):
         """The whole page is about how far down a figure reaches. Its width answers nothing here,
@@ -174,7 +183,9 @@ class TestExhibitChoice(unittest.TestCase):
 
     def test_between_two_carriers_the_one_with_more_rungs_wins(self):
         narrow = ("tall/narrow", svg(300, 900, primary=13.0, edge=12.0, detail=11.0))
-        wide = ("short/wide", svg(760, 200, primary=13.0, edge=12.0, detail=11.0))
+        # Exactly the column width, so by construction it cannot be shown at any size above the
+        # one it already renders at — which is what costs it the top of the range.
+        wide = ("short/wide", svg(at_scale(1.0), 200, primary=13.0, edge=12.0, detail=11.0))
         self.assertEqual(sl.pick_three_kinds([wide, narrow])[0], "tall/narrow")
         self.assertEqual(sl.pick_three_kinds([narrow, wide])[0], "tall/narrow")
 
@@ -203,8 +214,9 @@ class TestWhichVariantIsReal(unittest.TestCase):
     def test_the_variant_the_renderer_lands_on_is_named_with_its_true_size(self):
         """Named with the measured size, not just circled: the switcher offers whole pixels and a
         real figure lands wherever its layout puts it, so an exact match must not be implied."""
-        # 1010px wide with 13px text renders at 10.0px in the column.
-        variants, _skipped = sl.text_variants("s", svg(1010, 226, primary=13.0, edge=13.0))
+        # A drawing scaled to 10/13 renders its 13px text at exactly 10px.
+        variants, _skipped = sl.text_variants(
+            "s", svg(at_scale(10 / 13), 226, primary=13.0, edge=13.0))
         captions = " ".join(aside for *_head, aside, _fig in variants)
         self.assertIn("the size this figure really renders at, 10px", captions)
         self.assertEqual(self.marks(variants).count("what ships"), 1)

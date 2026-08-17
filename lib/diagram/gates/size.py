@@ -6,10 +6,9 @@ page has to scale it down to fit the content column, and that scale applies to e
 shrinking its text until nobody can read it. Checking height, maximum glyph, modal glyph
 and minimum glyph together is what closes that loophole.
 
-Page geometry these numbers come from (the explainers' HTML):
+Page geometry these numbers come from (the explainers' HTML), and it is spelled out below as
+arithmetic rather than as an answer, because the answer was wrong for a long time:
 
-    body max-width 880px, padding 1.5rem x2 at a 19px root = 57px,
-    .diagram padding 1.2rem x2 = 45.6px          ->  ~777px of usable drawing width
     h2 = 1.4rem at a 19px root                   ->  26.6px
     body text = 1rem                             ->  19px
 
@@ -25,7 +24,24 @@ import re
 
 from . import GateError, Result
 
-AVAIL_W = 777.0        # usable px inside a .diagram card on the real page
+# The explainer page's geometry, term by term, and `AVAIL_W` derived from it rather than stated.
+#
+# It was stated for a long time, as 777, and it was wrong by 55px: the derivation subtracted the
+# BODY's own padding, which `max-width` on a content-box element never included, and forgot the
+# card's border entirely. Nothing failed, because the error only ever made the gate pessimistic —
+# it predicted text ~7% smaller than the browser renders, so every figure in both corpora was
+# wrapped and shrunk harder than it needed to be. Six edge labels were folded to survive a column
+# that was never that narrow.
+#
+# Which is why these are four named terms and one subtraction. A single number here is a claim
+# nobody can check by reading it; the terms can each be looked up in the page's stylesheet, and
+# `explain-diff`'s own test suite measures a real page in a browser and asserts the result matches
+# `AVAIL_W`. That measurement is the guarantee — arithmetic written twice is arithmetic that can be
+# wrong twice.
+BODY_W = 880.0                       # `body { max-width }`, a CONTENT-box width: padding is extra
+CARD_PADDING = 22.8                  # `.diagram { padding: 1.2rem }` at a 19px root, per side
+CARD_BORDER = 1.0                    # `.diagram { border: 1px }`, per side
+AVAIL_W = BODY_W - 2 * (CARD_PADDING + CARD_BORDER)      # 832.4px of drawing room in the card
 
 # The hard ceiling, and the one number that governs: nothing ships taller than this. `MAX_H` is
 # what the renderer aims at and `RESCUE_H` is the rest of the allowance, derived rather than
@@ -49,9 +65,9 @@ MAX_H = 820.0          # what a figure should come in under
 RESCUE_H = MAX_TOTAL_H - MAX_H
 H2_PX = 26.6           # 1.4rem at a 19px root
 BODY_PX = 19.0         # 1rem at a 19px root
-# Measured rather than assumed: every figure in both corpora was shown inside the real 777px
-# column, against the article's real body text, at 14px down to 8px, and these are the sizes
-# that survived. See the ladder under "Setting the renderer's limits".
+# Measured rather than assumed: every figure in both corpora was shown inside the real column,
+# against the article's real body text, at 14px down to 8px, and these are the sizes that
+# survived. `show_limits.py` builds that evidence and is the thing to re-run before moving one.
 MIN_READABLE = 10.0    # below this, text in body copy is effectively unreadable
 
 # The same floor for a box's subtitle line, which is supplementary by construction: the muted

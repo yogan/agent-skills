@@ -111,7 +111,7 @@ class TestTables(unittest.TestCase):
         self.assertIn("stroke-dash: 3", source)
 
     def test_tables_stack_downward_when_embedded(self):
-        """Left-to-right makes three columns, overflowing the 777px content width."""
+        """Left-to-right makes three columns, overflowing the content column's width."""
         self.assertIn("direction: down", d2.emit(ER))
         self.assertIn("direction: down", d2.emit(CLASS))
 

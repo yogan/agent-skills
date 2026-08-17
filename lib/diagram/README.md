@@ -108,10 +108,17 @@ repo state machine is the figure that still needs it: its label is nearly as lon
 would otherwise slide along, so there is no room to move into.
 
 **What a figure cannot pay is width, not height** — the reference architecture is the one that
-proved it. Its two arrowheads needed edge rung 24, where the drawing is 1079px wide, the 777px
-content column scales it to 0.72 and the text lands at 9.4px against a 10px floor. Height never
-moves at any rung. An earlier note here, and in `render._afford`, said it was 958px tall against
-the ceiling; that was measured against a ceiling and a layout that no longer exist.
+showed it, and the margin is now one step rather than none. Its two arrowheads wanted 24px of
+spacing between an edge and the box it points at, where the drawing comes out 1079px wide; the
+832px of drawing room inside a card scales that to 0.77 and its smallest text lands at 10.0px,
+exactly on the floor. One step further, 25px of spacing, is 1091px wide and 9.9px — refused.
+Height never moves at any step.
+
+Two earlier readings of this same figure are worth knowing about, because both were wrong in a way
+that read as a finding. One said it was 958px tall against the ceiling, measured against a ceiling
+and a layout that no longer exist. The other said the text landed at 9.4px and was refused
+outright, which was true only against a content column 55px narrower than the real one — see
+`gates/size.AVAIL_W`, which was stated rather than derived for a long time.
 
 A gap that lands on an arrowhead is the same shortage seen from the other end, and it is
 bought with the OTHER ladder. ELK sizes the space between two layers to hold the edge label and

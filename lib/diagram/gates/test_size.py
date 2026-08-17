@@ -19,6 +19,18 @@ from lib.diagram.gates import GateError
 from lib.diagram.gates import size
 
 
+def at_scale(scale):
+    """The natural width a drawing must have to be scaled to `scale` by the real column.
+
+    Every over-wide fixture below is written this way rather than as a literal. They WERE
+    literals — 1554px for "half the column", 1100px for "an edge label just under its floor" —
+    and when the column width was corrected from 777 to 832.4 every one of them silently
+    described a different scale than its name claimed. Three then failed and two passed for the
+    wrong reason.
+    """
+    return size.AVAIL_W / scale
+
+
 def svg(width, height, fonts=(13,), extra=""):
     text = "".join(f'<text font-size="{f}">x</text>' for f in fonts)
     return (f'<svg width="{width}" height="{height}" '
@@ -60,7 +72,7 @@ class TestScale(unittest.TestCase):
         self.assertEqual(size.analyse(svg(400, 300))["scale"], 1.0)
 
     def test_an_over_wide_diagram_is_scaled_down(self):
-        m = size.analyse(svg(1554, 400))
+        m = size.analyse(svg(at_scale(0.5), 400))
         self.assertAlmostEqual(m["scale"], 0.5, places=2)
         self.assertAlmostEqual(m["rend_h"], 200, delta=1)
 
@@ -69,7 +81,7 @@ class TestScale(unittest.TestCase):
         self.assertEqual(size.analyse(svg(100, 100))["scale"], 1.0)
 
     def test_glyphs_shrink_with_the_diagram(self):
-        m = size.analyse(svg(1554, 400, fonts=(20,)))
+        m = size.analyse(svg(at_scale(0.5), 400, fonts=(20,)))
         self.assertAlmostEqual(m["fmax"], 10.0, places=1)
 
     def test_point_units_are_converted_to_css_pixels(self):
@@ -116,7 +128,7 @@ class TestGates(unittest.TestCase):
 
     def test_downscaling_can_push_legible_text_under_the_floor(self):
         """This is the loophole the four gates close together: fitting by shrinking."""
-        result = size.check(svg(1554, 400, fonts=(13,)))
+        result = size.check(svg(at_scale(0.5), 400, fonts=(13,)))
         self.assertTrue(any("TINY" in p for p in result.problems),
                         f"expected a legibility failure, got {result.problems}")
 
@@ -124,10 +136,12 @@ class TestGates(unittest.TestCase):
         """"TINY" on its own does not say whether to drop a box, shorten a label or split the
         diagram — and at half the column width, 13px text renders at 6.5px, so the width that
         puts it back on the floor is what this has to say."""
-        tiny = next(p for p in size.check(svg(1554, 400, fonts=(13,))).problems if "TINY" in p)
-        self.assertIn("1554px wide", tiny)
-        # 1554 * 6.5/10 — which is also 777 * 13/10, the widest a 13px-text diagram can be.
-        self.assertIn("~1010px", tiny)
+        wide = at_scale(0.5)
+        tiny = next(p for p in size.check(svg(wide, 400, fonts=(13,))).problems if "TINY" in p)
+        self.assertIn(f"{wide:.0f}px wide", tiny)
+        # The width whose 13px text lands exactly on the 10px floor: column * 13/10. Which is
+        # 65% of a drawing twice the column wide, so the percentage holds whatever the column is.
+        self.assertIn(f"~{size.AVAIL_W * 13 / 10:.0f}px", tiny)
         self.assertIn("35% less width", tiny)
 
     def test_authored_tiny_text_is_not_told_to_get_narrower(self):
@@ -160,7 +174,7 @@ class TestEdgeLabelFloor(unittest.TestCase):
         self.assertEqual(size.check(with_edge_label(935, 300)).problems, [])
 
     def test_an_edge_label_below_its_own_floor_fails(self):
-        result = size.check(with_edge_label(1100, 300))       # 13 * 0.71 = 9.2px
+        result = size.check(with_edge_label(at_scale(0.65), 300))   # 13 * 0.65 = 8.5px
         self.assertTrue(any("edge label" in p for p in result.problems), result.problems)
 
     def test_it_is_not_counted_as_the_modal_glyph(self):
@@ -183,13 +197,14 @@ class TestSubtitleFloor(unittest.TestCase):
         self.assertTrue(any("subtitle" in p for p in result.problems), result.problems)
 
     def test_the_primary_floor_still_binds_first(self):
-        """The subtitle floor is chosen so it never fails before the primary text does. The
-        binding case is a figure authored at 14px primary, which hits ITS floor at 1088px of
-        width where an 11px subtitle has come down to 7.9 — so anything above ~7.86 would stop
-        a figure by its supplementary line. Checked here on the 13px fixture, which reaches its
-        own floor at 1010px with the subtitle still at 8.5.
+        """The subtitle floor is chosen so it never fails before the primary text does.
+
+        As ratios, so it does not go stale: an 11px subtitle reaches its 7.5px floor at a scale of
+        0.68, and 13px primary text reaches its 10px floor at 0.77. Any scale between the two has
+        the primary failing alone, which is the point — a figure must never be stopped by its
+        supplementary line while the text a reader needs is still legible.
         """
-        result = size.check(with_subtitle(1020, 300))
+        result = size.check(with_subtitle(at_scale(0.72), 300))
         self.assertTrue(any(p.startswith("TINY") and "subtitle" not in p
                             for p in result.problems), result.problems)
         self.assertFalse(any("subtitle" in p for p in result.problems), result.problems)
@@ -218,8 +233,21 @@ class TestSubtitleFloor(unittest.TestCase):
 
 
 class TestThresholdsMatchThePageGeometry(unittest.TestCase):
+    def test_the_drawing_room_is_the_page_geometry_minus_nothing_else(self):
+        """The terms, and the one subtraction over them — not the answer.
+
+        The answer was pinned here for a long time, as 777.0, with the wrong derivation written in
+        the comment beside it: it subtracted the BODY's padding, which `max-width` on a
+        content-box element never included, and forgot the card's border. A test that pins an
+        answer cannot catch that; `explain-diff`'s suite measures a real page in a browser and is
+        what does.
+        """
+        self.assertEqual(size.BODY_W, 880.0)      # `body { max-width }`, a content-box width
+        self.assertEqual(size.CARD_PADDING, 22.8)  # `.diagram { padding: 1.2rem }` at 19px root
+        self.assertEqual(size.CARD_BORDER, 1.0)   # `.diagram { border: 1px }`
+        self.assertAlmostEqual(size.AVAIL_W, 832.4, places=1)
+
     def test_the_thresholds_are_the_measured_page_values(self):
-        self.assertEqual(size.AVAIL_W, 777.0)     # 880 - 57 - 45.6, rounded
         self.assertEqual(size.H2_PX, 26.6)        # 1.4rem at a 19px root
         self.assertEqual(size.BODY_PX, 19.0)      # 1rem at a 19px root
         # Measured, not assumed: both corpora were shown in the real column against the

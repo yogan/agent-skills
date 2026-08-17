@@ -133,9 +133,9 @@ guessing at field names; what follows is only the editorial part.
 ##### A figure on a page, not an image in a viewer
 
 This is the one place the guidance differs from the `visualize` skill, which draws standalone
-images and can therefore ignore width. Here the diagram lives in the article's **777px content
-column**, and the page scales anything wider down — every glyph with it. Past roughly 900px of
-natural canvas the smallest text drops under 11px, the size gate says `TINY`, and the figure is
+images and can therefore ignore width. Here the diagram lives in the article's **832px content
+column**, and the page scales anything wider down — every glyph with it. Past roughly 1080px of
+natural canvas the smallest text drops under 10px, the size gate says `TINY`, and the figure is
 genuinely unreadable in place. So:
 
 - **Leave `direction` out, and do not hand-wrap an edge label.** The renderer draws the figure
