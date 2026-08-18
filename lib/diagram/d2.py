@@ -137,20 +137,12 @@ DIRECTION = {
 # routing options for a 90-degree turn arriving too close to an arrowhead — are set internally
 # by d2 and never exposed. Reaching them needs a fork, so those two are accepted as they are.
 #
-# And what is not tunable in a stronger sense. **`layered` decides the ARRANGEMENT from the
-# edges, not from any spacing.** Every box goes in a layer such that every edge crosses from one
-# layer to the next — layers being columns under `direction: right` and rows under `down`. So two
-# boxes that must sit side by side WITH an edge between them cannot be asked for: that edge puts
-# them in different layers by definition. Measured on `repo/er`, whose four tables would read
-# best as a 2x2 — none of the 36 candidates the search tries produces it, because one edge would
-# have to run within a row.
-#
-# Swapping the algorithm is not the way out, and not because seven of ELK's twelve crash d2's
-# bundle (they do): **`layered` is the only one that routes edges orthogonally**, and every other
-# one was tried and draws at least one diagonal run, which `arrows.defects` forbids. The two that
-# would arrange a grid, `rectpacking` and `box`, are packers — they place boxes without looking at
-# the edges, so the routes are straight lines between whatever they packed. See
-# `lib/diagram/README.md` for what each one did.
+# And what is not tunable in a stronger sense: **`layered` decides the ARRANGEMENT from the edges,
+# not from any spacing.** Every box goes in a layer such that every edge crosses to the next —
+# columns under `direction: right`, rows under `down` — so two boxes that must sit side by side
+# WITH an edge between them cannot be asked for. It is also the only ELK algorithm that routes
+# orthogonally, so swapping is no way round it either. Both measured on `repo/er`, which wants a
+# 2x2; the numbers are under "Dead ends" in `lib/diagram/README.md`.
 ELK_OPTS = {
     "nodeNodeBetweenLayers": 15,   # ELK default 70
     "edgeNodeBetweenLayers": 15,   # ELK default 40 — the expensive one

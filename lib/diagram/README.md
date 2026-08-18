@@ -186,48 +186,27 @@ range it was allowed to be in. Do that first.
 Most of these were built and reverted; the rest were measured and refused. None of them is
 visible in the code, which is why they are written down.
 
-- **Giving the drawing more room by moving the page's limits** — widening the 880px reading
-  measure the explainer's `<body>` is capped at, or lowering the 10px floor under primary text.
-  Refused, and not on cost grounds. Those floors were derived by showing every figure in both
-  corpora inside the real column against the real body prose, from 14px down to 8px, and keeping
-  what survived; they are a legibility result, not a budget. **The lightbox is not an argument
-  against them either** — yes, every embedded diagram enlarges on click, and needing that click
-  means the inline figure has already failed, which is the whole reason the floor exists.
-
-  It will look tempting, because a figure that comes up short usually misses by very little: the
-  reference architecture needs 24px of spacing between an edge and the box it points at and can
-  only afford 20px, the reference state machine 24px against 22px. Two figures, both unusually
-  wide for their content — that is two outliers, not a wall. The renderer adapts; the page does
-  not.
-
-- **Asking for a particular arrangement of the boxes.** `repo/er`'s four tables would read best
-  as a 2x2 — `note`/`edges` above `spec`/`nodes` — and no lever reaches it, because it is not a
-  layered drawing. ELK's `layered` puts every box in a layer such that every edge crosses to the
-  next one (columns under `direction: right`, rows under `down`), and that 2x2 needs `nodes → spec`
-  to run *within* a row. Measured: **0 of the 36 candidates** the search tries produce it — 2
-  directions x 3 wraps x 3 layer spacings x 2 edge spacings — and only three arrangements exist in
-  the whole space, with `spec` last in every one.
-
-  **Swapping the algorithm is not the way out, and the reason is not the crashes.** `layered` is
-  the only ELK algorithm that routes edges ORTHOGONALLY, and orthogonal routes are a rule here
-  (`arrows.defects`, "no run of any arrow is diagonal"). Every other one was tried: `sporeOverlap`
-  is a real drawing and a compact 441x395 against 587x884, and it routes five defective arrows
-  including a diagonal; `disco` and `sporeCompaction` draw the tables on top of each other
-  (23,408px² of overlap); `force`, `stress` and `mrtree` each produce diagonals too, and none of
-  the three gives the 2x2 either. `rectpacking` and `box` are the two that would arrange a grid,
-  being packers — and packers place boxes without looking at edges, so their routes are straight
-  lines between whatever they packed.
-
-  Seven of the twelve also crash d2's bundle, which is worth knowing only so nobody debugs it
-  twice: `rectpacking`, `box`, `radial` and `fixed` panic on ANY graph with an edge, and `force`,
-  `stress` and `mrtree` panic on a SELF-LOOP — which `repo/er` has, `nodes.parent -> nodes.id`.
-  Only `layered` handles one, `--elk-nodeSelfLoop` being one of the five options d2 exposes.
-  (`fixed` is the one that would let us state the 2x2 outright, since it takes given coordinates;
-  d2 emits none, so it would be inert even working.)
-
-  Getting the 2x2 therefore means moving BOXES in a post-pass and re-routing everything attached
-  to them — the renderer taking placement over from ELK rather than adjusting it. See
-  `d2.ELK_OPTS`.
+- **Moving the page's limits to give the drawing more room** — a `<body>` wider than 880px, or a
+  floor lower than 10px under primary text. The floors are a legibility result, not a budget:
+  derived by showing both corpora in the real column against the real body prose, 14px down to 8px.
+  The lightbox is not an argument against them — needing the click means the inline figure already
+  failed. Figures that come up short miss by very little (24px of edge spacing wanted against 20
+  affordable, twice), which is two outliers, not a wall.
+- **Asking ELK for a particular arrangement of the boxes.** `repo/er`'s four tables would read best
+  as a 2x2, `note`/`edges` above `spec`/`nodes`. `layered` puts every box in a layer such that
+  every edge crosses to the next — columns under `direction: right`, rows under `down` — and that
+  2x2 needs `nodes -> spec` to run *within* a row. **0 of the 36 candidates** produce it (2
+  directions x 3 wraps x 3 layer spacings x 2 edge spacings); only three arrangements exist at all.
+  Another algorithm is no way out: `layered` is the only ELK one that routes ORTHOGONALLY and every
+  other draws a diagonal. Seven of the twelve also crash d2 — four on any edge at all, and
+  `force`/`stress`/`mrtree` on a self-loop, which this figure has.
+- **d2's `grid` layout for that same 2x2.** It does place it, keeps row anchoring, and wins on
+  every size number: 606x486 against 1002x689, unscaled, 13.0px text against 11.6px. Refused for
+  two things that cannot be worked around. A grid draws straight lines rather than routes — four
+  arrow defects including a 53x40px diagonal, and `route.py` fixes none of them because there are
+  no runs or corners to adjust. And **d2 refuses an edge from a grid cell to itself**, so this
+  figure's `n children : 1 container` is silently absent. Getting the 2x2 means writing an
+  orthogonal router; placement was never the hard half.
 - **Squaring off the corner an arrowhead is painted over.** It does free the head, and it is a
   worse drawing: the rounding is wanted, and a hard 90° turn 12px from a box reads as a mistake.
 - **Ranking arrow defects above height** in `render._pick_at_spacing`. Buys real fixes at a price
