@@ -200,6 +200,34 @@ visible in the code, which is why they are written down.
   wide for their content — that is two outliers, not a wall. The renderer adapts; the page does
   not.
 
+- **Asking for a particular arrangement of the boxes.** `repo/er`'s four tables would read best
+  as a 2x2 — `note`/`edges` above `spec`/`nodes` — and no lever reaches it, because it is not a
+  layered drawing. ELK's `layered` puts every box in a layer such that every edge crosses to the
+  next one (columns under `direction: right`, rows under `down`), and that 2x2 needs `nodes → spec`
+  to run *within* a row. Measured: **0 of the 36 candidates** the search tries produce it — 2
+  directions x 3 wraps x 3 layer spacings x 2 edge spacings — and only three arrangements exist in
+  the whole space, with `spec` last in every one.
+
+  **Swapping the algorithm is not the way out, and the reason is not the crashes.** `layered` is
+  the only ELK algorithm that routes edges ORTHOGONALLY, and orthogonal routes are a rule here
+  (`arrows.defects`, "no run of any arrow is diagonal"). Every other one was tried: `sporeOverlap`
+  is a real drawing and a compact 441x395 against 587x884, and it routes five defective arrows
+  including a diagonal; `disco` and `sporeCompaction` draw the tables on top of each other
+  (23,408px² of overlap); `force`, `stress` and `mrtree` each produce diagonals too, and none of
+  the three gives the 2x2 either. `rectpacking` and `box` are the two that would arrange a grid,
+  being packers — and packers place boxes without looking at edges, so their routes are straight
+  lines between whatever they packed.
+
+  Seven of the twelve also crash d2's bundle, which is worth knowing only so nobody debugs it
+  twice: `rectpacking`, `box`, `radial` and `fixed` panic on ANY graph with an edge, and `force`,
+  `stress` and `mrtree` panic on a SELF-LOOP — which `repo/er` has, `nodes.parent -> nodes.id`.
+  Only `layered` handles one, `--elk-nodeSelfLoop` being one of the five options d2 exposes.
+  (`fixed` is the one that would let us state the 2x2 outright, since it takes given coordinates;
+  d2 emits none, so it would be inert even working.)
+
+  Getting the 2x2 therefore means moving BOXES in a post-pass and re-routing everything attached
+  to them — the renderer taking placement over from ELK rather than adjusting it. See
+  `d2.ELK_OPTS`.
 - **Squaring off the corner an arrowhead is painted over.** It does free the head, and it is a
   worse drawing: the rounding is wanted, and a hard 90° turn 12px from a box reads as a mistake.
 - **Ranking arrow defects above height** in `render._pick_at_spacing`. Buys real fixes at a price
