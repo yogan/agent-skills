@@ -182,12 +182,12 @@ directly, e.g.:
 
     python3 skills/rework-mr/scripts/test_threads.py
 
-To run everything: `python3 run_tests.py` (~90s over 1004 tests, most of it browser
+To run everything: `python3 run_tests.py` (~86s over 1059 tests, most of it browser
 launches and d2). While editing, run less:
 
 - `python3 run_tests.py --changed` — resolves your uncommitted edits through the repo's import
-  graph and runs every test that reaches them. Touching `lib/gitlab.py` runs 4 files in 0.4s;
-  touching `lib/diagram/palette.py` runs 14, because that is genuinely how far it reaches. It
+  graph and runs every test that reaches them. Touching `lib/gitlab.py` runs 4 files in 1s;
+  touching `lib/diagram/palette.py` runs 21, because that is genuinely how far it reaches. It
   **declines and runs everything** whenever it cannot map a changed file, since a selector that
   quietly skips the failing test is worse than a slow one. `test_run_tests.py` exists to pin
   that, and every case in it is a real under-selection that was once shipped. With a CLEAN tree
