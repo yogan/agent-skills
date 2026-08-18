@@ -103,9 +103,22 @@ direction the route was already heading, so no rule is needed for which way to g
 
 `d2.ELK_EDGE_LADDER` is the fallback for the twelfth. It widens the gap ELK leaves between an
 edge and the box it points at, per figure, only where there is something left to fix and only
-as far as the size gate still passes (`render._afford`), and it costs 40 to 100px of page. The
-repo state machine is the figure that still needs it: its label is nearly as long as the run it
-would otherwise slide along, so there is no room to move into.
+as far as the size gate still passes (`render._afford`), and it costs 40 to 100px of page.
+
+**Keep it.** It looks like dead weight — one figure in either corpus reaches its second step — but
+what it exists for is a shape, not a figure, and the skill runs on whatever a reader's codebase
+turns out to be. The shape is *an edge whose label nearly fills the leg it sits on*. `route._slide`
+would fix the arrowhead by moving the step back, and its own arithmetic then refuses: the room it
+may take is the leg minus the label's extent minus `edgelabel.CENTRE_SLACK`, and what it needs is
+`arrows.APPROACH` minus the straight line the head already has. Both are single-digit numbers on a
+figure like that, so the two land within a pixel of each other and which way is luck.
+
+The corpus example is the repo state machine, and it misses by half a pixel: 6.0px of room against
+6.5px needed. Measured both ways at the same scale a reader sees, side by side, and the 47px of
+extra width was accepted — a detached arrowhead breaks a rule the whole corpus is held to, where
+the width costs a fraction of a glyph. Do not read the half pixel as the interesting number: it
+says the two constraints are the same size on this kind of edge, which is the reason to keep a
+lever for it at all.
 
 **What a figure cannot pay is width, not height** — the reference architecture is the one that
 showed it, and the margin is now one step rather than none. Its two arrowheads wanted 24px of
