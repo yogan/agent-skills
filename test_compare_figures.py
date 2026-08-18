@@ -132,6 +132,44 @@ class TestCaptureLayout(unittest.TestCase):
             cf._load("never-captured")
 
 
+class TestMarks(unittest.TestCase):
+    """Ringing the reported flaw on the before side. Both failures this guards against draw
+    something plausible rather than raising, which is why they survived a hand-rolled version:
+    the ring appeared, just several times over and a few pixels off the thing it points at."""
+
+    # A drawing shaped the way d2 emits one: an outer <svg> and a nested one holding the paths,
+    # the nested one carrying its own viewBox origin.
+    NESTED = ('<svg viewBox="0 0 200 100" width="200" height="100">'
+              '<svg class="d2-1 d2-svg" viewBox="3 3 200 100" width="200" height="100">'
+              '<path d="M 10 10 L 90 10"/></svg></svg>')
+
+    def test_one_point_draws_one_circle(self):
+        """`str.replace` with no count hits every `</svg>`, and d2 nests one — so a plain replace
+        drew the ring two or three times, each in a different coordinate space."""
+        self.assertEqual(cf.ring(self.NESTED, [(50, 50)]).count("<circle"), 1)
+
+    def test_every_point_gets_its_own_circle(self):
+        self.assertEqual(cf.ring(self.NESTED, [(1, 2), (3, 4), (5, 6)]).count("<circle"), 3)
+
+    def test_the_circle_lands_in_the_space_the_paths_are_in(self):
+        """Inside the NESTED svg, which is where the path coordinates live. Placed in the outer
+        one it sits off by the nested viewBox's origin — close enough to look deliberate."""
+        out = cf.ring(self.NESTED, [(50, 50)])
+        self.assertLess(out.index("<circle"), out.index("</svg>"))
+        self.assertIn('<path d="M 10 10 L 90 10"/><circle', out)
+
+    def test_no_points_leaves_the_drawing_alone(self):
+        self.assertEqual(cf.ring(self.NESTED, []), self.NESTED)
+
+    def test_a_note_with_no_mark_rings_nothing(self):
+        """The common case, and the default: a change aiming at a different arrangement has no
+        single place to point at."""
+        self.assertEqual(cf.points_to_mark(self.NESTED, None), [])
+
+    def test_explicit_points_are_passed_through(self):
+        self.assertEqual(cf.points_to_mark(self.NESTED, [[12, 34]]), [(12, 34)])
+
+
 class TestChrome(unittest.TestCase):
     def test_both_themes_are_styled_so_a_dark_render_is_not_shown_on_a_light_page(self):
         self.assertEqual(sorted(cf.CHROME), ["dark", "light"])

@@ -29,6 +29,25 @@ Keys are `<corpus>/<name>`; every key is optional and so is the file itself. Gat
 added underneath on their own, from the capture, because a sheet that looks better while the
 clipping gate is complaining is a sheet that is lying to you.
 
+`mark` rings the flaw on the BEFORE side, so the reader is not asked to find it:
+
+    {"repo/state": {"issues": ["one arrowhead sits in its turn"], "mark": "defects"},
+     "repo/er":    {"issues": ["the label masks the leg"],        "mark": [[612, 190]]}}
+
+`"defects"` rings whatever `arrows.defects` finds on that side, which is the whole of it for arrow
+work. A list of `[x, y]` pairs, in the DRAWING's own coordinates, is for a flaw no gate can see —
+a label over a line, a box in the wrong quadrant.
+
+Three rules about marks, and they are what keeps a sheet readable:
+
+  * **the before side marks what was reported and asked for**, not everything wrong with it;
+  * **the after side normally marks nothing** — `mark_after` exists for the one case that earns
+    it, something new that may have slipped in, and a sheet using it routinely is a sheet whose
+    after side is being argued with rather than shown;
+  * **plenty of before sides want no mark at all.** A change aiming at a different arrangement
+    altogether has no single place to point at, and a ring there says "look here" about a figure
+    whose whole shape is the subject.
+
 BOTH corpora are captured by default, and that is the point of there being two. `examples.py`
 is the scenario the renderer was tuned against, so it is the one a change is least likely to
 break; `examples_repo.py` is a real `/explain-branch` run nobody steered. A layout change that
@@ -44,7 +63,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from lib.diagram import browser, figure, render          # noqa: E402
+from lib.diagram import arrows, browser, figure, render  # noqa: E402
 from lib.diagram.examples import REFERENCE               # noqa: E402
 from lib.diagram.examples_repo import REPO               # noqa: E402
 
@@ -182,10 +201,48 @@ def rescope(svg, tag):
     return svg
 
 
-def _side(kind, column, svg, lines, gates):
+# Radius of a mark, in the DRAWING's own units, and why it is not in page pixels: a panel's width
+# is decided per figure, so a ring sized in px needs the sheet's own zoom to be right at the
+# moment it is drawn. In drawing units it simply scales with the figure, and 15 comes out a little
+# larger than an arrowhead at every column width this sheet uses.
+RING_R = 15
+RING_COLOUR = "#c0392b"      # the same red the gate problems use in the bullet list
+
+
+def points_to_mark(svg, spec):
+    """The coordinates `spec` asks for: `"defects"`, an explicit list of pairs, or nothing."""
+    if not spec:
+        return []
+    if spec == "defects":
+        return [defect.at for defect in arrows.defects(svg)]
+    return [tuple(point) for point in spec]
+
+
+def ring(svg, points):
+    """`svg` with a circle round each of `points`, in the drawing's own coordinates.
+
+    Two traps, both of which were live bugs in the hand-rolled version this replaces, and both of
+    which draw something plausible rather than failing:
+
+    `count=1`, because d2 NESTS an `<svg>` and so `</svg>` appears more than once — a plain
+    `str.replace` injects the ring at every close tag, giving two or three circles per point.
+
+    And the FIRST close tag is the nested one, which is deliberate: the paths live in there, and
+    the nested `<svg>` carries its own viewBox origin, so a circle placed in the outer one sits a
+    few pixels off the thing it is meant to be pointing at.
+    """
+    if not points:
+        return svg
+    circles = "".join(
+        f'<circle cx="{x:.1f}" cy="{y:.1f}" r="{RING_R}" fill="none" '
+        f'stroke="{RING_COLOUR}" stroke-width="2.5"/>' for x, y in points)
+    return svg.replace("</svg>", circles + "</svg>", 1)
+
+
+def _side(kind, column, svg, lines, gates, marks=()):
     return (f'<div class="side" style="width:{column:.0f}px">'
             f'<p class="tag {kind}">{kind}</p>'
-            f'<div class="card diagram">{rescope(svg, kind)}</div>'
+            f'<div class="card diagram">{ring(rescope(svg, kind), marks)}</div>'
             f"{_bullets(lines, gates)}</div>")
 
 
@@ -208,9 +265,11 @@ def sheet(before_tag, after_tag, notes, out, theme, changed_only=True):
         panels.append(
             f'<h2>{html_mod.escape(note.get("title", key))}</h2><div class="pair">'
             + _side("before", wide, before[key], note.get("issues", []),
-                    _gates(before_meta, key))
+                    _gates(before_meta, key),
+                    points_to_mark(before[key], note.get("mark")))
             + _side("after", wide, after[key], note.get("changes", []),
-                    _gates(after_meta, key))
+                    _gates(after_meta, key),
+                    points_to_mark(after[key], note.get("mark_after")))
             + "</div>")
 
     page_bg, ink, card, note_ink, faint = CHROME[theme]
