@@ -1,0 +1,53 @@
+{
+  "machine": {
+    "arch": "arm64",
+    "cores": 12,
+    "d2": "0.8.1-HEAD",
+    "node": "v26.1.0",
+    "python": "3.14.7",
+    "system": "Darwin",
+    "workers": 12
+  },
+  "recorded": "2026-08-19",
+  "scenarios": {
+    "clipping_gate": {
+      "compiles": 0,
+      "core_usage": 0.083,
+      "launches": 1,
+      "pages": 5,
+      "seconds": 0.84
+    },
+    "corpus": {
+      "compiles": 193,
+      "core_usage": 0.293,
+      "launches": 27,
+      "pages": 194,
+      "seconds": 41.7
+    },
+    "launch_floor": {
+      "seconds": 0.707
+    },
+    "one_figure": {
+      "compiles": 66,
+      "core_usage": 0.54,
+      "launches": 4,
+      "pages": 66,
+      "seconds": 9.06
+    },
+    "page_cost": {
+      "seconds": 0.0285
+    },
+    "pages_per_launch": {
+      "value": 24.8
+    },
+    "ten_drawings": {
+      "compiles": 62,
+      "core_usage": 0.184,
+      "launches": 13,
+      "pages": 13,
+      "seconds": 15.9
+    }
+  },
+  "summary": "Recorded on the engine as it stands: each connection is traced once per drawing rather than once per label, and browsers are started only once a batch is big enough to pay for one.",
+  "why": "Baseline for future comparisons. Nothing is being compared here."
+}

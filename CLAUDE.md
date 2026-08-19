@@ -39,6 +39,13 @@ work that may be rejected.
 disprove it: a measurement beats a render, a render beats a full capture. Never present a
 visual result you have not looked at yourself. Say what you did not check.
 
+**A claim about speed is measured with `measure_speed.py`, never by hand.** Timing is the one
+thing here that looks easy and is not: a cold run against a warm one, or a block of befores
+followed by a block of afters, will hand you a confident number that is wrong by tens of
+percent. The script's docstring is the method and `speed_baseline.json` is what "before" means;
+re-record it with `--update` once a change is accepted, and only from a full run on the machine
+the baseline belongs to.
+
 Diagnose the same way. Before proposing a cause, measure the thing's actual state against the
 state it was allowed to be in — where it is against where it was permitted to be, what it
 scored against what the alternatives scored. A session once guessed three causes for one
@@ -194,7 +201,7 @@ directly, e.g.:
 
     python3 skills/rework-mr/scripts/test_threads.py
 
-To run everything: `python3 run_tests.py` (~86s over 1059 tests, most of it browser
+To run everything: `python3 run_tests.py` (~85s over 1126 tests, most of it browser
 launches and d2). While editing, run less:
 
 - `python3 run_tests.py --changed` — resolves your uncommitted edits through the repo's import

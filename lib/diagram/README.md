@@ -173,13 +173,23 @@ range it was allowed to be in. Do that first.
 - Callout placement is a measured search over eight anchors; `test_place_slow.py` covers it
   and takes minutes. Run `--slow` once, at the end, and only if you touched placement,
   callout geometry or the harness.
+- **`measure_speed.py` (repo root) is the answer to "did that make it slower?"** — don't hand-roll
+  a timing script, and don't trust one that was. It times four jobs against `speed_baseline.json`,
+  shows what moved, and its docstring carries the rules that make a timing honest (warm up and
+  discard the first run; best of N; alternate when comparing two versions; trust the counts over
+  the seconds). Every one of those is a mistake somebody here already made — a cold-vs-warm
+  comparison once reported a 34% win that was really 41%.
+
+      python3 measure_speed.py            # ~4 minutes, writes and opens a report
+      python3 measure_speed.py --update   # record this run as the new baseline
+
 - **Say which of these two a cost figure is for** — they differ by more than 2x, and quoting one
   for the other is how the old number here came to read 40s. Warm, both sample sets:
 
   | | wall | layout candidates | browser starts |
   |---|---|---|---|
-  | ten diagrams arranged, no notes placed, no gates | ~17s | 62 | 13 |
-  | the same ten, plus note placement and gates | ~43s | 193 | 27 |
+  | ten diagrams arranged, no notes placed, no gates | ~16s | 62 | 13 |
+  | the same ten, plus note placement and gates | ~42s | 193 | 27 |
 
   A first render in a fresh process costs ~25s more than a warm one. If a change appears to cost
   much more than the figures above, something is re-deciding a layout that was already decided.
