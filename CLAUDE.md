@@ -111,6 +111,18 @@ lists of px values for two ELK options, so a "rung" is a pixel count with a name
 and what it spaces. Same for anything else whose meaning lives in one file: name the real thing
 and its unit, not the picture the code uses to keep track of it.
 
+**[CONTEXT.md](CONTEXT.md) is the agreed vocabulary, and it is binding on anything a person
+reads** — reports, commit messages, the summary at the end of a turn, an answer in chat. Where
+it gives a word, that word is the only one used; the internal name may stay in the code and in
+comments, and stops at the edge of the file it is defined in. This is not a style preference:
+"rung", "corpus", "callout", "gate", "figure" and "page" each name something real, and every one
+of them has been used in front of the owner in a sentence that could not be acted on.
+
+The test before anything is shown: **could someone who has never opened this repo act on this
+sentence?** If it needs a word only the code knows, either use CONTEXT.md's word or spend the
+few extra words to say the thing plainly. When a concept keeps coming up and CONTEXT.md has no
+word for it, that is a gap to fix in CONTEXT.md, not a licence to fall back on the code's name.
+
 **Asking.** When the wish is not clear, grill before starting. Never ask about implementation
 choices — use best practice. Do ask when the options lead to visibly different outcomes, when
 a wish cannot be met without a compromise, or when it is risky. Non-trivial changes get
