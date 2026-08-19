@@ -1,7 +1,10 @@
 #!/usr/bin/env python3
 """Repo-wide conventions that are cheap to check and expensive to notice by hand.
 
-Right now that is one thing: what tests are allowed to do to the filesystem. Tests here do
+Two things: what tests are allowed to do to the filesystem, and that the agreed vocabulary
+does not contradict itself.
+
+The first: Tests here do
 write real files — `test_visualize.py` covers a CLI whose entire contract is "write a file
 and print its path", so there is nothing to test without one — and the rule is not "don't",
 it is:
@@ -13,6 +16,11 @@ removed nothing, leaking three directories per suite run until 460 had piled up.
 tempting fix for the other half — sweeping `/tmp/*diagram*` — would have deleted real
 `visualize.py` output, because the CLI writes there by design and its files are
 indistinguishable from a test's unless the test gives itself a name of its own.
+
+The second is smaller and came from a real mixup: CONTEXT.md told the reader to say "section"
+in one entry and not to say it in another, because two entries were written as if they named
+alternatives at the same level when one is a kind of the other. A word cannot be both the
+agreed term and a banned one, and that is mechanical to check.
 
 Run: `python3 test_repo_hygiene.py`
 """
@@ -123,6 +131,34 @@ class TestTheSuiteLeavesNothingBehind(unittest.TestCase):
         """
         self.assertEqual(
             self._leftovers_after("skills/review-mr/scripts/test_findings.py"), [])
+
+
+class TestTheVocabularyDoesNotContradictItself(unittest.TestCase):
+    """No word is both an agreed term in CONTEXT.md and something it tells you not to say."""
+
+    def rows(self):
+        text = (REPO_ROOT / "CONTEXT.md").read_text(encoding="utf-8")
+        for line in text.splitlines():
+            if not line.startswith("| **"):
+                continue
+            cells = [c.strip() for c in line.strip("|").split("|")]
+            term = cells[0].strip("* ").lower()
+            avoid = [w.strip().lower() for w in cells[1].split(",") if w.strip()]
+            yield term, avoid
+
+    def test_no_agreed_term_is_also_told_against(self):
+        rows = list(self.rows())
+        self.assertGreater(len(rows), 10, "CONTEXT.md's tables did not parse")
+        agreed = {term for term, _ in rows}
+        for term, avoid in rows:
+            for word in avoid:
+                with self.subTest(term=term, word=word):
+                    self.assertNotIn(
+                        word, agreed,
+                        f"CONTEXT.md says to use {word!r} in its own entry, and to avoid it "
+                        f"as an alternative to {term!r}. If one is a kind of the other, say so "
+                        f"in the entry rather than banning the general word.")
+
 
 
 if __name__ == "__main__":
