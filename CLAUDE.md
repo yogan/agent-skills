@@ -42,9 +42,19 @@ visual result you have not looked at yourself. Say what you did not check.
 **A claim about speed is measured with `measure_speed.py`, never by hand.** Timing is the one
 thing here that looks easy and is not: a cold run against a warm one, or a block of befores
 followed by a block of afters, will hand you a confident number that is wrong by tens of
-percent. The script's docstring is the method and `speed_baseline.json` is what "before" means;
-re-record it with `--update` once a change is accepted, and only from a full run on the machine
-the baseline belongs to.
+percent. The script's docstring is the method and `speed_baseline.json` is what "before" means.
+
+**A change that moves performance carries its own new baseline, in the same commit.** Once the
+change is agreed and about to land, re-record with `--update` — a full run, on the machine the
+baseline belongs to — and commit the result alongside the code that caused it. Not afterwards
+and not as a commit of its own.
+
+Two things go wrong when it is left for later, and both have. A baseline describing code that no
+longer exists makes every later run report the same stale win until somebody notices. And the
+number stops being attached to its cause: the recorded measurements ARE the performance history
+— `git log -p speed_baseline.json` is the series, `git show <rev>:speed_baseline.json` any entry
+in it — so a baseline committed one step away from the change answers "what did this cost?" with
+the wrong commit.
 
 Diagnose the same way. Before proposing a cause, measure the thing's actual state against the
 state it was allowed to be in — where it is against where it was permitted to be, what it
@@ -201,8 +211,8 @@ directly, e.g.:
 
     python3 skills/rework-mr/scripts/test_threads.py
 
-To run everything: `python3 run_tests.py` (~85s over 1130 tests, most of it browser
-launches and d2). While editing, run less:
+To run everything: `python3 run_tests.py` (~85s, most of it browser launches and d2). While
+editing, run less:
 
 - `python3 run_tests.py --changed` — resolves your uncommitted edits through the repo's import
   graph and runs every test that reaches them. Touching `lib/gitlab.py` runs 4 files in 1s;
