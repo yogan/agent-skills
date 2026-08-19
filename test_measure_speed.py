@@ -13,6 +13,7 @@ import re
 import os
 import sys
 import tempfile
+import time
 import unittest
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -134,6 +135,39 @@ class TestProbeRestoresWhatItPatched(unittest.TestCase):
         after = (render.compile_source, browser._measure, browser.text_widths,
                  browser.rasterise)
         self.assertEqual(before, after)
+
+    def test_it_restores_the_concurrency_helper_too(self):
+        from lib import parallel
+        before = parallel.slot
+        with speed.Probe():
+            self.assertIsNot(parallel.slot, before)
+        self.assertIs(parallel.slot, before)
+
+    def test_a_span_excludes_the_time_spent_queueing(self):
+        """Two runs held apart by the cap must not read as two things running at once.
+
+        Timed at the call site rather than at the slot, the second of these would appear to
+        start while the first was still going, and a queued machine would read as a busy one.
+        """
+        import threading as _threading
+        from lib import parallel
+        original = parallel._SLOTS
+        parallel._SLOTS = _threading.BoundedSemaphore(1)      # force them to queue
+        try:
+            with speed.Probe() as probe:
+                def hold():
+                    with parallel.slot():
+                        time.sleep(0.05)
+                threads = [_threading.Thread(target=hold) for _ in range(2)]
+                for t in threads:
+                    t.start()
+                for t in threads:
+                    t.join()
+        finally:
+            parallel._SLOTS = original
+        self.assertEqual(len(probe.spans), 2)
+        (a_start, a_end), (b_start, b_end) = sorted(probe.spans)
+        self.assertGreaterEqual(b_start, a_end - 0.005)
 
     def test_it_restores_even_when_the_block_raises(self):
         from lib.diagram import render
@@ -323,6 +357,10 @@ class TestReport(unittest.TestCase):
         found = re.search(r'<span class="umove"><span class="chip (\w+)">', html)
         return found.group(1) if found else None
 
+    def test_a_wobble_in_core_usage_is_not_reported_at_all(self):
+        """It is derived from the timings, so it cannot be steadier than they are."""
+        self.assertIsNone(self.usage_chip(40.0, 40.0, 0.52, 0.54))
+
     def test_using_more_of_the_machine_is_always_an_improvement(self):
         self.assertEqual(self.usage_chip(40.0, 80.0, 0.30, 0.16), "better")
 
@@ -338,20 +376,30 @@ class TestReport(unittest.TestCase):
         html = self.section(self.build(baseline=record(corpus=80.0)), "jobs")
         self.assertIn("One diagram", html)
         self.assertNotIn('class="uval"', html)
-        # The marker describes the JOB, so it survives a run with no core-usage figure at all.
-        self.assertIn('class="flag"', html)
 
     def test_a_job_worth_acting_on_is_marked_in_the_row(self):
-        """The note lives in a tooltip, so without a marker nothing says it is worth opening."""
-        current = record(**{key: run(40.0, core_usage=0.3)
-                            for key in (s["key"] for s in speed.SCENARIOS)})
+        """The note lives in a tooltip, so without a marker nothing says it is worth opening.
+
+        Driven by a scenario made up here rather than by whichever one happens to carry an
+        opportunity today: there are none at the moment, and a test that asserted otherwise
+        would have to be edited every time one is found or taken.
+        """
+        marked = dict(speed.SCENARIOS[0], opportunity="a win nobody has taken")
+        original = speed.SCENARIOS[:]
+        speed.SCENARIOS[0] = marked
+        try:
+            current = record(**{s["key"]: run(40.0, core_usage=0.3) for s in speed.SCENARIOS})
+            html = self.section(speed.build(current, record(corpus=80.0), []), "jobs")
+        finally:
+            speed.SCENARIOS[:] = original
+        self.assertEqual(html.count('class="flag"'), 1)
+        self.assertIn("a win nobody has taken", html)
+
+    def test_no_job_is_marked_when_none_has_an_opportunity(self):
+        current = record(**{s["key"]: run(40.0, core_usage=0.3) for s in speed.SCENARIOS})
         html = self.section(speed.build(current, record(corpus=80.0), []), "jobs")
         self.assertEqual(html.count('class="flag"'),
                          sum(1 for s in speed.SCENARIOS if s.get("opportunity")))
-        self.assertGreater(html.count('class="flag"'), 0)
-        # It carries its own text rather than reusing the core-usage note, so a future
-        # opportunity unrelated to cores has somewhere to live.
-        self.assertIn("largest speed-up still available", html)
 
     def test_the_change_in_core_usage_carries_its_unit(self):
         """"was 62" is not a quantity; the reader has to guess what it counts."""

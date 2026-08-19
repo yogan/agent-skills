@@ -75,6 +75,7 @@ is unambiguously good.
 """
 import argparse
 import collections
+import contextlib
 import datetime
 import html
 import importlib.util
@@ -152,14 +153,20 @@ def same_machine(now, before):
 
 
 class Probe:
-    """Counts every subprocess a block of work starts, and when each one ran.
+    """Counts every subprocess a block of work starts, and times how long each one ran.
 
-    Wraps the four entry points that cost real time — one d2 compile, and the three ways a
-    node+Chrome gets started. `browser._measure` rather than `browser.measure` on purpose: the
+    Counting and timing come from two different places on purpose.
+
+    The COUNTS wrap the four entry points that cost real time — one d2 compile, and the three
+    ways a node+Chrome gets started. `browser._measure` rather than `browser.measure`: the
     public one shards into several processes and counting it undercounts.
 
-    The timeline is kept so `idle_share` can be derived: knowing that 27 browsers ran says
-    nothing about whether they ran at the same time, and that is the whole question.
+    The TIMELINE comes from `parallel.slot`, which is held for exactly as long as a subprocess
+    is running. Timing the entry points instead would start the clock when a call is made
+    rather than when it gets to run, and every call queued behind the concurrency cap would be
+    counted as though it were working — which reads as a machine busier than it is, on a run
+    that is in fact waiting. That distinction did not exist until diagrams began overlapping;
+    before that nothing ever queued.
     """
 
     def __init__(self):
@@ -172,22 +179,36 @@ class Probe:
         original = getattr(module, name)
 
         def wrapper(*args, **kwargs):
-            start = time.time()
             try:
                 return original(*args, **kwargs)
             finally:
                 with self._lock:
                     self.counts[kind] += 1
                     self.counts["pages"] += pages_of(args)
-                    self.spans.append((start, time.time()))
         self._patched.append((module, name, original))
         setattr(module, name, wrapper)
+
+    def _time_slots(self):
+        original = parallel.slot
+
+        @contextlib.contextmanager
+        def timed():
+            with original():
+                start = time.time()
+                try:
+                    yield
+                finally:
+                    with self._lock:
+                        self.spans.append((start, time.time()))
+        self._patched.append((parallel, "slot", original))
+        parallel.slot = timed
 
     def __enter__(self):
         self._wrap(render, "compile_source", "compiles", lambda args: 0)
         self._wrap(browser, "_measure", "launches", lambda args: len(args[0]))
         self._wrap(browser, "text_widths", "launches", lambda args: 1)
         self._wrap(browser, "rasterise", "launches", lambda args: 1)
+        self._time_slots()
         return self
 
     def __exit__(self, *exc):
@@ -278,19 +299,16 @@ SCENARIOS = [
     {"key": "corpus", "label": "All 10 sample diagrams",
      "what": "all 10 sample diagrams from scratch, notes and legibility checks included — "
              "what a full check of a change costs",
-     "usage": "Low: the 10 diagrams are produced one after another rather than at the same "
-              "time, so for most of the run only a single diagram's work exists to spread "
-              "across the machine.",
-     "opportunity": "The 10 diagrams are produced one after another. Overlapping them is the "
-                    "largest speed-up still available anywhere in the engine — it would take "
-                    "roughly half off this job, and nothing has claimed it yet.",
+     "usage": "Reasonable. The 10 diagrams are drawn at the same time rather than one after "
+              "another, which is what fills the machine; a single diagram on its own leaves "
+              "most of it idle, and there are only so many diagrams to overlap.",
      "run": both_corpora, "repeats": REPEATS_EXPENSIVE},
     {"key": "ten_drawings", "label": "Layout only",
      "what": "all 10 sample diagrams arranged, but with no notes positioned and no legibility "
              "checks run — the arrangement search on its own",
-     "usage": "Low, and largely unavoidable here. Diagrams are still handled one at a time, "
-              "and without note positioning there is little inside each one that can run "
-              "alongside anything else.",
+     "usage": "Lower than a full check, and largely unavoidable: without note positioning "
+              "there is little inside a diagram that can run alongside anything else, so all "
+              "the overlap there is comes from drawing the ten together.",
      "run": ten_drawings, "repeats": REPEATS_EXPENSIVE},
     {"key": "clipping_gate", "label": "Legibility checks only",
      "what": "5 already-finished diagrams checked for text that is cut off, hidden or too "
@@ -699,8 +717,12 @@ def jobs_block(reported):
             # faster for it — usage falls whenever the part that already ran in parallel gets
             # cheaper, and painting that red called a 28% speed-up a regression.
             now_pct = round(row["usage"] * 100)
-            if before_pct is None or now_pct == before_pct:
-                verdict_for_usage = None
+            # Held to the same noise band as the seconds it is derived from. Compared exactly,
+            # a two-point wobble between two runs of identical code read as a regression, on a
+            # figure that cannot be more stable than the timings underneath it.
+            usage_word, _ = verdict(now_pct, before_pct, lower_is_better=False)
+            if usage_word in ("new", "same"):
+                verdict_for_usage, before_pct = None, None
             elif now_pct > before_pct:
                 verdict_for_usage = False          # higher is better
             else:
@@ -822,10 +844,12 @@ def why_block(current, baseline, reported, machine_costs):
     full = next((r for r in reported if r["key"] == "corpus"), None)
     if full and full["usage"] is not None:
         parts.append(
-            f'<p class="lead"><b>Still on the table.</b> A full check uses only '
-            f'{full["usage"] * 100:.0f}% of this machine, because the 10 sample diagrams are '
-            f'produced one after another rather than at the same time. Overlapping them is the '
-            f'largest remaining win, and nothing here has taken it yet.</p>')
+            f'<p class="lead"><b>How much of the machine this used.</b> A full check runs at '
+            f'{full["usage"] * 100:.0f}% of this machine. What is left is not one big miss but '
+            f'the shape of the work: a diagram spends much of its time on a single step that '
+            f'nothing can run beside, and ten of them overlapping only fills the gaps so far. '
+            f'Any further win has to come from making a step cheaper, not from running more of '
+            f'them at once.</p>')
     return "".join(parts)
 
 

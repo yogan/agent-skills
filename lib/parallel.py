@@ -5,11 +5,17 @@ so the GIL is not the constraint and threads are the right tool: a worker holds 
 marshalling strings around the call it is waiting on. `run_tests.py` has run its files this way
 from the start, and this is the same mechanism applied to the renderer's own fan-outs.
 
-**Fan out at the innermost place that has independent work, not at the outermost.** The
-callout search renders 64 candidates that know nothing about each other, and a document of six
-figures renders six that know nothing about each other — doing both at once would put 8 x 8 d2
-processes on an 8-core machine and spend the win on contention. The inner one is chosen because
-it also helps the single-figure case, which is what `visualize` runs every time.
+**Fan out wherever there is independent work, and cap the SUBPROCESSES rather than the levels.**
+This file used to say the opposite — fan out at the innermost place only — on the reasoning that
+overlapping a document's figures as well as each figure's own search would put many times more
+processes on the machine than it has cores. The reasoning was right and the conclusion was
+wrong: the fix is a cap, not a rule about where to fan out. `slot` below is that cap, and it is
+what makes nesting safe.
+
+The measurement that settled it: two thirds of a full check of the ten sample diagrams ran with
+a SINGLE subprocess in flight — one d2 compile, or one browser reading one page — because a
+diagram is mostly not parallel and they were drawn one after another. Overlapping them took that
+run from ~42s to ~26s with the cap holding total processes at `WORKERS`.
 
 What must NOT be parallelised, and neither is an oversight:
 
@@ -21,7 +27,9 @@ What must NOT be parallelised, and neither is an oversight:
     costs ~25x what measuring one more page in a running one does. Fanning out per page would
     buy a launch for every measurement.
 """
+import contextlib
 import os
+import threading
 from concurrent.futures import ThreadPoolExecutor
 
 # How many subprocesses to have in flight. Measured end to end on the reference architecture as
@@ -35,6 +43,29 @@ from concurrent.futures import ThreadPoolExecutor
 # `cpu_count` rather than a flat 8, so a two-core machine is not oversubscribed, and capped
 # because past the core count the compiles only queue.
 WORKERS = max(1, min(12, os.cpu_count() or 4))
+
+
+_SLOTS = threading.BoundedSemaphore(WORKERS)
+
+
+@contextlib.contextmanager
+def slot():
+    """Hold one of `WORKERS` places while a SUBPROCESS runs. Wrap the call, nothing wider.
+
+    This is what makes it safe to fan out at more than one level at once. The cap has to sit on
+    the subprocess rather than on the task that started it, and the difference is not a detail:
+    a task holding a place while it waits for work it spawned will, once enough tasks do the
+    same, leave every place held by something waiting for a place. Bounding the subprocess
+    cannot deadlock, because a subprocess waits for nothing else here.
+
+    So the rule for callers is narrow — take a place immediately around `subprocess.run`, and
+    never around anything that will itself fan out.
+    """
+    _SLOTS.acquire()
+    try:
+        yield
+    finally:
+        _SLOTS.release()
 
 
 def each(fn, items, workers=None):

@@ -15,39 +15,39 @@
       "core_usage": 0.083,
       "launches": 1,
       "pages": 5,
-      "seconds": 0.84
+      "seconds": 0.85
     },
     "corpus": {
       "compiles": 193,
-      "core_usage": 0.293,
+      "core_usage": 0.635,
       "launches": 27,
       "pages": 194,
-      "seconds": 41.7
+      "seconds": 24.61
     },
     "launch_floor": {
-      "seconds": 0.707
+      "seconds": 0.732
     },
     "one_figure": {
       "compiles": 66,
-      "core_usage": 0.54,
+      "core_usage": 0.514,
       "launches": 4,
       "pages": 66,
-      "seconds": 9.06
+      "seconds": 9.12
     },
     "page_cost": {
-      "seconds": 0.0285
+      "seconds": 0.0291
     },
     "pages_per_launch": {
-      "value": 24.8
+      "value": 25.1
     },
     "ten_drawings": {
       "compiles": 62,
-      "core_usage": 0.184,
+      "core_usage": 0.177,
       "launches": 13,
       "pages": 13,
-      "seconds": 15.9
+      "seconds": 16.17
     }
   },
-  "summary": "Recorded on the engine as it stands: each connection is traced once per drawing rather than once per label, and browsers are started only once a batch is big enough to pay for one.",
+  "summary": "Recorded on the engine as it stands: a document's diagrams are drawn at the same time, each connection is traced once per drawing, and browsers are started only once a batch is big enough to pay for one.",
   "why": "Baseline for future comparisons. Nothing is being compared here."
 }

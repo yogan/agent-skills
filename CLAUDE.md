@@ -201,7 +201,7 @@ directly, e.g.:
 
     python3 skills/rework-mr/scripts/test_threads.py
 
-To run everything: `python3 run_tests.py` (~85s over 1126 tests, most of it browser
+To run everything: `python3 run_tests.py` (~85s over 1130 tests, most of it browser
 launches and d2). While editing, run less:
 
 - `python3 run_tests.py --changed` — resolves your uncommitted edits through the repo's import

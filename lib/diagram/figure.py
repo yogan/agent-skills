@@ -29,6 +29,8 @@ being run.
 """
 from collections import namedtuple
 
+from .. import parallel
+
 from . import browser as browser_mod
 from . import callout as callout_mod
 from . import d2
@@ -88,8 +90,8 @@ def draw(specs, target="embed", theme="dark", place_callouts=True, gates=True, b
     callout_mod.prime([site["note"] for spec in specs.values()
                        for site in place_mod.note_sites(spec)])
 
-    drawn = []
-    for name, spec in specs.items():
+    def one(item):
+        name, spec = item
         # Before placement rewrites the spec's `near` values: the advice is about what the
         # author wrote, not about what the search made of it.
         validate(spec)
@@ -100,14 +102,26 @@ def draw(specs, target="embed", theme="dark", place_callouts=True, gates=True, b
         # render would re-run the search on a spec that by then has its `near` values, and a
         # callout changes the geometry the search ranks on. See `render.choose_drawing`.
         pinned = render_mod.choose_drawing(spec, name, theme, standalone, binary)
-        svg, placed, placement = _settle(spec, name, theme, standalone, pinned, binary,
-                                         place_callouts)
-        spec = placed
-
+        svg, _placed, placement = _settle(spec, name, theme, standalone, pinned, binary,
+                                          place_callouts)
         results, blocked = ([], [])
         if gates:
             results, blocked = _static_gates(svg, name, standalone, theme)
-        drawn.append(Figure(name, svg, results, placement, [], advice, blocked))
+        return Figure(name, svg, results, placement, [], advice, blocked)
+
+    # Diagrams are drawn at the same time, not one after another. Each one is independent — the
+    # note widths every one of them needs were primed above, and nothing else here is shared —
+    # so this is the outermost place with real independent work.
+    #
+    # It is safe to fan out here even though the search inside a single diagram fans out too,
+    # because what is capped is the number of SUBPROCESSES, not the number of tasks: see
+    # `parallel.slot`. Without that cap this would put ten diagrams' worth of d2 and Chrome on
+    # the machine at once and spend the win on contention.
+    #
+    # The reason it is worth doing at all is that a diagram is mostly NOT parallel: two thirds
+    # of a full check used to run with a single subprocess in flight — one d2 compile, or one
+    # browser reading one page — while the rest of the machine waited.
+    drawn = parallel.each(one, specs.items())
 
     if gates:
         drawn = _clipping_gate(drawn, theme, standalone)

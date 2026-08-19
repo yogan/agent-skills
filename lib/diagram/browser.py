@@ -143,8 +143,9 @@ def _measure(jobs, viewport, shadow, weights, timeout):
         "jobs": jobs,
     })
     try:
-        proc = subprocess.run(["node", MEASURE_JS], input=payload, capture_output=True,
-                              text=True, timeout=timeout)
+        with parallel.slot():
+            proc = subprocess.run(["node", MEASURE_JS], input=payload, capture_output=True,
+                                  text=True, timeout=timeout)
     except subprocess.TimeoutExpired:
         raise BrowserError(f"the browser did not finish measuring {len(jobs)} page(s) "
                            f"within {timeout}s")
@@ -183,8 +184,9 @@ def text_widths(html, timeout=60):
         raise BrowserError("; ".join(problems))
     payload = json.dumps({"jobs": [], "widths": [{"key": "w", "html": html}]})
     try:
-        proc = subprocess.run(["node", MEASURE_JS], input=payload, capture_output=True,
-                              text=True, timeout=timeout)
+        with parallel.slot():
+            proc = subprocess.run(["node", MEASURE_JS], input=payload, capture_output=True,
+                                  text=True, timeout=timeout)
     except subprocess.TimeoutExpired:
         raise BrowserError(f"the browser did not measure the text within {timeout}s")
     if proc.returncode != 0:
@@ -219,8 +221,9 @@ def rasterise(html, out, width, height=None, scale=RASTER_SCALE, timeout=180, fu
         {"key": "raster", "html": html, "out": str(out), "width": width,
          "height": height, "scale": scale, "fullPage": bool(full)}]})
     try:
-        proc = subprocess.run(["node", MEASURE_JS], input=payload, capture_output=True,
-                              text=True, timeout=timeout)
+        with parallel.slot():
+            proc = subprocess.run(["node", MEASURE_JS], input=payload, capture_output=True,
+                                  text=True, timeout=timeout)
     except subprocess.TimeoutExpired:
         raise BrowserError(f"the browser did not rasterise {out} within {timeout}s")
     if proc.returncode != 0:

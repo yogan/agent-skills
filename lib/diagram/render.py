@@ -187,7 +187,8 @@ def compile_source(source, pad=8, binary="d2", layers=None, edges=None):
                "--elk-edgeNodeBetweenLayers", str(edges),
                "--elk-padding", f"[top={top},left={box},bottom={box},right={box}]",
                "-", target]
-        proc = subprocess.run(cmd, input=source, capture_output=True, text=True)
+        with parallel.slot():
+            proc = subprocess.run(cmd, input=source, capture_output=True, text=True)
         if proc.returncode != 0 or not os.path.exists(target):
             raise RenderError(f"d2 failed to compile the diagram:\n{proc.stderr.strip()}\n"
                               f"--- source ---\n{source}")
