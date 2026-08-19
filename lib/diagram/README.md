@@ -173,9 +173,19 @@ range it was allowed to be in. Do that first.
 - Callout placement is a measured search over eight anchors; `test_place_slow.py` covers it
   and takes minutes. Run `--slow` once, at the end, and only if you touched placement,
   callout geometry or the harness.
-- The corpus renders end to end in about 40 seconds: 68 d2 compiles at ~370ms and 14 browser
-  launches at ~1.2s. If a change appears to cost much more than that, something is re-deciding a
-  layout that was already decided.
+- **Say which of these two a cost figure is for** — they differ by more than 2x, and quoting one
+  for the other is how the old number here came to read 40s. Warm, both sample sets:
+
+  | | wall | layout candidates | browser starts |
+  |---|---|---|---|
+  | ten diagrams arranged, no notes placed, no gates | ~17s | 62 | 13 |
+  | the same ten, plus note placement and gates | ~43s | 193 | 27 |
+
+  A first render in a fresh process costs ~25s more than a warm one. If a change appears to cost
+  much more than the figures above, something is re-deciding a layout that was already decided.
+- **The browser's cost is the number of browsers, not the amount inspected.** A browser that
+  inspects nothing costs ~0.74s to start; one more inspection in a running one costs ~0.030s.
+  `browser.SHARD_MIN` is the ratio of those two and has to be re-derived when either moves.
 - **A standalone render is never scaled.** `gates/size.analyse(standalone=True)` fixes the scale
   at 1.0, because a file is shown at natural size and zoomed by the reader. So every rule about
   a file's text is a rule about what was AUTHORED, and the text floors — which only ever bite

@@ -16,17 +16,21 @@ What must NOT be parallelised, and neither is an oversight:
   * **A ladder rung.** `render._climb_layers` and the edge ladder decide whether to try the next
     rung FROM the result of this one. Rendering them all speculatively would burn the cores on
     answers that are usually thrown away — most figures settle on the first rung.
-  * **The browser measurement itself.** `browser.measure` already takes every page in one
-    launch, and launching Chrome costs more than measuring another page in it.
+  * **The browser measurement itself.** `browser.measure` batches pages into as few launches
+    as pay for themselves and shards only past `browser.SHARD_MIN`, because starting Chrome
+    costs ~25x what measuring one more page in a running one does. Fanning out per page would
+    buy a launch for every measurement.
 """
 import os
 from concurrent.futures import ThreadPoolExecutor
 
 # How many subprocesses to have in flight. Measured end to end on the reference architecture as
 # a standalone file — 64 callout candidates, the biggest fan-out in the repo — on a machine with
-# 12 logical cores (8 performance, 4 efficiency): 56.2s at 1 worker, 33.3s at 4, 30.5s at 8,
-# 30.3s at 12. The curve is flat past 8 because what remains is not compiling, and the browser
-# batch is sharded separately (`browser.SHARD_MIN`).
+# 12 logical cores (8 performance, 4 efficiency): 35.5s at 1 worker, 19.7s at 2, 12.3s at 4,
+# 9.3s at 8, 9.4s at 12. The curve is flat past 8 because what remains is not compiling, and the
+# browser batch is sharded separately (`browser.SHARD_MIN`). The shape has held across a 4x
+# speedup in what each worker does; the absolute seconds have not, so re-measure rather than
+# reading them as current.
 #
 # `cpu_count` rather than a flat 8, so a two-core machine is not oversubscribed, and capped
 # because past the core count the compiles only queue.

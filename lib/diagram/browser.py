@@ -10,10 +10,21 @@ have no workable substitute:
   * **callout text size.** It is HTML in a `<foreignObject>`, laid out with the host page's
     CSS. Nothing outside a browser knows how big it comes out.
 
-Cost, measured on the machine this was developed on, so nobody has to re-derive it: about
-10s for automatic placement of 7 callouts, 12s for an exhaustive two-callout search, 3.6s
-for the clipping gate over the reference corpus. Fine for generating a document once; not fine per
-keystroke, so keep this in the build step and never in a preview path.
+Cost, measured on the machine this was developed on, so nobody has to re-derive it. Two
+numbers decide every other one here: **starting a node+Chrome that measures nothing costs
+~0.74s, and measuring one more harness page in an already-started one costs ~0.030s.** So
+this file is dominated by how many browsers it starts, not by how much it measures in them
+— which is what `SHARD_MIN` below trades, and it is why a single-page measurement is the
+expensive shape.
+
+End to end, warm: ~9.3s for one standalone figure with two callouts (66 candidate renders,
+4 launches), and ~0.9s for the clipping gate over the reference corpus (5 figures, one
+launch). Fine for generating a document once; not fine per keystroke, so keep this in the
+build step and never in a preview path.
+
+The per-page figure was ~0.39s until `js/measure.js` stopped re-sampling every connection
+once per text label. If it ever climbs back, measure `measureInPage`'s sections before
+blaming the browser — the launch is the honest cost here and the page rarely is.
 
 Deliberately `puppeteer-core` (29 MB, no bundled browser) driving the system Chrome, rather
 than `puppeteer` (which downloads its own ~550 MB Chromium). `js/measure.js` holds the
@@ -76,12 +87,20 @@ def requirements():
     return problems
 
 
-# Pages per browser, once there are enough of them to be worth a second one. A launch costs
-# about as much as measuring eight pages, so splitting below that spends more on Chrome than it
-# saves; above it the batch divides across `parallel.WORKERS` browsers, which is what takes the
-# 64-candidate placement search off the critical path. Chrome instances are independent — the
-# test runner has relied on that from the start.
-SHARD_MIN = 8
+# Pages per browser, once there are enough of them to be worth a second one. Splitting below
+# this spends more on starting Chrome than it saves; above it the batch divides across
+# `parallel.WORKERS` browsers, which is what takes the 64-candidate placement search off the
+# critical path. Chrome instances are independent — the test runner has relied on that from the
+# start.
+#
+# The number is a ratio of two measured costs, so re-derive it rather than guessing whenever
+# either moves: a node+Chrome that measures nothing costs ~0.74s, and one more harness page
+# costs ~0.030s, so a launch buys about 25 pages. It was 8 for as long as a page cost ~0.39s —
+# a figure set by `measureInPage` re-sampling every connection once per label, which it no
+# longer does. Getting this wrong is quiet: too low and the corpus pays for browsers it did not
+# need, too high and the placement search measures 64 pages in one process while the rest of
+# the machine idles.
+SHARD_MIN = 24
 
 
 def measure(jobs, viewport=None, shadow=SHADOW_PX, weights=None, timeout=180):
