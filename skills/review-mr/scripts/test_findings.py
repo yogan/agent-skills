@@ -9,6 +9,7 @@ import shutil
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
@@ -65,7 +66,9 @@ class TestCodeSnippet(Throwaway, unittest.TestCase):
         os.makedirs(os.path.dirname(full), exist_ok=True)
         with open(full, "w") as f:
             f.write(content)
-        F.get_worktree = lambda slug: wt
+        original = F.get_worktree
+        F.get_worktree = lambda slug, iid: wt
+        self.addCleanup(setattr, F, "get_worktree", original)
         return wt
 
     def test_window_starting_mid_docstring_extends_back_to_the_opener(self):
@@ -108,7 +111,9 @@ class TestCriticalManifest(Throwaway, unittest.TestCase):
         full = os.path.join(wt, "a.py")
         with open(full, "w") as f:
             f.write("a = 1\nb = 2\nc = 3\n")
-        F.get_worktree = lambda slug: wt
+        original = F.get_worktree
+        F.get_worktree = lambda slug, iid: wt
+        self.addCleanup(setattr, F, "get_worktree", original)
         F.code_snippet(new_state(slug="x"), {"file": "a.py", "line": 2})
         marked = " ".join(critical_manifest.current())
         self.assertIn("b = 2", marked)
@@ -196,6 +201,102 @@ class TestSync(unittest.TestCase):
         state = new_state()
         F.sync(state, {"d1": {"awaiting": "you"}})
         self.assertEqual(state["threads"]["d1"], {"awaiting": "you"})
+
+
+class TestPruneWorktrees(Throwaway, unittest.TestCase):
+    """Each MR now gets its own worktree (state_root/<slug>--mr<iid>/worktree)
+    rather than one shared per repo, so parallel reviews of different MRs stop
+    clobbering each other's checkout — but that means cleanup has to sweep them
+    one by one instead of relying on there only ever being one."""
+
+    def setUp(self):
+        self.orig_root = F.STATE_ROOT
+        F.STATE_ROOT = self._throwaway_dir()
+        self.addCleanup(setattr, F, "STATE_ROOT", self.orig_root)
+
+    def _ctx(self, slug="acme-repo"):
+        return {"slug": slug, "enc": slug, "path": slug, "web": f"https://x/{slug}"}
+
+    def _with_worktree(self, slug, iid):
+        wt = self._throwaway_dir()
+        F.set_worktree(slug, iid, wt)
+        return wt
+
+    def test_removes_the_worktree_but_keeps_the_findings_file_for_a_merged_mr(self):
+        slug = "acme-repo"
+        wt = self._with_worktree(slug, 42)
+        findings_path = F.state_file(F.STATE_ROOT, slug, 42, "findings.json")
+        with open(findings_path, "w") as f:
+            f.write("{}")
+        with patch.object(F, "mr_object", return_value={"state": "merged"}), \
+             patch("subprocess.run"):
+            removed = F.prune_worktrees(self._ctx(slug))
+        self.assertEqual(len(removed), 1)
+        self.assertIn("!42", removed[0])
+        self.assertIn("merged", removed[0])
+        self.assertFalse(os.path.isdir(wt))
+        self.assertIsNone(F.get_worktree(slug, 42))
+        self.assertTrue(os.path.exists(findings_path))
+
+    def test_closed_mr_is_also_pruned(self):
+        slug = "acme-repo"
+        self._with_worktree(slug, 43)
+        with patch.object(F, "mr_object", return_value={"state": "closed"}), \
+             patch("subprocess.run"):
+            removed = F.prune_worktrees(self._ctx(slug))
+        self.assertEqual(len(removed), 1)
+        self.assertIsNone(F.get_worktree(slug, 43))
+
+    def test_a_still_open_mrs_worktree_is_left_alone(self):
+        slug = "acme-repo"
+        wt = self._with_worktree(slug, 7)
+        with patch.object(F, "mr_object", return_value={"state": "opened"}), \
+             patch("subprocess.run"):
+            removed = F.prune_worktrees(self._ctx(slug))
+        self.assertEqual(removed, [])
+        self.assertTrue(os.path.isdir(wt))
+        self.assertEqual(F.get_worktree(slug, 7), wt)
+
+    def test_one_mr_erroring_out_of_the_api_does_not_abort_the_rest_of_the_sweep(self):
+        """mr_object() dies (sys.exit) on any glab API failure, e.g. an old MR whose
+        project access was later revoked. That must not crash the whole sweep and
+        block the review this run actually came here to do."""
+        slug = "acme-repo"
+        self._with_worktree(slug, 10)
+        wt_ok = self._with_worktree(slug, 11)
+
+        def fake_mr_object(_ctx, iid):
+            if iid == 10:
+                raise SystemExit(1)
+            return {"state": "merged"}
+
+        with patch.object(F, "mr_object", side_effect=fake_mr_object), \
+             patch("subprocess.run"):
+            removed = F.prune_worktrees(self._ctx(slug))
+        self.assertEqual(len(removed), 1)
+        self.assertIn("!11", removed[0])
+        self.assertFalse(os.path.isdir(wt_ok))
+        # the erroring MR's worktree is untouched, not silently dropped either
+        self.assertIsNotNone(F.get_worktree(slug, 10))
+
+    def test_skip_iid_is_never_pruned_even_if_merged(self):
+        slug = "acme-repo"
+        wt = self._with_worktree(slug, 99)
+        with patch.object(F, "mr_object", return_value={"state": "merged"}), \
+             patch("subprocess.run"):
+            removed = F.prune_worktrees(self._ctx(slug), skip_iid=99)
+        self.assertEqual(removed, [])
+        self.assertTrue(os.path.isdir(wt))
+
+    def test_another_repos_worktree_is_never_touched(self):
+        mine, theirs = "acme-repo", "other-repo"
+        self._with_worktree(mine, 1)
+        wt_theirs = self._with_worktree(theirs, 1)
+        with patch.object(F, "mr_object", return_value={"state": "merged"}), \
+             patch("subprocess.run"):
+            F.prune_worktrees(self._ctx(mine))
+        self.assertTrue(os.path.isdir(wt_theirs))
+        self.assertEqual(F.get_worktree(theirs, 1), wt_theirs)
 
 
 if __name__ == "__main__":

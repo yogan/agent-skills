@@ -10,8 +10,12 @@ tip, and keeps a local overlay of your findings and their lifecycle.
 
 State lives at ~/.claude/review-mr/<slug>--mr<iid>/findings.json, keyed by
 project + MR iid, so it survives across sessions (a review spans days). The
-review worktree path is remembered repo-wide at ~/.claude/review-mr/<slug>/worktree,
-and the draft language at ~/.claude/review-mr/<slug>/lang (default de).
+review worktree path is remembered per MR too, at
+~/.claude/review-mr/<slug>--mr<iid>/worktree — one worktree per MR, so reviewing
+several MRs of the same repo in parallel no longer means they fight over a single
+shared checkout. `prune` removes the worktree (never the findings.json) for any
+MR of the current repo that GitLab now reports merged or closed. The draft
+language is still repo-wide, at ~/.claude/review-mr/<slug>/lang (default de).
 
 A topic has two orthogonal axes plus a lifecycle state:
   kind    issue (carries a severity) | question | praise
@@ -51,7 +55,9 @@ Subcommands (all read-only against GitLab):
   candidates     your posted threads not yet linked to any topic (for matching)
   head           one-line push check (branch tip vs last-reviewed head)
   set-head       mark the current branch tip as reviewed
-  worktree [--set PATH]   get/set the repo's review worktree path
+  worktree [--set PATH]   get/set this MR's review worktree path
+  prune [--iid N]  remove OTHER merged/closed MRs' worktrees for this repo
+                   (skips --iid's own; never touches findings.json)
   lang [--set XX]         get/set the repo's draft language (default de)
   path           print the state-file path
 """
@@ -60,6 +66,8 @@ import datetime
 import json
 import os
 import re
+import shutil
+import subprocess
 import sys
 
 # Repo root, 4 levels up from skills/review-mr/scripts/findings.py — needed so `lib/`,
@@ -513,7 +521,7 @@ def code_snippet(state, t, context_lines=4):
     file, line = t.get("file"), t.get("line")
     if not file:
         return None
-    wt = get_worktree(state.get("slug") or "")
+    wt = get_worktree(state.get("slug") or "", state.get("iid"))
     if not wt:
         return None
     full = os.path.join(wt, file)
@@ -566,7 +574,7 @@ def anchor_warning(state, t, context_lines=4):
     file, line, summary = t.get("file"), t.get("line"), t.get("summary") or ""
     if not (file and line and summary):
         return None
-    wt = get_worktree(state.get("slug") or "")
+    wt = get_worktree(state.get("slug") or "", state.get("iid"))
     if not wt:
         return None
     full = os.path.join(wt, file)
@@ -962,21 +970,63 @@ def render_topic_diff(state, ctx, iid, tid, inline_limit=80):
 # ---------------------------------------------------------------- worktree
 
 
-def worktree_path(slug):
-    return os.path.join(state_dir(slug), "worktree")
+def worktree_path(slug, iid):
+    return state_file(STATE_ROOT, slug, iid, "worktree")
 
 
-def get_worktree(slug):
-    p = worktree_path(slug)
+def get_worktree(slug, iid):
+    p = worktree_path(slug, iid)
     if os.path.exists(p):
         with open(p) as f:
             return f.read().strip()
     return None
 
 
-def set_worktree(slug, path):
-    with open(worktree_path(slug), "w") as f:
+def set_worktree(slug, iid, path):
+    with open(worktree_path(slug, iid), "w") as f:
         f.write(path.strip() + "\n")
+
+
+def prune_worktrees(ctx, skip_iid=None):
+    """Remove the git worktree — never the findings/state file — for any MR of
+    this repo that has one recorded and that GitLab now reports merged or closed.
+
+    Each MR gets its own worktree (see the module docstring), so parallel reviews
+    of different MRs stopped clobbering each other's checkout — but that also
+    means each one needs its own cleanup, or they accumulate forever. `skip_iid`
+    is the MR the current run is about to use; pruning it out from under the
+    session that asked for it would just mean recreating it a moment later.
+    Returns one short line per worktree actually removed, for the caller to relay.
+    """
+    if not os.path.isdir(STATE_ROOT):
+        return []
+    prefix = f"{ctx['slug']}--mr"
+    removed = []
+    for name in sorted(os.listdir(STATE_ROOT)):
+        if not name.startswith(prefix) or not name[len(prefix):].isdigit():
+            continue
+        iid = int(name[len(prefix):])
+        if iid == skip_iid:
+            continue
+        wt = get_worktree(ctx["slug"], iid)
+        if not wt:
+            continue
+        try:
+            # mr_object() dies (sys.exit) on any API failure — one deleted/
+            # inaccessible old MR must not abort the sweep, let alone the
+            # actual review this run is here for.
+            state = (mr_object(ctx, iid) or {}).get("state")
+        except SystemExit:
+            continue
+        if state not in ("merged", "closed"):
+            continue
+        subprocess.run(["git", "worktree", "remove", "--force", wt],
+                        capture_output=True, text=True)
+        if os.path.isdir(wt):          # already gone from git's list, still on disk
+            shutil.rmtree(wt, ignore_errors=True)
+        os.remove(worktree_path(ctx["slug"], iid))
+        removed.append(f"MR !{iid} ({state}): removed its review worktree at {wt}")
+    return removed
 
 
 # ---------------------------------------------------------------- draft language
@@ -1076,7 +1126,13 @@ def main():
                  "head", "set-head", "updates", "path"):
         sub.add_parser(name).add_argument("--iid", type=int)
 
-    sub.add_parser("worktree").add_argument("--set", dest="set_path")
+    pw = sub.add_parser("worktree")
+    pw.add_argument("--iid", type=int)
+    pw.add_argument("--set", dest="set_path")
+
+    sub.add_parser("prune").add_argument(
+        "--iid", type=int, help="this run's own MR — its worktree is never pruned")
+
     sub.add_parser("lang").add_argument("--set", dest="set_lang")
 
     pq = sub.add_parser("quote")
@@ -1145,12 +1201,22 @@ def main():
         print(get_lang(ctx["slug"]))
         return
 
-    # worktree is repo-level (no MR needed)
+    # worktree is per-MR now (one checkout per MR, not shared repo-wide)
     if cmd == "worktree":
         ctx = context()
+        if args.iid is None:
+            die("worktree needs --iid <n> — one worktree per MR now.")
         if args.set_path:
-            set_worktree(ctx["slug"], args.set_path)
-        print(get_worktree(ctx["slug"]) or "")
+            set_worktree(ctx["slug"], args.iid, args.set_path)
+        print(get_worktree(ctx["slug"], args.iid) or "")
+        return
+
+    # prune is repo-level (sweeps every MR's worktree for this repo, no single
+    # MR's state needs loading)
+    if cmd == "prune":
+        ctx = context()
+        for line in prune_worktrees(ctx, skip_iid=args.iid):
+            print(line)
         return
 
     ctx, iid, path, state = resolve_state(args)

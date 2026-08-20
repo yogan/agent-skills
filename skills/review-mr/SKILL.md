@@ -63,15 +63,30 @@ refer to the author as `Jane`. The table header already renders the short name (
 **You're given the MR number** (`534` from `/review-mr 534`) — **use it as `--iid` on every
 `findings.py` call** and don't rely on branch inference: you may be launched in a detached or
 unrelated worktree, and a bare `glab mr view` / `findings.py` there resolves the wrong thing.
-First find the review worktree (this is repo-level; run from anywhere inside the repo):
+
+**Prune first.** Each MR gets its **own** review worktree (reviewing several MRs of the same
+repo in parallel used to mean they all fought over one shared checkout). Old ones pile up
+unless swept, so before touching this MR's own worktree, clean up any *other* one that's done:
 
 ```bash
-python3 $SD/findings.py worktree            # stored review-worktree path for this repo, if any
-git worktree list                           # else pick the one whose path looks like a review worktree
-python3 $SD/findings.py worktree --set <path>   # persist your choice (ask once if ambiguous / none)
+python3 $SD/findings.py prune --iid <n>   # removes an OTHER merged/closed MR's worktree for this repo
 ```
 
-If none exists, offer to create one (`git worktree add --detach <path>` — no branch). **Then `cd` into the worktree and run
+This only ever deletes the git worktree, never a findings/state file, and only for an MR
+GitLab reports merged or closed — `--iid <n>` exempts this run's own MR even if it happens to
+already qualify. It's silent when it finds nothing; if it prints a line, mention it in passing.
+
+Then find (or create) **this MR's own** worktree:
+
+```bash
+python3 $SD/findings.py worktree --iid <n>              # stored path for this MR, if any
+git worktree list                                       # else look for one that already looks right
+python3 $SD/findings.py worktree --iid <n> --set <path> # persist your choice (ask once if ambiguous / none)
+```
+
+If none exists, offer to create one (`git worktree add --detach <path>` — no branch); name it
+so it's recognizable among several at a glance (e.g. fold the MR number into the path) — you
+may have more than one checked out at once now. **Then `cd` into the worktree and run
 everything — glab *and* findings.py — from there.** Both auto-resolve the project from that
 worktree's `origin`, so you never name it by hand. **Do NOT guess the repo** (no
 `glab mr view -R "$(glab repo view …)"` — it misfires into 404s); and `findings.py` takes
@@ -325,4 +340,4 @@ paraphrased away.
 `glab` authenticated; a review worktree (or willingness to create one); run inside the target
 repo. `python3`; macOS for `clip.sh`. Build blocks: the `explain-branch` and `review-branch`
 skills installed. `findings.py` subcommands: sync·todo·present·resume·updates·bodies·quote·diff·candidates·
-import·add·set·drop·merge·link·head·set-head·worktree·path (run any with `-h`).
+import·add·set·drop·merge·link·head·set-head·worktree·prune·path (run any with `-h`).
