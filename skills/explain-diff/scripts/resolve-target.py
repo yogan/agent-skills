@@ -65,9 +65,25 @@ def resolve_blank() -> dict:
             capture_output=True,
             text=True,
         )
-        branch_name = (
-            tag_result.stdout.strip() if tag_result.returncode == 0 else f"detached@{head_ref[:7]}"
-        )
+        if tag_result.returncode == 0:
+            branch_name = tag_result.stdout.strip()
+        else:
+            # A detached checkout that lands exactly on a remote branch's tip (e.g.
+            # review-mr's `git checkout --detach origin/<mr-branch>` in its worktree) still
+            # has a meaningful name — showing "detached@<hash>" there loses the branch/MR
+            # identity for no reason.
+            remote_result = subprocess.run(
+                ["git", "for-each-ref", "--points-at=HEAD",
+                 "--format=%(refname:short)", "refs/remotes"],
+                capture_output=True,
+                text=True,
+            )
+            remote_branch = next(
+                (line.split("/", 1)[1] for line in remote_result.stdout.splitlines()
+                 if line and not line.endswith("/HEAD")),
+                "",
+            )
+            branch_name = remote_branch or f"detached@{head_ref[:7]}"
 
     return {"BASE": base, "HEAD_REF": head_ref, "LABEL": branch_name, "IS_SINGLE_COMMIT": "false"}
 

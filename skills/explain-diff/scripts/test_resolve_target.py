@@ -90,6 +90,18 @@ class TestResolveBlank(unittest.TestCase):
             out = RT.resolve_blank()
         self.assertEqual(out["LABEL"], "v1.2.3")
 
+    def test_detached_head_matching_a_remote_branch_uses_the_branch_name(self):
+        with patch("subprocess.run", side_effect=dispatch([
+            ("branch -r", fake_result(stdout="origin/main\n")),
+            ("rev-parse HEAD", fake_result(stdout="abc1234\n")),
+            ("merge-base", fake_result(stdout="base5678\n")),
+            ("symbolic-ref", fake_result(returncode=1)),
+            ("describe", fake_result(returncode=1)),
+            ("for-each-ref", fake_result(stdout="origin/HEAD\norigin/feat/thing\n")),
+        ])):
+            out = RT.resolve_blank()
+        self.assertEqual(out["LABEL"], "feat/thing")
+
     def test_detached_head_without_a_tag_uses_a_short_sha_label(self):
         with patch("subprocess.run", side_effect=dispatch([
             ("branch -r", fake_result(stdout="origin/main\n")),
@@ -97,6 +109,7 @@ class TestResolveBlank(unittest.TestCase):
             ("merge-base", fake_result(stdout="base5678\n")),
             ("symbolic-ref", fake_result(returncode=1)),
             ("describe", fake_result(returncode=1)),
+            ("for-each-ref", fake_result(stdout="")),
         ])):
             out = RT.resolve_blank()
         self.assertEqual(out["LABEL"], "detached@abcdef1")
