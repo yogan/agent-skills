@@ -181,6 +181,18 @@ def _result_text(c):
     return ""
 
 
+# Bash tool plumbing, not part of any producer's own output: appended whenever a gated
+# command's own `cd` changes the shell's directory. The model was never going to paste
+# this back, but `_missing_lines` doesn't know that — it just sees one more line of
+# `result` absent from `shown`, and that alone can burn the one-line tolerance a
+# genuinely harmless edit (e.g. a reworded header) would otherwise get.
+_CWD_RESET_RE = re.compile(r"\nShell cwd was reset to [^\n]*\Z")
+
+
+def _strip_tool_noise(result):
+    return _CWD_RESET_RE.sub("", result)
+
+
 MANIFEST_MARKER = "<!-- paste-gate:critical"
 _MANIFEST_RE = re.compile(re.escape(MANIFEST_MARKER) + r"\n(.*?)\n-->", re.S)
 
@@ -418,7 +430,7 @@ def violation(path, specs):
     reason = None
     for gate_key, uid in last_per_key.items():
         gate = matched[uid]
-        result = result_by_id.get(uid, "")
+        result = _strip_tool_noise(result_by_id.get(uid, ""))
         visible, critical = _split_manifest(result)
         if not all(s in visible for s in gate["signature"]):
             continue

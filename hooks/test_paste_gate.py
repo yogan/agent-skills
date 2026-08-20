@@ -236,6 +236,34 @@ class TestGates(HookCase):
             assistant_text("\n".join(body)),
         ])
 
+    def test_cwd_reset_noise_does_not_count_against_the_one_line_tolerance(self):
+        """The Bash tool itself appends "Shell cwd was reset to ..." to a command's
+        result whenever a gated command's own `cd` changes the shell's directory — that
+        line is harness plumbing, not part of findings.py's own output, and the model was
+        never going to paste it back. Observed in production: combined with an otherwise
+        tolerable header swap (see test_one_dropped_line_tolerated above), this noise
+        line alone pushed the count of missing lines from one to two and forced a block
+        that had nothing real to correct."""
+        body = RESUME_OUT.strip().splitlines()[1:]
+        self.assertAllowed([
+            user_prompt(),
+            bash_call("u1", "cd /some/wt && python3 $SD/findings.py resume --iid 123"),
+            tool_result("u1", RESUME_OUT + "\nShell cwd was reset to /some/wt"),
+            assistant_text("Two pushes since your last look.\n" + "\n".join(body)),
+        ])
+
+    def test_cwd_reset_noise_stripped_but_a_real_second_drop_still_blocks(self):
+        """The noise line is invisible to the check, but it is not a second free pass —
+        drop a genuine second line on top of it and the block still fires."""
+        dropped = "- **push 1:** 3 files, +42/-7"
+        body = [ln for ln in RESUME_OUT.strip().splitlines()[1:] if ln != dropped]
+        self.assertBlocked([
+            user_prompt(),
+            bash_call("u1", "cd /some/wt && python3 $SD/findings.py resume --iid 123"),
+            tool_result("u1", RESUME_OUT + "\nShell cwd was reset to /some/wt"),
+            assistant_text("Two pushes since your last look.\n" + "\n".join(body)),
+        ])
+
     def test_errored_run_allows(self):
         """No signature in the output → the command failed and the model is mid-fix."""
         self.assertAllowed([
