@@ -289,8 +289,18 @@ CSS = (
   code { font-family: 'SF Mono', Consolas, monospace; background: var(--inline-code-bg); color: inherit;
     padding: .1rem .3rem; border-radius: 3px; font-size: .92em; }
   pre { background: var(--code-bg); color: var(--code-fg); padding: 1rem 1.2rem; border-radius: 8px;
-    overflow-x: auto; white-space: pre-wrap; font-family: 'SF Mono', Consolas, monospace; font-size: .88rem; line-height: 1.5; }
-  pre code { background: none; padding: 0; color: inherit; }
+    overflow-x: auto; white-space: pre; font-family: 'SF Mono', Consolas, monospace; font-size: .88rem; line-height: 1.5;
+    scrollbar-width: thin; scrollbar-color: var(--border) transparent; }
+  /* inline-block shrink-wraps this box to its widest line, so every .diff-line below can be
+     width: 100% of it (see that rule) instead of sizing itself off its own content - lines of
+     different lengths otherwise gave their add/del backgrounds different right edges. */
+  pre code { background: none; padding: 0; color: inherit; display: inline-block; min-width: 100%; }
+  /* Long code lines scroll horizontally (white-space: pre above) instead of wrapping - a thin
+     themed scrollbar makes that affordance visible without the heavy default OS bar. */
+  pre::-webkit-scrollbar { height: 8px; }
+  pre::-webkit-scrollbar-track { background: transparent; }
+  pre::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+  pre::-webkit-scrollbar-thumb:hover { background: var(--muted); }
   .tok-keyword { color: var(--tok-keyword); }
   .tok-string { color: var(--tok-string); }
   .tok-comment { color: var(--tok-comment); font-style: italic; }
@@ -301,7 +311,10 @@ CSS = (
   .tok-property { color: var(--tok-property); }
   .tok-variable { color: var(--tok-variable); }
   pre.pre-diff { padding: .4rem 0; }
-  .diff-line { display: block; padding: 0 1.2rem; }
+  /* box-sizing: border-box - the padding that sized `pre code` above is already inside the 100%
+     it's shrink-wrapped to. Left at the default (content-box), each line added that same padding
+     again on top of its own width: 100%, leaving dead space past the widest line when scrolled. */
+  .diff-line { display: block; width: 100%; padding: 0 1.2rem; box-sizing: border-box; }
   .diff-add { background: var(--diff-add-bg); }
   .diff-del { background: var(--diff-del-bg); }
   .diff-hunk, .diff-meta { color: var(--muted); }
