@@ -54,6 +54,7 @@ Subcommands (all read-only against GitLab):
                  omit the id to auto-pick your one unlinked thread on that file
   candidates     your posted threads not yet linked to any topic (for matching)
   head           one-line push check (branch tip vs last-reviewed head)
+  base           GitLab's own merge-base SHA for this MR (feed to review-branch)
   set-head       mark the current branch tip as reviewed
   worktree [--set PATH]   get/set this MR's review worktree path
   prune [--iid N]  remove OTHER merged/closed MRs' worktrees for this repo
@@ -79,7 +80,7 @@ if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
 
 from lib import critical_manifest                               # noqa: E402
-from lib.gitlab import (api, context, current_user, die, mr_head,  # noqa: E402
+from lib.gitlab import (api, context, current_user, die, mr_base, mr_head,  # noqa: E402
                         mr_object, mr_view, versions, web_base)
 from lib.mr_common import (first_name, load, num, save, short_summary,  # noqa: E402
                            state_file, topic_for, tref)
@@ -1123,7 +1124,7 @@ def main():
     sub = ap.add_subparsers(dest="cmd")
 
     for name in ("sync", "todo", "present", "resume", "bodies", "candidates",
-                 "head", "set-head", "updates", "path"):
+                 "head", "base", "set-head", "updates", "path"):
         sub.add_parser(name).add_argument("--iid", type=int)
 
     pw = sub.add_parser("worktree")
@@ -1275,6 +1276,12 @@ def main():
         print(f"{u}\n\n---\n\n{p}{critical_manifest.manifest()}")
     elif cmd == "head":
         print(head_report(state, ctx, iid))
+    elif cmd == "base":
+        # GitLab's own merge-base for this MR — feed it to review-branch
+        # (REVIEW_BRANCH_BASE) instead of letting it re-derive one locally; see
+        # lib/gitlab.py's mr_base for why the local guess can drift.
+        base = mr_base(ctx, iid) or die(f"MR !{iid} has no diff_refs.base_sha")
+        print(base)
     elif cmd == "set-head":
         state["last_reviewed_head"] = mr_head(ctx, iid)
         save(path, state)

@@ -128,7 +128,22 @@ size — changed LOC **excluding tests**; below ~40 → skip (it's a short chang
 on immediately (it opens the HTML when ready). It must only *read* git (no checkout/fetch —
 that already happened) so it can't race review-branch.
 
-**Seed the findings.** Run the `review-branch` skill against the worktree (foreground). It
+**Seed the findings.** First pin the diff scope to GitLab's own answer — **never** let
+review-branch re-derive it locally here:
+
+```bash
+export REVIEW_BRANCH_BASE=$(python3 $SD/findings.py base --iid <n>)
+```
+
+review-branch's own base-detection (`git merge-base HEAD origin/main`) is right for a plain
+`/review-branch` run on your own branch, but wrong for an MR: it assumes the target is always
+`main`/`master` and that the locally known tip of it is fresh. Neither holds in general — an MR
+can target another branch, or the local repo's knowledge of the target can sit behind where
+this MR actually forked from — and either one silently sweeps unrelated, already-merged commits
+into what looks like the MR's own diff. `REVIEW_BRANCH_BASE` makes review-branch use GitLab's
+own merge-base verbatim instead.
+
+Then run the `review-branch` skill against the worktree (foreground). It
 returns a prioritized critique. Turn each finding into a JSON object and import them:
 
 ```jsonc
@@ -340,4 +355,4 @@ paraphrased away.
 `glab` authenticated; a review worktree (or willingness to create one); run inside the target
 repo. `python3`; macOS for `clip.sh`. Build blocks: the `explain-branch` and `review-branch`
 skills installed. `findings.py` subcommands: sync·todo·present·resume·updates·bodies·quote·diff·candidates·
-import·add·set·drop·merge·link·head·set-head·worktree·prune·path (run any with `-h`).
+import·add·set·drop·merge·link·head·base·set-head·worktree·prune·path (run any with `-h`).

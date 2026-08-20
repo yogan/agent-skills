@@ -106,6 +106,16 @@ class TestMrHead(unittest.TestCase):
         self.assertEqual(G.mr_head({}, 1), "old")
 
 
+class TestMrBase(unittest.TestCase):
+    def test_reads_diff_refs_base_sha(self):
+        G.mr_object = lambda ctx, iid: {"diff_refs": {"base_sha": "aabbc347"}}
+        self.assertEqual(G.mr_base({}, 1), "aabbc347")
+
+    def test_none_when_no_diff_refs(self):
+        G.mr_object = lambda ctx, iid: {"sha": "old"}
+        self.assertIsNone(G.mr_base({}, 1))
+
+
 class TestVersions(unittest.TestCase):
     def test_hits_the_versions_endpoint_with_pagination(self):
         seen = {}

@@ -9,13 +9,21 @@ description: Performs a focused code review of all commits on the current git br
 
 ### Step 1 — Gather the branch range
 
-Run the bundled script to resolve the review scope (handles detached HEAD transparently):
+Run the bundled script to resolve the review scope (handles detached HEAD transparently). The
+script refuses to guess silently — for a plain, standalone review like this one, say so
+explicitly with `REVIEW_BRANCH_STANDALONE=1`:
 
 ```bash
-bash ~/.claude/skills/review-branch/scripts/branch-range.sh
+REVIEW_BRANCH_STANDALONE=1 bash ~/.claude/skills/review-branch/scripts/branch-range.sh
 ```
 
 Source the output variables: `MAIN_REF`, `BASE`, `HEAD_SHA`, `COMMIT_COUNT`, `BRANCH_NAME`.
+
+If the caller already knows an authoritative base (e.g. review-mr, seeding from a specific
+GitLab MR), it sets `REVIEW_BRANCH_BASE` instead — that value is then used verbatim instead of
+the local `git merge-base HEAD origin/main` guess. Only relevant when invoking review-branch
+from another skill; a plain `/review-branch` run always uses `REVIEW_BRANCH_STANDALONE=1` as
+shown above, never `REVIEW_BRANCH_BASE`.
 
 If the script errors (not a git repo, no remote), report the error and stop.
 

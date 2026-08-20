@@ -108,6 +108,18 @@ def mr_head(ctx, iid):
     return refs.get("head_sha") or mr.get("sha")
 
 
+def mr_base(ctx, iid):
+    """GitLab's own merge-base for this MR's latest diff — the authoritative scope
+    boundary. Deliberately NOT re-derived locally (e.g. `git merge-base HEAD
+    origin/main`): that guess silently drifts from GitLab's answer whenever the
+    target isn't main/master, or the locally known target-branch tip is behind
+    where the MR actually forked from, sweeping unrelated already-on-target
+    commits into what looks like the MR's diff."""
+    mr = mr_object(ctx, iid)
+    refs = mr.get("diff_refs") or {}
+    return refs.get("base_sha")
+
+
 def versions(ctx, iid):
     """MR diff versions, newest first — one per push (survives force-push). Used to
     derive a stable diff-between-versions URL (see lib/diff_url.py) and, in review-mr's
