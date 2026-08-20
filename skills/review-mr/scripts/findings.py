@@ -441,8 +441,9 @@ def _note_md(name, body):
 
 FENCE_BY_EXT = {".ts": "ts", ".tsx": "tsx", ".js": "js", ".jsx": "jsx",
                 ".py": "python", ".rb": "ruby", ".go": "go", ".java": "java",
-                ".kt": "kotlin", ".sh": "bash", ".yml": "yaml", ".yaml": "yaml",
-                ".json": "json", ".sql": "sql", ".css": "css", ".html": "html"}
+                ".kt": "kotlin", ".sh": "bash", ".env": "bash", ".yml": "yaml",
+                ".yaml": "yaml", ".json": "json", ".sql": "sql", ".css": "css",
+                ".html": "html"}
 
 
 SUGGESTION_FENCE = re.compile(r"^```suggestion(?::-(\d+)\+(\d+))?\s*$")

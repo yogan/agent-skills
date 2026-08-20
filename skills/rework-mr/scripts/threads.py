@@ -422,9 +422,9 @@ def _note_md(name, body, path=None, anchor=None):
 FENCE_BY_EXT = {".ts": "ts", ".tsx": "tsx", ".js": "js", ".jsx": "jsx", ".mjs": "js",
                 ".py": "python", ".rb": "ruby", ".go": "go", ".java": "java",
                 ".kt": "kotlin", ".rs": "rust", ".php": "php", ".cs": "csharp",
-                ".sh": "bash", ".yml": "yaml", ".yaml": "yaml", ".json": "json",
-                ".sql": "sql", ".css": "css", ".scss": "scss", ".html": "html",
-                ".vue": "vue", ".svelte": "svelte", ".md": "markdown"}
+                ".sh": "bash", ".env": "bash", ".yml": "yaml", ".yaml": "yaml",
+                ".json": "json", ".sql": "sql", ".css": "css", ".scss": "scss",
+                ".html": "html", ".vue": "vue", ".svelte": "svelte", ".md": "markdown"}
 FENCE_RE = re.compile(r"^(\s*)(`{3,})(.*)$")
 #  git's own headers. `index` is matched with its sha shape, not as a bare word: a code
 #  snippet starting a line with `index = 0` is not a diff.

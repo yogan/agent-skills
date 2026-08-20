@@ -93,6 +93,11 @@ class TestCodeSnippet(Throwaway, unittest.TestCase):
         self.assertTrue(out.startswith("```python\n"))
         self.assertIn("► 10 | x10 = 10", out)
 
+    def test_env_file_gets_a_highlightable_language(self):
+        self._worktree_with("local.env", "A=1\nB=2\nC=3\n")
+        out = F.code_snippet(new_state(slug="x"), {"file": "local.env", "line": 2})
+        self.assertTrue(out.startswith("```bash\n"))
+
 
 class TestCriticalManifest(Throwaway, unittest.TestCase):
     def setUp(self):

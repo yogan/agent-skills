@@ -77,6 +77,10 @@ class TestRenderChange(unittest.TestCase):
         out = T.render_change("export const a = 1\n", "src/a.ts")
         self.assertEqual(out, "```ts\nexport const a = 1\n```")
 
+    def test_env_file_uses_a_highlightable_language(self):
+        out = T.render_change("A=1\n", "backend/local.env")
+        self.assertEqual(out, "```bash\nA=1\n```")
+
     def test_snippet_without_a_path_is_untagged(self):
         self.assertEqual(T.render_change("hello\n"), "```\nhello\n```")
 
