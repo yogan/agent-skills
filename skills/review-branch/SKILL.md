@@ -107,7 +107,8 @@ Rules for the non-trivial structure:
 - Always show the offending code, not just a prose description. Include enough surrounding lines (or the calling site, in a second snippet) for the flaw to be self-evident.
 - Add a **How this bites** scenario only when the failure mode isn't obvious from the code alone — e.g. concurrency, a specific input shape, an interaction between two call sites. Skip it when the snippet already speaks for itself.
 - Always end with a **Fix** — concrete replacement code, not just advice in prose. Keep it as small as the actual fix; don't pad with unrelated cleanup.
-- Use the real language for code fences (`ts`, `py`, `go`, ...), and a `// path:lines` comment on the first line when the snippet is longer than a couple of lines.
+- Use the real language for code fences (`ts`, `py`, `go`, ...), and a `// path:lines` comment on the first line when the snippet is longer than a couple of lines. When the file is a template layered on a well-known format — a Helm/Go `.tpl`, Jinja, EJS — fence it as the underlying format (`yaml`, `html`, ...), not the template engine's own name: the engine's tag is rarely a real highlighter language, and the underlying format still covers most of the snippet's lines.
+- If you run a command to verify a claim, show it in a fenced block (` ```bash ` for the command, or ` ```console ` if you're showing a `$ command` line together with its output) — a bare `$ command` line outside a fence renders as flat, unhighlighted text.
 
 If there are zero findings, output exactly: `No issues found.`
 
