@@ -1206,7 +1206,9 @@ def main():
     if cmd == "worktree":
         ctx = context()
         if args.iid is None:
-            die("worktree needs --iid <n> — one worktree per MR now.")
+            hint = f" --set {args.set_path}" if args.set_path else ""
+            die("worktree is recorded per MR now, not repo-wide — say which one: "
+                f"findings.py worktree --iid <n>{hint}  (<n> is the MR's IID, e.g. 2 for MR !2)")
         if args.set_path:
             set_worktree(ctx["slug"], args.iid, args.set_path)
         print(get_worktree(ctx["slug"], args.iid) or "")

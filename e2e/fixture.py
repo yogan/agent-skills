@@ -642,7 +642,7 @@ def seed_mr2(iid):
     info(f"peer thread {peer['id'][:12]}")
 
     wt = wt0
-    findings(wt, "worktree", "--set", wt)
+    findings(wt, "worktree", "--iid", str(iid), "--set", wt)
     seed = [{"kind": "issue", "severity": t["severity"], "source": "both",
              "summary": t["summary"], "file": t["file"], "draft": t["body"]}
             for t, _ in posted]
