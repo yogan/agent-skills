@@ -48,11 +48,32 @@ fi
 # ── 2. reachable ─────────────────────────────────────────────────────────────
 # /-/readiness is allowlisted to 127.0.0.1 and always 404s from the host, so probe
 # the sign-in page instead.
+#
+# On this machine, port 80 is sometimes owned by Rancher Desktop's local Kubernetes
+# Traefik (a LoadBalancer service that predates the container and wins the host's
+# port forwarding) instead of e2e-gitlab. That looks identical to a slow boot —
+# curl just keeps getting a non-200 — except it will NEVER turn into a 200, so
+# without this check the loop burns the full timeout to say nothing more than
+# "still 404". Traefik's default backend has a distinctive, un-GitLab-like shape
+# (bare text body, text/plain), and only means this if the container itself is
+# already healthy — during a real cold boot the same body could just be nginx not
+# up yet.
+other_lb_hijacked_port_80() {
+  docker inspect -f '{{.State.Health.Status}}' e2e-gitlab 2>/dev/null | grep -qx healthy || return 1
+  body=$(curl -sS "$URL" 2>/dev/null)
+  [ "$body" = "404 page not found" ] || return 1
+  ctype=$(curl -sS -o /dev/null -D - "$URL" 2>/dev/null | tr -d '\r' | sed -n 's/^[Cc]ontent-[Tt]ype: //p')
+  case "$ctype" in text/plain*) return 0 ;; *) return 1 ;; esac
+}
+
 say "GitLab reachable"
 waited=0
 while :; do
   code=$(curl -sS -o /dev/null -w '%{http_code}' "$URL" 2>/dev/null) || code=000
   if [ "$code" = 200 ]; then ok "$URL -> 200"; break; fi
+  if [ "$code" = 404 ] && other_lb_hijacked_port_80; then
+    die "$URL -> 404, but e2e-gitlab is healthy — that 404 is Traefik's default backend, not GitLab's. Something else on the host owns port 80, most likely Rancher Desktop's local Kubernetes Traefik. Free it: kubectl --context rancher-desktop -n kube-system scale deployment traefik --replicas=0 (see README 'Troubleshooting')"
+  fi
   [ "$waited" -ge "$BOOT_TIMEOUT" ] && die "$URL still $code after ${waited}s — see README 'Troubleshooting'"
   [ $((waited % 30)) = 0 ] && warn "$URL -> $code, waiting (${waited}s)"
   sleep 5

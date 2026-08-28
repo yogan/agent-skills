@@ -149,6 +149,7 @@ cd ~/src/agent-skills-demo && glab api user      # should print frank
 | seed prints `Password must not contain commonly used combinations of words and letters` | GitLab 19 strength-checks passwords, and the admin seed then **silently** creates no user. Passwords here are deliberately opaque |
 | `Validation failed: Namespace can't be blank` | creating users with `User.new(...).save!` in rails skips personal-namespace creation. Use the REST API, which goes through GitLab's own service |
 | reset dies with `no topic ◈t1` | `fixture.py` parses `findings.py import`'s output for topic handles. Match `t\d+`, never split the decorated string |
+| `/users/sign_in` stuck at a bare-text `404 page not found` even though `gitlab-ctl status` and the container healthcheck are fine | something else on the host owns port 80 and is winning the port forward ahead of `e2e-gitlab` — on this machine that was Rancher Desktop's local Kubernetes Traefik, a `LoadBalancer` service that predates the container. `tmux-demo.sh` detects this shape and fails fast instead of waiting out the full boot timeout |
 
 ### VM memory
 
