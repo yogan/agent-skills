@@ -15,6 +15,7 @@ import hashlib
 import io
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -38,6 +39,17 @@ HAVE_D2 = render.d2_version() is not None
 def read(path):
     with open(path, encoding="utf-8") as handle:
         return handle.read()
+
+
+_TSPAN_TEXT = re.compile(r"<tspan\b[^>]*>([^<]*)</tspan>")
+
+
+def visible_text(svg):
+    """Every rendered label, not the raw SVG source — which also carries a base64
+    <style>-embedded font subset that can coincidentally contain any short substring
+    (an "absence" check against the whole file is not checking where the label would
+    actually show up)."""
+    return " ".join(_TSPAN_TEXT.findall(svg))
 
 
 # Where `run` sends each invocation's output, and what it has already run. Both are
@@ -195,7 +207,7 @@ class TestOverviewFlag(unittest.TestCase):
         code, out, err = run("--no-open", "--no-png", "--no-place", "--overview",
                              "--drop", "api", spec=self.SPEC)
         self.assertEqual(code, 0, err)
-        self.assertNotIn("API", read(out.strip()))
+        self.assertNotIn("API", visible_text(read(out.strip())))
 
     def test_drop_without_overview_is_an_error(self):
         """It would silently do nothing, and the author would believe the node was gone."""
@@ -228,7 +240,6 @@ class TestStandaloneImage(unittest.TestCase):
 
     def canvas_fill(self, svg):
         """The root background rect's fill — the first rect d2 emits, covering the canvas."""
-        import re
         first = re.search(r"<rect[^>]*>", svg).group(0)
         return re.search(r'fill="([^"]*)"', first).group(1)
 
