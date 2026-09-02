@@ -201,6 +201,25 @@ class TestForbidden(HookCase):
             assistant_text("> ```suggestion\n> logger.exception(exc)\n> ```"),
         ])
 
+    def test_unresolved_needs_title_table_row_blocks(self):
+        """A topic adopt_inbound surfaced from a live thread (yours or a peer's) carries
+        no authored `summary` — render_table marks it with this exact glyph+label instead
+        of silently showing the raw, un-summarized quote as if it were a title."""
+        self.assertBlocked([
+            user_prompt(),
+            assistant_text(
+                "| ○ open | ◈ **t9** | ⚪ | 👤 | `token.py:40` "
+                "| ✍️ _needs summary:_ Sollten wir hier nicht X machen? |"),
+        ], contains="needs_title")
+
+    def test_unresolved_needs_title_quote_header_blocks(self):
+        self.assertBlocked([
+            user_prompt(),
+            assistant_text(
+                "◈ **t9** · `token.py:40` · drafts in de\n\n"
+                "⚠️ **needs an English summary** — `t9` has no authored `summary` yet"),
+        ], contains="needs_title")
+
 
 class TestRequired(HookCase):
     def test_ack_without_diff_view_blocks(self):

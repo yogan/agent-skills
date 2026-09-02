@@ -185,6 +185,53 @@ class TestRenderTable(unittest.TestCase):
         self.assertIn("1 need your ack", out)
 
 
+class TestNeedsTitle(unittest.TestCase):
+    """adopt_inbound has no way to author an English one-liner for a thread it did not
+    write — the only text available is the raw comment body, in whatever language the
+    commenter used. `needs_title` makes that gap visible instead of letting the raw
+    quote silently pass as a finished title (see `short_summary`'s docstring)."""
+
+    def test_adopted_thread_is_flagged_with_no_authored_summary(self):
+        state = new_state(threads={"d1": {"body": "Sollten wir hier nicht X machen?",
+                                           "file": "a.py", "line": 3}})
+        F.adopt_inbound(state)
+        t = F.topic_for(state, "t1")
+        self.assertTrue(t["needs_title"])
+        self.assertIsNone(t["summary"])
+
+    def test_render_table_flags_a_needs_title_topic(self):
+        state = new_state(threads={"d1": {"body": "Sollten wir hier nicht X machen?",
+                                           "file": "a.py", "line": 3}})
+        F.adopt_inbound(state)
+        self.assertIn("needs summary", F.render_table(state))
+
+    def test_render_table_leaves_an_authored_summary_alone(self):
+        state = new_state(threads={"d1": {"body": "irrelevant"}})
+        add_linked_topic(state, "d1", summary="a real English title")
+        self.assertNotIn("needs summary", F.render_table(state))
+
+    def test_quote_warns_when_topic_needs_a_title(self):
+        state = new_state(threads={"d1": {"body": "Sollten wir hier nicht X machen?",
+                                           "file": "a.py", "line": 3}})
+        F.adopt_inbound(state)
+        self.assertIn("needs an English summary", F.render_quote(state, "t1"))
+
+    def test_quote_is_silent_for_an_authored_summary(self):
+        state = new_state(threads={"d1": {"body": "irrelevant"}})
+        add_linked_topic(state, "d1", summary="a real English title")
+        self.assertNotIn("needs an English summary", F.render_quote(state, "t1"))
+
+    def test_setting_a_summary_clears_the_flag(self):
+        state = new_state(threads={"d1": {"body": "Sollten wir hier nicht X machen?",
+                                           "file": "a.py", "line": 3}})
+        F.adopt_inbound(state)
+        t = F.topic_for(state, "t1")
+        t["summary"] = "Clarify the X behavior"
+        t["needs_title"] = False              # what `set --summary` does, see cmd == "set"
+        self.assertNotIn("needs summary", F.render_table(state))
+        self.assertNotIn("needs an English summary", F.render_quote(state, "t1"))
+
+
 class TestSync(unittest.TestCase):
     def test_local_fields_survive_a_fetch(self):
         state = new_state(threads={"d1": {"gone": True, "awaiting": "you"}})

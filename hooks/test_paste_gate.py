@@ -345,6 +345,28 @@ class TestForbidden(HookCase):
             assistant_text("The paste payload wraps the code in a ```suggestion fence."),
         ])
 
+    def test_discussing_needs_title_in_prose_allows(self):
+        """Explaining the `needs_title` mechanism itself (this test's own subject) must
+        not trip the forbidden check — only the exact rendered glyph+markup from
+        render_table/render_quote should, not a plain-prose mention of the flag or the
+        phrase without it."""
+        self.assertAllowed([
+            user_prompt(),
+            assistant_text(
+                "A topic flagged needs_title has no authored summary yet — it needs "
+                "an English summary before it's presented, via `set <t> --summary`."),
+        ])
+
+    def test_authored_summary_row_allows(self):
+        """A resolved topic's table row must not false-positive just for containing
+        an em dash or the word "summary" near the ✍️/⚠️ glyphs used elsewhere."""
+        self.assertAllowed([
+            user_prompt(),
+            assistant_text(
+                "| ● acked | ◈ **t9** | 🟡 | 👤 | `token.py:40` "
+                "| Rename _from_subprotocol for clarity |"),
+        ])
+
 
 class TestRequired(HookCase):
     def test_ack_with_pasted_diff_view_allows(self):
@@ -446,7 +468,7 @@ class TestShippedSpecs(unittest.TestCase):
         self.assertEqual([g["key"] for g in review["gates"]],
                          ["review-mr:resume", "review-mr:present", "review-mr:todo",
                           "review-mr:quote", "review-mr:updates", "review-mr:diff"])
-        self.assertEqual(len(review["forbidden"]), 1)
+        self.assertEqual(len(review["forbidden"]), 3)
         self.assertEqual([g["key"] for g in rework["gates"]],
                          ["rework-mr:present", "rework-mr:todo", "rework-mr:quote",
                           "rework-mr:diff-view", "rework-mr:reply-view",

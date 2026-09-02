@@ -237,6 +237,7 @@ def add_topic(state, **fields):
         "source": "llm", "summary": None, "file": None, "line": None,
         "draft": None, "thread_ids": [], "state": None, "ticket": None,
         "start_sha": None, "note": None, "by": None, "acked_at": None,
+        "needs_title": False,
     }
     t.update({k: v for k, v in fields.items()
               if v is not None and k not in ADD_PROTECTED})
@@ -351,15 +352,18 @@ def adopt_inbound(state):
             continue
         if x.get("mine") and x.get("file") in draft_files:
             continue                          # could be that draft, posted — ask instead
-        summ = " ".join((x.get("body") or "").split())[:80]
         if x.get("mine"):
             source = "human"                  # 👤 you found it and posted it yourself
         elif x.get("by_author"):
             source = "author"
         else:
             source = "peer"
-        t = add_topic(state, source=source, summary=summ or None, file=x.get("file"),
-                      line=x.get("line"),
+        # No `summary` here on purpose: the only text available is the raw thread body,
+        # in whatever language/wording the commenter used — never a title. `needs_title`
+        # makes that gap visible in the table/quote instead of silently rendering a
+        # truncated, possibly non-English quote as if it were an authored one-liner.
+        t = add_topic(state, source=source, file=x.get("file"),
+                      line=x.get("line"), needs_title=True,
                       by=None if x.get("mine") else first_name(x.get("author")))
         t["thread_ids"].append(tid)
 
@@ -417,6 +421,8 @@ def render_table(state, scope="all"):
             tid = t["id"]
             s = st[tid]
             summ = short_summary(state, t).replace("|", "\\|")
+            if t.get("needs_title"):
+                summ = f"✍️ _needs summary:_ {summ}"    # raw quote, not an authored title
             if t.get("source") in INBOUND and t.get("by"):
                 summ = f"_{t['by']}:_ {summ}"           # who raised this thread
             resolved = any(state["threads"].get(x, {}).get("resolved")
@@ -623,9 +629,23 @@ def anchor_warning(state, t, context_lines=4):
             f"verify before posting — `set {t['id']} --line {best}` if that is the right spot.")
 
 
+def needs_title_warning(t):
+    """A topic `adopt_inbound` surfaced from a live thread carries no authored
+    `summary` — only the raw thread quote (via `short_summary`'s fallback), in
+    whatever language/wording the commenter used. Surface that gap explicitly
+    wherever the topic is rendered as a heading, so it never passes as a finished,
+    English one-liner."""
+    if not t.get("needs_title"):
+        return None
+    return (f"⚠️ **needs an English summary** — `{t['id']}` has no authored "
+            f"`summary` yet; the title above is the raw thread quote (as posted, "
+            f"not translated/summarized). Run `set {t['id']} --summary \"<short "
+            f"English title>\"` before presenting this topic further.")
+
+
 def render_quote(state, tid):
     t = topic_for(state, tid) or die(f"no topic {tid}")
-    summ = t.get("summary") or ""
+    summ = short_summary(state, t)
     out = []
     if not t["thread_ids"]:                       # a draft — show its draft text
         title = f"**{tref(t['id'])}" + (f" — {summ}**" if summ else "**")
@@ -659,6 +679,9 @@ def render_quote(state, tid):
         if i == 0:
             title = f"**{tref(t['id'])}" + (f" — {summ}**" if summ else "**")
             out.append(f"{title} · `{path}` · {lang_hint(state)}")
+            warn = needs_title_warning(t)
+            if warn:
+                out.append(warn)
         else:
             out.append(f"`{path}`")
         if x.get("url"):
@@ -1321,6 +1344,8 @@ def main():
             v = getattr(args, f.replace("-", "_"))
             if v is not None:
                 t[fld.get(f, f)] = v
+        if args.summary is not None:
+            t["needs_title"] = False              # now has an authored one-liner
         save(path, state)
         if args.draft is not None:
             # Echo the refreshed view: after storing a draft the agent needs to show it,

@@ -61,6 +61,26 @@
       "text": "^[>\\s]*```suggestion",
       "flags": "m",
       "reason": "Your message contains a raw ```suggestion fence, which means you wrote the draft block out yourself instead of pasting the rendered one. That block is shown unhighlighted, and the user cannot read the code they are approving. Re-send your message using the output of `python3 $SD/findings.py quote <t> --iid <n>` pasted verbatim (run it again if you have since changed the draft — `set <t> --draft` also prints the refreshed view). The ```suggestion fence belongs only in the PASTE PAYLOAD from `draft <t>` / the clipboard, never in what you show."
+    },
+    {
+      "key": "unresolved-needs-title-table",
+      "note": [
+        "adopt_inbound cannot author a title for a thread it did not write — only the raw",
+        "comment body is available, in whatever language/wording the commenter used. It",
+        "flags the topic `needs_title` instead of ever storing that raw text as `summary`,",
+        "and render_table marks it with this exact glyph+label so it can only ever appear",
+        "in a message that still has the placeholder. Anchored to a table row (`^\\|`) so a",
+        "prose mention of the phrase elsewhere can't false-positive."
+      ],
+      "text": "^\\|.*✍️ _needs summary:_",
+      "flags": "m",
+      "reason": "Your message pastes a topic whose title is still the unresolved `needs_title` placeholder (`✍️ needs summary:` — a raw, un-authored thread quote). Resolve it first: author an English one-liner (`findings.py set <t> --summary \"...\"`), or `drop`/`merge` the topic if it doesn't need one, then re-render (`sync`/`present`/`todo`) before showing it to the user."
+    },
+    {
+      "key": "unresolved-needs-title-quote",
+      "note": "Same `needs_title` gap as unresolved-needs-title-table, but for `quote <t>`'s header warning (render_quote's `needs_title_warning`) instead of a table row.",
+      "text": "⚠️ \\*\\*needs an English summary\\*\\*",
+      "reason": "Your message pastes a topic flagged `needs_title` — `quote <t>` is warning that it has no authored `summary` yet, only the raw thread quote. Author an English one-liner (`findings.py set <t> --summary \"...\"`), or `drop`/`merge` the topic, then re-run `quote <t>` before showing it to the user."
     }
   ]
 }

@@ -53,6 +53,12 @@ def first_name(name):
 
 
 def short_summary(state, t, width=64):
+    """Falls back to the raw first-thread body when no authored `summary` exists yet —
+    e.g. a topic `adopt_inbound` just surfaced from a live GitLab discussion, which is
+    always in whatever language/wording the commenter used, truncated mid-word by
+    `width`. That fallback text is a stand-in for display, never a title: callers that
+    render a topic as a heading (the table, `quote`) must also check `needs_title` and
+    flag it, rather than treating this string as a finished summary."""
     text = t.get("summary")
     if not text:
         thr = [state["threads"].get(x, {}) for x in t["thread_ids"]]
