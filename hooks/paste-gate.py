@@ -393,6 +393,16 @@ def _leaked_manifest(path):
     return None
 
 
+def _turn_could_leak(rows):
+    """True if some tool result THIS turn carries a manifest at all. Unlike `shown`
+    (the assistant's text, generated after the tool result and prone to lagging its
+    own flush), a tool result exists before the model even starts writing — so this is
+    safe to check once, no retry needed, and lets `main()` skip the leak-retry wait on
+    every turn (nearly all of them) that has nothing to leak in the first place."""
+    _, result_by_id, _ = _scan_turn(rows, [])
+    return any(MANIFEST_MARKER in v for v in result_by_id.values())
+
+
 def violation(path, specs):
     """Reason to block, or None. Re-readable so it can be retried — see main(). The
     manifest-leak check lives in `_leaked_manifest`, called separately by `main()` —
@@ -479,14 +489,21 @@ def main(argv):
     # not wait for a fresh (non-retry) turn: a retry forced by some OTHER violation can
     # introduce exactly this leak as a side effect of "just paste everything to be
     # safe", and that is precisely the turn where stop_hook_active is already true.
-    leak = _leaked_manifest(path)
-    for delay in (0.25, 0.5, 1.0):
-        if not leak:
-            break
-        time.sleep(delay)
+    #
+    # `_turn_could_leak` gates the wait to turns where a manifest actually exists
+    # (skipping it everywhere else, see its own docstring). Retry WHILE nothing has
+    # shown up yet, not while it has: an unflushed leak can still arrive, but a
+    # confirmed one won't un-happen, so there's nothing left to wait for.
+    rows = _load(path)
+    if rows is not None and _turn_could_leak(rows):
         leak = _leaked_manifest(path)
-    if leak:
-        _block(leak)
+        for delay in (0.25, 0.5, 1.0):
+            if leak:
+                break
+            time.sleep(delay)
+            leak = _leaked_manifest(path)
+        if leak:
+            _block(leak)
 
     # already inside a hook-forced retry → let the REST through, never loop. (The leak
     # check above ran regardless — that is the one deliberate exception.)

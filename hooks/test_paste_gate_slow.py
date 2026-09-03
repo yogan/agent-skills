@@ -13,15 +13,20 @@ under 0.15s each. That delay can't be mocked from here — the hook runs as a ge
 subprocess (see test_paste_gate.py's own note on why), so there's no reaching into its
 process to fake time.sleep.
 """
+import json
 import os
+import subprocess
 import sys
+import tempfile
+import threading
+import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import unittest  # noqa: E402
 
-from test_paste_gate import (DIFF_VIEW_OUT, QUOTE_OUT, RESUME_CRITICAL,  # noqa: E402
-                             RESUME_OUT, REVIEW_SPEC, REWORK_QUOTE_OUT,
+from test_paste_gate import (DIFF_VIEW_OUT, HOOK, QUOTE_OUT, RESUME_CRITICAL,  # noqa: E402
+                             RESUME_OUT, REVIEW_SPEC, REWORK_QUOTE_OUT, REWORK_SPEC,
                              HookCase, assistant_text, bash_call, row,
                              tool_result, user_prompt, with_manifest)
 
@@ -254,6 +259,50 @@ class TestFailOpen(HookCase):
             tool_result("u1", manifest),
             assistant_text(manifest),
         ], contains="paste-gate:critical", stop_hook_active=True)
+
+    def test_leak_caught_despite_delayed_transcript_flush(self):
+        """A leak must be caught even if it hasn't hit disk yet when the hook's first
+        read happens — not just once it's already there. Production miss: the retry
+        loop gave up the instant its first check found nothing, instead of waiting to
+        see if a leak was still being flushed. Modeled by writing everything up to the
+        gated tool_result up front, starting the hook, then appending the leaking
+        message from a background thread once the hook is already running."""
+        manifest = with_manifest(RESUME_OUT, RESUME_CRITICAL)
+        rows = [
+            user_prompt(),
+            bash_call("u1", "python3 $SD/findings.py resume --iid 123"),
+            tool_result("u1", manifest),
+        ]
+        leak_row = assistant_text(manifest)
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "transcript.jsonl")
+            with open(path, "w") as fh:
+                for r in rows:
+                    fh.write(json.dumps(r) + "\n")
+
+            proc = subprocess.Popen(
+                [sys.executable, HOOK, REVIEW_SPEC, REWORK_SPEC],
+                stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                text=True)
+            proc.stdin.write(json.dumps({"transcript_path": path}))
+            proc.stdin.close()
+
+            def append_late():
+                time.sleep(0.15)
+                with open(path, "a") as fh:
+                    fh.write(json.dumps(leak_row) + "\n")
+
+            t = threading.Thread(target=append_late)
+            t.start()
+            out, err = proc.communicate(timeout=10)
+            t.join()
+
+        self.assertEqual(proc.returncode, 0, err)
+        self.assertEqual(err, "", err)
+        self.assertNotEqual(out.strip(), "", "expected a block, got allow")
+        decision = json.loads(out)
+        self.assertEqual(decision["decision"], "block")
+        self.assertIn("paste-gate:critical", decision["reason"])
 
     def test_other_skills_spec_still_enforces(self):
         """A missing spec must not disable the ones that ARE installed."""
