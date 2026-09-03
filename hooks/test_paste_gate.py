@@ -445,6 +445,41 @@ class TestFailOpen(HookCase):
         self.assertEqual(proc.stdout.strip(), "")
 
 
+class TestGarbledEscape(HookCase):
+    """Unlike every other block in this file, `_garbled_backtick_escape` has no retry
+    loop (see paste-gate.py's main()) — nothing about it races a transcript flush, so a
+    block from it is as fast as an allow. That's why these live here, not in the slow
+    file with the rest of the `assertBlocked` cases."""
+
+    def test_backslash_escaped_backtick_run_blocks(self):
+        """Observed in production: escaping a fence's backticks one at a time with
+        backslashes, instead of the wrap-in-single-backticks-with-a-plain-run-inside
+        technique the skills' own docs use, renders as a garbled, illegible mess."""
+        self.assertBlocked([
+            user_prompt(),
+            assistant_text(
+                "Good — the raw draft body preserves the real "
+                "`\\`\\`\\`suggestion` block correctly (the `quote` display just "
+                "annotated it with line numbers for your reading)."),
+        ], contains="backslash-escapes")
+
+    def test_single_escaped_backtick_allows(self):
+        """One backslash-escaped backtick is ordinary, correct Markdown (a literal
+        backtick outside a code span) — only 2+ back-to-back is the broken pattern."""
+        self.assertAllowed([
+            user_prompt(),
+            assistant_text("the path ends with a literal backtick \\` there"),
+        ])
+
+    def test_plain_mid_sentence_fence_mention_allows(self):
+        """The correct, unescaped way to mention a fence mid-sentence — no backslashes
+        needed at all."""
+        self.assertAllowed([
+            user_prompt(),
+            assistant_text("The paste payload wraps the code in a ```suggestion fence."),
+        ])
+
+
 class TestShippedSpecs(unittest.TestCase):
     """The shipped specs must actually LOAD.
 

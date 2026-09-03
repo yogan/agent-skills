@@ -403,6 +403,33 @@ def _turn_could_leak(rows):
     return any(MANIFEST_MARKER in v for v in result_by_id.values())
 
 
+_BROKEN_BACKTICK_ESCAPE_RE = re.compile(r"(?:\\`){2,}")
+
+
+def _garbled_backtick_escape(path):
+    """Reason to block if the assistant backslash-escaped a run of backticks (e.g.
+    trying to show a literal fence) instead of wrapping it in single backticks with the
+    run left plain inside — the technique every skill's own docs already use. Markdown
+    has no such escape, so this renders as a garbled mess of glued-together words
+    instead of the intended literal text. Engine-level and unconditional, like
+    `_leaked_manifest`: nothing about it is specific to either skill's vocabulary, so it
+    protects any spec built on this engine, not just the two shipped today."""
+    rows = _load(path)
+    if rows is None:
+        return None
+    _, _, shown = _scan_turn(rows, [])
+    if not shown.strip():
+        return None
+    if _BROKEN_BACKTICK_ESCAPE_RE.search(shown):
+        return ("Your message backslash-escapes a run of backticks to show them "
+                "literally — Markdown has no such escape, so it renders as garbled, "
+                "illegible text instead. To show a literal fence or backtick run in "
+                "prose, wrap it in single backticks with the run left PLAIN inside "
+                "(a single backtick, the plain run, a single backtick) — no "
+                "backslashes. Re-send your message with that fixed.")
+    return None
+
+
 def violation(path, specs):
     """Reason to block, or None. Re-readable so it can be retried — see main(). The
     manifest-leak check lives in `_leaked_manifest`, called separately by `main()` —
@@ -505,8 +532,14 @@ def main(argv):
         if leak:
             _block(leak)
 
-    # already inside a hook-forced retry → let the REST through, never loop. (The leak
-    # check above ran regardless — that is the one deliberate exception.)
+    # Same engine-level, unconditional treatment as the leak check above — no gating
+    # needed, since checking is cheap and there's no separate write it has to wait on.
+    garble = _garbled_backtick_escape(path)
+    if garble:
+        _block(garble)
+
+    # already inside a hook-forced retry → let the REST through, never loop. (The two
+    # checks above ran regardless — that is the deliberate exception.)
     if data.get("stop_hook_active"):
         _allow()
 
