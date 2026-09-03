@@ -30,15 +30,21 @@ list may name skills you do not have. Previously each skill carried its own 320-
 of this engine and every fix had to be ported by hand between them; the ports kept
 missing things, which is why it lives in one place now.
 
-Three rule kinds, all optional per spec:
-  gates     — a command ran and produced real output → that output must appear in the
-              visible message. The main mechanism.
-  forbidden — a pattern that must never appear in a visible message, whatever ran. Catches
-              the model COMPOSING a block itself, for which no command runs at all, so no
-              gate can see it.
-  required  — a pattern that may only appear once a given gate has actually fired this
-              turn. The inverse check: the ritual phrase is there, but the command that
-              was supposed to produce it never ran.
+Two tiers of rule:
+  Per-spec, data-driven (what `violation()` checks; needs a spec loaded) — three kinds:
+    gates     — a command ran and produced real output → that output must appear in the
+                visible message. The main mechanism.
+    forbidden — a pattern that must never appear in a visible message, whatever ran.
+                Catches the model COMPOSING a block itself, for which no command runs
+                at all, so no gate can see it.
+    required  — a pattern that may only appear once a given gate has actually fired
+                this turn. The inverse check: the ritual phrase is there, but the
+                command that was supposed to produce it never ran.
+  Engine-level, unconditional (`_leaked_manifest`, `_garbled_backtick_escape`) — always
+  checked, spec or no spec, because neither is about either skill's vocabulary: one
+  guards the manifest mechanism this engine itself relies on, the other guards plain
+  Markdown hygiene. New engine-level checks belong here, not as one more per-spec
+  `forbidden` entry duplicated into every skill's JSON.
 
 Contract (Claude Code Stop hook):
   stdin  — JSON with `transcript_path` and `stop_hook_active`.
@@ -47,11 +53,11 @@ It fails OPEN throughout: any error → allow the stop (never wedge a session).
 
 Loop guard: `stop_hook_active` is true when we're already inside a hook-forced
 continuation, so we block at most once per reply and never spin — with ONE deliberate
-exception. A leaked critical-lines manifest (see `_leaked_manifest`) is checked
-regardless of `stop_hook_active`: it is narrow, deterministic, and trivial for the model
-to fix, unlike the broader verbatim-paste checks, and a retry forced by some OTHER
-violation can introduce exactly this leak as a side effect ("just paste everything to be
-safe") on the very turn where the general loop guard would otherwise hide it. Observed in
+exception. Both engine-level checks run regardless of `stop_hook_active`: each is
+narrow, deterministic, and trivial for the model to fix, unlike the broader
+verbatim-paste checks, and a retry forced by some OTHER violation can introduce either
+as a side effect ("just paste everything to be safe") on the very turn where the
+general loop guard would otherwise hide it. The manifest case was observed in
 production on a real MR review, not theoretical.
 
 Scope: only acts on a turn where a gated command actually ran AND produced real output
@@ -352,6 +358,26 @@ def _scan_turn(rows, gates):
     return matched, result_by_id, "\n".join(assistant_text)
 
 
+def _turn_state(path, gates=()):
+    """(matched, result_by_id, shown) for the current turn, or None if there's nothing
+    to check yet. Covers both ways "nothing yet" happens: the transcript can't be read
+    at all, or it can, but the turn has no assistant text in it — the hook can fire
+    within ~300ms of a tool call finishing, well before the assistant's own message
+    catches up in the file. Judging now would report every line of a real block as
+    missing, so every check below that reasons about the assistant's VISIBLE text
+    shares this one early exit rather than each re-deriving it.
+
+    `_turn_could_leak` is the one exception, and does not go through this: it needs to
+    see a tool result even when `shown` is still empty (see its own docstring)."""
+    rows = _load(path)
+    if rows is None:
+        return None
+    matched, result_by_id, shown = _scan_turn(rows, gates)
+    if not shown.strip():
+        return None
+    return matched, result_by_id, shown
+
+
 def _leaked_manifest(path):
     """Reason to block if the producer's own critical-lines manifest leaked into the
     visible message, or None. Deliberately callable independent of `stop_hook_active`
@@ -378,12 +404,10 @@ def _leaked_manifest(path):
     the marker and the closer; a prose mention almost never reproduces that whole shape
     by accident.
     """
-    rows = _load(path)
-    if rows is None:
+    state = _turn_state(path)
+    if state is None:
         return None
-    _, _, shown = _scan_turn(rows, [])       # gates unused for just computing `shown`
-    if not shown.strip():
-        return None
+    _, _, shown = state
     if _MANIFEST_RE.search(shown):
         return ("Your message contains an internal `<!-- paste-gate:critical -->` "
                 "manifest block. A gated command appends that payload AFTER the "
@@ -393,12 +417,20 @@ def _leaked_manifest(path):
     return None
 
 
-def _turn_could_leak(rows):
+def _turn_could_leak(path):
     """True if some tool result THIS turn carries a manifest at all. Unlike `shown`
     (the assistant's text, generated after the tool result and prone to lagging its
     own flush), a tool result exists before the model even starts writing — so this is
     safe to check once, no retry needed, and lets `main()` skip the leak-retry wait on
-    every turn (nearly all of them) that has nothing to leak in the first place."""
+    every turn (nearly all of them) that has nothing to leak in the first place.
+
+    Does not go through `_turn_state`: that helper treats an empty `shown` as "nothing
+    to check yet" and stops there, but a tool result can already be sitting in the
+    transcript before the assistant has written a single character of its reply —
+    exactly the moment this needs to see past."""
+    rows = _load(path)
+    if rows is None:
+        return False
     _, result_by_id, _ = _scan_turn(rows, [])
     return any(MANIFEST_MARKER in v for v in result_by_id.values())
 
@@ -414,12 +446,10 @@ def _garbled_backtick_escape(path):
     instead of the intended literal text. Engine-level and unconditional, like
     `_leaked_manifest`: nothing about it is specific to either skill's vocabulary, so it
     protects any spec built on this engine, not just the two shipped today."""
-    rows = _load(path)
-    if rows is None:
+    state = _turn_state(path)
+    if state is None:
         return None
-    _, _, shown = _scan_turn(rows, [])
-    if not shown.strip():
-        return None
+    _, _, shown = state
     if _BROKEN_BACKTICK_ESCAPE_RE.search(shown):
         return ("Your message backslash-escapes a run of backticks to show them "
                 "literally — Markdown has no such escape, so it renders as garbled, "
@@ -434,19 +464,11 @@ def violation(path, specs):
     """Reason to block, or None. Re-readable so it can be retried — see main(). The
     manifest-leak check lives in `_leaked_manifest`, called separately by `main()` —
     not duplicated here."""
-    rows = _load(path)
-    if rows is None:
-        return None
-
     gates = [g for s in specs for g in s["gates"]]
-    matched, result_by_id, shown = _scan_turn(rows, gates)
-
-    if not shown.strip():
-        # No assistant text in this turn yet. Either there is genuinely nothing to
-        # check, or the message has not reached the transcript file — the hook can fire
-        # within ~300 ms of the message being written. Judging now would report every
-        # line as missing.
+    state = _turn_state(path, gates)
+    if state is None:
         return None
+    matched, result_by_id, shown = state
 
     # For every gated command that actually ran and produced real (non-error) output this
     # turn, require ITS OWN output text to reappear verbatim in the model's visible
@@ -500,6 +522,29 @@ def violation(path, specs):
     return None
 
 
+def _retry_until(check, keep_waiting=lambda result: bool(result), delays=(0.25, 0.5, 1.0)):
+    """Call `check()`, re-calling it with a widening delay for as long as
+    `keep_waiting(result)` says the current result isn't settled yet, then return the
+    last result. Every check in this file reads the SAME asynchronously-written
+    transcript — the hook can fire before the assistant's message has caught up in the
+    file — so a call right after the triggering event can catch it mid-flush; retrying
+    is how each one gives that write a chance to land before committing to an answer.
+
+    `keep_waiting` names which direction is unsettled, and differs per caller: a
+    suspected violation may still clear as the message finishes arriving (retry while
+    truthy — the default), while a leak that hasn't shown up YET may still be about to
+    (retry while falsy). `delays=()` means exactly one attempt, no waiting at all — for
+    a check with nothing async to wait on.
+    """
+    result = check()
+    for delay in delays:
+        if not keep_waiting(result):
+            break
+        time.sleep(delay)
+        result = check()
+    return result
+
+
 def main(argv):
     try:
         data = json.load(sys.stdin)
@@ -510,31 +555,24 @@ def main(argv):
     if not path:
         _allow()
 
-    # The manifest-leak check runs BEFORE the stop_hook_active gate below, and without
-    # requiring any spec to have loaded — it is an engine-level convention, not tied to
-    # a specific skill. See `_leaked_manifest`'s docstring for why this one check must
-    # not wait for a fresh (non-retry) turn: a retry forced by some OTHER violation can
-    # introduce exactly this leak as a side effect of "just paste everything to be
-    # safe", and that is precisely the turn where stop_hook_active is already true.
+    # These two run BEFORE the stop_hook_active gate below, and without requiring any
+    # spec to have loaded — they are engine-level conventions, not tied to a specific
+    # skill. See `_leaked_manifest`'s docstring for why this must not wait for a fresh
+    # (non-retry) turn: a retry forced by some OTHER violation can introduce a leak (or
+    # a garbled escape) as a side effect of "just paste everything to be safe", and
+    # that is precisely the turn where stop_hook_active is already true.
     #
     # `_turn_could_leak` gates the wait to turns where a manifest actually exists
-    # (skipping it everywhere else, see its own docstring). Retry WHILE nothing has
-    # shown up yet, not while it has: an unflushed leak can still arrive, but a
-    # confirmed one won't un-happen, so there's nothing left to wait for.
-    rows = _load(path)
-    if rows is not None and _turn_could_leak(rows):
-        leak = _leaked_manifest(path)
-        for delay in (0.25, 0.5, 1.0):
-            if leak:
-                break
-            time.sleep(delay)
-            leak = _leaked_manifest(path)
+    # (skipping it everywhere else, see its own docstring) — retried WHILE ABSENT, the
+    # opposite of every other check here, since an unflushed leak can still arrive but
+    # a confirmed one won't un-happen. The garble check needs no such gate or wait: it's
+    # cheap, and nothing async has to land before it means anything either way.
+    if _turn_could_leak(path):
+        leak = _retry_until(lambda: _leaked_manifest(path), lambda found: not found)
         if leak:
             _block(leak)
 
-    # Same engine-level, unconditional treatment as the leak check above — no gating
-    # needed, since checking is cheap and there's no separate write it has to wait on.
-    garble = _garbled_backtick_escape(path)
+    garble = _retry_until(lambda: _garbled_backtick_escape(path), delays=())
     if garble:
         _block(garble)
 
@@ -547,17 +585,10 @@ def main(argv):
     if not specs:                          # nothing installed to enforce
         _allow()
 
-    # Re-read before blocking. The transcript is written asynchronously: a block was
-    # observed 348 ms after a 2384-character message was produced, and replaying that
-    # same transcript afterwards allowed it — the hook had simply read the file before
-    # the message landed. Retry with a widening delay and bail out as soon as it clears;
-    # only a turn that is genuinely about to be blocked ever pays the wait.
-    reason = violation(path, specs)
-    for delay in (0.25, 0.5, 1.0):
-        if not reason:
-            break
-        time.sleep(delay)
-        reason = violation(path, specs)
+    # Only a turn that's genuinely about to be blocked ever pays this wait (see
+    # `_retry_until`): a block was once observed 348ms behind the message that
+    # triggered it, purely from reading the transcript before that message landed.
+    reason = _retry_until(lambda: violation(path, specs))
     if reason:
         _block(reason)
     _allow()
