@@ -194,7 +194,7 @@ class TestNeedsTitle(unittest.TestCase):
     def test_adopted_thread_is_flagged_with_no_authored_summary(self):
         state = new_state(threads={"d1": {"body": "Sollten wir hier nicht X machen?",
                                            "file": "a.py", "line": 3}})
-        F.adopt_inbound(state)
+        F.adopt_inbound(state, None, None)
         t = F.topic_for(state, "t1")
         self.assertTrue(t["needs_title"])
         self.assertIsNone(t["summary"])
@@ -202,7 +202,7 @@ class TestNeedsTitle(unittest.TestCase):
     def test_render_table_flags_a_needs_title_topic(self):
         state = new_state(threads={"d1": {"body": "Sollten wir hier nicht X machen?",
                                            "file": "a.py", "line": 3}})
-        F.adopt_inbound(state)
+        F.adopt_inbound(state, None, None)
         self.assertIn("needs summary", F.render_table(state))
 
     def test_render_table_leaves_an_authored_summary_alone(self):
@@ -213,7 +213,7 @@ class TestNeedsTitle(unittest.TestCase):
     def test_quote_warns_when_topic_needs_a_title(self):
         state = new_state(threads={"d1": {"body": "Sollten wir hier nicht X machen?",
                                            "file": "a.py", "line": 3}})
-        F.adopt_inbound(state)
+        F.adopt_inbound(state, None, None)
         self.assertIn("needs an English summary", F.render_quote(state, "t1"))
 
     def test_quote_is_silent_for_an_authored_summary(self):
@@ -224,7 +224,7 @@ class TestNeedsTitle(unittest.TestCase):
     def test_setting_a_summary_clears_the_flag(self):
         state = new_state(threads={"d1": {"body": "Sollten wir hier nicht X machen?",
                                            "file": "a.py", "line": 3}})
-        F.adopt_inbound(state)
+        F.adopt_inbound(state, None, None)
         t = F.topic_for(state, "t1")
         t["summary"] = "Clarify the X behavior"
         t["needs_title"] = False              # what `set --summary` does, see cmd == "set"
@@ -235,19 +235,236 @@ class TestNeedsTitle(unittest.TestCase):
 class TestSync(unittest.TestCase):
     def test_local_fields_survive_a_fetch(self):
         state = new_state(threads={"d1": {"gone": True, "awaiting": "you"}})
-        F.sync(state, {"d1": {"awaiting": "them"}})
+        F.sync(state, {"d1": {"awaiting": "them"}}, None, None)
         self.assertEqual(state["threads"]["d1"], {"awaiting": "them", "gone": True})
 
     def test_a_thread_missing_from_live_is_marked_resolved_and_gone(self):
         state = new_state(threads={"d1": {"awaiting": "you", "resolved": False}})
-        F.sync(state, {})
+        F.sync(state, {}, None, None)
         self.assertTrue(state["threads"]["d1"]["resolved"])
         self.assertTrue(state["threads"]["d1"]["gone"])
 
     def test_a_new_thread_from_live_is_added_verbatim(self):
         state = new_state()
-        F.sync(state, {"d1": {"awaiting": "you"}})
+        F.sync(state, {"d1": {"awaiting": "you"}}, None, None)
         self.assertEqual(state["threads"]["d1"], {"awaiting": "you"})
+
+
+class TestSyncBackfillsMissingBaseline(unittest.TestCase):
+    """A topic linked before this fix existed has `start_sha=None` and is never
+    revisited by `adopt_inbound` (its thread is already in `linked`) — without a
+    backfill, it would defer to a live read of `last_reviewed_head` forever, exactly
+    the bug the freeze-at-adoption fix closes, just for topics older than the fix."""
+
+    def test_a_linked_topic_with_no_baseline_gets_one_backfilled(self):
+        state = new_state(last_reviewed_head="OLD1")
+        t = add_linked_topic(state, "d1", file="a.py")
+        self.assertIsNone(t["start_sha"])
+        F.sync(state, {"d1": {"awaiting": "you"}}, None, None)
+        self.assertEqual(t["start_sha"], "OLD1")
+
+    def test_backfill_falls_back_to_mr_head_when_no_baseline_exists_at_all(self):
+        state = new_state()
+        t = add_linked_topic(state, "d1", file="a.py")
+        with patch.object(F, "mr_head", return_value="FRESH1"):
+            F.sync(state, {"d1": {"awaiting": "you"}}, {"enc": "x"}, 1)
+        self.assertEqual(t["start_sha"], "FRESH1")
+
+    def test_a_topic_with_its_own_baseline_is_left_alone(self):
+        state = new_state(last_reviewed_head="OLD1")
+        t = add_linked_topic(state, "d1", file="a.py", start_sha="ALREADY_SET")
+        F.sync(state, {"d1": {"awaiting": "you"}}, None, None)
+        self.assertEqual(t["start_sha"], "ALREADY_SET")
+
+
+class TestAdoptInboundBaseline(unittest.TestCase):
+    """The bug this closes, observed on a real MR: a topic auto-adopted by
+    `adopt_inbound` used to get no baseline of its own (`start_sha=None`) and defer to
+    a LIVE read of `last_reviewed_head` at render time (`render_topic_diff`). Acking a
+    DIFFERENT topic in the same session advances that shared value — so the deferred
+    topic's own "changes since you posted" silently lost everything before the advance,
+    with no sign anything was wrong. Freezing the baseline at adoption time closes it."""
+
+    def test_adopted_topic_freezes_the_current_baseline(self):
+        state = new_state(threads={"d1": {"body": "x", "file": "a.py", "line": 3}},
+                           last_reviewed_head="OLD1")
+        F.adopt_inbound(state, None, None)
+        self.assertEqual(F.topic_for(state, "t1")["start_sha"], "OLD1")
+
+    def test_a_later_baseline_advance_does_not_retroactively_move_it(self):
+        """The regression itself: not whether `start_sha` (a plain stored value that
+        can't spontaneously change) survives a later advance — it trivially always
+        does — but whether `render_topic_diff`, which is what actually reads it, still
+        compares from the FROZEN baseline once `last_reviewed_head` has moved on."""
+        state = new_state(threads={"d1": {"body": "x", "file": "a.py", "line": 3,
+                                          "url": "u"}},
+                          last_reviewed_head="OLD1",
+                          mr_web_url="https://gitlab.example.com/g/r/-/merge_requests/1")
+        F.adopt_inbound(state, None, None)
+        state["last_reviewed_head"] = "NEW1"      # another topic's ack + set-head
+        with patch.object(F, "mr_head", return_value="NEW1"), \
+             patch.object(F, "versions", return_value=[{"id": 2}]), \
+             patch.object(F, "_compare", return_value=[
+                 {"new_path": "a.py", "old_path": "a.py", "diff": "+fix\n"}]) as cp:
+            out = F.render_topic_diff(state, {"enc": "x"}, 1, "t1")
+        self.assertEqual(cp.call_args.args[1], "OLD1")   # not the advanced baseline
+        self.assertIn("+fix", out)
+
+    def test_no_baseline_yet_falls_back_to_the_current_head(self):
+        """First-ever sync, before any `set-head` — `attach_thread` already falls
+        back to `mr_head` for this exact case; this is that same fallback for an
+        auto-adopted topic."""
+        state = new_state(threads={"d1": {"body": "x", "file": "a.py", "line": 3}})
+        with patch.object(F, "mr_head", return_value="FRESH1"):
+            F.adopt_inbound(state, ctx={"enc": "x"}, iid=1)
+        self.assertEqual(F.topic_for(state, "t1")["start_sha"], "FRESH1")
+
+    def test_no_baseline_and_no_ctx_leaves_it_unset(self):
+        """`ctx`/`iid` may be `None` — every real call site always has both, via
+        `sync`; only a test with no live GitLab context to give passes `None, None`
+        explicitly, and gets the pre-fix behavior for that one case."""
+        state = new_state(threads={"d1": {"body": "x", "file": "a.py", "line": 3}})
+        F.adopt_inbound(state, None, None)
+        self.assertIsNone(F.topic_for(state, "t1")["start_sha"])
+
+
+class TestRenderUpdatesRebaseContentCheck(unittest.TestCase):
+    """`_rebase_kind`'s commit-message comparison misses exactly the common case of a
+    folded-in fixup: `git commit --amend --no-edit` (or an interactive-rebase `fixup!`)
+    keeps the target commit's message unchanged BY DESIGN. These pin the content-based
+    check `render_updates` runs instead/first: does any topic's own tracked file
+    actually differ between the two heads, regardless of what the messages say —
+    reusing the same compare a normal (non-rebase) push already trusts."""
+
+    def _ctx(self):
+        return {"enc": "grp%2Frepo", "web": "https://gitlab.example.com/grp/repo"}
+
+    def _versions(self):
+        return [{"id": 2, "head_commit_sha": "NEW1", "base_commit_sha": "BASE2"},
+                {"id": 1, "head_commit_sha": "OLD1", "base_commit_sha": "BASE1"}]
+
+    def _fake_compare(self, pairs):
+        """side_effect for `_compare`: `pairs` maps (frm, to) -> diffs list (or
+        `None`, to simulate that one call failing). The check now makes TWO calls
+        per rebased push (each version's own base->head patch), so a test has to
+        distinguish them — a single blanket `return_value` can't."""
+        def _fn(ctx, frm, to):
+            return pairs.get((frm, to))
+        return _fn
+
+    def test_content_change_on_a_tracked_topic_overrides_unchanged_messages(self):
+        """The actual production miss: a rebase whose commit messages are identical
+        (a silent `--amend`) but whose AUTHOR'S OWN patch — base to head, for each
+        version — did change a tracked topic's file."""
+        state = new_state(last_reviewed_head="OLD1")
+        add_linked_topic(state, "d1", file="a.py")
+        compare = self._fake_compare({
+            ("BASE1", "OLD1"): [{"new_path": "a.py", "old_path": "a.py",
+                                  "diff": "+old placeholder\n"}],
+            ("BASE2", "NEW1"): [{"new_path": "a.py", "old_path": "a.py",
+                                  "diff": "+nested placeholder\n"}],
+        })
+        with patch.object(F, "mr_head", return_value="NEW1"), \
+             patch.object(F, "versions", return_value=self._versions()), \
+             patch.object(F, "_compare", side_effect=compare), \
+             patch.object(F, "_version_commits") as vc:
+            out = F.render_updates(state, self._ctx(), 1)
+        vc.assert_not_called()          # content already answered it — no need to ask
+        self.assertIn("⚠️", out)
+        self.assertIn("t1", out)
+
+    def test_pure_rebase_where_upstream_touches_a_tracked_file_does_not_false_alarm(self):
+        """Caught in review: an earlier version compared OLD head directly to NEW
+        head, which cannot tell "the target branch moved and happened to touch a.py"
+        apart from "the author touched a.py" — so a PURE rebase where the author
+        changed nothing, but upstream touched a tracked file, must NOT raise the
+        file-level ⚠️. It must fall through to the (accurate, here) message
+        classification instead."""
+        state = new_state(last_reviewed_head="OLD1")
+        add_linked_topic(state, "d1", file="a.py")
+        compare = self._fake_compare({
+            # the author's own patch is identical before/after and never touches a.py
+            ("BASE1", "OLD1"): [{"new_path": "b.py", "old_path": "b.py", "diff": "+x\n"}],
+            ("BASE2", "NEW1"): [{"new_path": "b.py", "old_path": "b.py", "diff": "+x\n"}],
+            # a raw head-to-head compare WOULD show a.py changing (upstream drift) —
+            # this pair must never be consulted for the file-level check.
+            ("OLD1", "NEW1"): [{"new_path": "a.py", "old_path": "a.py",
+                                 "diff": "+upstream edit\n"}],
+        })
+        with patch.object(F, "mr_head", return_value="NEW1"), \
+             patch.object(F, "versions", return_value=self._versions()), \
+             patch.object(F, "_compare", side_effect=compare), \
+             patch.object(F, "_version_commits",
+                          side_effect=lambda ctx, iid, vid: [{"message": "feat: x"}]):
+            out = F.render_updates(state, self._ctx(), 1)
+        self.assertIn("↻", out)
+        self.assertNotIn("⚠️", out)
+
+    def test_no_tracked_file_touched_and_unchanged_messages_reassures_plainly(self):
+        state = new_state(last_reviewed_head="OLD1")
+        add_linked_topic(state, "d1", file="a.py")
+        with patch.object(F, "mr_head", return_value="NEW1"), \
+             patch.object(F, "versions", return_value=self._versions()), \
+             patch.object(F, "_compare",
+                          return_value=[{"new_path": "unrelated.py",
+                                         "old_path": "unrelated.py", "diff": "+x\n"}]), \
+             patch.object(F, "_version_commits",
+                          side_effect=lambda ctx, iid, vid: [{"message": "feat: x"}]):
+            out = F.render_updates(state, self._ctx(), 1)
+        self.assertIn("↻", out)
+        self.assertIn("no tracked topic's file differs", out)
+
+    def test_content_check_failure_does_not_overclaim_a_clean_result(self):
+        """If the compare API call itself fails, `touch` comes back empty for a
+        completely different reason than "checked and found nothing" — there's
+        nothing to be confident about. Must fall back to the ORIGINAL, hedged
+        message-only wording, not silently upgrade to the stronger claim."""
+        state = new_state(last_reviewed_head="OLD1")
+        add_linked_topic(state, "d1", file="a.py")
+        with patch.object(F, "mr_head", return_value="NEW1"), \
+             patch.object(F, "versions", return_value=self._versions()), \
+             patch.object(F, "_compare", return_value=None), \
+             patch.object(F, "_version_commits",
+                          side_effect=lambda ctx, iid, vid: [{"message": "feat: x"}]):
+            out = F.render_updates(state, self._ctx(), 1)
+        self.assertIn("↻", out)
+        self.assertNotIn("no tracked topic's file differs", out)
+        self.assertIn("skim the URL if unsure", out)
+
+    def test_content_check_failure_with_a_message_change_claims_no_scope(self):
+        """The other half of the `cmp`-failed branch: a real message change too.
+        Must still say "not verified" rather than the stronger, unearned "(none on a
+        topic you're tracking yet)" — that claim requires the content check to have
+        actually run, which it didn't here."""
+        state = new_state(last_reviewed_head="OLD1")
+        add_linked_topic(state, "d1", file="a.py")
+        commits = {1: [{"message": "feat: x"}],
+                   2: [{"message": "feat: x", "title": "feat: x"},
+                       {"message": "fix: y", "title": "fix: y"}]}
+        with patch.object(F, "mr_head", return_value="NEW1"), \
+             patch.object(F, "versions", return_value=self._versions()), \
+             patch.object(F, "_compare", return_value=None), \
+             patch.object(F, "_version_commits",
+                          side_effect=lambda ctx, iid, vid: commits[vid]):
+            out = F.render_updates(state, self._ctx(), 1)
+        self.assertIn("real change(s) folded in", out)
+        self.assertNotIn("tracking yet", out)      # never verified — don't claim it
+
+    def test_no_tracked_file_touched_but_a_real_message_change_still_flags_it(self):
+        state = new_state(last_reviewed_head="OLD1")
+        add_linked_topic(state, "d1", file="a.py")
+        commits = {1: [{"message": "feat: x"}],
+                   2: [{"message": "feat: x, plus a fix", "title": "feat: x, plus a fix"}]}
+        with patch.object(F, "mr_head", return_value="NEW1"), \
+             patch.object(F, "versions", return_value=self._versions()), \
+             patch.object(F, "_compare",
+                          return_value=[{"new_path": "unrelated.py",
+                                         "old_path": "unrelated.py", "diff": "+x\n"}]), \
+             patch.object(F, "_version_commits",
+                          side_effect=lambda ctx, iid, vid: commits[vid]):
+            out = F.render_updates(state, self._ctx(), 1)
+        self.assertIn("⚠️", out)
+        self.assertIn("tracking yet", out)
 
 
 class TestPruneWorktrees(Throwaway, unittest.TestCase):

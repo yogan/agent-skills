@@ -16,6 +16,10 @@ The skill is **read-only against GitLab** — you draft, the user posts and reso
 
 Once adopted, a hand-posted comment is tracked exactly like a drafted one: the author's reply
 flips it to ◐ needs-ack, `diff <t>` shows what they changed for it, and only your ack closes it.
+The baseline `diff <t>` compares from is captured the moment `sync` adopts the topic, not
+re-read later — so acking something else first and advancing your baseline can't retroactively
+blind this topic to a change that landed before that advance. (A topic linked before this
+existed has no baseline of its own either; `sync` backfills one for it the first time it can.)
 
 Keying the hold-back on the *file* rather than on "any draft pending" is deliberate: during
 curation there are almost always drafts pending, so the coarser rule meant a comment written in
@@ -92,11 +96,25 @@ A review spans days; the state file persists across sessions. Each check:
    ```
    Each push is a `- **push N:** <url>` bullet with a nested `  - ` detail line — either a
    **diffstat** (`` `+33/−23` · 2 files ``) + **topics touched**, or — when the branch was rebased
-   (its base SHA moved) — a rebase classification:
-   - **↻ pure rebase** — only the base moved, no author content change; nothing to re-review.
-   - **⚠️ rebase + N real change(s) folded in** — the annoying case: someone rebased *and*
-     edited/added commits in one push. It lists the new/edited commit subjects so you know real
-     work is hidden in there — inspect via the URL. **Call this out to the user explicitly.**
+   (its base SHA moved) — a rebase classification. Content is checked FIRST: not a raw
+   old-head-vs-new-head compare (that also contains whatever the rebase pulled in from the new
+   base — a file the TARGET branch touched between the two bases would look exactly like one
+   the author touched), but each push's OWN patch, base to head, compared against the other's —
+   which survives a silent `--amend` that keeps the commit message unchanged AND survives the
+   target branch moving. Commit messages are only a fallback for when that check can't run:
+   - **⚠️ rebase + a real change to a tracked file** — the annoying case, caught by content:
+     the author's own patch changed on a topic you're tracking, whatever the commit messages
+     say. **Call this out to the user explicitly**, and re-check that topic via `quote`/the URL
+     rather than trusting its own `diff` — if its baseline has since moved past this push,
+     `diff` will show no change even though this one did.
+   - **↻ pure rebase (content checked)** — no tracked topic's file differs, and commit
+     messages are unchanged; nothing to re-review.
+   - **⚠️ rebase + N real change(s) folded in** — a message-based catch for a new/edited commit
+     that isn't on a file you're tracking yet. Lists the new/edited commit subjects — inspect
+     via the URL. **Call this out to the user explicitly.**
+   - **↻ rebase, content check failed** — the compare call didn't come back, so this is the
+     older, message-only verdict with its original hedge: a silent `--amend` would not show
+     here. Skim the URL if unsure.
    - **↻ rebase (couldn't classify)** — the API didn't return version commits; use the URL.
 
    Add your **one-line summary as a `  - ` sub-bullet** under each push (see SKILL *Resuming*),

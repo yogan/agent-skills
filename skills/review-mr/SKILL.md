@@ -254,7 +254,8 @@ python3 $SD/findings.py link <t> <discussion_id>   # on the user's OK → topic 
 ```
 
 A linked topic captures a `start_sha` baseline, so later you can show exactly what the author
-changed for it (across force-pushes).
+changed for it (across force-pushes) — and so does a thread `sync` adopts on its own (see
+REFERENCE.md's *Comments you posted yourself*).
 
 ## Resuming an in-progress review
 
@@ -280,10 +281,13 @@ label). Add your **one-line summary as a further `  - ` sub-bullet**:
   - `+20/−8` · 3 files · touches ◈ t1, ◈ t3, ◈ t5
   - the five fixes, one commit — matches each finding
 - **push 2:** <url>
-  - ↻ rebase onto latest main — messages unchanged, nothing to re-review
+  - ↻ rebase onto latest main — no tracked topic's file differs, and commit messages
+    are unchanged
 ```
 
-A **⚠️ mixed rebase** line (real changes folded into a rebase) — **call it out loudly**.
+A **⚠️** rebase line — a real change hidden in the rebase, caught either by content (it
+touched a topic's tracked file, whatever the commit messages say) or, failing that, by a
+new/edited commit message — **call it out loudly**.
 
 **2 — the overview + first topic** (the part after the `---`). Paste verbatim: the **overview table** (your map of every topic's state) plus
 the first topic needing you. **The overview table is mandatory in the opener — never drop it**

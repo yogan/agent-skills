@@ -313,7 +313,10 @@ def kind_icon(t):
 LOCAL_THREAD_FIELDS = ("gone",)
 
 
-def sync(state, live):
+def sync(state, live, ctx, iid):
+    """`ctx`/`iid` are the current GitLab context and MR iid — every real call site
+    has both; only a test that has no live context to give passes `None, None`
+    explicitly (see `adopt_inbound`'s docstring for what that trades away)."""
     # A live thread's record is REPLACED, bar the local fields: an `update()` keeps keys the
     # fetch has stopped producing, which is how a conditional field (a line range that the
     # reviewer edited away, say) would linger as stale truth. rework-mr's threads.py had the
@@ -330,14 +333,30 @@ def sync(state, live):
         if tid not in live:                     # discussion deleted upstream
             state["threads"][tid]["resolved"] = True
             state["threads"][tid]["gone"] = True
-    adopt_inbound(state)
+    adopt_inbound(state, ctx, iid)
+    # A topic linked before this fix existed has no baseline of its own either, and
+    # `adopt_inbound` above never revisits it (its thread is already in `linked`) — so
+    # without this, it would keep deferring to a live read forever, exactly the bug
+    # this whole change closes, just for topics adopted before it shipped. Frozen the
+    # same way, the first time a baseline is available after that.
+    for t in state["topics"]:
+        if t["thread_ids"] and not t.get("start_sha"):
+            t["start_sha"] = state.get("last_reviewed_head")
+            if not t["start_sha"] and ctx is not None and iid is not None:
+                t["start_sha"] = mr_head(ctx, iid)
 
 
-def adopt_inbound(state):
+def adopt_inbound(state, ctx, iid):
     """Surface discussions you didn't open — a peer reviewer's thread (💬, first
     class and mergeable) or the author's own (🖊️, rare) — as topics, so they show
     up in the overview and needs-ack flow. Threads you opened stay out of this
-    (they belong to your drafts, matched via `candidates`/`link`)."""
+    (they belong to your drafts, matched via `candidates`/`link`).
+
+    `ctx`/`iid` may be `None` — tests only, when there is no live GitLab context to
+    give; every real call site has both, via `sync`. Without them, a topic adopted
+    before any baseline exists gets no fallback and stays `start_sha=None`, deferring
+    to a live read at render time exactly like before this function froze anything.
+    """
     linked = {th for t in state["topics"] for th in t["thread_ids"]}
     ignored = set(state.get("ignored") or [])       # dropped inbound → stay dropped
     # A thread YOU opened is normally left to candidates/link, because it may be the
@@ -347,11 +366,22 @@ def adopt_inbound(state):
     # pending, so a comment you wrote straight in the UI would never land in the table.
     draft_files = {t.get("file") for t in state["topics"]
                    if topic_status(state, t) == "draft" and t.get("file")}
+    # Frozen once per call, lazily (only once something is actually about to be
+    # adopted): `last_reviewed_head` is shared and advances whenever ANY topic is
+    # acked, so a topic that deferred to it at RENDER time instead could silently
+    # compare from a baseline later than the one in effect when it was adopted. Same
+    # freeze `attach_thread` already does for a manually-linked thread.
+    baseline = state.get("last_reviewed_head")
+    baseline_ready = baseline is not None
     for tid, x in state["threads"].items():
         if tid in linked or tid in ignored or x.get("gone"):
             continue
         if x.get("mine") and x.get("file") in draft_files:
             continue                          # could be that draft, posted — ask instead
+        if not baseline_ready:
+            if ctx is not None and iid is not None:
+                baseline = mr_head(ctx, iid)
+            baseline_ready = True
         if x.get("mine"):
             source = "human"                  # 👤 you found it and posted it yourself
         elif x.get("by_author"):
@@ -363,7 +393,7 @@ def adopt_inbound(state):
         # makes that gap visible in the table/quote instead of silently rendering a
         # truncated, possibly non-English quote as if it were an authored one-liner.
         t = add_topic(state, source=source, file=x.get("file"),
-                      line=x.get("line"), needs_title=True,
+                      line=x.get("line"), needs_title=True, start_sha=baseline,
                       by=None if x.get("mine") else first_name(x.get("author")))
         t["thread_ids"].append(tid)
 
@@ -876,6 +906,47 @@ def _topics_touching(state, files):
     return hit
 
 
+_HUNK_HEADER_RE = re.compile(r"^@@[^\n]*@@[^\n]*$", re.M)
+
+
+def _author_touch(ctx, state, pred, v, start, to):
+    """(touched topic ids, checked) for a rebased push: which TRACKED topics' files
+    the AUTHOR's own change actually differs on between the two pushes.
+
+    A straight `start`→`to` compare cannot tell the author's own edit from whatever
+    the rebase pulled in from the new base: a file the TARGET branch touched between
+    the two bases looks identical, content-wise, to one the author touched — a plain
+    head-to-head diff has no way to tell them apart. Each version's OWN patch — its
+    base to its head — isolates just the author's delta; comparing those two patches
+    to each other is what actually answers "did the author's own change to this file
+    evolve." Hunk headers are stripped first, so a line-number shift from a nearby,
+    unrelated upstream edit does not register as a change on its own.
+    """
+    before = _compare(ctx, pred.get("base_commit_sha"), start)
+    after = _compare(ctx, v.get("base_commit_sha"), to)
+    if before is None or after is None:
+        return [], False
+
+    def by_path(diffs):
+        return {(d.get("new_path") or d.get("old_path")):
+                _HUNK_HEADER_RE.sub("", d.get("diff") or "") for d in diffs}
+
+    b, a = by_path(before), by_path(after)
+    moved = [p for p in set(b) | set(a) if b.get(p) != a.get(p)]
+    return _topics_touching(state, moved), True
+
+
+def _rebase_folded_in_line(ob, nb, rd, scope_note=""):
+    """The `⚠️ ... N real change(s) folded in` line — shared by the two message-based
+    branches in `render_updates` (content check unavailable, and content check ran
+    clean but a message still changed) so the wording can't drift between them."""
+    subs = "; ".join(rd["subjects"][:3])
+    more = "…" if len(rd["subjects"]) > 3 else ""
+    return (f"  - ⚠️ rebase onto new base `{ob}` → `{nb}` **+ "
+            f"{rd['changed']} real change(s) folded in**{scope_note} — inspect "
+            f"carefully. New/edited commits: {subs}{more}")
+
+
 def head_report(state, ctx, iid):
     """One-liner for the sync banner: did the author push since your baseline?"""
     cur = mr_head(ctx, iid)
@@ -891,11 +962,14 @@ def head_report(state, ctx, iid):
 
 def render_updates(state, ctx, iid):
     """The 'any updates?' report: each push since your baseline as a compare URL,
-    labelled **rebase** (branch moved onto a new target base — no reviewable author
-    change) or a **diffstat** + topics touched. You add the prose summary per push.
+    labelled **rebase** or a **diffstat** + topics touched. You add the prose summary
+    per push.
 
     Rebase vs real-change is read from version metadata: a push whose base_commit_sha
-    differs from the previous version's is a rebase; same base + new head is fixups."""
+    differs from the previous version's is a rebase; same base + new head is fixups. A
+    rebase is NOT automatically "no reviewable author change", though — see the
+    content check inside the `rebased` branch below for why a fixup folded into the
+    same push can still hide one."""
     cur = mr_head(ctx, iid)
     last = state.get("last_reviewed_head")
     if not last:
@@ -920,20 +994,48 @@ def render_updates(state, ctx, iid):
         if rebased:
             ob = (pred.get("base_commit_sha") or "")[:8]
             nb = (v.get("base_commit_sha") or "")[:8]
-            rd = _rebase_kind(ctx, iid, pred.get("id"), v.get("id"))
-            if rd is None:
-                out.append(f"  - ↻ rebase onto new base `{ob}` → `{nb}` "
-                           "(couldn't classify — inspect via the URL)")
-            elif rd["changed"] == 0:
-                out.append(f"  - ↻ rebase onto new base `{ob}` → `{nb}` — commit "
-                           "messages unchanged (likely no author change; a silent "
-                           "`--amend` wouldn't show here, so skim the URL if unsure)")
-            else:                                # the annoying mixed push
-                subs = "; ".join(rd["subjects"][:3])
-                more = "…" if len(rd["subjects"]) > 3 else ""
-                out.append(f"  - ⚠️ rebase onto new base `{ob}` → `{nb}` **+ "
-                           f"{rd['changed']} real change(s) folded in** — inspect "
-                           f"carefully. New/edited commits: {subs}{more}")
+            # Commit-message comparison (`_rebase_kind`) misses exactly the common
+            # case of a folded-in fixup: `git commit --amend --no-edit` (or an
+            # interactive-rebase `fixup!`) keeps the target commit's message
+            # unchanged BY DESIGN. The reliable signal is content — but NOT a plain
+            # `start`→`to` compare (that also contains whatever the rebase pulled in
+            # from the new base); see `_author_touch` for why and how it isolates
+            # just the author's own delta. Checked first, and skips `_rebase_kind`'s
+            # extra API calls entirely when it already has an answer.
+            touch, checked = _author_touch(ctx, state, pred, v, start, to)
+            if touch:
+                topics = ", ".join(tref(x) for x in touch)
+                out.append(f"  - ⚠️ rebase onto new base `{ob}` → `{nb}` **+ a real "
+                           f"change to a file tracked by {topics}** — inspect "
+                           "carefully; check via `quote`/the URL, not a plain "
+                           "`diff`, since a baseline already past this push would "
+                           "show none there even though this one did.")
+            else:
+                rd = _rebase_kind(ctx, iid, pred.get("id"), v.get("id"))
+                if rd is None:
+                    out.append(f"  - ↻ rebase onto new base `{ob}` → `{nb}` "
+                               "(couldn't classify — inspect via the URL)")
+                elif not checked:
+                    # The content check itself failed (e.g. a transient API error) —
+                    # `touch` came back empty because there was nothing to check, not
+                    # because a check ran clean. Don't claim the stronger guarantee
+                    # below when it was never verified; fall back to message-only,
+                    # with its original hedge intact.
+                    if rd["changed"] == 0:
+                        out.append(f"  - ↻ rebase onto new base `{ob}` → `{nb}` — "
+                                   "commit messages unchanged (likely no author "
+                                   "change; a silent `--amend` wouldn't show here, so "
+                                   "skim the URL if unsure — the content check that "
+                                   "would normally catch it failed)")
+                    else:
+                        out.append(_rebase_folded_in_line(ob, nb, rd))
+                elif rd["changed"] == 0:
+                    out.append(f"  - ↻ rebase onto new base `{ob}` → `{nb}` — no "
+                               "tracked topic's file differs, and commit messages "
+                               "are unchanged")
+                else:                # a real commit, but not on a file you're tracking yet
+                    out.append(_rebase_folded_in_line(
+                        ob, nb, rd, " (none on a topic you're tracking yet)"))
         else:
             cmp = _gl_compare(ctx, start, to)
             if cmp:
@@ -1255,22 +1357,22 @@ def main():
     if cmd == "path":
         print(path)
     elif cmd == "sync":
-        sync(state, fetch_threads(ctx, iid, me, author))
+        sync(state, fetch_threads(ctx, iid, me, author), ctx, iid)
         save(path, state)
         print(render_table(state, "all"))
         print("\n_" + head_report(state, ctx, iid) + "_")
     elif cmd == "todo":
-        sync(state, fetch_threads(ctx, iid, me, author))
+        sync(state, fetch_threads(ctx, iid, me, author), ctx, iid)
         save(path, state)
         print(render_table(state, "mine") + critical_manifest.manifest())
     elif cmd == "present":
-        sync(state, fetch_threads(ctx, iid, me, author))
+        sync(state, fetch_threads(ctx, iid, me, author), ctx, iid)
         save(path, state)
         print(render_present(state) + critical_manifest.manifest())
     elif cmd == "bodies":
         print(render_bodies(state))
     elif cmd == "candidates":
-        sync(state, fetch_threads(ctx, iid, me, author))
+        sync(state, fetch_threads(ctx, iid, me, author), ctx, iid)
         save(path, state)
         print(render_candidates(state, me))
     elif cmd == "quote":
@@ -1280,7 +1382,7 @@ def main():
     elif cmd == "diff":
         print(render_topic_diff(state, ctx, iid, args.topic) + critical_manifest.manifest())
     elif cmd == "updates":
-        sync(state, fetch_threads(ctx, iid, me, author))
+        sync(state, fetch_threads(ctx, iid, me, author), ctx, iid)
         save(path, state)
         print(render_updates(state, ctx, iid) + critical_manifest.manifest())
     elif cmd == "resume":
@@ -1294,7 +1396,7 @@ def main():
         # manifest covers everything this command built — updates has no critical
         # content of its own, but present's table (and first topic's code, if any)
         # does, and paste-gate.py needs it all in one place to check the whole thing.
-        sync(state, fetch_threads(ctx, iid, me, author))
+        sync(state, fetch_threads(ctx, iid, me, author), ctx, iid)
         save(path, state)
         u = render_updates(state, ctx, iid)
         p = render_present(state)
@@ -1379,7 +1481,7 @@ def main():
             # "I posted it by hand" — resolve it instead of asking the user for an id
             # they would have to hunt for. Unambiguous when exactly one unlinked thread
             # of theirs sits on this topic's file, which is the normal case.
-            sync(state, fetch_threads(ctx, iid, me, author))
+            sync(state, fetch_threads(ctx, iid, me, author), ctx, iid)
             linked = {th for x in state["topics"] for th in x["thread_ids"]}
             hits = [tid for tid, x in state["threads"].items()
                     if x.get("mine") and not x.get("gone") and tid not in linked
