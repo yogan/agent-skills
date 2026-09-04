@@ -364,11 +364,18 @@ def add_legend(svg, entries, font, pad=D2_PAD):
             # flex row that centres the words in whatever height it is given — which is the
             # swatch's, so the two line up without a baseline being computed here at all.
             # The inline size overrides the 12.5px that class carries.
+            #
+            # The COLOUR has to be written too, and forgetting it is invisible in exactly one
+            # theme: `.md` sets no colour, d2 tags its own callout divs `color-N1`, and HTML
+            # with neither inherits black — which reads fine on a light page and disappears
+            # into a dark one. Writing `palette.FG` here means the theme machinery rewrites it
+            # like any other colour in the drawing: a var in an embedded figure, the dark
+            # value in a baked one.
             marks.append(
                 f'<foreignObject x="{x + lead:.1f}" y="{top:.1f}" width="{width:.1f}" '
                 f'height="{swatch:.1f}"><div xmlns="http://www.w3.org/1999/xhtml" '
-                f'class="md"><p style="font-size:{font:g}px">{_escape(label)}</p>'
-                "</div></foreignObject>")
+                f'class="md"><p style="color:{palette.FG};font-size:{font:g}px">'
+                f"{_escape(label)}</p></div></foreignObject>")
     return _append(_grown(svg, bottom=band), marks)
 
 

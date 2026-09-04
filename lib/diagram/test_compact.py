@@ -273,6 +273,22 @@ class TestRoleLegend(unittest.TestCase):
         self.assertNotIn("<text", out)
         self.assertIn('class="md"', out)
 
+    def test_the_words_carry_a_colour_the_theme_machinery_can_rewrite(self):
+        """Shipped once without one, and it is invisible in exactly one theme: `.md` sets no
+        colour, d2 tags its own callout divs `color-N1`, and HTML with neither inherits black
+        — which reads fine on a light page and disappears into a dark one. Writing a mapped
+        literal means `palette.resolve` / `to_vars` rewrite it like any colour in the drawing.
+
+        Not asserted as a hex: what matters is that the colour is THERE and is one the
+        palette claims, which is what makes both themes come out right."""
+        from lib.diagram import palette
+        out = compact.add_legend(self.svg(), self.ENTRIES, 14)
+        self.assertIn(f"color:{palette.FG}", out)
+        self.assertEqual(palette.unmapped(out), {})
+        self.assertIn(palette.for_theme(palette.FG, "dark"),
+                      palette.resolve(out, "dark"),
+                      "a dark render has to get the dark ink")
+
     def test_the_words_are_set_in_the_size_they_are_given(self):
         """Overriding the 12.5px the callout class carries, because a callout's size lives in
         the PAGE's css where `gates/size` cannot see it — while this one is written into the
