@@ -4,16 +4,22 @@ This is the one place in the renderer that changes where a line goes, and it is 
 not in [`arrows.py`](arrows.py) — that module measures and does not redraw, and keeping the two
 apart is what stops "nudge it" becoming the answer to every route complaint.
 
-Three repairs, each described at the function that does it, and none of them costs any page:
+Four repairs, each described at the function that does it, and none of them costs any page:
 
   * `_slide` moves the step at the END of a route, so its arrowhead sits on straight line;
   * `_square` deepens a sideways transition in the MIDDLE of one, so d2 can draw it as two
     turns instead of a wobble;
-  * `_clear` steps a run out from under a callout resting against it.
+  * `_clear` steps a run out from under a callout resting against it;
+  * `_converge` brings an arrow end onto the bundle its neighbours already arrive in.
 
-The last is the odd one, because nothing about that route is malformed — it is `place` that
-cannot see the problem, having been asked what a callout COVERS rather than what it touches.
-The line moves because moving it is free and moving the callout is not.
+The last two are the odd ones, because nothing about those routes is malformed. For `_clear` it
+is `place` that cannot see the problem, having been asked what a callout COVERS rather than what
+it touches. The line moves because moving it is free and moving the callout is not.
+
+`_converge` is about a PAIR of arrows rather than about either one: ELK puts edges that point
+at the same row of one table on a shared port, and then lands one of them a few px off it. Each
+route is fine and the drawing is not — two lines a fraction of a glyph apart read as one thick
+line that splits.
 
 **What the first one does.** ELK brings an edge across the drawing on one long run, steps
 sideways at the very last moment, and arrives with about 3.5px of straight line for a 10px
@@ -51,11 +57,12 @@ one ELK proposed. Only `marker-end` tails are moved: the twelve are all at that 
 the end that arrives at a box, and a `marker-start` needing this would still be reported by
 `arrows.defects` for someone to come back to.
 
-**All three refuse what they do not recognise.** Each checks every part of the shape it is
+**All four refuse what they do not recognise.** Each checks every part of the shape it is
 about to rewrite rather than assuming it, and returns the route untouched otherwise — a defect
 left reported is a great deal better than a line moved somewhere nobody measured.
 """
 import re
+from collections import namedtuple
 
 from . import arrows
 from . import edgelabel
@@ -89,9 +96,12 @@ CALLOUT_CLEARANCE = 10
 MIN_DAYLIGHT = arrows.MIN_RUN
 
 # How close two parallel runs may get before they read as one thick line rather than two
-# arrows. Only relevant when something here MOVES a run, since ELK spaces its own channels far
-# wider than this — 30px apart on the figure that needed the move. Below about this the two
-# arrows arriving at one box stop being separately followable.
+# arrows. Below about this the two arrows arriving at one box stop being separately followable.
+#
+# It bounds a run this module moves, and it is what `_converge` measures ELK's own arrivals
+# against. ELK spaces its channels far wider than this, but it does NOT space its arrival
+# points: edges pointing at one row of one table mostly share a port, and the odd one lands a
+# few px off it.
 MIN_SEPARATION = 20
 
 # The shortest straight run left between two rebuilt corners. Its job is structural rather than
@@ -117,11 +127,11 @@ _NUM = re.compile(r"-?\d+(?:\.\d+)?")
 def straighten(svg, obstacles):
     """`svg` with every route repaired that can be, given the shapes a route may not cross.
 
-    The three run in this order because they touch different parts of a route and the later
-    ones want the earlier ones' result: `_square` fixes a transition in the middle, `_clear`
-    may then move a whole run, and `_slide` works on whatever tail that left. Rewrites the `d`
-    of the connections it changes and nothing else, so a drawing needing none of it comes back
-    byte-identical.
+    The four run in this order because they touch different parts of a route and the later
+    ones want the earlier ones' result: `_square` fixes a transition in the middle, `_converge`
+    then moves the tail across, `_clear` may move a whole run, and `_slide` works on whatever
+    tail that left. Rewrites the `d` of the connections it changes and nothing else, so a
+    drawing needing none of it comes back byte-identical.
     """
     holes, canvas = arrows.holes(svg), _canvas(svg)
     callouts = edgelabel.callout_boxes(svg)
@@ -129,11 +139,16 @@ def straighten(svg, obstacles):
     # sequence diagram's lifelines routinely are — and keying on `d` would then hide each from
     # the other, so a run could be pushed onto a channel it was supposed to keep off.
     runs = [arrows.leg_boxes(m.group(1)) for m in arrows.CONNECTION.finditer(svg)]
+    # Decided across every route at once, and before any of them moves: which end joins which
+    # bundle is a question about the whole drawing, and answering it per route as the loop
+    # rewrites them would let each one see a half-repaired picture.
+    merges = _merges(svg)
     out, end = [], 0
     for where, match in enumerate(arrows.CONNECTION.finditer(svg)):
         original = match.group(1)
         others = [leg for i, legs in enumerate(runs) if i != where for leg in legs]
         fixed = _square(original, canvas, obstacles) or original
+        fixed = _converge(fixed, merges.get(where), obstacles) or fixed
         fixed = _clear(fixed, callouts, others, canvas, obstacles) or fixed
         fixed = _slide(fixed, holes, obstacles) or fixed
         if fixed != original:
@@ -385,6 +400,150 @@ def _square(d, canvas, obstacles):
         if abs(tail) < KEEP_RUN:
             return None                  # the run it turns into would be eaten by the move
     moved = _emit(rebuilt)
+    return None if arrows.crosses(moved, obstacles) else moved
+
+
+# One arrowhead and how it arrives: which axis it travels on, which way along it, how far
+# along the drawing it stops (`along`) and where across (`across`). Two heads with the same
+# axis, way and `along` are arriving at the same face of the same box; `across` is the only
+# thing that then tells them apart, which is why it is the one this pass moves.
+Arrival = namedtuple("Arrival", "index axis way along across movable")
+
+
+def _merges(svg):
+    """`{connection index: how far its tail moves across}` — the arrivals worth tidying.
+
+    ELK gives edges pointing at one row of one table the same port and they land exactly on top
+    of each other, which is how a reader knows they are a bundle. It does not do that reliably,
+    and an arrival a few px off the bundle is neither one line nor two distinguishable ones.
+    So an arrival closer than `MIN_SEPARATION` to a neighbour is asked to move onto it; one
+    already there, or already further than that, is not. Whether the move can actually be made
+    is `_converge`'s answer, not this one's — what cannot be moved stays reported as a defect.
+
+    **Which of them moves is decided by what it would cost the rest of the route**, not by
+    counting heads. Moving a tail is free — the last run slides across and the run feeding it
+    grows by the same amount — but a route with no corner in it is a straight line from box to
+    box, and moving that drags its START off the middle of the row it leaves. So a route that
+    cannot move its tail alone is the one the others come to, whatever the count, and only where
+    every route that would have to move can.
+    """
+    arrivals = []
+    for index, match in enumerate(arrows.CONNECTION.finditer(svg)):
+        if "marker-end" not in match.group(0):
+            continue
+        pts = arrows.points(match.group(1))
+        if len(pts) < 2:
+            continue
+        axis, run = _axis(pts[-2], pts[-1])
+        if axis is None:
+            continue
+        along = 0 if axis == "x" else 1
+        arrivals.append(Arrival(index, axis, 1.0 if run > 0 else -1.0,
+                                pts[-1][along], pts[-1][1 - along],
+                                _tail(match.group(1)) is not None))
+    out = {}
+    faces = {}
+    for arrival in arrivals:
+        faces.setdefault((arrival.axis, arrival.way), []).append(arrival)
+    for face in faces.values():
+        for stop in _bunched(face, lambda a: a.along, arrows.AXIS_EPS):
+            out.update(_band(stop))
+    return out
+
+
+def _band(arriving):
+    """Which of the arrowheads stopping on one line move, and how far across.
+
+    Two tolerances, and they mean different things. `MIN_SEPARATION` groups the ones that
+    are close enough to be confused with each other; `AXIS_EPS` then tells apart the
+    distinct lines inside such a group, since arrivals within a pixel of each other are
+    already one line and have nothing to fix.
+    """
+    out = {}
+    for bunch in _bunched(arriving, lambda a: a.across, MIN_SEPARATION):
+        levels = _bunched(bunch, lambda a: a.across, arrows.AXIS_EPS)
+        if len(levels) < 2:
+            continue                     # already one bundle, or already far enough apart
+        best = None
+        for level in levels:
+            movers = [a for other in levels if other is not level for a in other]
+            if all(a.movable for a in movers) and (best is None or len(movers) < len(best[1])):
+                best = (level[0].across, movers)
+        if best is None:
+            continue                     # every line here is one nothing can be moved onto
+        target, movers = best
+        for mover in movers:
+            out[mover.index] = target - mover.across
+    return out
+
+
+def _bunched(items, coord, tolerance):
+    """`items` split into runs whose sorted `coord` never jumps by more than `tolerance`."""
+    out, run = [], []
+    for item in sorted(items, key=coord):
+        if run and coord(item) - coord(run[-1]) > tolerance:
+            out.append(run)
+            run = []
+        run.append(item)
+    return out + ([run] if run else [])
+
+
+def _tail(d):
+    """`(commands, perp, feed)` for a route whose last run can move across on its own.
+
+    The shape is d2's own and every part of it is checked rather than assumed: a straight run
+    into the arrowhead, the corner it came round, and a run on the other axis feeding that
+    corner. `perp` is the coordinate the move changes; `feed` is the signed length of that
+    feeding run, which is what absorbs the move.
+
+    None for anything else, and the commonest anything-else is the one that matters: a route
+    drawn as a single straight line has no corner, so its tail cannot move without its source
+    moving with it.
+    """
+    commands = _commands(d)
+    if len(commands) < 4 or [c for c, _p in commands[-3:]] != ["L", "S", "L"]:
+        return None
+    corner_in, tip = commands[-3][1][-1], commands[-1][1][-1]
+    axis, _run = _axis(commands[-2][1][-1], tip)
+    if axis is None:
+        return None
+    perp = 1 if axis == "x" else 0
+    feed_axis, feed = _axis(commands[-4][1][-1], corner_in)
+    if feed_axis is None or feed_axis == axis:
+        return None
+    return commands, perp, feed
+
+
+def _converge(d, delta, obstacles):
+    """The path with its last run moved across onto a neighbour's, or None.
+
+    Only the tail moves: the final run, the corner before it, and the end of the run feeding
+    that corner, which grows or shrinks by the same amount. Everything earlier — including
+    where the route leaves its own box — is untouched, so the arrow still starts where ELK put
+    it and still points at what it pointed at.
+
+    Bounded by `KEEP_RUN`, since the feeding run has to survive as a run rather than become a
+    second jog, and refused outright if the move would turn that run round.
+
+    There is no check that the move keeps clear of some THIRD line, and that is deliberate:
+    it lands on a coordinate a neighbouring arrowhead already occupies, so it can only ever
+    reduce the number of distinct channels arriving at that box. What it might still do is
+    cross a shape, and `arrows.crosses` is what refuses that.
+    """
+    if not delta:
+        return None
+    tail = _tail(d)
+    if tail is None:
+        return None
+    commands, perp, feed = tail
+    if abs(feed + delta) < KEEP_RUN or feed * (feed + delta) <= 0:
+        return None
+    moved = _emit([(letter, [_at(p, perp, p[perp] + delta) for p in points])
+                   if i >= len(commands) - 3 else (letter, points)
+                   for i, (letter, points) in enumerate(commands)])
+    if arrows.terminals(arrows.points(moved), obstacles) != \
+            arrows.terminals(arrows.points(d), obstacles):
+        return None                      # it would stop pointing at what it points at
     return None if arrows.crosses(moved, obstacles) else moved
 
 

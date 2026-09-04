@@ -48,10 +48,12 @@ Three rules about marks, and they are what keeps a sheet readable:
     altogether has no single place to point at, and a ring there says "look here" about a figure
     whose whole shape is the subject.
 
-BOTH corpora are captured by default, and that is the point of there being two. `examples.py`
-is the scenario the renderer was tuned against, so it is the one a change is least likely to
-break; `examples_repo.py` is a real `/explain-branch` run nobody steered. A layout change that
-improves one and ruins the other is the normal outcome, not the unlikely one.
+EVERY corpus is captured by default, and that is the point of there being three.
+`examples.py` is the scenario the renderer was tuned against, so it is the one a change is
+least likely to break; `examples_repo.py` is a real `/explain-branch` run nobody steered;
+`examples_large.py` is one diagram far bigger than either, where arrows and labels are close
+enough together to interfere. A layout change that improves one and ruins another is the
+normal outcome, not the unlikely one.
 """
 import argparse
 import html as html_mod
@@ -65,9 +67,17 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from lib.diagram import arrows, browser, figure, render  # noqa: E402
 from lib.diagram.examples import REFERENCE               # noqa: E402
+from lib.diagram.examples_large import LARGE             # noqa: E402
 from lib.diagram.examples_repo import REPO               # noqa: E402
 
-CORPORA = {"repo": REPO, "reference": REFERENCE}
+CORPORA = {"repo": REPO, "reference": REFERENCE, "large": LARGE}
+
+# The target a sample set is drawn for, where it is not the one the CLI asked for. A
+# standalone image is shown at natural size; an embed is scaled into a content column, and
+# `large` drawn as an embed comes out 1952px wide, is scaled to 0.43 to fit the 832px
+# column, and lands its text at 5.5px. It therefore fails the size gate by construction on
+# that target, and a capture full of that is a capture nobody reads.
+TARGETS = {"large": "file"}
 ROOT = "/tmp/diagram-compare"
 
 # Widest a figure is shown at, in CSS px. Two of these sit side by side plus the page's own
@@ -115,7 +125,7 @@ def capture(tag, corpora, only, target, theme):
         specs = {n: s for n, s in CORPORA[corpus].items() if not only or n in only}
         if not specs:
             continue
-        for fig in figure.draw(specs, target=target, theme=theme):
+        for fig in figure.draw(specs, target=TARGETS.get(corpus, target), theme=theme):
             key = f"{corpus}/{fig.name}"
             with open(os.path.join(out, f"{corpus}.{fig.name}.svg"), "w") as handle:
                 handle.write(fig.svg)
@@ -298,7 +308,9 @@ def main(argv=None):
     grab.add_argument("--corpus", choices=sorted(CORPORA) + ["both"], default="both")
     grab.add_argument("--only", nargs="*", default=[], metavar="NAME",
                       help="figure names, e.g. arch er")
-    grab.add_argument("--target", choices=("embed", "file"), default="embed")
+    grab.add_argument("--target", choices=("embed", "file"), default="embed",
+                      help="what the figures are drawn FOR. A sample set that only makes "
+                           "sense on one target pins its own — see TARGETS")
     grab.add_argument("--theme", choices=("light", "dark"), default="light")
 
     show = sub.add_parser("sheet", help="one PNG comparing two snapshots, and open it")

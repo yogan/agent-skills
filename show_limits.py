@@ -41,6 +41,10 @@ from lib.diagram.examples import REFERENCE                   # noqa: E402
 from lib.diagram.examples_repo import REPO                   # noqa: E402
 from lib.diagram.gates import size as size_gate              # noqa: E402
 
+# `examples_large` is deliberately absent. This document exists to judge the text floor
+# against the content column, and that sample set does not fit a content column at any
+# spacing — it is a standalone image. Every rung of it would read "under the floor",
+# which says nothing about where the floor belongs.
 CORPORA = {"reference": REFERENCE, "repo": REPO}
 OUT = "/tmp/diagram-limits.html"
 

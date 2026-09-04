@@ -407,6 +407,95 @@ class TestTermination(unittest.TestCase):
         self.assertEqual(edgelabel.reposition(once), once)
 
 
+# The shape of the defect this was written for: an edge whose route turns down and then runs a
+# long way across, with somebody else's line passing through the short vertical leg. 70px down
+# at x=70, then 300px across at y=130.
+ELBOW = "M 40 40 L 60 40 S 70 40 70 50 L 70 120 S 70 130 80 130 L 380 130"
+
+
+class TestKeepingClearOfOtherArrows(unittest.TestCase):
+    """A label names one arrow by standing on it, which only works where there is one to stand
+    on. Two arrows broken by one label's gap is two arrows neither of which owns the words.
+
+    It needs a term of its own because the term below it pays for the wrong answer: hidden line
+    is an area, and a 60px label lying ALONG a horizontal run covers 120px² of it where the same
+    label across a vertical run covers 34 — so a crowded vertical leg wins by three to one on
+    the ordering without it. Every fixture here is sized to make that choice explicit.
+    """
+
+    def placed(self, extra=(), start=(40, 76.5)):
+        """`ELBOW`'s label, ELK-placed on the vertical leg, plus whatever else is drawn.
+
+        The extra routes carry a `<text>` with no mask rectangle to pair with, so they are
+        skipped rather than placed — which is what makes the one translate in the output the
+        label under test. Asserted rather than assumed, since a stray second one would be
+        read as this label's move.
+        """
+        conns = [(ELBOW, 70, 89, "n rows : 1 thing")]
+        conns += [(d, 300, 380, "elsewhere") for d in extra]
+        out = edgelabel.reposition(svg(conns, [(start[0], start[1], 60, 17)]))
+        shifts = moved(out)
+        self.assertLessEqual(len(shifts), 1, "only the label under test may move")
+        dx, dy = (shifts + [(0.0, 0.0)])[0]
+        return (start[0] + dx + 30, start[1] + dy + 8.5)
+
+    def test_it_moves_to_the_long_run_rather_than_share_a_gap(self):
+        """The vertical leg is the cheaper one to break and it is the one with somebody else's
+        line through it, so the label goes to the horizontal run instead."""
+        self.assertEqual(self.placed(extra=["M 95 20 L 95 300"])[1], 130)
+
+    def test_with_nobody_else_there_it_still_takes_the_cheap_leg(self):
+        """The term only ever fires where there is a second arrow to be confused with — with
+        the drawing to itself, the older ordering is the right one and stands."""
+        self.assertEqual(self.placed()[1], 85)
+
+    def test_a_line_just_outside_the_clearance_does_not_count(self):
+        far = 100 + edgelabel.FOREIGN_CLEARANCE + 6
+        self.assertEqual(self.placed(extra=[f"M {far} 20 L {far} 300"])[1], 85)
+
+    def test_a_line_just_inside_it_does(self):
+        near = 100 + edgelabel.FOREIGN_CLEARANCE - 4
+        self.assertEqual(self.placed(extra=[f"M {near} 20 L {near} 300"])[1], 130)
+
+
+class TestALineOnTopOfItsOwnIsNotASecondArrow(unittest.TestCase):
+    """Arrows converging on one box share their last run exactly — that is what makes a bundle
+    read as a bundle, and `route._converge` deliberately produces more of them. A label on that
+    run breaks all of them and correctly: they are one stroke of ink.
+    """
+
+    # Two routes into one point from opposite sides, sharing the run at y=210 — and a third
+    # line beside the vertical leg, so the shared run is the only uncrowded place left.
+    DOWN = "M 20 40 L 40 40 S 50 40 50 50 L 50 200 S 50 210 60 210 L 380 210"
+    UP = "M 20 380 L 40 380 S 50 380 50 370 L 50 220 S 50 210 60 210 L 380 210"
+    BESIDE = "M 90 30 L 90 200"
+
+    def test_the_label_stays_on_the_run_its_own_arrow_shares(self):
+        out = edgelabel.reposition(svg(
+            [(self.DOWN, 50, 129, "n rows : 1 thing")]
+            + [(d, 300, 380, "elsewhere") for d in (self.UP, self.BESIDE)],
+            [(20, 116.5, 60, 17)], canvas=(0, 0, 400, 400)))
+        (dx, dy), = moved(out)
+        self.assertEqual((20 + dx + 30, 116.5 + dy + 8.5), (220, 210))
+
+    def test_two_runs_drawn_on_top_of_each_other_are_one_line(self):
+        mine = arrows.leg_boxes(self.DOWN)
+        self.assertTrue(any(edgelabel._coincident(leg, mine)
+                            for leg in arrows.leg_boxes(self.UP)))
+
+    def test_a_run_on_the_same_line_but_further_along_is_not(self):
+        self.assertFalse(edgelabel._coincident(arrows.Box((500, 209, 600, 211)),
+                                               arrows.leg_boxes(self.DOWN)))
+
+    def test_a_parallel_run_a_few_px_off_is_not(self):
+        self.assertFalse(edgelabel._coincident(arrows.Box((60, 216, 380, 218)),
+                                               arrows.leg_boxes(self.DOWN)))
+
+    def test_a_run_crossing_it_at_right_angles_is_not(self):
+        self.assertFalse(edgelabel._coincident(arrows.Box((199, 100, 201, 300)),
+                                               arrows.leg_boxes(self.DOWN)))
+
+
 class TestSafety(unittest.TestCase):
     def test_an_svg_with_no_mask_is_returned_unchanged(self):
         plain = '<svg viewBox="0 0 10 10"><path d="M 0 0 L 1 1"/></svg>'
@@ -441,11 +530,13 @@ class TestAgainstTheCorpus(unittest.TestCase):
             raise unittest.SkipTest("needs d2 and a browser")
         cls.browser, cls.render = browser, render
         from lib.diagram.examples import REFERENCE
+        from lib.diagram.examples_large import LARGE
         from lib.diagram.examples_repo import REPO
         cls.corpus = [(f"{group}/{name}", spec)
-                      for group, specs in (("reference", REFERENCE), ("repo", REPO))
+                      for group, specs in (("reference", REFERENCE), ("repo", REPO),
+                                           ("large", LARGE))
                       for name, spec in specs.items()]
-        # Rendered ONCE for the whole class. Both tests below want the same ten drawings, and
+        # Rendered ONCE for the whole class. Both tests below want the same drawings, and
         # producing them costs 45 seconds of d2 compiles and Chrome launches — the single
         # largest duplicated cost in the suite when each test made its own.
         cls.drawn = {key: render.render(spec, name=key.replace("/", "-"))
@@ -477,6 +568,44 @@ class TestAgainstTheCorpus(unittest.TestCase):
                     declined,
                     f"{result['key']}: an arrow is drawn {crossing['depth']:.0f}px into "
                     f"{crossing['text'][:30]!r} and nothing declined a gap there")
+
+    # Labels no position on their diagram can keep clear of a foreign arrow, per corpus key.
+    # An exception takes this shape rather than a looser assertion, so one more of them has
+    # to be argued for. The single entry here is a 152px label on a route whose only leg long
+    # enough to hold it is 181px: it can slide 21px, another arrow crosses inside every one of
+    # those positions, and the one other leg with room puts the words 5px onto a table.
+    CROWDED = {"large/er": 1}
+
+    def test_no_label_stands_on_an_arrow_that_is_not_its_own(self):
+        """Where two arrows share one label's gap, neither of them owns the words — and the
+        mask is not per-edge, so one gap really does break both. `FOREIGN_CLEARANCE` extends
+        that to a line passing just under the words, which reads the same way without a gap.
+
+        Only the large ER exercises this. The other two corpora have room to spare, which is
+        why the rule went in without moving a byte of either.
+
+        Sequences are out, as they are out of `reposition` itself: their labels are d2's own
+        and their lifelines are markerless connections a message label crosses by design.
+        """
+        for key, spec in self.corpus:
+            if spec["kind"] == "sequence":
+                continue
+            svg_text = self.drawn[key]
+            routes = [(m.start(), arrows.leg_boxes(m.group(1)))
+                      for m in arrows.CONNECTION.finditer(svg_text)]
+            crowded = 0
+            for hole in arrows.holes(svg_text):
+                mine = next((legs for _s, legs in routes
+                             if any(hole.overlap(leg) > 0 for leg in legs)), None)
+                if mine is None:
+                    continue
+                near = arrows.Box((hole[0] - edgelabel.FOREIGN_CLEARANCE,
+                                   hole[1] - edgelabel.FOREIGN_CLEARANCE,
+                                   hole[2] + edgelabel.FOREIGN_CLEARANCE,
+                                   hole[3] + edgelabel.FOREIGN_CLEARANCE))
+                crowded += any(near.overlap(leg) > 0 and not edgelabel._coincident(leg, mine)
+                               for _s, legs in routes if legs is not mine for leg in legs)
+            self.assertEqual(crowded, self.CROWDED.get(key, 0), key)
 
     def test_the_derived_title_box_matches_what_the_browser_lays_out(self):
         """`TITLE_PAD` is the one number here that was measured rather than read out of the

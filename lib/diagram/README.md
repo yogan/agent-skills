@@ -26,15 +26,18 @@ really is the caller's business.
     python3 compare_figures.py capture after
     python3 compare_figures.py sheet before after notes.json
 
-It renders both corpora through `figure.draw` and writes one annotated before/after PNG.
+It renders every corpus through `figure.draw` and writes one annotated before/after PNG.
 The notes file is not optional in spirit: each side says what was wrong and what was done,
 so the sheet still means something when re-read later, and gate problems are appended from
 the capture — a picture that looks better while a gate complains cannot pass for a win.
 
-**Two corpora, and that is the point.** [`examples.py`](examples.py) is the scenario the
+**Three corpora, and that is the point.** [`examples.py`](examples.py) is the scenario the
 renderer was tuned against, so it is the one a change is least likely to break;
-[`examples_repo.py`](examples_repo.py) is an unsteered real run, kept exactly as authored.
-A change that improves one and ruins the other is the normal outcome, not the unlikely one.
+[`examples_repo.py`](examples_repo.py) is an unsteered real run, kept exactly as authored;
+[`examples_large.py`](examples_large.py) is one ER diagram three times the area of anything
+else, because crowding — two labels competing for one stretch of line, two arrowheads landing
+a few px apart — does not exist on a drawing with five boxes in it. A change that improves one
+and ruins another is the normal outcome, not the unlikely one.
 
 Use this rather than eyeballing one figure. Every defect fixed here by hand — a label masking
 the arrow it sits on, a cardinality inside a table, an arrow through a container's title —
@@ -50,6 +53,7 @@ preference: the goal is for every line here to be a check.
 | An arrow is broken where it crosses text that is not its own label | `edgelabel.title_boxes` + `test_edgelabel` |
 | A gap in an arrow leaves visible line on both sides — never a detached arrowhead | `arrows.leaves_a_stub` + `test_arrows` |
 | An edge label sits centred ON its arrow, never beside it | `edgelabel._candidates` |
+| **An edge label keeps clear of every line but its own** | `edgelabel.FOREIGN_CLEARANCE` in `_key` + `test_edgelabel` |
 | Edge labels near the same height share one, where they can | `edgelabel._align_rows` |
 | A label never sits on a box, a container border or a container title | `edgelabel._key` |
 | Text is never unreadable, clipped, or under a callout | `gates/` |
@@ -59,6 +63,7 @@ preference: the goal is for every line here to be a check.
 | **No gap immediately before an arrowhead**, including the ones d2 cuts for its own labels | `arrows.shortfall` in `edgelabel._key`, `render._climb_layers` + `test_arrows` |
 | **No arrow is drawn across a box it does not begin or end at** | `arrows.through` + `test_arrows` |
 | **A callout never rests against a line it does not cover** | `route._clear` + `test_route` |
+| **Two arrows arriving at one box land on one line, or far enough apart to read as two** | `route._converge` + `test_route` |
 | **A callout never covers a corner or an arrowhead** where any of the eight positions avoids it | `place._score`'s landmark rank + `test_place`, and `figure._coverage_advice` says so when none of them does |
 
 **The note-words row took a defect to write down.** A callout's note and a role legend's
@@ -68,6 +73,18 @@ legend shipped black on a dark page at 1.18:1 while the contrast gate reported t
 check passing. Both gates read that markup now, and the size they assume when the file does
 not state one is `render.ANNOTATION_PX` — which is why that constant is `d2.BASE_FONT` rather
 than the css default it used to be.
+
+**The label-clearance row is the section below on terms that pay for the wrong answer, in its
+purest form.** `_key`'s hidden-line term is an AREA, and a label lying ALONG a horizontal run
+covers its own width of it where the same label across a vertical run covers only its height —
+roughly ten to one on a long cardinality. So the search reliably preferred a crowded vertical
+leg to a clear horizontal one, and a mask that is not per-edge did the rest: the gap cut under
+those words broke a neighbouring arrow too, and neither arrow owned it. Counting foreign lines
+above the area term is what fixed it.
+
+A run drawn on top of the label's own is excluded, or the rule would fight the one below it:
+arrows converging on a box share their last run exactly, and a label there breaks one stroke of
+ink rather than three arrows.
 
 [`arrows.py`](arrows.py) is where four of them live, because they are about the arrow itself
 rather than about the words on it.
@@ -109,6 +126,18 @@ line it actually hides, the anchor above the box — free of every route, 48px t
 the search picks. `place.HEIGHT_PRICE` is what prices that trade — and a corner or an
 arrowhead is not in it at all: those are ranked above everything tradeable, so a position that
 covers one loses to any position that does not, whatever the page costs.
+
+It also moves a whole TAIL, and that repair is about a PAIR of arrows rather than about either
+one of them. ELK gives edges pointing at one row of one table the same port and they arrive
+exactly on top of each other, which is how a reader knows they are a bundle — but not
+reliably, and one arrival a few px off the bundle is neither one line nor two followable ones.
+`route._converge` brings them onto one.
+
+**Which of them moves is decided by what it would cost the rest of the route**, not by counting
+heads. Moving a tail is free — the last run slides across and the run feeding it grows to
+match — but a route drawn as a single straight line has no corner to absorb that, so moving it
+drags its start off the middle of the row it leaves. A route that cannot move its tail alone is
+therefore the one the others come to, whatever the count.
 
 The same module repairs one other thing, and the tell for it is a single character. d2 draws an
 orthogonal corner as an `S` and a diagonal one as a `C`, so **a cubic in a connection path is a
@@ -201,18 +230,26 @@ range it was allowed to be in. Do that first.
       python3 measure_speed.py            # ~4 minutes, writes and opens a report
       python3 measure_speed.py --update   # record this run as the new baseline
 
-- **Say which of these two a cost figure is for** — they differ by more than 2x, and quoting one
-  for the other is how the old number here came to read 40s. Warm, both sample sets:
+- **Say which of these two a cost figure is for** — they differ by nearly 3x, and quoting one
+  for the other is how the old number here came to read 40s. Warm, all three sample sets, and
+  read them out of `speed_baseline.json` rather than from here if the number matters:
 
   | | wall | layout candidates | browser starts |
   |---|---|---|---|
-  | ten diagrams arranged, no notes placed, no gates | ~16s | 62 | 13 |
-  | the same ten, plus note placement and gates | ~42s | 193 | 27 |
+  | eleven diagrams arranged, no notes placed, no gates | ~16s | 68 | 14 |
+  | the same eleven, plus note placement and gates | ~29s | 203 | 30 |
+
+  **Note placement is most of the difference between those two rows, and it scales with the
+  diagram.** Every anchor tried is a d2 compile of the whole graph plus a browser page, so on
+  `examples_large` — eight tables, 2274px wide — a note costs about 5s, which is also what
+  arranging and checking that whole diagram costs. It carried four when it was transcribed and
+  those cost 20s between them, which is why it carries one. **A note is the lever** if this
+  ever needs to be cheaper; the arrangement search is not, being a tenth of the same figure.
 
   A first render in a fresh process costs ~25s more than a warm one. If a change appears to cost
   much more than the figures above, something is re-deciding a layout that was already decided.
 - **The browser's cost is the number of browsers, not the amount inspected.** A browser that
-  inspects nothing costs ~0.74s to start; one more inspection in a running one costs ~0.030s.
+  inspects nothing costs ~0.89s to start; one more inspection in a running one costs ~0.031s.
   `browser.SHARD_MIN` is the ratio of those two and has to be re-derived when either moves.
 - **A standalone render is never scaled.** `gates/size.analyse(standalone=True)` fixes the scale
   at 1.0, because a file is shown at natural size and zoomed by the reader. So every rule about

@@ -271,5 +271,91 @@ class TestItMayNotCrossAShape(unittest.TestCase):
         self.assertIsNotNone(moved(TAIL, obstacles=[(804, 146, 916, 260)]))
 
 
+class TestArrowEndsConverge(unittest.TestCase):
+    """Two arrows arriving at one box are one bundle or two arrows, never a hair apart.
+
+    The shape is `examples_large`'s, reduced to its parts: edges pointing at one table row
+    share a port exactly, and one of them arrives a few px under the rest. `test_arrows` holds
+    the corpus to the result; what is worth pinning here is every bound on the move.
+    """
+
+    # A single straight run into the row, 7.5px below the bundle. It has no corner, so moving
+    # its tail would drag its source across too — which is why the bundle comes to IT.
+    LONE = "M 100.000000 207.500000 L 400.000000 207.500000"
+    # The ordinary shape: a long run, a corner, and a short approach into the head.
+    HOOKED = ("M 100.000000 100.000000 L 340.000000 100.000000 S 350.000000 100.000000 "
+              "350.000000 110.000000 L 350.000000 190.000000 S 350.000000 200.000000 "
+              "360.000000 200.000000 L 400.000000 200.000000")
+    # The same, coming up from below — so the two that move do it in opposite directions.
+    FROM_BELOW = ("M 100.000000 380.000000 L 340.000000 380.000000 S 350.000000 380.000000 "
+                  "350.000000 370.000000 L 350.000000 210.000000 S 350.000000 200.000000 "
+                  "360.000000 200.000000 L 400.000000 200.000000")
+
+    def tips(self, paths, obstacles=()):
+        out = route.straighten(svg(paths), [arrows.Box(o) for o in obstacles])
+        return [arrows.points(m.group(1))[-1] for m in arrows.CONNECTION.finditer(out)]
+
+    def test_the_lone_end_is_the_one_the_others_come_to(self):
+        self.assertEqual(route._merges(svg([self.LONE, self.HOOKED])), {1: 7.5})
+
+    def test_they_end_up_on_exactly_one_line(self):
+        self.assertEqual(self.tips([self.LONE, self.HOOKED]),
+                         [(400.0, 207.5), (400.0, 207.5)])
+
+    def test_a_whole_bundle_moves_rather_than_the_one_that_cannot(self):
+        tips = self.tips([self.LONE, self.HOOKED, self.FROM_BELOW])
+        self.assertEqual(tips, [(400.0, 207.5)] * 3)
+
+    def test_nothing_but_the_tail_moves(self):
+        out = route.straighten(svg([self.LONE, self.HOOKED]), [])
+        after = arrows.points(list(arrows.CONNECTION.finditer(out))[1].group(1))
+        before = arrows.points(self.HOOKED)
+        self.assertEqual(after[:3], before[:3],
+                         "the route still leaves its own box where ELK put it")
+
+    def test_the_run_feeding_the_corner_absorbs_the_move(self):
+        out = route.straighten(svg([self.LONE, self.HOOKED]), [])
+        after = arrows.points(list(arrows.CONNECTION.finditer(out))[1].group(1))
+        self.assertAlmostEqual(after[-3][1] - after[2][1], 87.5, places=3,
+                               msg="80px of feeding run, 7.5px longer")
+
+    def test_the_route_is_still_orthogonal(self):
+        out = route.straighten(svg([self.LONE, self.HOOKED]), [])
+        self.assertEqual([d.rule for d in arrows.defects(out)], [])
+
+    def test_ends_already_on_one_line_are_left_alone(self):
+        """Most bundles are already exact, and a pass that jiggled them would change every
+        figure's bytes for nothing."""
+        source = svg([self.HOOKED, self.FROM_BELOW])
+        self.assertEqual(route._merges(source), {})
+        self.assertEqual(route.straighten(source, []), source)
+
+    def test_ends_far_enough_apart_to_be_two_arrows_are_left_alone(self):
+        apart = self.HOOKED.replace("200.000000 L 400.000000 200.000000",
+                                    "260.000000 L 400.000000 260.000000")
+        self.assertEqual(route._merges(svg([self.LONE, apart])), {})
+
+    def test_a_move_that_would_eat_the_feeding_run_is_refused(self):
+        """`KEEP_RUN` again: a run shorter than this cannot hold the corner at the end of it
+        and still read as a run rather than as a second jog. Here the lone end is ABOVE the
+        bundle, so the move shortens the feeding run instead of lengthening it."""
+        above = self.LONE.replace("207.500000", "192.500000")
+        tight = self.HOOKED.replace("350.000000 110.000000 L 350.000000 190.000000",
+                                    "350.000000 160.000000 L 350.000000 190.000000")
+        self.assertEqual(route._merges(svg([above, tight])), {1: -7.5})
+        self.assertEqual(self.tips([above, tight]), [(400.0, 192.5), (400.0, 200.0)])
+        self.assertEqual(self.tips([above, self.HOOKED]),
+                         [(400.0, 192.5), (400.0, 192.5)], "80px of feeding run can spare it")
+
+    def test_a_move_that_would_cross_a_shape_is_refused(self):
+        blocker = (360, 203, 380, 212)   # squarely on the line the tail would move onto
+        self.assertEqual(self.tips([self.LONE, self.HOOKED], obstacles=[blocker]),
+                         [(400.0, 207.5), (400.0, 200.0)])
+
+    def test_the_shape_at_its_own_end_is_not_an_obstacle(self):
+        self.assertEqual(self.tips([self.LONE, self.HOOKED], obstacles=[(404, 160, 500, 240)]),
+                         [(400.0, 207.5), (400.0, 207.5)])
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

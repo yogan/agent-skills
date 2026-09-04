@@ -94,8 +94,11 @@ def requirements():
 # start.
 #
 # The number is a ratio of two measured costs, so re-derive it rather than guessing whenever
-# either moves: a node+Chrome that measures nothing costs ~0.74s, and one more harness page
-# costs ~0.030s, so a launch buys about 25 pages. It was 8 for as long as a page cost ~0.39s —
+# either moves: a node+Chrome that measures nothing costs ~0.89s, and one more harness page
+# costs ~0.031s, so a launch buys about 29 pages. `SHARD_MIN` sits under that ratio and has
+# done since the page cost dropped; closing the gap changes how many browsers every check
+# starts, so it is a measurement of its own rather than a tidy-up. It was 8 for as long as a
+# page cost ~0.39s —
 # a figure set by `measureInPage` re-sampling every connection once per label, which it no
 # longer does. Getting this wrong is quiet: too low and the corpus pays for browsers it did not
 # need, too high and the placement search measures 64 pages in one process while the rest of

@@ -19,6 +19,12 @@ at all: beside a line a label stops saying WHICH line it belongs to, and two off
 neighbouring routes line up flush and read as one wrapped paragraph. A short break in a
 vertical line costs less than either.
 
+**And that only works while there is ONE line to stand on.** The mask is not per-edge, so the
+hole cut under a label breaks every connection crossing it: words placed where two arrows pass
+leave one gap in both, belonging to neither. A line running just under them reads the same way
+without any gap at all. `FOREIGN_CLEARANCE` is the daylight a label keeps from a line that is
+not its own.
+
 So a candidate is centred across some straight leg, at some point along it. Sliding along the
 leg is what buys clearance from whatever the label would otherwise sit on.
 
@@ -99,10 +105,23 @@ TITLE_RISE, TITLE_HEIGHT = 13, 17
 # choose a different one.
 HEAD_WEIGHT = 5
 
-# Rounding, in px² of area and px of distance, before two candidates are compared. Without it
-# a quarter-pixel of shape overlap outranks a whole leg of hidden line, since the terms are
-# compared in order rather than priced against each other.
-ROUND = (1, 4, 1, 8, 4, 4)
+# Daylight a label keeps from any line that is NOT the arrow it names, in px around its box.
+#
+# Set from the type: a label's box is 17px tall for `d2.BASE_FONT`, so at 14 a foreign line is
+# more than a line of type from the words and cannot be read as underlining them or as the line
+# they sit on. Below about 10 it still can — a run passing a fraction of a px under the box is
+# indistinguishable from the leg the label is centred on.
+#
+# The failure at the top of the range is silence rather than noise: once every position on a
+# crowded diagram has some line within reach, the count ties everywhere and stops choosing
+# anything. So this wants the smallest distance that reads clear.
+FOREIGN_CLEARANCE = 14
+
+# Rounding, in the unit of each term of `_key` — px² of area, px of distance, and 1 for the two
+# that are already counts — before two candidates are compared. Without it a quarter-pixel of
+# shape overlap outranks a whole leg of hidden line, since the terms are compared in order
+# rather than priced against each other.
+ROUND = (1, 4, 1, 1, 8, 4, 4)
 
 _ROOT = re.compile(r"<svg\b[^>]*>")
 _MASK_RECT = re.compile(r'<rect x="([-\d.]+)" y="([-\d.]+)" width="([\d.]+)" '
@@ -310,10 +329,10 @@ def route_obstacles(svg, body_start=0):
     return [box for box, kind in _shape_boxes(svg, body_start) if kind == "node"]
 
 
-def _key(box, canvas, shapes, lines, zones, others, adrift, home, target):
+def _key(box, canvas, shapes, lines, foreign, zones, others, adrift, home, target):
     """How bad a candidate is, compared term by term rather than priced against each other.
 
-    Six terms, in this order, and the order is the argument.
+    Seven terms, in this order, and the order is the argument.
 
     **Off the canvas** is not a placement at all. **On a box** is the defect this module was
     written for — a cardinality with its left half inside the table it points at — and no
@@ -327,6 +346,15 @@ def _key(box, canvas, shapes, lines, zones, others, adrift, home, target):
     with no leg to slide along, which silently removes it from the row alignment. Ranking a
     legal position above the quantity being minimised is what fixed four separate complaints at
     once — a minimisation term can always be satisfied by leaving the domain it measures.
+
+    **Foreign lines** — how many arrows other than its own the label stands on or beside, within
+    `FOREIGN_CLEARANCE`. Counted rather than measured in px, because what matters is how many
+    arrows a reader has to choose between.
+
+    It has to rank above the term below, which otherwise pays for the wrong answer: hidden line
+    is an AREA, and a label lying ALONG a horizontal run covers its own width of it where the
+    same label across a vertical run covers only its height. A crowded vertical leg therefore
+    outscores a clear horizontal one by an order of magnitude on that term alone.
 
     **Hidden line** is the thing being minimised once the label is somewhere legal, and the px
     of it that sit right before an arrowhead count `HEAD_WEIGHT` times over, because losing
@@ -343,10 +371,13 @@ def _key(box, canvas, shapes, lines, zones, others, adrift, home, target):
     shape_area = sum(box.overlap(s) for s in shapes) + sum(box.overlap(o) for o in others)
     line_area = (sum(box.overlap(line) for line in lines)
                  + HEAD_WEIGHT * STROKE * shortfall(box, zones))
+    near = Box((box[0] - FOREIGN_CLEARANCE, box[1] - FOREIGN_CLEARANCE,
+                box[2] + FOREIGN_CLEARANCE, box[3] + FOREIGN_CLEARANCE))
+    crowd = sum(1 for leg in foreign if near.overlap(leg) > 0)
     centre = ((box[0] + box[2]) / 2, (box[1] + box[3]) / 2)
     off = _distance(centre, home)
     drift = _distance(centre, target)
-    terms = (box.outside(canvas), shape_area, bool(adrift), line_area, off, drift)
+    terms = (box.outside(canvas), shape_area, bool(adrift), crowd, line_area, off, drift)
     return tuple(round(v / step) for v, step in zip(terms, ROUND))
 
 
@@ -390,12 +421,17 @@ def reposition(svg):
 
     titles = title_boxes(svg, root.end())
     shapes = _shapes(svg, root.end()) + titles
-    all_paths = [m.group("d") for m in labels] + _unlabelled_paths(svg, labels)
     boxes = [Box((float(r.group(1)), float(r.group(2)),
                    float(r.group(1)) + float(r.group(3)),
                    float(r.group(2)) + float(r.group(4)))) for r in rects]
 
-    lines = [b for d in all_paths for b in leg_boxes(d)]
+    # Keyed by POSITION, so a label can tell its OWN arrow from every other one. Two
+    # connections can be drawn identically — a route converging on a bundle shares its last
+    # run exactly — and keying on the path data would let a label mistake a neighbour's line
+    # for its own. `_LABELLED`'s path group is `CONNECTION`'s own pattern, so every label's
+    # `path` start is a key here.
+    routes = {m.start(): leg_boxes(m.group(1)) for m in CONNECTION.finditer(svg)}
+    lines = [leg for legs in routes.values() for leg in legs]
     # The arrow ends, read once. Every candidate of every label is scored against them, and
     # they do not move: this pass edits words and mask rectangles, never a route.
     zones = ends(svg)
@@ -409,9 +445,12 @@ def reposition(svg):
         pts = points(label.group("d"))
         others = drawn + [b for i, b in enumerate(boxes) if i not in used]
         target = _midpoint(pts)
+        mine = routes.get(label.start("path"), [])
+        foreign = [leg for start, legs in routes.items() if start != label.start("path")
+                   for leg in legs if not _coincident(leg, mine)]
 
-        def score(candidate, adrift, home, _o=others, _t=target):
-            return _key(candidate, canvas, shapes, lines, zones, _o, adrift, home, _t)
+        def score(candidate, adrift, home, _o=others, _t=target, _f=foreign):
+            return _key(candidate, canvas, shapes, lines, _f, zones, _o, adrift, home, _t)
 
         best, best_key, axis, lo, hi = box, None, None, 0.0, 0.0
         for candidate, candidate_axis, low, high in _candidates(box, legs(pts)):
@@ -528,10 +567,11 @@ def _align_rows(placed):
     nothing here reads a position it has also written.
 
     Every move is refused unless it scores IDENTICALLY on everything above drift — on the
-    canvas, off every box, hiding no more line — so alignment can only ever spend drift. Two
-    labels that would touch at a shared height are the case this has to survive, and it does it
-    by admitting them one at a time, nearest first: the second one is refused and simply keeps
-    the position it already had. A partial row beats a collision, and beats abandoning the row.
+    canvas, off every box, no nearer anybody else's arrow, hiding no more line — so alignment
+    can only ever spend drift. Two labels that would touch at a shared height are the case
+    this has to survive, and it does it by admitting them one at a time, nearest first: the
+    second one is refused and simply keeps the position it already had. A partial row beats a
+    collision, and beats abandoning the row.
 
     No label travels further than `_Placed.reach`, and a row that only exists at a coordinate
     beyond that simply does not form. That is what keeps a distant third label from dragging a
@@ -619,11 +659,24 @@ def _targets(row):
     return list(dict.fromkeys(wanted))
 
 
-def _unlabelled_paths(svg, labels):
-    """Connection paths with no label of their own — obstacles, but never hosts."""
-    taken = {m.group("d") for m in labels}
-    return [m.group(1) for m in re.finditer(r'<path d="([^"]*)"[^>]*class="connection"', svg)
-            if m.group(1) not in taken]
+def _coincident(leg, mine):
+    """Whether `leg` is drawn on top of one of `mine` — one line to a reader, not two.
+
+    Arrows converging on a box share their final run exactly, which is what makes a bundle read
+    as a bundle. A label there breaks one stroke of ink rather than several, so counting the
+    others would drive it off a leg that is not ambiguous at all.
+    """
+    flat, tall = leg.h <= STROKE + 1, leg.w <= STROKE + 1
+    for own in mine:
+        if flat and own.h <= STROKE + 1:
+            if (abs((leg[1] + leg[3]) / 2 - (own[1] + own[3]) / 2) <= STROKE
+                    and min(leg[2], own[2]) > max(leg[0], own[0])):
+                return True
+        if tall and own.w <= STROKE + 1:
+            if (abs((leg[0] + leg[2]) / 2 - (own[0] + own[2]) / 2) <= STROKE
+                    and min(leg[3], own[3]) > max(leg[1], own[1])):
+                return True
+    return False
 
 
 def _match(label, boxes, taken):

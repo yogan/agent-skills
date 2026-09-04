@@ -59,7 +59,7 @@ The four jobs are the shapes the engine actually runs in, and they behave differ
 that a single figure hides regressions:
 
   * **one diagram** is the `/visualize` path and the only one a person waits on;
-  * **all 10 sample diagrams** is what a full check of a change costs, and the number any
+  * **all 11 sample diagrams** is what a full check of a change costs, and the number any
     renderer work is judged against;
   * **layout only** isolates the arrangement search from note placement and the legibility
     checks, which is where a regression in that search would show first;
@@ -93,6 +93,7 @@ sys.path.insert(0, HERE)
 from lib import parallel                                      # noqa: E402
 from lib.diagram import browser, figure, render               # noqa: E402
 from lib.diagram.examples import REFERENCE                    # noqa: E402
+from lib.diagram.examples_large import LARGE                  # noqa: E402
 from lib.diagram.examples_repo import REPO                    # noqa: E402
 from lib.diagram.gates import clipping                        # noqa: E402
 
@@ -246,14 +247,14 @@ class Probe:
 # --------------------------------------------------------------------------- scenarios
 
 
-def ten_drawings():
-    for group, specs in (("reference", REFERENCE), ("repo", REPO)):
+def arrange_every_diagram():
+    for group, specs in (("reference", REFERENCE), ("large", LARGE), ("repo", REPO)):
         for name, spec in specs.items():
             render.render(spec, name=f"{group}-{name}")
 
 
-def both_corpora():
-    for specs in (REFERENCE, REPO):
+def draw_every_diagram():
+    for specs in (REFERENCE, LARGE, REPO):
         figure.draw(specs, target="file")
 
 
@@ -296,20 +297,23 @@ SCENARIOS = [
               "browsers at once, which is the bulk of this job. The rest is the arrangement "
               "search, which has to run one step at a time.",
      "run": one_figure, "repeats": REPEATS},
-    {"key": "corpus", "label": "All 10 sample diagrams",
-     "what": "all 10 sample diagrams from scratch, notes and legibility checks included — "
+    {"key": "corpus", "label": "All 11 sample diagrams",
+     "what": "all 11 sample diagrams from scratch, notes and legibility checks included — "
              "what a full check of a change costs",
-     "usage": "Reasonable. The 10 diagrams are drawn at the same time rather than one after "
+     "usage": "Reasonable. The 11 diagrams are drawn at the same time rather than one after "
               "another, which is what fills the machine; a single diagram on its own leaves "
               "most of it idle, and there are only so many diagrams to overlap.",
-     "run": both_corpora, "repeats": REPEATS_EXPENSIVE},
+     "run": draw_every_diagram, "repeats": REPEATS_EXPENSIVE},
+    # `key` is what identifies a job across every baseline ever recorded, so it is frozen
+    # even when the sample sets grow past the count it was named for. What a person reads
+    # is `label` and `what`, which are not.
     {"key": "ten_drawings", "label": "Layout only",
-     "what": "all 10 sample diagrams arranged, but with no notes positioned and no legibility "
+     "what": "all 11 sample diagrams arranged, but with no notes positioned and no legibility "
              "checks run — the arrangement search on its own",
      "usage": "Lower than a full check, and largely unavoidable: without note positioning "
               "there is little inside a diagram that can run alongside anything else, so all "
-              "the overlap there is comes from drawing the ten together.",
-     "run": ten_drawings, "repeats": REPEATS_EXPENSIVE},
+              "the overlap there is comes from drawing them together.",
+     "run": arrange_every_diagram, "repeats": REPEATS_EXPENSIVE},
     {"key": "clipping_gate", "label": "Legibility checks only",
      "what": "5 already-finished diagrams checked for text that is cut off, hidden or too "
              "small to read",
@@ -668,7 +672,7 @@ def headline(reported):
                      f'<strong>{number(full["before"])}</strong> '
                      f'{"down" if full["change"] < 0 else "up"} to '
                      f'<strong class="hl {full["verdict"]}">{number(full["now"])}</strong>')
-        tail = f" A full check of all 10 sample diagrams now takes {moved}."
+        tail = f" A full check of all 11 sample diagrams now takes {moved}."
         word = full["verdict"]
     else:
         word = "worse" if worse > better else ("better" if better else "same")
@@ -679,7 +683,7 @@ def headline(reported):
 # were read first and meant nothing yet; below, they are there when a number raises a question.
 JOB_TERMS = """<details class="terms"><summary>What these terms mean</summary><dl>
 <dt>sample sets</dt><dd>two fixed collections of 5 diagrams each (architecture, sequence,
-ER, class, state) — 10 in total, used to test every change</dd>
+ER, class, state) plus one large ER on its own — 11 in total, used to test every change</dd>
 <dt>core usage</dt><dd>how much of the machine the job kept busy: the average number of things
 running at once, as a share of this machine's cores. 100% would be every core working for the
 whole job. Low means there is speed still available — though not always reachable, so each job

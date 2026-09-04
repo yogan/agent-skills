@@ -269,9 +269,11 @@ class TestAgainstTheCorpus(unittest.TestCase):
         if render.d2_version() is None:
             raise unittest.SkipTest("d2 is not installed (brew install d2)")
         from lib.diagram.examples import REFERENCE
+        from lib.diagram.examples_large import LARGE
         from lib.diagram.examples_repo import REPO
         cls.drawn = {f"{group}/{name}": render.render(spec, name=f"{group}-{name}")
-                     for group, specs in (("reference", REFERENCE), ("repo", REPO))
+                     for group, specs in (("reference", REFERENCE), ("repo", REPO),
+                                          ("large", LARGE))
                      for name, spec in specs.items()}
 
     def counted(self, key, rule):
@@ -291,8 +293,23 @@ class TestAgainstTheCorpus(unittest.TestCase):
             self.assertEqual(self.counted(key, "gap"), self.KNOWN.get(key, {}).get("gap", 0),
                              f"{key}: {[d.detail for d in arrows.defects(self.drawn[key])]}")
 
+    def test_arrows_arriving_at_one_box_are_a_bundle_or_are_apart(self):
+        """Never a few px apart, which reads as one thick line that splits.
+
+        `route._converge` is what makes this true, and asking `route` for the work still
+        outstanding on a FINISHED drawing is the cheapest way to say so: nothing left to do
+        means every arrival is either exactly on a neighbour's line or more than
+        `route.MIN_SEPARATION` from it. A move it had to refuse — one that would cross a
+        shape, or eat the run feeding its corner — is left standing and belongs in `KNOWN`
+        with the rest of what a figure cannot afford.
+        """
+        from lib.diagram import route
+        for key, svg_text in self.drawn.items():
+            self.assertEqual(len(route._merges(svg_text)),
+                             self.KNOWN.get(key, {}).get("crowded", 0), key)
+
     def test_no_arrow_is_drawn_across_a_box_it_does_not_end_at(self):
-        """The invariant, and it has no exceptions — unlike the three rules above, nothing
+        """The invariant, and it has no exceptions — unlike the traded rules above, nothing
         here trades it away, and there is no figure that cannot afford it."""
         from lib.diagram import edgelabel
         for key, svg_text in self.drawn.items():

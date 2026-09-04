@@ -30,7 +30,7 @@ called "the visualize renderer", because a change to it changes every skill that
 | **layout search** | the ladders, escalation, picking a candidate | Trying several arrangements of the same diagram and keeping the one that reads best. |
 | **spacing step** | rung, ladder rung | One step in the run of spacing values the layout search walks. **Never say "rung".** Give the number and its unit — "25px of space between an arrow and the box it points at". |
 | **quality check** | gate | An automatic check on the finished diagram — text too small, text hidden, text cut off, contrast too low. A diagram that fails one is reported, not silently shipped. |
-| **sample set** | corpus, corpora | One of two fixed collections of five diagrams, one per kind, used to test every change. There are two on purpose: one the engine was tuned against, one taken from a real unsteered run. |
+| **sample set** | corpus, corpora | One of three fixed collections of diagrams used to test every change — 11 in all. Two hold five each, one per kind: one the engine was tuned against, one taken from a real unsteered run. The third holds a single ER diagram three times the area of anything else, because crowded arrows and labels only exist at that size. |
 
 ### Words for how it is measured
 
