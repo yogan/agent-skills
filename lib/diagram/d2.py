@@ -184,7 +184,7 @@ ELK_OPTS = {
 #   * EMBEDDED, every px of width is scaled back out of the glyphs inside the content column.
 #     ER goes 862x257 at 12.6px to 892x257 at 12.2px.
 #   * STANDALONE, the image is shown at its natural size and there is nothing to scale it.
-#     ER goes 886x281 to 916x281 with its text unmoved at 12.5px.
+#     ER goes 886x281 to 916x281 with its text unmoved.
 #
 # Wrapping the label instead does NOT help — measured, it changes the covered area not at all,
 # since a folded label is still wider than a 15px gap. That is what demoted the unconditional

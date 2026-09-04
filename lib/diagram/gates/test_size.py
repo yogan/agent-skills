@@ -288,5 +288,53 @@ class TestTheRescueBudget(unittest.TestCase):
         self.assertLess(size.RESCUE_H, size.MAX_H * 0.1)
 
 
+class TestAnnotationText(unittest.TestCase):
+    """A callout's note and a legend's labels are HTML in a `<foreignObject>`, and their size
+    is in the file only when they state one — a callout's comes from the host page's `.md p`
+    rule. So this pool never contained them, and a callout's words rendered at 9.7px on a
+    figure scaled to 0.78 with every glyph check passing."""
+
+    def svg(self, extra="", width=400):
+        return (f'<svg width="{width}" height="200" viewBox="0 0 {width} 200">'
+                '<text x="5" y="10" class="text" style="font-size:14px">label</text>'
+                f'<foreignObject x="20" y="60" width="90" height="16">'
+                f'<div xmlns="http://www.w3.org/1999/xhtml" class="md">'
+                f'<p{extra}>queryable today</p></div></foreignObject></svg>')
+
+    def test_the_repos_own_size_is_assumed_when_the_element_states_none(self):
+        m = size.analyse(self.svg())
+        self.assertEqual(m["fmin"], size.ANNOTATION_PX,
+                         "a callout's words are the smallest text in this drawing")
+
+    def test_a_stated_size_is_used_instead(self):
+        m = size.analyse(self.svg(extra=' style="font-size:16px"'))
+        self.assertEqual(m["fmin"], 14.0, "16px annotation, 14px label — the label is least")
+
+    def test_annotation_words_face_the_primary_floor(self):
+        """A note is prose the reader has to read, not a subtitle, so it gets the same floor
+        as a node label rather than the lower one.
+
+        The width is derived, not written down: annotation words go under the floor once the
+        column has to scale the drawing past `ANNOTATION_PX / MIN_READABLE`, so a fixture
+        with a number in it would stop testing this the next time either constant moves — as
+        one just did, from 12.5 to `d2.BASE_FONT`.
+        """
+        too_wide = int(size.AVAIL_W * size.ANNOTATION_PX / size.MIN_READABLE) + 40
+        result = size.check(self.svg(width=too_wide))
+        self.assertFalse(result.ok)
+        self.assertTrue(any("TINY" in p for p in result.problems), result.problems)
+
+    def test_the_same_words_pass_just_inside_that_width(self):
+        """The other side of the same line, so the test cannot pass by always failing."""
+        wide_enough = int(size.AVAIL_W * size.ANNOTATION_PX / size.MIN_READABLE) - 40
+        self.assertTrue(size.check(self.svg(width=wide_enough)).ok)
+
+    def test_the_assumed_size_is_the_one_the_css_sets(self):
+        """If that rule moves and this constant does not, the gate checks a size nothing is
+        drawn at."""
+        from lib.diagram import render
+        self.assertIn(f"font-size:{size.ANNOTATION_PX:g}px", render.page_css())
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

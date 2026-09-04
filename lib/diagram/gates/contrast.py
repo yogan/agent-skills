@@ -33,13 +33,23 @@ from . import GateError, Result
 
 LARGE_PX = 18.66
 
+# The size annotation text is set at when the file does not say. A callout's `.md p` rule
+# lives in the HOST PAGE's css, so for an embedded figure that size is simply not in the SVG
+# — and a gate must not treat "unknown" as "fine". `test_contrast` pins this against the css.
+ANNOTATION_PX = 13
+
 _NAMED = {"white": (255, 255, 255), "black": (0, 0, 0), "grey": (128, 128, 128),
           "gray": (128, 128, 128), "red": (255, 0, 0), "green": (0, 128, 0),
           "blue": (0, 0, 255)}
 
 _MASK = re.compile(r"<mask\b.*?</mask>", re.S)
 _SHAPE = re.compile(r"<(rect|ellipse|circle|polygon|path)\b([^>]*)>")
-_NODES = re.compile(r"<g\b[^>]*>|</g>|<text\b[^>]*>.*?</text>", re.S)
+_NODES = re.compile(r"<g\b[^>]*>|</g>|<text\b[^>]*>.*?</text>"
+                    r"|<foreignObject\b[^>]*>.*?</foreignObject>", re.S)
+# The words inside an annotation: HTML in a `<foreignObject>`, which is how a callout's note
+# and a role legend's labels are drawn (see `compact.add_legend` on why they are not SVG text
+# — d2's embedded face is a subset of the drawing's own glyphs).
+_HTML_TEXT = re.compile(r"<p\b([^>]*)>(.*?)</p>", re.S)
 
 
 def parse_color(value, default=None):
@@ -151,11 +161,49 @@ def shapes(svg):
     return out
 
 
-def texts(svg):
-    """Yield each `<text>` with the classes of every open ancestor `<g>`.
+def _annotation_texts(pos, token, stack, html_size):
+    """The words of one `<foreignObject>`, as `texts` yields anything else.
+
+    Position is the BOX's, not the glyphs': HTML inside is laid out by the browser and its
+    baseline is not in the file. That is what the box is for — a callout's own rect sits at
+    exactly those coordinates, so the background lookup finds it the same way it does for a
+    node's label.
+    """
+    box = {name: re.search(rf'\s{name}="([-\d.]+)"', token) for name in ("x", "y")}
+    if not all(box.values()):
+        return
+    x, y = (float(box["x"].group(1)), float(box["y"].group(1)))
+    div = re.search(r'<div[^>]*class="([^"]*)"', token)
+    classes = div.group(1).split() if div else []
+    ancestors = [c for level in stack for c in level]
+    for attrs, body in _HTML_TEXT.findall(token):
+        content = re.sub(r"<[^>]+>", "", body).strip()
+        if not content:
+            continue
+        style = re.search(r'style="([^"]*)"', attrs)
+        style = style.group(1) if style else ""
+        colour = re.search(r"(?:^|[;\s])color:\s*([^;]+)", style)
+        size = re.search(r"font-size:\s*([\d.]+)", style)
+        yield (pos, x, y,
+               float(size.group(1)) if size else html_size,
+               colour.group(1).strip() if colour else None,
+               classes + ancestors, content)
+
+
+def texts(svg, html_size=ANNOTATION_PX):
+    """Yield each piece of text with the classes of every open ancestor `<g>`.
 
     Ancestor classes matter because SVG text is routinely coloured by a rule scoped to a
     parent group rather than by an attribute on the element itself.
+
+    ANNOTATION text is included, and it took a real defect to add: a callout's note and a
+    legend's labels are HTML in a `<foreignObject>`, so a checker that reads `<text>` alone
+    sees none of them. A legend shipped in black on a dark page at 1.18:1 while this gate
+    reported the figure at 5.05:1 — it was measuring everything except the words that were
+    wrong. Its colour comes from an inline `color:` or from d2's own `.color-N1` rule, both
+    of which are in the file; its SIZE may not be, since `.md p` lives in the host page's css
+    for an embedded figure — so `html_size` says what the repo sets it to, defaulting to
+    exactly that.
     """
     stack = []
     for m in _NODES.finditer(svg):
@@ -167,6 +215,9 @@ def texts(svg):
         if token.startswith("<g"):
             c = re.search(r'\sclass="([^"]*)"', token)
             stack.append(c.group(1).split() if c else [])
+            continue
+        if token.startswith("<foreignObject"):
+            yield from _annotation_texts(m.start(), token, stack, html_size)
             continue
         inner = re.match(r"<text\b([^>]*)>(.*?)</text>", token, re.S)
         if not inner:
@@ -206,21 +257,29 @@ def worst_in_theme(svg, theme, scale=1.0):
     painted = shapes(resolved)
     page = parse_color(palette.PAGE[theme])
 
-    def class_color(classes, prop):
+    def class_color(classes, *props):
+        """The colour a class rule gives this text, whichever property carries it.
+
+        Two properties, because two kinds of text: SVG paints with `fill`, HTML with
+        `color`. d2 puts both in the same style block — `.color-N1{color:var(--d-fg)}` is
+        where a callout's note takes its ink from — so looking for one only is how
+        annotation text came to be measured as black.
+        """
         for c in reversed(classes):
-            if c in rules and prop in rules[c]:
-                return rules[c][prop]
+            for prop in props:
+                if c in rules and prop in rules[c]:
+                    return rules[c][prop]
         return None
 
     lowest = None
     for pos, x, y, size, fill, classes, content in texts(resolved):
-        fg = (parse_color(fill) or parse_color(class_color(classes, "fill"))
+        fg = (parse_color(fill) or parse_color(class_color(classes, "fill", "color"))
               or parse_color("#000"))
         bg = None
         for spos, (x0, y0, x1, y1), sfill, sclasses in painted:
             if spos > pos:
                 break
-            colour = parse_color(sfill) or parse_color(class_color(sclasses, "fill"))
+            colour = parse_color(sfill) or parse_color(class_color(sclasses, "fill", "color"))
             if colour is None:
                 continue
             if x0 - 1 <= x <= x1 + 1 and y0 - 1 <= y <= y1 + 1:

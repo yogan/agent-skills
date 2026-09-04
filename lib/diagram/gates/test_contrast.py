@@ -181,5 +181,54 @@ class TestRefusesToGuess(unittest.TestCase):
             contrast.check("nothing here")
 
 
+class TestAnnotationText(unittest.TestCase):
+    """A callout's note and a legend's labels are HTML in a `<foreignObject>`, so a checker
+    that reads `<text>` alone never saw them. A legend shipped in black on a dark page at
+    1.18:1 while this gate reported the figure at 5.05:1."""
+
+    PAGE_DARK = "#16181d"
+
+    def svg(self, style="", div_class="md"):
+        return ('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 100">'
+                '<style>.color-N1{color:#1a1a1a;}</style>'
+                '<text x="5" y="10" fill="#1a1a1a" class="text" '
+                'style="font-size:14px">label</text>'
+                f'<foreignObject x="20" y="60" width="90" height="16">'
+                f'<div xmlns="http://www.w3.org/1999/xhtml" class="{div_class}">'
+                f'<p{style}>queryable today</p></div></foreignObject></svg>')
+
+    def test_the_words_of_an_annotation_are_measured(self):
+        found = [t for t in contrast.texts(self.svg())
+                 if t[6] == "queryable today"]
+        self.assertEqual(len(found), 1, "annotation text has to reach the gate at all")
+        self.assertEqual(found[0][3], contrast.ANNOTATION_PX,
+                         "and at the size the repo sets annotation words")
+
+    def test_a_stated_size_wins_over_the_default(self):
+        found = [t for t in contrast.texts(self.svg(style=' style="font-size:14px"'))
+                 if t[6] == "queryable today"]
+        self.assertEqual(found[0][3], 14.0)
+
+    def test_ink_comes_from_an_inline_colour(self):
+        out = contrast.worst_in_theme(self.svg(style=' style="color:#1a1a1a"'), "light")
+        self.assertGreater(out[0], 4.5)
+
+    def test_ink_comes_from_d2s_own_class_when_there_is_no_inline_one(self):
+        """`.color-N1{color:…}` is d2's, and it is inside the SVG — so a callout's ink is
+        resolvable from the file. Looking only for `fill` is what missed it."""
+        rules = contrast.css_rules(self.svg(div_class="md color-N1"))
+        self.assertIn("color", rules.get("color-N1", {}))
+        out = contrast.worst_in_theme(self.svg(div_class="md color-N1"), "light")
+        self.assertGreater(out[0], 4.5)
+
+    def test_words_with_no_colour_at_all_are_measured_as_black(self):
+        """Which is what they render as, and on a dark page that is the defect this found:
+        1.18:1 measured. A gate that assumed "unstated means fine" would have shipped it
+        again."""
+        worst = contrast.worst_in_theme(self.svg(), "dark")
+        self.assertLess(worst[0], 4.5)
+        self.assertEqual(worst[2], "queryable today")
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

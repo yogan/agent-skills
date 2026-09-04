@@ -107,11 +107,12 @@ LEGEND_EDGE_GAP = 0.9
 # its own or lose whichever letters the drawing did not need.
 ANNOTATION_FONT = "system-ui,-apple-system,'Segoe UI',sans-serif"
 
-# The size `callout.prime` measures a string at — `render`'s `.md p` rule, pinned by a test
-# so the two cannot drift apart. A measured width is an ADVANCE width and scales with the type
-# size, so a legend set at 14 is that measurement times 14/12.5. Nothing here counts
-# characters: see `add_legend` on why an estimated width is the wrong risk.
-MEASURED_AT = 12.5
+# The size `callout.prime` measures a string at — `render.ANNOTATION_PX`, which is what its
+# `.md p` rule sets; pinned by a test so the two cannot drift apart. A measured width is an
+# ADVANCE width and scales with the type size, so a legend set larger is that measurement
+# times the ratio. Nothing here counts characters: see `add_legend` on why an estimated width
+# is the wrong risk.
+MEASURED_AT = 13
 
 # The dot a state machine begins at — UML's start marker, which is the one thing a reader of
 # the reference state diagram could not find: being the top node is implicit, and any state
@@ -363,7 +364,7 @@ def add_legend(svg, entries, font, pad=D2_PAD):
             # `class="md"` is the callout's own text box: the page's font, `nowrap`, and a
             # flex row that centres the words in whatever height it is given — which is the
             # swatch's, so the two line up without a baseline being computed here at all.
-            # The inline size overrides the 12.5px that class carries.
+            # The inline size overrides the one that class carries.
             #
             # The COLOUR has to be written too, and forgetting it is invisible in exactly one
             # theme: `.md` sets no colour, d2 tags its own callout divs `color-N1`, and HTML

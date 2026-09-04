@@ -56,6 +56,21 @@ CALLOUT_ATTRS = palette.CALLOUT_PAINT
 CALLOUT_REPLACEMENT = ('class="d2-callout" fill="var(--d-callout-bg)" '
                        'stroke="var(--d-callout-br)"')
 
+# The size a callout's note and a legend's labels are set at. Annotation words are HTML in a
+# `<foreignObject>`, so this size lives in the css below rather than in the SVG.
+#
+# d2's own label size, and equal is not a coincidence. It was 12.5 — a css default nobody
+# chose — and once `gates/size` began counting these words that became the binding constraint
+# on every scaled figure: the reference architecture held two edge labels folded onto two lines
+# purely to stay narrow enough for 12.5px to clear the 10px floor, with 200px of empty canvas
+# beside them. At `BASE_FONT` the same drawing may be 1081px wide before the words go under,
+# which is wider than it wants to be, so those folds paid for nothing and went away.
+#
+# `compact.MEASURED_AT` and both gates carry this number too, each pinned to this css by a
+# test, because none of them can import this module: it imports them.
+ANNOTATION_PX = d2mod.BASE_FONT
+
+
 # What the DRAWING needs, in whatever container it is put. Not optional styling.
 #
 # Scoped rather than global, and emitted once per container: a page with two places a diagram
@@ -72,7 +87,8 @@ CONTENT_CSS = """\
 {scope} foreignObject{{overflow:visible}}
 {scope} foreignObject .md{{display:flex;align-items:center;height:100%;
   font-family:system-ui,-apple-system,'Segoe UI',sans-serif}}
-{scope} foreignObject .md p{{margin:0;line-height:1.2;font-size:12.5px;white-space:nowrap}}
+{scope} foreignObject .md p{{margin:0;line-height:1.2;
+  font-size:{annotation:g}px;white-space:nowrap}}
 /* A callout is an annotation ABOUT the drawing, so it should read as sitting above it.
    Depth does that; a dashed outline does not — d2 welds a solid pointer triangle onto the
    box and a dashed edge fights it at the junction. Keep fill-opacity >= 0.94: the contrast
@@ -103,8 +119,8 @@ CALLOUT_DARK_CSS = """\
 
 
 def content_css(scope=".diagram"):
-    """`CONTENT_CSS` bound to one container selector."""
-    return CONTENT_CSS.format(scope=scope)
+    """`CONTENT_CSS` bound to one container selector and one annotation size."""
+    return CONTENT_CSS.format(scope=scope, annotation=ANNOTATION_PX)
 
 
 def fit_css(scope=".diagram"):
@@ -845,11 +861,12 @@ def render(spec, name="diagram", binary="d2", theme_vars=True, wrap_edges=None,
 # is meant to show it at full size and let you zoom. What carries over is the part that is
 # not styling at all — the paragraph reset and font-family a callout's `<foreignObject>`
 # needs — plus the callout depth, baked to one theme since there is nothing to toggle.
-STANDALONE_CSS = """\
-foreignObject{overflow:visible}
-foreignObject .md{display:flex;align-items:center;height:100%;
-  font-family:system-ui,-apple-system,'Segoe UI',sans-serif}
-foreignObject .md p{margin:0;line-height:1.2;font-size:12.5px;white-space:nowrap}
+STANDALONE_CSS = f"""\
+foreignObject{{overflow:visible}}
+foreignObject .md{{display:flex;align-items:center;height:100%;
+  font-family:system-ui,-apple-system,'Segoe UI',sans-serif}}
+foreignObject .md p{{margin:0;line-height:1.2;
+  font-size:{ANNOTATION_PX:g}px;white-space:nowrap}}
 """
 
 STANDALONE_CALLOUT = {
@@ -899,7 +916,7 @@ def _standalone_ladder(spec, name, theme, binary, edge_rungs=None):
     What does NOT carry across is the cost. Embedded, every px of width is scaled back out of
     the glyphs, which is why the ladders are escalated rather than raised for everyone; a
     standalone image is shown at natural size, so the reference ER goes from 886x281 to
-    916x281 with its text still at 12.5px. The gap is close to free here.
+    916x281 with its text unmoved. The gap is close to free here.
     """
     best = None
     for edges in (edge_rungs or d2mod.ELK_EDGE_LADDER):

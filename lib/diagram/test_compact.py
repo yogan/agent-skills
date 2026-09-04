@@ -290,15 +290,15 @@ class TestRoleLegend(unittest.TestCase):
                       "a dark render has to get the dark ink")
 
     def test_the_words_are_set_in_the_size_they_are_given(self):
-        """Overriding the 12.5px the callout class carries, because a callout's size lives in
-        the PAGE's css where `gates/size` cannot see it — while this one is written into the
-        SVG and checked like any other label."""
+        """Overriding the size the callout class carries, because that one lives in the
+        PAGE's css where `gates/size` cannot see it — while this one is written into the SVG
+        and checked like any other label."""
         self.assertIn("font-size:14px", compact.add_legend(self.svg(), self.ENTRIES, 14))
         self.assertIn("font-size:13px", compact.add_legend(self.svg(), self.ENTRIES, 13))
 
     def test_a_wider_setting_takes_proportionally_more_room(self):
         """A measured width is an advance width, so it scales with the size it is set at.
-        Ignoring that laid a 14px legend out on 12.5px measurements."""
+        Ignoring it laid a legend out on widths for a size it is not set at."""
         at13 = re.search(r'<foreignObject[^>]*width="([\d.]+)"',
                          compact.add_legend(self.svg(), self.ENTRIES, 13)).group(1)
         at14 = re.search(r'<foreignObject[^>]*width="([\d.]+)"',
