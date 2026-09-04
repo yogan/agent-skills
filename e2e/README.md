@@ -88,7 +88,7 @@ fails loudly. That is what makes this an E2E harness and not just a demo prop.
 ```sh
 cd ~/src/agent-skills-demo-review
 python3 ~/.claude/skills/review-mr/scripts/findings.py sync --iid 2
-#   "drafts in en", t1/t2/t3 ◐ needs-ack, t4 ○ open, t5 💬 peer, 2 pushes since baseline
+#   "drafts en", t1/t2/t3 ◐ needs-ack, t4 ○ open, t5 💬 peer, 2 pushes since baseline
 
 cd ~/src/agent-skills-demo
 python3 ~/.claude/skills/rework-mr/scripts/threads.py sync --iid 3

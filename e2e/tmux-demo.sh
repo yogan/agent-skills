@@ -101,7 +101,7 @@ state_ok() {
   fi
 
   mr2=$(cd "$REVIEW" && python3 "$SKILLS/review-mr/scripts/findings.py" sync --iid 2 2>&1)
-  for pat in 'drafts in en' '3 need your ack' '2 awaiting author' '2 new version'; do
+  for pat in 'drafts en' '3 need your ack' '2 awaiting author' '2 new version'; do
     printf '%s\n' "$mr2" | grep -q "$pat" || { warn "MR !2 sync lacks '$pat'"; return 1; }
   done
 

@@ -77,6 +77,19 @@
       "reason": "Your message pastes a topic whose title is still the unresolved `needs_title` placeholder (`✍️ needs summary:` — a raw, un-authored thread quote). Resolve it first: author an English one-liner (`findings.py set <t> --summary \"...\"`), or `drop`/`merge` the topic if it doesn't need one, then re-render (`sync`/`present`/`todo`) before showing it to the user."
     },
     {
+      "key": "summary-in-draft-language",
+      "note": [
+        "findings.py's `summary_language_warning` emits this exact phrase in the table",
+        "footer and in a topic heading whenever an AUTHORED summary reads as the draft",
+        "language. Summaries, headings and table cells are English; only a draft comment",
+        "body uses the draft language. The check is conservative (function words only,",
+        "code spans stripped, two distinct hits), so a message carrying the warning has a",
+        "summary that really does need rewording."
+      ],
+      "text": "⚠️ \\*\\*summaries must be English\\*\\*",
+      "reason": "Your message pastes a view whose warning says one or more summaries are written in the draft language. A summary is the one-line title the user reads in the table and in every topic heading, and it is always English — the draft language governs only the comment BODY you are about to hand them for posting. Reword each named topic (`findings.py set <t> --summary \"<short English line>\"`), re-render (`sync`/`present`/`todo`/`quote <t>`), and send that instead."
+    },
+    {
       "key": "unresolved-needs-title-quote",
       "note": "Same `needs_title` gap as unresolved-needs-title-table, but for `quote <t>`'s header warning (render_quote's `needs_title_warning`) instead of a table row.",
       "text": "⚠️ \\*\\*needs an English summary\\*\\*",

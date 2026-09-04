@@ -6,6 +6,7 @@ import json
 import os
 
 TOPIC_ICON = "◈"
+MR_LEVEL = "MR-level"
 
 
 def load(path):
@@ -65,6 +66,19 @@ def short_summary(state, t, width=64):
         text = thr[0].get("body") if thr else ""
     text = " ".join((text or "").split())
     return text[: width - 1] + "…" if len(text) > width else text
+
+
+def loc_md(loc):
+    """A topic's `file:line` as a person reads it — in a table cell, in a topic
+    heading, anywhere a location is shown.
+
+    A topic with no location is normal, not missing data: a point about the merge
+    request itself — its title, its description, a test nobody's diff adds — has no
+    diff line for GitLab to hang a comment on, so it is posted on the MR. Wrapping
+    that empty string in backticks renders as a literal, meaningless `` in every
+    client that styles this output, so the empty case gets the word instead.
+    """
+    return f"`{loc}`" if loc else f"_{MR_LEVEL}_"
 
 
 def state_file(root, slug, iid, filename):

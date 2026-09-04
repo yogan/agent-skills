@@ -188,6 +188,47 @@ class TestCriticalManifest(unittest.TestCase):
                           critical_manifest.current())
 
 
+class TestLocationlessThread(unittest.TestCase):
+    """A thread on the merge request itself carries no diff position. Mirrors
+    review-mr's TestLocationlessTopic: the table showed a visible pair of empty
+    backticks and `quote` showed `None:`."""
+
+    def _state(self, **thread):
+        return {"iid": 1, "title": "x", "topics": [
+            {"id": "t1", "thread_ids": ["d1"], "summary": "s", "state": None,
+             "decision": None, "plan": None, "diff_url": None}],
+            "threads": {"d1": {"resolved": False, "awaiting": "you", **thread}}}
+
+    def test_table_names_it_instead_of_empty_backticks(self):
+        row = next(ln for ln in T.render_table(self._state(file=None, line=None))
+                   .splitlines() if ln.startswith("| ○"))
+        self.assertIn("MR-level", row)
+        self.assertNotIn("``", row)
+
+    def test_table_still_shows_a_real_location(self):
+        row = next(ln for ln in T.render_table(self._state(file="src/a.py", line=7))
+                   .splitlines() if ln.startswith("| ○"))
+        self.assertIn("`a.py:7`", row)
+
+    def test_the_further_thread_count_survives_an_mr_level_topic(self):
+        """The count used to sit inside the code span, which an empty location has
+        nowhere to put — `` (+1)`` was the result."""
+        state = self._state(file=None, line=None)
+        state["topics"][0]["thread_ids"] = ["d1", "d2"]
+        state["threads"]["d2"] = {"resolved": False, "awaiting": "you"}
+        row = next(ln for ln in T.render_table(state).splitlines()
+                   if ln.startswith("| ○"))
+        self.assertIn("MR-level", row)
+        self.assertIn("(+1)", row)
+        self.assertNotIn("``", row)
+
+    def test_quote_prints_no_none(self):
+        out = T.render_quote(self._state(file=None, line=None, body="a comment",
+                                         author="Someone", notes=[]), "t1")
+        self.assertIn("MR-level", out)
+        self.assertNotIn("None:", out)
+
+
 class TestNoteRendering(unittest.TestCase):
     """A reviewer's own code has to render as code.
 

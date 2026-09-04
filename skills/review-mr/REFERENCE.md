@@ -27,9 +27,15 @@ the UI never reached the table.
 
 ## Draft rules (Phase 2 and follow-ups)
 
-- **Language: whatever `drafts in <lang>` says.** Every view you draft from — `sync`,
-  `todo`, `present` and `quote <t>` — ends its header with `· drafts in <lang>`. That is the
-  instruction; it wins for the whole session.
+- **Language: whatever `drafts <lang>` says — for the comment BODY only.** Every view you
+  draft from — `sync`, `todo`, `present` and `quote <t>` — ends its header with
+  `· drafts <lang> · rest en` (just `· drafts en` when the two coincide). That is the
+  instruction, and it governs exactly one thing: the text you hand the user to post.
+  **Everything else is English, always** — every `--summary`, so the table and every topic
+  heading, and your own prose in the reply. A review whose ten summaries all came out in the
+  draft language had read the marker as "this review is in `<lang>`"; it never means that.
+  `findings.py` says so itself when a summary reads as the draft language, and the paste gate
+  will not let that view reach the user.
   - **Never guess it, and never carry it over from an earlier session.** If the marker is
     not visible in the output you are looking at, run `python3 $SD/findings.py lang` and use
     what it prints. Assuming a default is how an all-English project got a German draft.

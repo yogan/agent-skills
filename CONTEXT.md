@@ -75,6 +75,7 @@ own. They are mirrors of each other, and these words mean the same thing on both
 |---|---|---|
 | **topic** | finding, item, comment | One point being worked through — `t1`, `t2`. The unit both skills work in: raised, agreed and closed one at a time, never several at once. Two threads making the same point are merged into one topic. |
 | **thread** | discussion | The exchange on the merge request that a topic corresponds to. Whether it exists and whether it is resolved is GitLab's answer, never the skill's — both skills only read. GitLab calls the individual comments inside one "notes"; we do not, because a note is a thing on a diagram. |
+| **MR-level** | no location, missing file, global | A topic or thread that belongs to the merge request itself — its title, its description, a test nobody's diff adds — so there is no diff line to hang it on. Normal, not missing data: it is posted on the merge request instead of on a file. It is also what the tables print where a `file:line` would go. |
 
 **The two skills use different status words, and that is deliberate.** Reviewing, a topic is
 *draft, open, needs-ack, acked* or *wontfix*; reworking, it is *reply-pending, open, waiting* or

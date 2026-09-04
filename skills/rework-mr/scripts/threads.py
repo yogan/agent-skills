@@ -53,8 +53,8 @@ if _REPO_ROOT not in sys.path:
 
 from lib import critical_manifest                               # noqa: E402
 from lib.gitlab import api, context, current_user, die, mr_view, run, web_base  # noqa: E402
-from lib.mr_common import (first_name, load, num, save, short_summary,  # noqa: E402
-                           state_file, topic_for, tref)
+from lib.mr_common import (MR_LEVEL, first_name, load, loc_md, num,  # noqa: E402
+                           save, short_summary, state_file, topic_for, tref)
 from lib.snippet import MAX_BACKTRACK, open_construct            # noqa: E402
 
 # internal topic handles (t5, t6, t10 …) — must never reach a GitLab comment.
@@ -271,11 +271,21 @@ def _rows(state, scope, show_done=False):
 
 
 def _loc(state, t):
+    """Mirrors review-mr's findings.py's `_loc` — same `basename:line`, and the same
+    "" when no thread of the topic has a diff position (a discussion on the merge
+    request itself has none). Stays duplicated: this table also carries the count of
+    the topic's further threads, which review-mr's does not."""
     thr = [state["threads"].get(x, {}) for x in t["thread_ids"]]
-    loc = next((f"{os.path.basename(x['file'])}:{x.get('line') or ''}"
-                for x in thr if x.get("file")), "")
+    return next((f"{os.path.basename(x['file'])}:{x.get('line') or ''}"
+                 for x in thr if x.get("file")), "")
+
+
+def _loc_cell(state, t):
+    """The Location column: the location, plus how many further threads this topic
+    folds in. The count sits OUTSIDE the code span — it is not part of the path, and
+    a topic whose threads are all MR-level has no path to put it inside."""
     n = len(t["thread_ids"])
-    return loc + (f" (+{n - 1})" if n > 1 else "")
+    return loc_md(_loc(state, t)) + (f" (+{n - 1})" if n > 1 else "")
 
 
 def render_table(state, scope="all", show_done=False):
@@ -288,7 +298,7 @@ def render_table(state, scope="all", show_done=False):
             s = st[tid]
             summ = short_summary(state, t, width=72).replace("|", "\\|")
             out.append(critical_manifest.mark(f"| {GLYPH[s]} {WORD[s]} | {tref(f'**{tid}**')} "
-                             f"| `{_loc(state, t)}` | {summ} |"))
+                             f"| {_loc_cell(state, t)} | {summ} |"))
     else:
         out.append("_✓ nothing needs you — open threads are waiting on the reviewer_"
                    if scope == "mine" else "_✓ no open threads_")
@@ -706,12 +716,14 @@ def render_quote(state, tid):
     out = []
     for i, th in enumerate(t["thread_ids"]):
         x = state["threads"].get(th, {})
-        path = f"{x.get('file')}:{x.get('line') or ''}"
+        # An MR-level thread carries no diff position at all, so there is no path to
+        # print — `None:` is what an unguarded f-string produced there.
+        path = f"{x['file']}:{x.get('line') or ''}" if x.get("file") else ""
         if i == 0:
             title = f"**{tref(t['id'])}" + (f" — {summ}**" if summ else "**")
-            out.append(f"{title} · `{path}`")
+            out.append(f"{title} · {loc_md(path)}")
         else:
-            out.append(f"`{path}`")
+            out.append(loc_md(path))
         if x.get("url"):
             out.append(x["url"])
         # Code FIRST, comment second: the reviewer's note is about these lines, and a
@@ -884,8 +896,10 @@ def render_bodies(state):
             continue
         for th in t["thread_ids"]:
             x = state["threads"].get(th, {})
-            out.append(f"[{tref(t['id'])}] {os.path.basename(x.get('file') or '')}:"
-                       f"{x.get('line') or ''}  (last spoke: {first_name(x.get('last_author'))})"
+            loc = (f"{os.path.basename(x['file'])}:{x.get('line') or ''}"
+                   if x.get("file") else MR_LEVEL)
+            out.append(f"[{tref(t['id'])}] {loc}"
+                       f"  (last spoke: {first_name(x.get('last_author'))})"
                        f"  {x.get('url')}")
             out.append(f"  {first_name(x.get('author'))}: {(x.get('body') or '').strip()}")
             if x.get("note_count", 1) > 1:

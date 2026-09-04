@@ -149,7 +149,7 @@ returns a prioritized critique. Turn each finding into a JSON object and import 
 ```jsonc
 // /tmp/seed.json — one object per review-branch finding
 [{"kind":"issue","severity":"high","source":"llm","file":"src/x.ts","line":42,
-  "summary":"one line in the user's words"}]
+  "summary":"one short line, plain words, ENGLISH — see the language rule below"}]
 ```
 ```bash
 python3 $SD/findings.py import /tmp/seed.json --iid <n>
@@ -174,6 +174,11 @@ python3 $SD/findings.py drop <t>                                       # not wor
 python3 $SD/findings.py merge <into> <other…>                         # same point (→ source 👥)
 python3 $SD/findings.py add --file … --line … --summary … --source human   # the user's own find
 ```
+
+**A `--summary` is always English** — it is the one-line title of the topic, and it is what
+the user reads in the table and in every topic heading. The `· drafts <lang> · rest en` marker
+applies to the **body of a comment you draft for posting**, and to nothing else. `findings.py`
+flags a summary that reads as the draft language, and the paste gate blocks the view.
 
 ### Comments the user posts in the UI while you work
 
@@ -223,14 +228,15 @@ question and the draft. Only *then* your 2-4 lines of reasoning. Opening on a ve
 you mean, cannot see the code you are asserting things about, and has no `file:line` to open.
 If you find yourself writing a conclusion before a pasted `quote`, reorder.
 
-Draft rules — see [REFERENCE.md](REFERENCE.md). In short: **write in the language named by
-the `· drafts in <lang>` marker** that every `sync`/`todo`/`present`/`quote` header carries —
-if you cannot see it in the output in front of you, run `python3 $SD/findings.py lang` rather
-than assuming (`de` means informal *du*). **As short as
-possible**; a ```suggestion block for a line-precise fix; identifiers in backticks; no
-headings. Show the draft as GitLab-compatible markdown in your reply (via `quote <t>`, which
-also gives **where to open the thread** — `file:line` — and the surrounding code with the
-line marked), and offer the clipboard:
+Draft rules — see [REFERENCE.md](REFERENCE.md). In short: **write the comment body in the
+language named by the `· drafts <lang>` marker** that every `sync`/`todo`/`present`/`quote`
+header carries — if you cannot see it in the output in front of you, run
+`python3 $SD/findings.py lang` rather than assuming (`de` means informal *du*). **The body is
+the only thing in that language**: summaries, headings and your own prose stay English. **As
+short as possible**; a ```suggestion block for a line-precise fix; identifiers in backticks;
+no headings. Show the draft as GitLab-compatible markdown in your reply (via `quote <t>`,
+which also gives **where to open the thread** — `file:line` — and the surrounding code with
+the line marked), and offer the clipboard:
 
 ```bash
 python3 $SD/findings.py set <t> --draft "…"     # store the accepted draft

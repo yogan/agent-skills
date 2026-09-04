@@ -185,6 +185,129 @@ class TestRenderTable(unittest.TestCase):
         self.assertIn("1 need your ack", out)
 
 
+class TestLocationlessTopic(unittest.TestCase):
+    """A topic about the MR itself — its title, its description, a test nobody's diff
+    adds — has no diff line to hang a comment on. Every view has to say that, not
+    print the empty string where a `file:line` goes: in the table it came out as a
+    visible pair of empty backticks, in `quote` as `None:`."""
+
+    def test_table_names_the_mr_level_topic_instead_of_empty_backticks(self):
+        state = new_state()
+        F.add_topic(state, summary="the MR title is the generated branch name")
+        row = next(x for x in F.render_table(state).splitlines() if "t1" in x)
+        self.assertIn("MR-level", row)
+        self.assertNotIn("``", row)
+
+    def test_table_still_shows_a_real_location(self):
+        state = new_state()
+        F.add_topic(state, summary="x", file="src/deep/x.ts", line=42)
+        row = next(x for x in F.render_table(state).splitlines() if "t1" in x)
+        self.assertIn("`x.ts:42`", row)
+
+    def test_draft_quote_says_where_an_mr_level_comment_goes(self):
+        state = new_state()
+        F.add_topic(state, summary="the MR title is the generated branch name",
+                    draft="Titel/Beschreibung nachziehen?")
+        out = F.render_quote(state, "t1")
+        self.assertIn("MR-level", out)
+        self.assertNotIn("thread on ``", out)
+
+    def test_posted_quote_of_an_mr_level_thread_prints_no_none(self):
+        state = new_state(threads={"d1": {"body": "some overview comment",
+                                          "author": "Someone", "file": None,
+                                          "line": None}})
+        add_linked_topic(state, "d1", summary="an English title")
+        out = F.render_quote(state, "t1")
+        self.assertIn("MR-level", out)
+        self.assertNotIn("None:", out)
+
+    def test_bodies_and_candidates_name_it_too(self):
+        state = new_state(threads={"d1": {"body": "b", "author": "A",
+                                          "awaiting": "you", "mine": True}})
+        add_linked_topic(state, "d1", summary="an English title")
+        self.assertIn("MR-level", F.render_bodies(state))
+        state["topics"] = []                       # now unlinked → a link candidate
+        self.assertIn("MR-level", F.render_candidates(state, "me"))
+
+
+class TestSummaryLanguage(unittest.TestCase):
+    """The `drafts <lang>` marker governs the comment BODY only. Read as "this
+    review is in <lang>", it produced a table whose ten summaries were all German —
+    so a summary in the draft language is flagged where it is rendered, and the paste
+    gate refuses the view."""
+
+    def test_a_german_summary_is_flagged_in_the_table(self):
+        state = new_state(lang="de")
+        F.add_topic(state, summary="`zone_code` ist in keinem der Schemas required",
+                    file="a.json", line=3)
+        self.assertIn("summaries must be English", F.render_table(state))
+
+    def test_an_english_summary_is_not(self):
+        state = new_state(lang="de")
+        F.add_topic(state, summary="`zone_code` is not required in any of the schemas",
+                    file="a.json", line=3)
+        self.assertNotIn("summaries must be English", F.render_table(state))
+
+    def test_english_summary_naming_german_identifiers_is_not_flagged(self):
+        """The one that would make the check unusable: an English line about German
+        code. Code spans are stripped and two distinct function words are needed."""
+        state = new_state(lang="de")
+        F.add_topic(state, summary="`ledger-zz.json` drops `menge_und_stueck`",
+                    file="a.json", line=3)
+        self.assertNotIn("summaries must be English", F.render_table(state))
+
+    def test_an_acronym_that_lowercases_into_the_word_list_is_ignored(self):
+        """MIT, DES, AUS and DEM all become German function words in lower case."""
+        state = new_state(lang="de")
+        F.add_topic(state, summary="MIT-licensed file in an Apache-2.0 repo, and the "
+                                   "DES fallback is still reachable", file="a.py")
+        self.assertNotIn("summaries must be English", F.render_table(state))
+
+    def test_an_english_summary_quoting_german_text_is_not_flagged(self):
+        state = new_state(lang="de")
+        F.add_topic(state, summary="the error string 'Bitte Feld ausfuellen' is "
+                                   "hardcoded instead of a message key", file="a.py")
+        self.assertNotIn("summaries must be English", F.render_table(state))
+
+    def test_a_single_ambiguous_word_is_not_evidence(self):
+        state = new_state(lang="de")
+        F.add_topic(state, summary="worker processes die before the queue is drained",
+                    file="a.py", line=3)
+        self.assertNotIn("summaries must be English", F.render_table(state))
+
+    def test_an_english_draft_language_disables_the_check(self):
+        """No word list for the language, no check — it must not guess."""
+        state = new_state(lang="en")
+        F.add_topic(state, summary="ist in keinem der Schemas required", file="a.json")
+        self.assertNotIn("summaries must be English", F.render_table(state))
+
+    def test_a_needs_title_topic_is_never_flagged(self):
+        """Its "summary" is a raw thread quote, foreign by design — `needs_title`
+        already says so, and two warnings about the same gap contradict each other."""
+        state = new_state(lang="de",
+                          threads={"d1": {"body": "Sollten wir das nicht in der "
+                                                  "Fabrik machen?", "file": "a.py",
+                                          "line": 3}})
+        F.adopt_inbound(state, None, None)
+        self.assertNotIn("summaries must be English", F.render_table(state))
+
+    def test_the_quote_view_flags_it_too(self):
+        state = new_state(lang="de")
+        F.add_topic(state, summary="ist in keinem der Schemas required",
+                    file="a.json", line=3, draft="Bitte ergänzen.")
+        self.assertIn("summaries must be English", F.render_quote(state, "t1"))
+
+    def test_the_header_marker_names_what_the_language_applies_to(self):
+        state = new_state(lang="de")
+        self.assertEqual(F.lang_hint(state), "_drafts de · rest en_")
+
+    def test_an_english_draft_language_needs_only_half_the_marker(self):
+        """A second half reading `rest en` next to `drafts en` is noise: with English
+        drafts there is nothing to keep apart, and this marker is unavoidably in the
+        user's face on every view."""
+        self.assertEqual(F.lang_hint(new_state(lang="en")), "_drafts en_")
+
+
 class TestNeedsTitle(unittest.TestCase):
     """adopt_inbound has no way to author an English one-liner for a thread it did not
     write — the only text available is the raw comment body, in whatever language the

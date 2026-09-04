@@ -12,12 +12,27 @@ import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from lib.mr_common import first_name, load, num, save, short_summary, state_file, topic_for, tref
+from lib.mr_common import (MR_LEVEL, first_name, load, loc_md, num, save, short_summary,
+                           state_file, topic_for, tref)
 
 
 class TestTref(unittest.TestCase):
     def test_carries_the_topic_icon(self):
         self.assertEqual(tref("t3"), "◈ t3")
+
+
+class TestLocMd(unittest.TestCase):
+    """A location-less topic used to render as a bare pair of empty backticks in the
+    overview table, which reads as a rendering bug rather than as "this one is about
+    the merge request itself"."""
+
+    def test_a_location_is_a_code_span(self):
+        self.assertEqual(loc_md("a/b.py:42"), "`a/b.py:42`")
+
+    def test_no_location_says_so_instead_of_empty_backticks(self):
+        out = loc_md("")
+        self.assertIn(MR_LEVEL, out)
+        self.assertNotIn("``", out)
 
 
 class TestNum(unittest.TestCase):

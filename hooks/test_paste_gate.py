@@ -503,7 +503,7 @@ class TestShippedSpecs(unittest.TestCase):
         self.assertEqual([g["key"] for g in review["gates"]],
                          ["review-mr:resume", "review-mr:present", "review-mr:todo",
                           "review-mr:quote", "review-mr:updates", "review-mr:diff"])
-        self.assertEqual(len(review["forbidden"]), 3)
+        self.assertEqual(len(review["forbidden"]), 4)
         self.assertEqual([g["key"] for g in rework["gates"]],
                          ["rework-mr:present", "rework-mr:todo", "rework-mr:quote",
                           "rework-mr:diff-view", "rework-mr:reply-view",

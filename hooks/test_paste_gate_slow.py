@@ -221,9 +221,21 @@ class TestForbidden(HookCase):
         self.assertBlocked([
             user_prompt(),
             assistant_text(
-                "◈ **t9** · `token.py:40` · drafts in de\n\n"
+                "◈ **t9** · `token.py:40` · _drafts de · rest en_\n\n"
                 "⚠️ **needs an English summary** — `t9` has no authored `summary` yet"),
         ], contains="needs_title")
+
+    def test_summary_in_the_draft_language_blocks(self):
+        """`drafts de` governs the comment body only. A table whose summaries came
+        out in the draft language must not reach the user — findings.py flags it and
+        this rule refuses to show the flagged view."""
+        self.assertBlocked([
+            user_prompt(),
+            assistant_text(
+                "| ✎ draft | ◈ **t2** | 🟠 | 🤖 | `a.json:12` | `zone_code` ist "
+                "in keinem Schema required |\n\n"
+                "⚠️ **summaries must be English** — ◈ t2 read as de."),
+        ], contains="always English")
 
 
 class TestRequired(HookCase):

@@ -82,8 +82,8 @@ if _REPO_ROOT not in sys.path:
 from lib import critical_manifest                               # noqa: E402
 from lib.gitlab import (api, context, current_user, die, mr_base, mr_head,  # noqa: E402
                         mr_object, mr_view, versions, web_base)
-from lib.mr_common import (first_name, load, num, save, short_summary,  # noqa: E402
-                           state_file, topic_for, tref)
+from lib.mr_common import (MR_LEVEL, first_name, load, loc_md, num,  # noqa: E402
+                           save, short_summary, state_file, topic_for, tref)
 from lib.snippet import MAX_BACKTRACK, open_construct            # noqa: E402
 
 STATE_ROOT = os.path.expanduser("~/.claude/review-mr")
@@ -122,8 +122,21 @@ def lang_hint(state):
     that only rides along with the overview scrolls out of context and the agent falls
     back to the documented default — which produced a German draft in an
     all-English project.
+
+    It names what the language applies to, because it was read the other way round
+    too: a review came back with all ten summaries in the draft language, the marker
+    having been taken as "this whole review is in de". A comment body is the only
+    thing that language governs.
+
+    Kept as short and as quiet as those two facts allow, and italic so the chat
+    styles it down: it is an instruction to the agent, not something the user asked
+    to see, and it cannot be hidden from them — every view is pasted verbatim. When
+    the draft language IS English there is nothing left to distinguish, so the second
+    half goes away instead of reading "drafts en · rest en".
     """
-    return f"drafts in {state.get('lang') or DEFAULT_LANG}"
+    lang = state.get("lang") or DEFAULT_LANG
+    return f"_drafts {lang}_" if lang.lower().startswith("en") \
+        else f"_drafts {lang} · rest en_"
 
 
 def state_dir(slug):
@@ -413,12 +426,21 @@ def topic_file(state, t):
 
 
 def _loc(state, t, full=False):
-    """Location `path:line`. Compact (basename) for the overview table; full repo
-    path when `full` — used in the per-topic header you read while discussing."""
+    """Location `path:line`, or "" for a topic with no diff position at all — see
+    `loc_md`, which is what turns either into something readable. Compact (basename)
+    for the overview table; full repo path when `full` — used in the per-topic header
+    you read while discussing. Mirrors rework-mr's threads.py's `_loc`."""
     f, line = topic_file(state, t)
     if not f:
         return ""
     return f"{f if full else os.path.basename(f)}:{line or ''}"
+
+
+def _thread_loc(x):
+    """`basename:line` for a thread's diff position, or "" when it has none — a
+    discussion on the merge request itself carries no position, and every caller has
+    to say so in its own words rather than print a stray separator."""
+    return f"{os.path.basename(x['file'])}:{x.get('line') or ''}" if x.get("file") else ""
 
 
 def _rows(state, scope):
@@ -461,10 +483,13 @@ def render_table(state, scope="all"):
             out.append(critical_manifest.mark(
                 f"| {GLYPH[s]} {WORD[s]}{mark} | {tref(f'**{tid}**')} "
                 f"| {kind_icon(t)} | {SRC_ICON.get(t.get('source'), '🤖')} "
-                f"| `{_loc(state, t)}` | {summ} |"))
+                f"| {loc_md(_loc(state, t))} | {summ} |"))
     else:
         out.append("_✓ nothing needs you right now_" if scope == "mine"
                    else "_no findings yet_")
+    warn = summary_language_warning(state, shown)
+    if warn:
+        out += ["", warn]
     total = len(state["topics"])
     done = counts["acked"] + counts["wontfix"]
     prog = [f"{done}/{total} acked/closed"]
@@ -673,6 +698,82 @@ def needs_title_warning(t):
             f"English title>\"` before presenting this topic further.")
 
 
+# Words that give a language away: function words, plus the inflections of a handful
+# of everyday verbs and adjectives, which is what a summary is actually made of. An
+# English summary legitimately names a foreign identifier, path or string literal, so
+# code spans are stripped and two DISTINCT words have to hit before anything is said.
+# A language with no list here is simply never checked — see summary_language_warning.
+#
+# Two rules keep this from firing on English prose: nothing shorter than three letters
+# (`an`, `am`, `in`, `so`, `da` are all English too), and nothing that is also an
+# English word (`also`, `war`, `falls`, `man`, `will`, `mine`, `hier` are the ones that
+# had to be left out).
+LANG_GIVEAWAYS = {
+    "de": {"aber", "alle", "allem", "allen", "aller", "auch", "auf", "aus", "beide",
+           "beiden", "beim", "bereits", "bleibt", "brauchen", "braucht", "dabei",
+           "damit", "dann", "dass", "dazu", "dem", "den", "denen", "denn", "der",
+           "deren", "des", "dessen", "die", "diese", "diesem", "diesen", "dieser",
+           "doch", "dort", "durch", "eher", "eigene", "eigenen", "eigener", "ein",
+           "eine", "einem", "einen", "einer", "eines", "etwa", "fehlen", "fehlend",
+           "fehlende", "fehlenden", "fehlt", "für", "ganz", "geben", "gegen",
+           "geändert", "geaendert", "gehört", "gemacht", "gibt", "gleiche",
+           "gleichen", "haben", "hart", "hat", "hatte", "hatten", "hinter", "ihre",
+           "ihren", "immer", "innerhalb", "ist", "jede", "jeden", "jeder", "jedes",
+           "jedoch", "jeweils", "kann", "kein", "keine", "keinem", "keinen",
+           "keiner", "komplett", "können", "könnte", "laufen", "liegt", "lässt",
+           "läuft", "machen", "macht", "mehr", "mit", "muss", "müssen", "müsste",
+           "nach", "neue", "neuem", "neuen", "neuer", "neues", "nicht", "noch",
+           "nur", "obwohl", "oder", "ohne", "sagen", "sagt", "schon", "sehr",
+           "sein", "seine", "seinen", "seiner", "selbst", "sind", "soll", "sollen",
+           "sollte", "sollten", "sonst", "sowie", "statt", "steht", "trotz", "über",
+           "und", "unter", "viele", "vom", "von", "vor", "waren", "wegen", "weil",
+           "weiter", "welche", "welcher", "wenn", "werden", "wieder", "wird",
+           "wurde", "wurden", "zwar", "zwischen"},
+}
+CODE_SPAN = re.compile(r"`[^`]*`")
+WORDS = re.compile(r"[^\W\d_]{3,}")
+
+
+def in_draft_language(state, t):
+    """Whether this topic's authored summary reads as the draft language.
+
+    Conservative by construction: it only knows languages `LANG_GIVEAWAYS` has a word
+    list for, it ignores anything in backticks, and it needs two distinct function
+    words — a single "die" or "von" in an English line is not evidence. A
+    `needs_title` topic is skipped: it has no authored summary at all, only a raw
+    thread quote, which is in the commenter's language by design.
+    """
+    words = LANG_GIVEAWAYS.get((state.get("lang") or DEFAULT_LANG).lower())
+    if not words or t.get("needs_title") or not t.get("summary"):
+        return False
+    prose = CODE_SPAN.sub(" ", t["summary"])
+    # An acronym is never a function word, and several lowercase straight into the
+    # list: MIT, DES, AUS, DEM. A German word at the start of a sentence is only
+    # title-case, so dropping the all-caps tokens costs nothing.
+    hits = {w.lower() for w in WORDS.findall(prose)
+            if not w.isupper() and w.lower() in words}
+    return len(hits) >= 2
+
+
+def summary_language_warning(state, topics):
+    """Name the topics whose summary was written in the draft language.
+
+    Summaries, topic headings and the overview table are English; the draft language
+    governs one thing only, the body of a comment about to be posted. That split is
+    stated in every header, and a whole review still came back with every summary in
+    the draft language — so it is checked here rather than only documented, and the
+    paste gate refuses to show a view still carrying this warning.
+    """
+    ids = [t["id"] for t in topics if in_draft_language(state, t)]
+    if not ids:
+        return None
+    lang = state.get("lang") or DEFAULT_LANG
+    return (f"⚠️ **summaries must be English** — {', '.join(tref(x) for x in ids)} "
+            f"read as {lang}. Only a draft comment body uses {lang}; every summary, "
+            f"topic heading and table cell is English. Reword each with "
+            f"`set <t> --summary \"<short English line>\"`, then re-render.")
+
+
 def render_quote(state, tid):
     t = topic_for(state, tid) or die(f"no topic {tid}")
     summ = short_summary(state, t)
@@ -683,6 +784,9 @@ def render_quote(state, tid):
         # only — NOT part of the comment. The paste payload is the body below,
         # which `draft <t>` emits on its own for the clipboard / posting.
         out.append(f"{title}  ({WORD['draft']} — not yet on GitLab)")
+        warn = summary_language_warning(state, [t])
+        if warn:
+            out.append(warn)
         # The code block carries the location, so there is no separate "open a thread
         # at …, then paste" line: it sat directly above the SOURCE snippet and read as if
         # that were the paste payload.
@@ -696,24 +800,31 @@ def render_quote(state, tid):
         body = t.get("draft") or t.get("note")
         if body:
             lang = FENCE_BY_EXT.get(os.path.splitext(t.get("file") or "")[1], "")
+            # A topic with no file:line is posted on the MR itself, so "thread on …"
+            # would name nothing — say where it goes instead.
+            where = (f"thread on `{loc}`" if loc
+                     else f"{MR_LEVEL}: post it on the MR, not on a diff line")
             # The draft language rides on THIS label. It has to stay somewhere in the
             # drafting view — it is what keeps the agent from falling back to the
             # documented default language — and next to the draft is where it belongs.
             out += ["", f"_Draft of comment to post ({state.get('lang') or DEFAULT_LANG})"
-                    f" — thread on `{loc}`:_", "",
+                    f" — {where}:_", "",
                     render_draft(body, lang, t.get("line"))]
         return "\n".join(out).strip()
     for i, th in enumerate(t["thread_ids"]):
         x = state["threads"].get(th, {})
-        path = f"{x.get('file')}:{x.get('line') or ''}"
+        # An MR-level thread carries no diff position at all, so there is no path to
+        # print — `None:` is what an unguarded f-string produced there.
+        path = f"{x['file']}:{x.get('line') or ''}" if x.get("file") else ""
         if i == 0:
             title = f"**{tref(t['id'])}" + (f" — {summ}**" if summ else "**")
-            out.append(f"{title} · `{path}` · {lang_hint(state)}")
-            warn = needs_title_warning(t)
-            if warn:
-                out.append(warn)
+            out.append(f"{title} · {loc_md(path)} · {lang_hint(state)}")
+            for warn in (needs_title_warning(t),
+                         summary_language_warning(state, [t])):
+                if warn:
+                    out.append(warn)
         else:
-            out.append(f"`{path}`")
+            out.append(loc_md(path))
         if x.get("url"):
             out.append(x["url"])
         if x.get("resolved"):
@@ -776,8 +887,7 @@ def render_bodies(state):
             x = state["threads"].get(th, {})
             res = (f", resolved by {first_name(x.get('resolved_by')) or '?'}"
                    if x.get("resolved") else "")
-            out.append(f"[{tref(t['id'])}] {os.path.basename(x.get('file') or '')}:"
-                       f"{x.get('line') or ''}  "
+            out.append(f"[{tref(t['id'])}] {_thread_loc(x) or MR_LEVEL}  "
                        f"(last: {first_name(x.get('last_author'))}{res})  {x.get('url')}")
             out.append(f"  {first_name(x.get('author'))}: {(x.get('body') or '').strip()}")
             if x.get("note_count", 1) > 1:
@@ -798,8 +908,8 @@ def render_candidates(state, me):
             continue
         if x.get("gone"):
             continue          # deleted upstream — offering it to link would be a trap
-        out.append(f"{tid}  `{os.path.basename(x.get('file') or '')}:"
-                   f"{x.get('line') or ''}`  {(x.get('body') or '').strip()[:80]}")
+        out.append(f"{tid}  {loc_md(_thread_loc(x))}  "
+                   f"{(x.get('body') or '').strip()[:80]}")
     return "\n".join(out).strip() or "(no unlinked threads of yours)"
 
 
@@ -1420,6 +1530,13 @@ def main():
         save(path, state)
         print(f"added {len(added)} findings: "
               f"{', '.join(tref(x) for x in added)}")
+        # Said here, not just in the next table: the seed is where a whole batch of
+        # summaries in the draft language arrives, and fixing them one command later
+        # is cheaper than after they have been shown.
+        warn = summary_language_warning(state, [t for t in state["topics"]
+                                                if t["id"] in added])
+        if warn:
+            print(warn)
     elif cmd == "add":
         t = add_topic(state, kind=args.kind, severity=args.severity,
                       source=args.source, summary=args.summary, file=args.file,
@@ -1431,6 +1548,9 @@ def main():
             attach_thread(state, t, args.thread, ctx, iid)
         save(path, state)
         print(t["id"])
+        warn = summary_language_warning(state, [t])
+        if warn:
+            print(warn)
     elif cmd == "set":
         t = topic_for(state, args.topic) or die(f"no topic {args.topic}")
         if args.state == "reset":
@@ -1449,6 +1569,12 @@ def main():
         if args.summary is not None:
             t["needs_title"] = False              # now has an authored one-liner
         save(path, state)
+        if args.summary is not None:
+            # Answered at the moment the wrong-language summary is stored, rather than
+            # two commands later when a whole table has to be re-rendered.
+            warn = summary_language_warning(state, [t])
+            if warn:
+                print(warn)
         if args.draft is not None:
             # Echo the refreshed view: after storing a draft the agent needs to show it,
             # and reconstructing the block by hand reintroduces the raw ```suggestion
