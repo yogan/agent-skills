@@ -8,13 +8,15 @@ that looks exactly like "the diagram's font is too big".
 
 Run: `python3 lib/diagram/test_render.py`
 """
+import contextlib
+import io
 import os
 import sys
 import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
-from lib.diagram import d2, d2 as d2mod, render
+from lib.diagram import d2, d2 as d2mod, palette, render
 
 
 class TestPinIntrinsic(unittest.TestCase):
@@ -414,6 +416,58 @@ class TestToolchain(unittest.TestCase):
         self.assertEqual(render.PINNED_VERSION, "0.8.2")
 
 
+
+
+class TestLegendWiring(unittest.TestCase):
+    """What `render` contributes to a legend: which colours it hands over, what type it sets
+    them in, and that a legend it cannot draw never costs the caller the drawing."""
+
+    ER = {"kind": "er", "legend": {"store": "queryable today", "ext": "grant pending"},
+          "tables": [{"id": "a", "role": "store", "columns": [{"name": "id", "type": "text"}]},
+                     {"id": "b", "role": "ext", "columns": [{"name": "id", "type": "text"}]}]}
+    ARCH = {"kind": "architecture", "legend": {"store": "queryable today"},
+            "nodes": [{"id": "db", "label": "DB", "role": "store"}]}
+
+    def setUp(self):
+        self.calls = []
+        self.real = render.compact.add_legend
+        render.compact.add_legend = lambda svg, entries, font, pad=8: (
+            self.calls.append((entries, font)) or svg)
+
+    def tearDown(self):
+        render.compact.add_legend = self.real
+
+    def test_a_table_kinds_swatch_takes_the_colour_a_table_is_painted_with(self):
+        """One colour does a table's border, header and text, so that is the paint a reader
+        is matching a swatch against — not the pastel a node box is filled with."""
+        render._maybe_legend("<svg/>", self.ER, "er", False, 8)
+        entries, font = self.calls[0]
+        self.assertEqual([e[0] for e in entries], ["queryable today", "grant pending"])
+        self.assertEqual(entries[0][1], palette.vars_for("store", table=True))
+        self.assertEqual(entries[0][1], entries[0][2], "a table's swatch is one solid colour")
+        self.assertEqual(font, render.d2mod.TABLE_FONT)
+
+    def test_a_node_kinds_swatch_takes_the_fill_and_the_border(self):
+        render._maybe_legend("<svg/>", self.ARCH, "arch", False, 8)
+        entries, font = self.calls[0]
+        self.assertEqual(entries[0][1:], palette.vars_for("store"))
+        self.assertEqual(font, render.d2mod.BASE_FONT)
+
+    def test_a_spec_with_no_legend_is_left_alone(self):
+        render._maybe_legend("<svg/>", {"kind": "er", "tables": []}, "er", False, 8)
+        self.assertEqual(self.calls, [])
+
+    def test_a_legend_that_cannot_be_drawn_still_returns_the_drawing(self):
+        """It is an annotation on a finished drawing, so refusing to hand one back over a
+        legend would be the wrong trade — the warning tells the author to put the words in
+        the prose instead."""
+        def refuse(svg, entries, font, pad=8):
+            raise render.compact.CompactError("no measurement for 'queryable today'")
+        render.compact.add_legend = refuse
+        with contextlib.redirect_stderr(io.StringIO()) as err:
+            out = render._maybe_legend("<svg id='keep'/>", self.ER, "er", False, 8)
+        self.assertEqual(out, "<svg id='keep'/>")
+        self.assertIn("say what they mean in the prose", err.getvalue())
 
 
 class TestEdgeLabelsOfASpec(unittest.TestCase):

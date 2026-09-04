@@ -211,6 +211,154 @@ class TestDetailLines(unittest.TestCase):
         ET.fromstring(compact.style_detail_lines(self.TWO_LINE))
 
 
+def _svg_height(svg):
+    return compact._viewbox(compact._svg_tags(svg)[1])[3]
+
+
+def _viewbox_width(svg):
+    return compact._viewbox(compact._svg_tags(svg)[1])[2]
+
+
+class TestRoleLegend(unittest.TestCase):
+    """The other legend: a swatch and a word per COLOUR, for the diagram that has repurposed
+    the role colours to a distinction of its own. Only that diagram asks for one — see
+    `spec._check_legend` — so what is tested here is the drawing, not the decision."""
+
+    ENTRIES = [("queryable today", "#2c6b30", "#2c6b30"),
+               ("grant still pending", "#a32b1f", "#a32b1f")]
+
+    def setUp(self):
+        """Widths come from the browser-measured cache, which is global and primed by
+        `figure.draw`. Seeding it is what makes this test browser-free."""
+        from lib.diagram import callout
+        self.callout = callout
+        self.original = dict(callout._WIDTHS)
+        for label, _f, _s in self.ENTRIES:
+            callout._WIDTHS[label] = 100.0
+
+    def tearDown(self):
+        self.callout._WIDTHS.clear()
+        self.callout._WIDTHS.update(self.original)
+
+    def svg(self, width=626):
+        return ('<?xml version="1.0"?>'
+                f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {width} 339">'
+                f'<svg class="d2-1" width="{width}" height="339" viewBox="3 43 {width} 339">'
+                f'<rect x="3" y="43" width="{width}" height="339" fill="transparent"/>'
+                '<g><rect x="20" y="60" width="120" height="48" class="shape"/></g>'
+                "</svg></svg>")
+
+    def test_every_colour_gets_a_swatch_and_its_words(self):
+        out = compact.add_legend(self.svg(), self.ENTRIES, 14)
+        self.assertIn(">queryable today</p>", out)
+        self.assertIn(">grant still pending</p>", out)
+        self.assertEqual(out.count('fill="#2c6b30"'), 1)
+        self.assertEqual(out.count('fill="#a32b1f"'), 1)
+
+    def test_the_swatch_matches_the_colour_it_explains(self):
+        """The whole point: a reader compares the swatch against a box in the drawing, so it
+        has to be the same paint, not an approximation of it."""
+        out = compact.add_legend(self.svg(), self.ENTRIES[:1], 14)
+        swatch = re.search(r'<rect[^>]*fill="#2c6b30"[^>]*>', out).group(0)
+        self.assertIn('stroke="#2c6b30"', swatch)
+
+    def test_the_words_are_html_in_the_pages_font_not_svg_text(self):
+        """d2 embeds its font as a SUBSET of the glyphs the drawing uses — 3.4KB a face — so
+        an SVG `<text>` here loses every letter the drawing does not already contain to a
+        per-character system fallback. Measured on a real figure: the only letters absent
+        from the drawing were the `q` and `b` of "queryable" and the `v` of "live", and they
+        were exactly the ones that looked wrong. HTML text is laid out whole, in the page's
+        own font — the same font `callout.prime` measures in."""
+        out = compact.add_legend(self.svg(), self.ENTRIES, 14)
+        self.assertNotIn("<text", out)
+        self.assertIn('class="md"', out)
+
+    def test_the_words_are_set_in_the_size_they_are_given(self):
+        """Overriding the 12.5px the callout class carries, because a callout's size lives in
+        the PAGE's css where `gates/size` cannot see it — while this one is written into the
+        SVG and checked like any other label."""
+        self.assertIn("font-size:14px", compact.add_legend(self.svg(), self.ENTRIES, 14))
+        self.assertIn("font-size:13px", compact.add_legend(self.svg(), self.ENTRIES, 13))
+
+    def test_a_wider_setting_takes_proportionally_more_room(self):
+        """A measured width is an advance width, so it scales with the size it is set at.
+        Ignoring that laid a 14px legend out on 12.5px measurements."""
+        at13 = re.search(r'<foreignObject[^>]*width="([\d.]+)"',
+                         compact.add_legend(self.svg(), self.ENTRIES, 13)).group(1)
+        at14 = re.search(r'<foreignObject[^>]*width="([\d.]+)"',
+                         compact.add_legend(self.svg(), self.ENTRIES, 14)).group(1)
+        self.assertAlmostEqual(float(at14) / float(at13), 14 / 13, places=2)
+
+    def test_the_space_under_it_is_the_margin_the_drawing_keeps(self):
+        """The reported defect: the band added `pad` below the swatches, and `pad` is not the
+        margin the drawing ends up with — measured on a standalone ER, d2 leaves 21px beside
+        the boxes and 13px under the lowest ink, so the legend read as having nearly double
+        the space beneath it that it had beside it. The gap ABOVE needs nothing added: the
+        canvas already carries its own bottom margin, and the swatches start where it ends."""
+        out = compact.add_legend(self.svg(), self.ENTRIES, 14)
+        before = compact._viewbox(compact._svg_tags(self.svg())[1])
+        after = compact._viewbox(compact._svg_tags(out)[1])
+        swatch = 14 * compact.LEGEND_SWATCH
+        top = float(re.search(r'<rect x="[\d.]+" y="([\d.]+)"[^>]*fill="#', out).group(1))
+        self.assertAlmostEqual(top, before[1] + before[3], places=1,
+                               msg="the swatches start at the old canvas edge")
+        self.assertAlmostEqual(after[1] + after[3] - (top + swatch),
+                               14 * compact.LEGEND_EDGE_GAP, places=1)
+
+    def test_the_canvas_grows_to_hold_it(self):
+        out = compact.add_legend(self.svg(), self.ENTRIES, 14)
+        before = compact._viewbox(compact._svg_tags(self.svg())[1])[3]
+        after = compact._viewbox(compact._svg_tags(out)[1])[3]
+        self.assertGreater(after, before, "a legend drawn outside the viewBox is invisible")
+
+    def test_an_unmeasured_word_draws_nothing(self):
+        """Rather than guessing its width from a character count: a legend is the one place a
+        reader goes to find out what they are looking at, and an overhanging word there is
+        worse than a legend that is honestly absent (the caller warns and says to put the
+        words in the prose)."""
+        self.callout._WIDTHS.pop("queryable today")
+        with self.assertRaises(compact.CompactError):
+            compact.add_legend(self.svg(), self.ENTRIES, 14)
+
+    def test_a_legend_too_wide_for_one_row_wraps_onto_two(self):
+        """Sideways is the expensive axis — a wider canvas is scaled further down in a content
+        column, so every label in the drawing would pay for the legend. A portrait figure is
+        narrow enough that this is the common case, not the edge one: measured, 304px of
+        drawing against 379px of legend on a four-box architecture."""
+        narrow = compact.add_legend(self.svg(width=260), self.ENTRIES, 14)
+        wide = compact.add_legend(self.svg(width=900), self.ENTRIES, 14)
+        self.assertIn(">queryable today</p>", narrow)
+        self.assertIn(">grant still pending</p>", narrow)
+        tops = {re.search(r'y="([\d.]+)"', mark).group(1)
+                for mark in re.findall(r"<rect[^>]*fill=\"#[0-9a-f]{6}\"[^>]*>", narrow)}
+        self.assertEqual(len(tops), 2, "wrapped swatches must sit on two different rows")
+        self.assertGreater(_svg_height(narrow), _svg_height(wide),
+                           "two rows have to cost more height than one")
+        self.assertEqual(_viewbox_width(narrow), _viewbox_width(self.svg(width=260)),
+                         "and the drawing must not have been widened to fit it")
+
+    def test_one_entry_wider_than_the_whole_drawing_draws_nothing(self):
+        """The case wrapping cannot fix. The caller warns and ships the drawing without it,
+        which is better than a legend hanging off the canvas in the one place a reader looks
+        to find out what they are looking at."""
+        with self.assertRaises(compact.CompactError):
+            compact.add_legend(self.svg(width=120), self.ENTRIES, 14)
+
+    def test_no_entries_is_no_change(self):
+        svg = self.svg()
+        self.assertEqual(compact.add_legend(svg, [], 14), svg)
+
+    def test_the_measurement_size_is_the_one_the_callout_css_sets(self):
+        """`callout.prime` measures under that css, so a legend width is that measurement
+        scaled by the size it is set at. If the css moves and this constant does not, every
+        legend is laid out on widths for a size nothing is drawn at."""
+        from lib.diagram import render
+        self.assertIn(f"font-size:{compact.MEASURED_AT:g}px", render.page_css())
+
+    def test_it_stays_well_formed(self):
+        ET.fromstring(compact.add_legend(self.svg(), self.ENTRIES, 14))
+
+
 class TestGroupLegend(unittest.TestCase):
     """Lane colour says which side of the wire a lane is on, and nothing said what the colours
     meant — the first reader of a real figure guessed "probably FE/BE"."""
@@ -234,7 +382,7 @@ class TestGroupLegend(unittest.TestCase):
         out = compact.add_group_legend(self.svg(), self.LANES)
         self.assertIn(">browser</text>", out)
         self.assertIn(">server</text>", out)
-        self.assertEqual(out.count(f'fill-opacity="{compact.LEGEND_OPACITY}"'), 2)
+        self.assertEqual(out.count(f'fill-opacity="{compact.GROUP_OPACITY}"'), 2)
 
     def test_the_rule_takes_the_border_colour_and_the_name_the_text_colour(self):
         """A border colour painting a name is what a two-group figure never caught: the third
@@ -259,7 +407,7 @@ class TestGroupLegend(unittest.TestCase):
 
     def test_the_rule_has_rounded_ends(self):
         out = compact.add_group_legend(self.svg(), self.LANES)
-        self.assertIn(f'rx="{compact.LEGEND_RULE / 2:g}"', out)
+        self.assertIn(f'rx="{compact.GROUP_RULE / 2:g}"', out)
 
     def test_one_group_explains_nothing_and_is_left_alone(self):
         svg = self.svg()
@@ -280,15 +428,15 @@ class TestGroupLegend(unittest.TestCase):
 
     def test_the_canvas_grows_so_the_band_is_not_cropped(self):
         out = compact.add_group_legend(self.svg(), self.LANES)
-        self.assertIn(f'viewBox="0 0 626 {339 + compact.LEGEND_BAND}"', out)
-        self.assertIn(f'viewBox="3 43 626 {339 + compact.LEGEND_BAND}"', out)
-        self.assertIn(f'height="{339 + compact.LEGEND_BAND}"', out)
+        self.assertIn(f'viewBox="0 0 626 {339 + compact.GROUP_BAND}"', out)
+        self.assertIn(f'viewBox="3 43 626 {339 + compact.GROUP_BAND}"', out)
+        self.assertIn(f'height="{339 + compact.GROUP_BAND}"', out)
 
     def test_the_backdrop_grows_too_so_a_standalone_image_paints_the_band(self):
         """render.standalone fills that rect with the page colour; left un-grown, the legend
         sits on an unpainted strip."""
         out = compact.add_group_legend(self.svg(), self.LANES)
-        self.assertIn(f'height="{339 + compact.LEGEND_BAND:.6f}" fill="transparent"', out)
+        self.assertIn(f'height="{339 + compact.GROUP_BAND:.6f}" fill="transparent"', out)
 
     def test_a_split_group_is_drawn_as_two_spans(self):
         """Honest: the rule marks where those lanes actually are. spec.py already advises

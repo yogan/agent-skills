@@ -160,9 +160,10 @@ def _list(spec, key, what):
 def _check_new(item, where):
     """`new` marks the one thing a change added, and it may not speak alone.
 
-    Colour without words says "something here is special" and never says what, and there is no
-    legend to look it up in — which is why this was rejected outright for a while. Pairing it
-    with a `note` is what makes it legible: the accent carries the eye, and two words say why.
+    Colour without words says "something here is special" and never says what. A `legend` is
+    no help here and is not an alternative: it explains ROLE colours, and the accent is not a
+    role — it is one box painted differently from its own kind. Pairing it with a `note` is
+    what makes it legible: the accent carries the eye, and two words say why.
     """
     if "new" not in item:
         return
@@ -406,7 +407,61 @@ def validate(spec):
         _check_nodes(spec["states"], kind, ids, roles=STATE_ROLES)
         _check_start(spec["states"])
         _check_edges(spec, ids, kind, key="transitions")
+    _check_legend(spec, kind)
     return spec
+
+
+# How many colours a legend may explain. Past this the diagram is not colour-coded, it is
+# colour-encoded, and a reader is being asked to hold a lookup table in their head while they
+# read a picture. The remedy is fewer distinctions or two diagrams, not a longer legend.
+MAX_LEGEND = 4
+
+
+def _check_legend(spec, kind):
+    """`legend` says what the ROLE COLOURS mean, for the diagram where they do not say it
+    themselves.
+
+    Normally they do: a store is a store and an external system is an external system, so a
+    legend would be four words restating what the shapes already are — which is why this is
+    opt-in and why `skills/visualize` is told to reach for it rarely. What earns one is a
+    diagram that has REPURPOSED the roles to a distinction of its own: green for "we can query
+    this today" against salmon for "the grant is still pending" is not something any reader
+    can derive from the picture, and putting it in the prose leaves the image meaningless the
+    moment it is pasted anywhere else.
+
+    Only roles the diagram actually uses may appear. A legend entry for a colour that is not
+    on the canvas is worse than none: the reader looks for it, does not find it, and now
+    doubts the rest of the legend too.
+    """
+    if "legend" not in spec:
+        return
+    legend = spec["legend"]
+    _require(isinstance(legend, dict) and legend,
+             "legend: must be a non-empty mapping of role -> what that colour means here")
+    _require(len(legend) <= MAX_LEGEND,
+             f"legend: {len(legend)} colours is more than a reader can hold — at most "
+             f"{MAX_LEGEND}. Draw fewer distinctions, or split the diagram.")
+    roles = STATE_ROLES if kind == "state" else ROLES
+    used = _roles_used(spec)
+    for role, label in legend.items():
+        _one_of(role, roles, "legend: role")
+        _str(label, f"legend: {role}")
+        _require(role in used,
+                 f"legend explains {role!r}, which nothing in this diagram uses. A colour in "
+                 "the legend that is not on the canvas sends the reader looking for it.")
+
+
+def _roles_used(spec):
+    """Every role the drawing will actually paint, defaults included."""
+    used = set()
+    for key in ("nodes", "participants", "states"):
+        for _id, node in _walk(spec.get(key) or []):
+            if not node.get("children"):
+                used.add(node.get("role", "neutral"))
+    for key in ("tables", "classes"):
+        for item in spec.get(key) or []:
+            used.add(item.get("role", "neutral"))
+    return used
 
 
 def _check_start(states):

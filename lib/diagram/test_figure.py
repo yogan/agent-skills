@@ -252,6 +252,36 @@ COVERED = ('<svg viewBox="0 0 300 100">'
 CLEAR = COVERED.replace('<rect x="150" y="30"', '<rect x="150" y="2"')
 
 
+class TestPriming(Base):
+    """One browser launch measures every string the drawing needs a width for, before any
+    figure is drawn. A string that misses it is not drawn at all — see `compact.add_legend` —
+    so what is tested here is that the legend's words are in that batch with the notes."""
+
+    LEGENDED = {"kind": "state", "legend": {"steady": "running today"},
+                "states": [{"id": "a", "role": "steady", "note": "new"},
+                           {"id": "b", "role": "terminal"}],
+                "transitions": [{"from": "a", "to": "b", "label": "done"}]}
+
+    def setUp(self):
+        super().setUp()
+        self.primed = []
+        self.real_prime = figure.callout_mod.prime
+        figure.callout_mod.prime = self.primed.extend
+
+    def tearDown(self):
+        figure.callout_mod.prime = self.real_prime
+        super().tearDown()
+
+    def test_a_legends_words_are_measured_with_the_notes(self):
+        figure.draw({"flow": self.LEGENDED})
+        self.assertIn("running today", self.primed)
+        self.assertIn("new", self.primed)
+
+    def test_a_diagram_with_no_legend_primes_only_its_notes(self):
+        figure.draw({"flow": NOTED})
+        self.assertEqual(self.primed, ["new"])
+
+
 class TestCoverageAdvice(Base):
     """The placement search minimises what a note covers and usually reaches zero. On a
     crowded drawing it cannot, and the least bad placement ships — which was silent."""

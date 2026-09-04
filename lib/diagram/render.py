@@ -299,19 +299,59 @@ def _maybe_compact(raw, spec, name, standalone=False):
     if spec.get("kind") == "state":
         # After the marker, not before: it moves the canvas top edge, and an edge label may
         # not be nudged past a boundary that is about to change.
-        return edgelabel.reposition(_maybe_mark_start(svg, spec, name, standalone, pad))
-    if spec.get("kind") != "sequence":
-        return edgelabel.reposition(svg)
+        svg = edgelabel.reposition(_maybe_mark_start(svg, spec, name, standalone, pad))
+    elif spec.get("kind") != "sequence":
+        svg = edgelabel.reposition(svg)
+    else:
+        try:
+            svg = compact.compact_sequence(svg)
+        except compact.CompactError as exc:
+            print(f"{name}: could not compact the sequence rows ({exc}) — "
+                  "falling back to d2's spacing", file=sys.stderr)
+        try:
+            svg = compact.add_group_legend(svg, _lane_colours(spec["participants"]), pad=pad)
+        except compact.CompactError as exc:
+            print(f"{name}: could not add the group legend ({exc}) — the lane colours are "
+                  "unexplained, so say what they mean in the prose", file=sys.stderr)
+    # Last, and for every kind: it grows the bottom edge, so anything that measures against
+    # that edge — the group band, the start marker, an edge label being nudged — has to have
+    # had its turn already.
+    return _maybe_legend(svg, spec, name, standalone, pad)
+
+
+def _maybe_legend(svg, spec, name, standalone, pad):
+    """Draw the legend the spec asked for, explaining what its role colours mean here.
+
+    Swallowed like the other annotations, and the warning has to say what the reader loses:
+    without it the drawing still ships, and its colours are then unexplained — which for a
+    diagram that asked for a legend is the whole point of the picture gone missing, not a
+    cosmetic loss. So the message says to put the words in the prose.
+
+    Its type is the size the EMITTER sets for the drawing's own labels, not a constant of its
+    own and not something derived from the scale. The legend is primary text and faces the
+    same 10px floor after the page has scaled the figure, so setting it in the type already
+    around it means type that has already been checked — where a fixed 12px would land at
+    9.2px on a figure scaled to 0.77, which is most wide ones.
+    """
+    legend = spec.get("legend")
+    if not legend:
+        return svg
+    table = spec.get("kind") in ("er", "class")
+    entries = []
+    for role, label in legend.items():
+        if table:
+            # A table is painted with one colour for border, header and text, so a swatch of
+            # that colour IS what the reader is matching against.
+            fill = stroke = palette.vars_for(role, table=True)
+        else:
+            fill, stroke = palette.vars_for(role)
+        entries.append((label, fill, stroke))
+    font = d2mod.TABLE_FONT if table else d2mod.BASE_FONT
     try:
-        svg = compact.compact_sequence(svg)
+        return compact.add_legend(svg, entries, font, pad=pad)
     except compact.CompactError as exc:
-        print(f"{name}: could not compact the sequence rows ({exc}) — "
-              "falling back to d2's spacing", file=sys.stderr)
-    try:
-        return compact.add_group_legend(svg, _lane_colours(spec["participants"]), pad=pad)
-    except compact.CompactError as exc:
-        print(f"{name}: could not add the group legend ({exc}) — the lane colours are "
-              "unexplained, so say what they mean in the prose", file=sys.stderr)
+        print(f"{name}: could not draw the legend ({exc}) — the colours are unexplained, so "
+              "say what they mean in the prose", file=sys.stderr)
         return svg
 
 

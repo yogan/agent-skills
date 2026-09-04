@@ -23,12 +23,17 @@ fine and is wrong:
 | `kind` | required | `architecture` · `sequence` · `er` · `class` · `state` |
 | `title` | optional | names the output file, and the ids inside the SVG |
 | `slug` | optional | same, and wins over `title` when both are set |
+| `legend` | optional | `{role: "what that colour means here"}` — a swatch and its words, drawn under the drawing. For the diagram that has repurposed the roles to a distinction of its own and nothing else; see [SKILL.md](SKILL.md). Only roles the diagram paints, at most four. |
 | `direction` | **not accepted** | The renderer decides. For an embedded figure it draws the diagram both ways, measures each, and keeps the one that stays legible with less height — wrapping long edge labels if that is what makes the wider layout fit. A spec carrying one is rejected, because pinning it also switches off the spacing escalation that keeps text readable, and the diagram comes out quietly worse: the reference ER pinned to its own measured direction renders a cardinality on top of a table. A standalone image is laid out wide by default, having no column to fit into. (`sequence` ignores it entirely — d2's sequence engine has its own layout.) |
 
 ### Roles
 
 Every box takes a `role`, which is what it *is*, not what colour you want:
 `client` · `svc` · `store` · `cache` · `ext` · `neutral` (the default).
+
+The exception is a diagram whose *question* is about a property the shapes cannot show — which
+of these can we query today, which of these did the migration touch. There the roles carry that
+distinction instead, and the diagram must then say so with a `legend`.
 
 **A `state` has its own set**, because a state is not a datastore or a cache and tagging it as
 one just picks a colour: `working` · `steady` · `transient` · `stuck` · `terminal` · `neutral`.
@@ -45,7 +50,7 @@ Any box, table, class or sequence lane may carry:
 |---|---|---|
 | `note` | | 2–4 words, becomes a permanently visible callout |
 | `near` | optional | one of `top-left` `top-center` `top-right` `center-left` `center-right` `bottom-left` `bottom-center` `bottom-right` |
-| `new` | optional | `true` marks the box a change **added**: an accent border, or an accent fill on a table, which has no border of its own to colour. Requires a `note` — the accent has no legend, so it cannot say what is new on its own, and with one the note shrinks to a word: `"new"`, `"added"`. Not allowed on a container, where it would be silently ignored. |
+| `new` | optional | `true` marks the box a change **added**: an accent border, or an accent fill on a table, which has no border of its own to colour. Requires a `note` — a `legend` is no help, since it explains role colours and the accent is not a role, so the accent cannot say what is new on its own; with a note it shrinks to a word: `"new"`, `"added"`. Not allowed on a container, where it would be silently ignored. |
 
 **Most diagrams should have no notes at all** — see [SKILL.md](SKILL.md) on when one earns its
 place. Note that no example in this file uses one, deliberately: a callout is the exception, not

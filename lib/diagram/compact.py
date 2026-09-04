@@ -76,12 +76,36 @@ DETAIL_CLASS = "d2-detail"
 # in a border colour is what a two-group figure never caught — the third group is green
 # (#3f9142) and lands at 3.76:1 on white, under the 4.5:1 the contrast gate demands. Muting
 # the rule further therefore costs nothing: the name is what has to stay readable.
-LEGEND_BAND = 22
-LEGEND_RULE = 2
-LEGEND_OPACITY = 0.22
-LEGEND_FONT = 12
-LEGEND_GAP = 5            # lifeline feet -> rule
-LEGEND_BASELINE = 19      # lifeline feet -> the name's baseline
+# The band under a sequence diagram's lanes, naming each GROUP of them. Distinct from the
+# role legend below, which explains colours: this one explains which lanes belong together,
+# and it can afford a fixed size because a sequence diagram is never scaled into a column.
+GROUP_BAND = 22
+GROUP_RULE = 2
+GROUP_OPACITY = 0.22
+GROUP_FONT = 12
+GROUP_GAP = 5            # lifeline feet -> rule
+GROUP_BASELINE = 19      # lifeline feet -> the name's baseline
+
+# The role LEGEND — a swatch and a word per colour, for the one case where a colour carries a
+# meaning the picture cannot show on its own (see `add_legend`). Every measurement is a
+# multiple of the type it is set in rather than a fixed px: the caller passes the drawing's
+# own label size, so the legend scales with whatever the figure is set in and faces a floor
+# it has already been shown to clear.
+LEGEND_SWATCH = 1.05         # swatch side, in multiples of the font size
+LEGEND_TEXT_GAP = 0.45       # swatch -> its word
+LEGEND_ENTRY_GAP = 1.6       # word -> the next swatch
+LEGEND_ROW_GAP = 0.55        # one wrapped row of swatches -> the next
+# Swatches -> the canvas edge below them. A multiple of the type, not the `--pad` d2 was run
+# with: measured on a standalone ER, d2 leaves 21px to the left of the boxes and 13px under
+# the lowest ink, so `pad` as a bottom margin came out at nearly double what the drawing
+# keeps for itself, which is exactly how it reads. At 0.9 it lands within a px of it.
+LEGEND_EDGE_GAP = 0.9
+
+# The size `callout.prime` measures a string at — `render`'s `.md p` rule, pinned by a test
+# so the two cannot drift apart. A measured width is an ADVANCE width and scales with the type
+# size, so a legend set at 14 is that measurement times 14/12.5. Nothing here counts
+# characters: see `add_legend` on why an estimated width is the wrong risk.
+MEASURED_AT = 12.5
 
 # The dot a state machine begins at — UML's start marker, which is the one thing a reader of
 # the reference state diagram could not find: being the top node is implicit, and any state
@@ -249,6 +273,99 @@ def _runs(lanes):
     return out
 
 
+def add_legend(svg, entries, font, pad=D2_PAD):
+    """Append a legend — one swatch and its words per colour — under the drawing.
+
+    `entries` is (label, fill, stroke) per colour, in the order they should read; `font` is
+    the size to set the words at, which the caller takes from what the emitter gives the
+    drawing's own labels. The legend is primary text and faces the same floor once the page
+    has scaled the figure, so matching the labels around it is type that has already been
+    shown to clear it — and unlike a callout's words, whose size lives in the PAGE's CSS and
+    is therefore invisible to `gates/size`, this size is written into the SVG and checked.
+
+    The words are HTML in a `<foreignObject>`, exactly as a callout's are, and that is not a
+    stylistic choice. d2 embeds its font as a SUBSET of the glyphs the drawing happens to
+    use — 3.4KB a face — so any letter the legend introduces is missing from it and the
+    browser substitutes that ONE character from a system face. The result is a word with two
+    typefaces in it: measured on a real figure, the `q` and `b` of "queryable" and the `v` of
+    "live" were the only letters absent from the drawing, and they were exactly the ones that
+    looked wrong. HTML text is laid out in the page's own font, whole.
+
+    That is also the font `callout.prime` measures in, which is what makes the widths here
+    honest: they are the widths of these strings as they will be drawn. Nothing is counted
+    from a character count — a legend is where a reader goes to find out what they are
+    looking at, and a word overhanging the canvas there is worse than an absent legend.
+
+    It WRAPS rather than widening the drawing. Sideways is the expensive axis: a wider canvas
+    is scaled further down in a content column, so a legend that grew one would cost every
+    label in the drawing some of its size — and a portrait figure, which most architectures
+    are, is narrow enough that one row rarely fits (measured: 304px of drawing against 379px
+    of legend, on four boxes). Height is the axis a legend is already spending.
+
+    Raises `CompactError` — the caller warns and ships the drawing without it — when a word
+    has no measurement, or when one swatch and its words are wider than the whole drawing,
+    which no amount of wrapping can fix.
+    """
+    from . import callout                      # local: callout imports browser, browser is heavy
+    if not entries:
+        return svg
+    widths = []
+    for label, _fill, _stroke in entries:
+        measured = callout.known(label)
+        if measured is None:
+            raise CompactError(f"the legend's {label!r} has not been measured")
+        widths.append(measured * font / MEASURED_AT)
+
+    swatch = font * LEGEND_SWATCH
+    lead = swatch + font * LEGEND_TEXT_GAP        # swatch, plus the gap before its words
+    _outer_tag, inner_tag = _svg_tags(svg)
+    vx, vy, vw, vh = _viewbox(inner_tag)
+    avail = vw - 2 * pad
+    for (label, _f, _s), width in zip(entries, widths):
+        if lead + width > avail:
+            raise CompactError(f"the legend's {label!r} needs {lead + width:.0f}px and the "
+                               f"whole drawing is only {vw:.0f}px wide")
+
+    # Greedy fill, one row at a time, each entry keeping the offset it will be drawn at.
+    rows, row, used = [], [], 0.0
+    for entry, width in zip(entries, widths):
+        gap = font * LEGEND_ENTRY_GAP if row else 0.0
+        if row and used + gap + lead + width > avail:
+            rows.append(row)
+            row, used, gap = [], 0.0, 0.0
+        used += gap
+        row.append((entry, width, used))
+        used += lead + width
+    rows.append(row)
+
+    # The gap ABOVE the legend is the one the drawing already has: the canvas carries its own
+    # bottom margin below the lowest ink, and the swatches start where that margin ends, so
+    # the legend sits the same distance from the drawing as the drawing sits from every other
+    # edge. Only the gap BELOW has to be added, and it is a multiple of the type rather than
+    # the `--pad` d2 was run with — that pad is not the margin the drawing ends up with, and
+    # using it put nearly twice as much space under the legend as beside it.
+    swatches = len(rows) * swatch + (len(rows) - 1) * font * LEGEND_ROW_GAP
+    band = swatches + font * LEGEND_EDGE_GAP
+    marks = []
+    for index, row in enumerate(rows):
+        top = vy + vh + index * (swatch + font * LEGEND_ROW_GAP)
+        for (label, fill, stroke), width, offset in row:
+            x = vx + pad + offset
+            marks.append(
+                f'<rect x="{x:.1f}" y="{top:.1f}" width="{swatch:.1f}" height="{swatch:.1f}" '
+                f'rx="{font * 0.2:.1f}" fill="{fill}" stroke="{stroke}" stroke-width="1"/>')
+            # `class="md"` is the callout's own text box: the page's font, `nowrap`, and a
+            # flex row that centres the words in whatever height it is given — which is the
+            # swatch's, so the two line up without a baseline being computed here at all.
+            # The inline size overrides the 12.5px that class carries.
+            marks.append(
+                f'<foreignObject x="{x + lead:.1f}" y="{top:.1f}" width="{width:.1f}" '
+                f'height="{swatch:.1f}"><div xmlns="http://www.w3.org/1999/xhtml" '
+                f'class="md"><p style="font-size:{font:g}px">{_escape(label)}</p>'
+                "</div></foreignObject>")
+    return _append(_grown(svg, bottom=band), marks)
+
+
 def add_group_legend(svg, lanes, pad=D2_PAD):
     """Name each lane group under the diagram, in its own colour.
 
@@ -279,19 +396,19 @@ def add_group_legend(svg, lanes, pad=D2_PAD):
         x0 = rects[first][0]
         x1 = rects[last][0] + rects[last][2]
         marks.append(
-            f'<rect x="{x0:.1f}" y="{foot + LEGEND_GAP:.1f}" width="{x1 - x0:.1f}" '
-            f'height="{LEGEND_RULE}" rx="{LEGEND_RULE / 2:g}" fill="{rule}" '
-            f'fill-opacity="{LEGEND_OPACITY}"/>'
+            f'<rect x="{x0:.1f}" y="{foot + GROUP_GAP:.1f}" width="{x1 - x0:.1f}" '
+            f'height="{GROUP_RULE}" rx="{GROUP_RULE / 2:g}" fill="{rule}" '
+            f'fill-opacity="{GROUP_OPACITY}"/>'
             # `class="text"` is not decoration: d2 scopes its embedded font to that class and
             # nothing else, so a <text> without it inherits the HOST PAGE's font — Georgia on
             # the explainer, which put these three group names in a serif while every other
             # label in the drawing was sans. The class sets font-family and nothing more, so
             # the fill and size written here still win.
-            f'<text x="{(x0 + x1) / 2:.1f}" y="{foot + LEGEND_BASELINE:.1f}" fill="{name}" '
-            f'class="text" style="text-anchor:middle;font-size:{LEGEND_FONT}px">'
+            f'<text x="{(x0 + x1) / 2:.1f}" y="{foot + GROUP_BASELINE:.1f}" fill="{name}" '
+            f'class="text" style="text-anchor:middle;font-size:{GROUP_FONT}px">'
             f"{_escape(group)}</text>")
 
-    return _append(_grown(svg, bottom=LEGEND_BAND), marks)
+    return _append(_grown(svg, bottom=GROUP_BAND), marks)
 
 
 def add_start_marker(svg, state_id, colour, vertical=False, pad=D2_PAD):

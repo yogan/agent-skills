@@ -746,5 +746,52 @@ class TestIslands(unittest.TestCase):
                   "nodes": [{"id": "a", "role": "svc"}, {"id": "b", "role": "svc"}]})
 
 
+class TestLegend(unittest.TestCase):
+    """`legend` is opt-in, and what it costs to get wrong is a reader hunting the canvas for
+    a colour that is not on it. So: only roles the diagram paints, only roles that exist, and
+    few enough to hold in the head while reading a picture."""
+
+    def test_a_colour_the_diagram_uses_may_be_explained(self):
+        spec = arch(legend={"store": "queryable today", "client": "grant pending"})
+        self.assertIs(validate(spec), spec)
+
+    def test_a_colour_the_diagram_does_not_use_is_rejected(self):
+        with self.assertRaisesRegex(SpecError, "nothing in this diagram uses"):
+            validate(arch(legend={"cache": "queued"}))
+
+    def test_an_unknown_role_is_rejected(self):
+        with self.assertRaisesRegex(SpecError, "legend: role"):
+            validate(arch(legend={"queryable": "green"}))
+
+    def test_the_words_must_be_words(self):
+        with self.assertRaisesRegex(SpecError, "legend: store"):
+            validate(arch(legend={"store": 3}))
+
+    def test_an_empty_legend_is_rejected(self):
+        """A key with nothing in it is a spec that meant to say something and did not."""
+        with self.assertRaisesRegex(SpecError, "non-empty mapping"):
+            validate(arch(legend={}))
+
+    def test_more_colours_than_a_reader_can_hold_is_rejected(self):
+        legend = {"store": "a", "client": "b", "svc": "c", "cache": "d", "ext": "e"}
+        with self.assertRaisesRegex(SpecError, "more than a reader can hold"):
+            validate(arch(legend=legend))
+
+    def test_a_state_machine_explains_state_roles(self):
+        """Its palette is a different set of words, and validating against the node roles
+        would reject every legend a state diagram could legitimately want."""
+        spec = {"kind": "state",
+                "states": [{"id": "live", "role": "steady"},
+                           {"id": "gone", "role": "terminal"}],
+                "transitions": [{"from": "live", "to": "gone", "label": "closed"}],
+                "legend": {"steady": "running today", "terminal": "not built yet"}}
+        self.assertIs(validate(spec), spec)
+
+    def test_a_diagram_without_one_is_unaffected(self):
+        spec = arch()
+        self.assertIs(validate(spec), spec)
+        self.assertNotIn("legend", spec)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

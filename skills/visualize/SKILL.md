@@ -299,8 +299,36 @@ flaw, or the specific answer to the question, it is a note.
 When you do add one, keep it to **2–4 words** in the reader's own language. Two or three across a
 whole diagram is plenty; annotating most of the boxes makes the annotations mean nothing.
 
-Do not reach for styling to convey meaning instead. There is no legend, so a thick border or an
-odd colour says "something here is special" without ever saying what.
+Do not reach for styling to convey meaning instead. A thick border or an odd colour says
+"something here is special" without ever saying what.
+
+### The one exception: colour that carries a meaning of its own
+
+`role` normally says what a thing IS — a store, a service, an external system — and a reader
+needs no help with that. Occasionally the honest way to answer the question is to repurpose it
+into a distinction of your own: green for the tables we can query today against salmon for the
+ones whose grant is still pending, and suddenly the picture says "the whole supplier chain
+works, the whole order chain is dark" at a glance.
+
+**When you do that, and only then, add a `legend`** — a word or three per colour, which the
+renderer draws as a swatch and its words under the drawing:
+
+```jsonc
+"legend": {"store": "queryable today", "ext": "grant still pending"}
+```
+
+Three rules, because a legend is easy to reach for and mostly wrong:
+
+- **No legend for the default meanings.** "store = a database" restates the shape. If someone
+  reading the picture would guess the colour right, the legend is noise.
+- **A legend is not a substitute for words on the thing.** It explains a COLOUR that groups
+  several boxes; a fact about one box is still a `note`.
+- **Say it in your summary too.** The legend makes the image stand on its own once it is
+  pasted somewhere else, which the prose cannot do — but the reader in front of you is reading
+  your message, so tell them there as well.
+
+Only roles the diagram actually paints may appear, at most four, or the spec is rejected: a
+colour in the legend that is not on the canvas sends a reader hunting for it.
 
 ## Step 4 — Render
 
