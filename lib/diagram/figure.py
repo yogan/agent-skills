@@ -31,6 +31,7 @@ from collections import namedtuple
 
 from .. import parallel
 
+from . import arrows
 from . import browser as browser_mod
 from . import callout as callout_mod
 from . import d2
@@ -57,9 +58,13 @@ class Figure(namedtuple("Figure", "name svg results placement problems advice bl
       * `problems`  — both, flattened and prefixed with the figure's name, which is why the
                       explainer needs neither the gate modules nor `Result`.
 
-    `advice` is kept apart because it is about the spec as AUTHORED, not the drawing; one list
-    would make "wide" read as loudly as "clipped". `blocked` is a gate that could not run,
-    which is never silence and never a pass — see gates/__init__.py.
+    `advice` is kept apart because **only the author can act on it**, and nothing is broken:
+    one list would make "wide" read as loudly as "clipped". Most of it is about the spec as
+    written (too many members, no start state), and some of it can only be known once the
+    picture exists — a note that no position could keep clear of the arrows. What decides
+    that a line belongs here is not where it was measured but who has the remedy: fewer
+    entities, shorter text, one diagram split into two. `blocked` is a gate that could not
+    run, which is never silence and never a pass — see gates/__init__.py.
     """
 
     @property
@@ -104,6 +109,10 @@ def draw(specs, target="embed", theme="dark", place_callouts=True, gates=True, b
         pinned = render_mod.choose_drawing(spec, name, theme, standalone, binary)
         svg, _placed, placement = _settle(spec, name, theme, standalone, pinned, binary,
                                           place_callouts)
+        # Measured on the drawing that SHIPS, after any fold or spacing the render escalated
+        # to — so what it reports is what a reader will be looking at rather than what the
+        # search believed while it was choosing.
+        advice += _coverage_advice(name, svg)
         results, blocked = ([], [])
         if gates:
             results, blocked = _static_gates(svg, name, standalone, theme)
@@ -258,6 +267,49 @@ def _render(spec, name, theme, standalone, pinned, binary):
     direction, wrap = layout
     return render_mod.render(dict(spec, direction=direction), name=name, wrap_edges=wrap,
                              layers=layers, edges=edges, binary=binary)
+
+
+def _coverage_advice(name, svg):
+    """Say when a note ended up covering part of an arrow a reader cannot do without.
+
+    Not for any pixel. The search minimises everything a note covers and usually reaches
+    zero, and a note lying across the middle of a long run — line still showing on both
+    sides — is a bridged gap the eye reads straight through. Saying so every time would be
+    noise, and noise gets switched off.
+
+    What is worth an author's attention is a LANDMARK: a corner the arrow goes round, or an
+    end — its head, or where it leaves its box. Neither can be recovered from what is still
+    visible, which is also why `place` RANKS a position that covers one below every position
+    that does not; the two agree because they ask `arrows.hides` the same question.
+
+    Covered TEXT is deliberately not here. It is not advice but a failure, and a stricter
+    one than this: the clipping gate holds hidden text to zero with no tolerance, so any
+    fraction of a label under a note already fails the figure and says which label.
+
+    It is `advice` and not a problem, deliberately. The drawing is the best one available,
+    so nothing is broken and nothing should fail; what is left is a decision only the
+    author can take — one note fewer, shorter text, or a diagram split in two.
+    """
+    out = []
+    for text, box in callout_mod.notes(svg):
+        hidden = arrows.hides(svg, box)
+        lost = []
+        if hidden.turns:
+            lost.append("the corner where an arrow turns" if hidden.turns == 1
+                        else f"{hidden.turns} corners where arrows turn")
+        if hidden.ends:
+            # "end" and not "head": `arrows.ends` counts the stretch at BOTH ends of a route,
+            # and one of them may carry no arrowhead at all — where the line leaves its box,
+            # or a sequence lifeline, which has a marker at neither end.
+            lost.append("the end of an arrow" if hidden.ends == 1
+                        else f"the ends of {hidden.ends} arrows")
+        if not lost:
+            continue
+        out.append(f"{name}: the note {text!r} covers {' and '.join(lost)}, "
+                   f"{hidden.line}px of line in all — no position for it on this drawing is "
+                   "clear, so it is the least bad one. One note fewer, or a shorter note, "
+                   "buys a clean placement")
+    return out
 
 
 def _place(spec, name, theme, standalone, pinned):

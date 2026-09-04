@@ -23,7 +23,7 @@ from lib.diagram.examples import ARCHITECTURE, CLASS, ER, SEQUENCE, STATE
 from lib.diagram.spec import NEAR
 
 
-def fake_measurement(callouts, svg_clip=None, fmin=13.0, turns=0):
+def fake_measurement(callouts, svg_clip=None, fmin=13.0, landmarks=0):
     """A measurement dict shaped like the browser's, for scoring tests.
 
     `measure.js` reports a callout's overflow against two boundaries and `_score` uses the
@@ -35,12 +35,12 @@ def fake_measurement(callouts, svg_clip=None, fmin=13.0, turns=0):
     from the size gate. It defaults to a comfortable value so a test about overlap is not
     accidentally a test about glyph size.
 
-    `turns` is how many corners of a route the callouts cover, which `_measure_candidates`
-    reads off the SVG with `arrows.corners_under`.
+    `landmarks` is how many corners and arrow ends the callouts cover, which
+    `_measure_candidates` reads off the SVG with `arrows.hides`.
     """
     return {"callouts": [{"clipVsCard": c, "clip": c if svg_clip is None else svg_clip[i],
                           "overlap": o} for i, (c, o) in enumerate(callouts)],
-            "fmin": fmin, "turns": turns,
+            "fmin": fmin, "landmarks": landmarks,
             "svg": {"width": 100, "height": 100}, "overflow": {}, "offenders": []}
 
 
@@ -127,10 +127,12 @@ class TestScoring(unittest.TestCase):
     def test_a_diagram_with_no_callouts_costs_nothing_but_its_glyph_size(self):
         key, clip, overlap = place._score(fake_measurement([]))
         self.assertEqual((clip, overlap), (0, 0))
-        # Everything except the glyph term, which is negated size and so never zero. Indexing
-        # by position broke the day a term was inserted; taking the whole tuple does not.
-        self.assertEqual([term for i, term in enumerate(key) if i != 2], [0, 0, 0],
-                         f"nothing to clip, hide or cover: {key}")
+        # Everything except the glyph term, which is negated size and so never zero. Neither
+        # the index of a term nor HOW MANY there are may be written down here: indexing by
+        # position broke the day a term was inserted, and so did comparing against a list of
+        # the right length, on the day the next one was.
+        self.assertTrue(all(term == 0 for i, term in enumerate(key) if i != 2),
+                        f"nothing to clip, hide or cover: {key}")
 
     def test_hidden_text_outranks_everything_the_search_could_trade_it_for(self):
         """The gap this closes. A buried label was only ever visible as weighted overlap, in a
@@ -194,7 +196,7 @@ class TestScoring(unittest.TestCase):
         rather than the rule: what has to hold is that a graze cannot buy page height, and a
         number well clear of indifference is what says so.
         """
-        short_but_covering = fake_measurement([(0, 71)], turns=1)
+        short_but_covering = fake_measurement([(0, 71)], landmarks=1)
         short_but_covering["rend_h"] = 164
         clean_but_taller = fake_measurement([(0, 0)])
         clean_but_taller["rend_h"] = 202
@@ -218,22 +220,47 @@ class TestScoring(unittest.TestCase):
         self.assertLessEqual(place.HEIGHT_PRICE, nearest_flip / 2,
                              "the height price is back at the edge of the band")
 
-    def test_a_covered_turn_costs_more_than_the_line_it_is_made_of(self):
-        """A turn is a dozen px of line and would round to nothing as ink, while it is the
-        most useful thing on the route: cover the one corner and two runs read as two
-        different arrows. So it is charged as the line a reader loses — `arrows.CORNER` px on
-        each of the runs it joins."""
-        one_turn = fake_measurement([(0, 0)], turns=1)
-        # The corner's own ink: at most `CORNER` px of a 2px line at weight 2.
-        the_corner_itself = fake_measurement([(0, 4 * arrows.CORNER)])
-        self.assertLess(place._score(the_corner_itself)[0], place._score(one_turn)[0],
-                        "a turn must cost more than the line its corner is drawn with")
+    def test_a_landmark_is_ranked_and_not_priced(self):
+        """A corner or an arrowhead is the part of a route a reader cannot get back: cover the
+        corner and two runs read as two different arrows; cover the head and nothing left in
+        the picture says which way it pointed. So a position that keeps them clear wins over
+        one that does not, at ANY cost in line covered or page height — which is a rank, and
+        needs no number for what a corner is worth.
+        """
+        clear = fake_measurement([(0, 20_000)]); clear["rend_h"] = 4000
+        covers_one = fake_measurement([(0, 0)], landmarks=1); covers_one["rend_h"] = 10
+        self.assertLess(place._score(clear)[0], place._score(covers_one)[0],
+                        "no amount of line or page may buy a covered corner or head")
 
-    def test_turns_are_summed_and_carried_in_the_overlap_figure(self):
-        """`_report` surfaces `overlap`, so a covered turn has to be visible there rather
-        than only inside the sort key."""
-        _total, _clip, overlap = place._score(fake_measurement([(0, 12)], turns=2))
-        self.assertEqual(overlap, 12 + 2 * place.TURN_PRICE)
+    def test_fewer_landmarks_wins_when_none_is_clear(self):
+        """It has to degrade: on a crowded drawing there may be no position that clears every
+        landmark, and then the search still has to pick the least bad one rather than treat
+        them as equal."""
+        one = fake_measurement([(0, 0)], landmarks=1)
+        three = fake_measurement([(0, 0)], landmarks=3)
+        self.assertLess(place._score(one)[0], place._score(three)[0])
+
+    def test_with_landmarks_tied_the_line_and_the_page_decide_again(self):
+        """The other half of degrading: once no candidate can clear them, term 4 is back in
+        charge and the search minimises what it always minimised."""
+        tidy = fake_measurement([(0, 100)], landmarks=1); tidy["rend_h"] = 200
+        messy = fake_measurement([(0, 900)], landmarks=1); messy["rend_h"] = 200
+        self.assertLess(place._score(tidy)[0], place._score(messy)[0])
+
+    def test_unreadable_text_and_smaller_text_both_outrank_a_landmark(self):
+        """Ranking it above the page must not put it above legibility: a whole figure's text
+        shrinking, or a word going unreadable, is the worse loss."""
+        covers_landmark = fake_measurement([(0, 0)], landmarks=1)
+        buries_text = fake_measurement([(0, 0)]); buries_text["hiddenText"] = 200
+        shrinks = fake_measurement([(0, 0)], fmin=11.0)
+        self.assertLess(place._score(covers_landmark)[0], place._score(buries_text)[0])
+        self.assertLess(place._score(covers_landmark)[0], place._score(shrinks)[0])
+
+    def test_the_reported_overlap_stays_the_line_that_was_covered(self):
+        """`_report` surfaces `overlap`, and it has to keep meaning px² of what was hidden:
+        folding a landmark count into it made "overlap 160" mean nothing was covered."""
+        _total, _clip, overlap = place._score(fake_measurement([(0, 12)], landmarks=2))
+        self.assertEqual(overlap, 12)
 
     def test_a_glyph_difference_too_small_to_see_does_not_outrank_overlap(self):
         """Rounded to the nearest half pixel, so measurement noise cannot decide a layout."""

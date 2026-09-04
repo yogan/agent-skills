@@ -115,23 +115,34 @@ def _new_x(rect_x, rect_w, trim, pointer):
     return rect_x + trim / 2
 
 
-def boxes(svg):
-    """Every callout's box, in the drawing's own coordinates.
+def notes(svg):
+    """Every callout as `(note text, box)`, in the drawing's own coordinates.
 
     Read from the SVG rather than from a browser because the callers that need it are
     measuring the DRAWING against them — which turn a callout covers, which leg it
     lies along — and the route geometry is only in these coordinates. The browser is
     still the authority on what a callout looks like on a page; this is where it sits
     on the picture.
+
+    The text comes from the callout itself and not from the spec, so a caller naming a
+    note in a message cannot name the wrong one: the order d2 emits them in is its
+    business, and pairing two lists by index assumed it matches the spec's.
     """
     out = []
     for group in _GROUP.finditer(svg):
-        rect = _RECT.search(group.group(1))
+        body = group.group(1)
+        rect, text = _RECT.search(body), _TEXT.search(body)
         if not rect:
             continue
         x, y, w, h = (float(v) for v in rect.groups())
-        out.append(arrows.Box((x, y, x + w, y + h)))
+        out.append(((text.group(1).strip() if text else ""),
+                    arrows.Box((x, y, x + w, y + h))))
     return out
+
+
+def boxes(svg):
+    """Just the boxes — what the placement search needs, which has no use for the text."""
+    return [box for _text, box in notes(svg)]
 
 
 def fit(svg):

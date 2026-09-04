@@ -82,21 +82,31 @@ class TestCorners(unittest.TestCase):
         (x, y), = arrows.corners(pts)
         self.assertEqual((round(x), round(y)), (5, 105))
 
-    def test_a_box_over_the_corner_is_reported(self):
-        drawing = svg([("M 0 0 L 0 100 S 0 110 10 110 L 60 110", "")])
-        over = arrows.Box((0, 95, 20, 120))
-        self.assertEqual(len(arrows.corners_under(drawing, [over])), 1)
 
-    def test_a_box_over_a_straight_run_is_not(self):
-        """It covers line, which is charged as line — see `js/measure.js`. This term is
-        only about the turn."""
-        drawing = svg([("M 0 0 L 0 100 S 0 110 10 110 L 60 110", "")])
-        over = arrows.Box((30, 100, 55, 120))
-        self.assertEqual(arrows.corners_under(drawing, [over]), [])
+class TestWhatABoxHides(unittest.TestCase):
+    """`hides` audits a finished drawing so a person can be told what a note covers. The
+    placement search prices the same geometry while choosing, in a browser — see the
+    docstring there for why the two cannot be one function."""
 
-    def test_no_boxes_means_nothing_covered(self):
-        drawing = svg([("M 0 0 L 0 100 S 0 110 10 110 L 60 110", "")])
-        self.assertEqual(arrows.corners_under(drawing, []), [])
+    STRAIGHT = "M 0 50 L 200 50"
+    BENT = "M 0 0 L 0 40 S 0 50 10 50 L 200 50"
+
+    def test_it_counts_the_line_under_the_box(self):
+        drawing = svg([(self.STRAIGHT, "")])
+        hidden = arrows.hides(drawing, arrows.Box((50, 40, 100, 60)))
+        self.assertAlmostEqual(hidden.line, 50, delta=2)
+        self.assertEqual(hidden.turns, 0)
+
+    def test_a_box_over_the_corner_reports_the_turn_as_well(self):
+        drawing = svg([(self.BENT, "")])
+        hidden = arrows.hides(drawing, arrows.Box((0, 40, 40, 60)))
+        self.assertEqual(hidden.turns, 1)
+        self.assertGreater(hidden.line, 0)
+
+    def test_a_box_clear_of_every_route_hides_nothing(self):
+        drawing = svg([(self.STRAIGHT, "")])
+        self.assertEqual(arrows.hides(drawing, arrows.Box((0, 0, 40, 20))),
+                         (0, 0, 0))
 
 
 class TestDiagonals(unittest.TestCase):

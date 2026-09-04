@@ -90,6 +90,20 @@ class TestWhereTheBoxSits(CalloutCase):
         self.assertEqual(callout.boxes(svg("center-right")),
                          [(102.0, 21.0, 254.0, 65.0)])
 
+    def test_the_note_comes_back_with_its_box(self):
+        """Paired here rather than by a caller zipping two lists: which order d2 emits
+        callouts in is d2's business, and a message that names the wrong note is worse
+        than no message."""
+        self.assertEqual(callout.notes(svg("center-right")),
+                         [(NOTE, (102.0, 21.0, 254.0, 65.0))])
+
+    def test_a_callout_whose_text_cannot_be_read_still_yields_its_box(self):
+        """The box is what a caller measures against; the text is for saying which note
+        it was. Losing the second must not lose the first."""
+        stripped = svg("center-right").replace("<p>", "<b>").replace("</p>", "</b>")
+        self.assertEqual(callout.notes(stripped),
+                         [("", (102.0, 21.0, 254.0, 65.0))])
+
     def test_a_box_hanging_off_to_the_left_keeps_its_negative_x(self):
         """`center-left` puts the box left of its target, so the drawing's own coordinates
         go negative — and a pattern that only matches digits silently finds no callout."""

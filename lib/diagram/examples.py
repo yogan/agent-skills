@@ -36,8 +36,9 @@ machine is the proof that this needs checking rather than assuming, three times 
 pinned `bottom-left`, which lay across 69% of `max attempts` in the PORTRAIT layout it had
 then. Laid out landscape, `bottom-left` became what the pass picked. And once the search
 started charging a callout for the line it actually hides rather than for the box it sits in
-(`js/measure.js`, `place.TURN_PRICE`), `bottom-left` was covering 105px of route and
-`top-left` — which covers nothing, for 49px of height — is what it measures now.
+(`js/measure.js`), and ranking any position that covers a corner below every position that
+does not (`place._score`), `bottom-left` was covering 105px of route — and `top-left`, which
+covers nothing for 49px of height, is what the pass measures now.
 
 **A pin here does not survive a layout change, and it does not survive a change to what the
 search measures. Re-derive it rather than assume it still holds:** `place.place` on the spec

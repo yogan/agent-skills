@@ -58,8 +58,9 @@ preference: the goal is for every line here to be a check.
 | **No gap immediately before an arrowhead**, including the ones d2 cuts for its own labels | `arrows.shortfall` in `edgelabel._key`, `render._climb_layers` + `test_arrows` |
 | **No arrow is drawn across a box it does not begin or end at** | `arrows.through` + `test_arrows` |
 | **A callout never rests against a line it does not cover** | `route._clear` + `test_route` |
+| **A callout never covers a corner or an arrowhead** where any of the eight positions avoids it | `place._score`'s landmark rank + `test_place`, and `figure._coverage_advice` says so when none of them does |
 
-[`arrows.py`](arrows.py) is where the last four live, because they are about the arrow itself
+[`arrows.py`](arrows.py) is where four of them live, because they are about the arrow itself
 rather than about the words on it.
 
 The last of them is an INVARIANT and not a defect, which is why it is not in `arrows.defects`.
@@ -96,8 +97,9 @@ the paragraph above: what a callout is charged for used to be the BOX of each th
 inside, which counted the empty middle of every L-shaped route, so a real overlap came out
 inflated more than tenfold and a page-height saving could always outbid one. Charged for the
 line it actually hides, the anchor above the box — free of every route, 48px taller — is what
-the search picks. `place.HEIGHT_PRICE` is the trade, and `place.TURN_PRICE` is why a corner
-counts for more than the dozen px of line it is drawn with.
+the search picks. `place.HEIGHT_PRICE` is what prices that trade — and a corner or an
+arrowhead is not in it at all: those are ranked above everything tradeable, so a position that
+covers one loses to any position that does not, whatever the page costs.
 
 The same module repairs one other thing, and the tell for it is a single character. d2 draws an
 orthogonal corner as an `S` and a diagonal one as a `C`, so **a cubic in a connection path is a

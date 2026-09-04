@@ -90,6 +90,11 @@ _CMD = re.compile(r"([MmLlSsCcQqZz])([^A-Za-z]*)")
 _NUM = re.compile(r"-?\d+(?:\.\d+)?")
 
 Defect = namedtuple("Defect", "rule at detail")
+# What a note ended up covering of the arrows: px of line, how many of the turns among
+# that line, and how many arrow ENDS — the head, or where the line leaves its box.
+# The last two are the landmarks: a bridged stretch of straight run is still readable
+# as one line, a hidden corner or head is not recoverable from what is left.
+Hidden = namedtuple("Hidden", "line turns ends")
 
 
 class Box(tuple):
@@ -188,20 +193,24 @@ def corners(pts):
     return out
 
 
-def corners_under(svg, boxes):
-    """Every turn in `svg` that one of `boxes` covers.
+def hides(svg, box):
+    """What `box` covers of the routes in `svg`: px of line, turns, and arrow ends.
 
-    Its own term in the placement search rather than part of the line a callout hides,
-    because a turn is not priced by its length: a reader follows a route by its changes
-    of direction, and a box over the one place the line changes leaves two runs that
-    cannot be told from two different arrows. See `place.TURN_PRICE`.
+    Two answers for two questions. The placement search asks this while choosing, and uses
+    the last two — a position that covers a landmark loses to any position that does not.
+    `figure` asks it again of the drawing that SHIPS, to tell a person what a note ended up
+    covering, which is why the px are the drawing's own.
+
+    The LINE is deliberately not what the search prices: it prices that in a browser
+    (`js/measure.js`), and has to, because how much of a route a note covers on a page
+    depends on how the page scaled the drawing. So that half cannot be one function; what
+    keeps the two honest is that they measure the same geometry, and each says so.
     """
-    found = []
+    line = turns = 0
     for _tag, pts in connections(svg):
-        for point in corners(pts):
-            if any(box.holds(point) for box in boxes):
-                found.append(point)
-    return found
+        line += sum(1 for point in walk(pts, step=1.0) if box.holds(point))
+        turns += sum(1 for point in corners(pts) if box.holds(point))
+    return Hidden(line, turns, len(ends_touched(box, ends(svg))))
 
 
 def walk(pts, step=1.0):
@@ -277,6 +286,18 @@ def shortfall(box, zones):
                 total += i + 1
                 break
     return total
+
+
+def ends_touched(box, zones):
+    """Which arrow ends `box` covers any part of — indices into `zones`.
+
+    The same question `shortfall` asks, counted per END instead of summed in px, for a caller
+    that prices one hidden head as one loss rather than as the dozen px it happens to be. A
+    head is the one thing on a route that cannot be recovered from what is still showing: a
+    bridged run reads as one line and a corner can be guessed from its two runs, but nothing
+    left in the picture says which way an arrow with no visible head was pointing.
+    """
+    return [i for i, zone in enumerate(zones) if any(box.holds(point) for point in zone)]
 
 
 def leaves_a_stub(box, zones):

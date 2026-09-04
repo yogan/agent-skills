@@ -148,6 +148,18 @@ class TestReferenceCorpus(unittest.TestCase):
         self.assertEqual(render.check_toolchain(), [],
                          f"installed d2 is {render.d2_version()}")
 
+    def test_the_class_names_the_occlusion_charge_keys_off_are_still_there(self):
+        """`js/measure.js` charges a route for the line under a note and a container for the
+        part of its border the note crosses, and it tells the two apart by d2's own class
+        names. If either name changes, both silently fall back to bounding boxes — which is
+        the defect those rules exist to remove, back again and reported by nothing. The
+        geometry assertions below would drift, but they would not say why.
+        """
+        arch = self.svgs["arch"]
+        self.assertIn('class="connection"', arch, "d2 no longer marks a route this way")
+        self.assertRegex(arch, r'class="[^"]*\bgrp\b"',
+                         "d2 no longer marks a container this way")
+
     def test_every_reference_diagram_renders(self):
         self.assertEqual(sorted(self.svgs), sorted(MEASURED))
         for name, svg in self.svgs.items():

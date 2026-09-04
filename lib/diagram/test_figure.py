@@ -240,6 +240,74 @@ class TestGateIndependence(Base):
         self.assertEqual(seen.get("scale"), 1.0)
 
 
+# A drawing where the note had to sit on the arrow's HEAD — the case that is worth telling an
+# author about, since nothing left in the picture says which way that arrow pointed. The stub
+# `render` hands this back, so the advice is exercised without d2 or a browser.
+COVERED = ('<svg viewBox="0 0 300 100">'
+           '<path d="M 10 50 L 190 50" class="connection" stroke="black" fill="none" '
+           'style="stroke-width:2;" marker-end="url(#head)"/>'
+           '<g class="positioned-tooltip"><rect x="150" y="30" width="80" height="40"/>'
+           '<foreignObject x="160" y="40" width="60" height="20">'
+           '<div class="md"><p>new</p></div></foreignObject></g></svg>')
+CLEAR = COVERED.replace('<rect x="150" y="30"', '<rect x="150" y="2"')
+
+
+class TestCoverageAdvice(Base):
+    """The placement search minimises what a note covers and usually reaches zero. On a
+    crowded drawing it cannot, and the least bad placement ships — which was silent."""
+
+    def test_a_note_that_had_to_cover_an_arrows_end_is_said_out_loud(self):
+        figure.render_mod.render = lambda spec, name="d", **kw: COVERED
+        drawn = figure.draw({"flow": NOTED})[0]
+        said = " ".join(drawn.advice)
+        self.assertIn("'new'", said)
+        self.assertIn("the end of an arrow", said)
+        self.assertTrue(said.startswith("flow: "), said)
+
+    def test_it_is_advice_and_does_not_fail_the_figure(self):
+        """The drawing is the best one available, so nothing is broken and nothing should
+        fail; the remedy is the author's. A `placement` message is the other case — a
+        callout that does not FIT — and that one does reach `problems`."""
+        figure.render_mod.render = lambda spec, name="d", **kw: COVERED
+        drawn = figure.draw({"flow": NOTED})[0]
+        self.assertEqual(drawn.problems, [])
+        self.assertTrue(drawn.ok)
+
+    def test_a_note_clear_of_every_arrow_says_nothing(self):
+        """Only about coverage: this spec also earns a content warning (no start state),
+        and asserting on the whole list would pass for the wrong reason."""
+        figure.render_mod.render = lambda spec, name="d", **kw: CLEAR
+        advice = figure.draw({"flow": NOTED})[0].advice
+        self.assertEqual([a for a in advice if "px of line" in a], [], advice)
+
+    def test_a_bridged_stretch_of_straight_run_says_nothing(self):
+        """The narrowing that keeps this from being noise: line showing on both sides of the
+        note reads straight through, so covering it is not worth an author's attention. What
+        is worth it is a landmark — a corner, or a head — and this route has neither under
+        the box. The search still prices the line; it just is not reported."""
+        long_run = ('<svg viewBox="0 0 600 100">'
+                    '<path d="M 10 50 L 590 50" class="connection" stroke="black" '
+                    'fill="none" style="stroke-width:2;"/>'
+                    '<g class="positioned-tooltip"><rect x="260" y="30" width="80" '
+                    'height="40"/><foreignObject x="270" y="40" width="60" height="20">'
+                    '<div class="md"><p>mid</p></div></foreignObject></g></svg>')
+        self.assertEqual(figure._coverage_advice("f", long_run), [])
+
+    def test_one_hidden_corner_reads_as_a_corner_and_several_as_a_count(self):
+        one = ('<svg viewBox="0 0 200 200">'
+               '<path d="M 0 0 L 0 40 S 0 50 10 50 L 190 50" class="connection" '
+               'stroke="black" fill="none" style="stroke-width:2;"/>'
+               '<g class="positioned-tooltip"><rect x="0" y="40" width="80" height="20"/>'
+               '<foreignObject x="10" y="45" width="60" height="10">'
+               '<div class="md"><p>one</p></div></foreignObject></g></svg>')
+        two = one.replace('L 190 50"',
+                          'L 60 50 S 70 50 70 60 L 70 190"')
+        self.assertIn("the corner where an arrow turns",
+                      figure._coverage_advice("f", one)[0])
+        self.assertIn("2 corners where arrows turn",
+                      figure._coverage_advice("f", two)[0])
+
+
 class TestPlacement(Base):
     def test_a_callout_no_anchor_fits_is_reported_but_not_as_a_gate_verdict(self):
         """The remedy is editorial — shorten the note — so a CLI says it rather than failing

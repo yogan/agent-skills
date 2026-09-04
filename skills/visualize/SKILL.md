@@ -363,6 +363,28 @@ it is complaining about. Fix the **spec**, not the styling:
 Note what is *not* in that table: nothing about width or height. A standalone image has no page
 to fit, so "too wide" and "too tall" are not failures and splitting to fix them is wrong.
 
+One warning is not a failure and does not affect the exit code: **`the note '…' covers the
+corner where an arrow turns` / `the head of an arrow`** means no position for that note kept it
+off one of those, so the drawing shipped with the least bad one. The picture is fine to look at
+and the fix is yours. Do not go looking for a styling problem — there isn't one, and **never
+position the note by hand**: all eight positions were measured and this was the best of them.
+
+It says this about a corner or a head and about nothing else, so it is not a coverage report:
+a note lying across the middle of a straight run says nothing, because line showing on both
+sides reads straight through. Measured, that is the difference between 22px in the wrong place
+and 89px that costs a reader nothing. What you are being told is that part of an arrow which
+cannot be guessed from the rest of the picture is behind a box, and the decision is yours:
+
+- **Drop the note** if it was not one of the one or two things the reader most needs. That is
+  the usual answer, and the fastest.
+- **Shorten it** if it is worth keeping: a narrower box has more places it can go.
+- **Draw fewer boxes** if two or three notes all report this — the diagram is too crowded to
+  annotate, and thinning the picture is the real fix.
+
+Then render again, with `--no-open`. **One retry, not a loop:** if the second attempt still
+says it, keep that drawing and tell the user in your summary — a crowded diagram can have no
+clear position for a note at all, and shortening the text again will not conjure one.
+
 ## Step 6 — Tell the user what they are looking at
 
 One or two sentences: what the diagram shows, and the one thing worth noticing in it. If you

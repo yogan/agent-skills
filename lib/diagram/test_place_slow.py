@@ -18,7 +18,7 @@ import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
-from lib.diagram import arrows, browser, place, render
+from lib.diagram import arrows, browser, callout, figure, place, render
 from lib.diagram.browser import OVERLAP_WEIGHTS
 from lib.diagram.examples import ER, REFERENCE
 from lib.diagram.gates import clipping
@@ -65,10 +65,15 @@ class TestPlacementAgainstRealDiagrams(unittest.TestCase):
         and 5280 and the search was ranking them by blur radius.
 
         The numbers below are an order of magnitude smaller than they once were, and that is
-        the same story again: a callout is now charged for the LINE it hides rather than for
-        being inside a route's bounding box, so the bad anchor here reads 442 where it used to
-        read four figures. What it means is unchanged and now literal — 442 units is 110px of
-        route line, at 2px of stroke and weight 2.
+        the same story again: a callout is charged for the LINE it hides rather than for being
+        inside a route's bounding box, so the bad anchor here reads 122 where it used to read
+        four figures. What it means is unchanged and now literal — 122 units is 30px of route
+        line, at 2px of stroke and weight 2 — and the corners it also covers are no longer
+        part of that figure at all, being a rank of their own.
+
+        So the bad anchor is pinned on both counts, and the line half comparatively: what has
+        to hold is that it covers more than the winner, not that it covers some particular
+        number of px.
         """
         _, report = self.placed["er"]
         self.assertEqual(place.unplaceable(report), [], f"search still clips: {report}")
@@ -77,14 +82,18 @@ class TestPlacementAgainstRealDiagrams(unittest.TestCase):
         self.assertLess(found, 1, f"the search should cover nothing here, not {found:.0f}")
 
         # Proof it had something to get wrong. `center-right` puts the new-table callout across
-        # both arrows leaving `presence_sessions`, and paths are weighted 2 — so the floor here
-        # is stated as the line it has to be hiding: 50px of it, against 110px measured.
+        # both arrows leaving `presence_sessions`.
         measured = place._measure_candidates(ER, "er", [("top-left", "center-right")], "light")
-        _, poor_clip, poor_overlap = place._score(measured[0][1])
+        poor = measured[0][1]
+        _, poor_clip, poor_overlap = place._score(poor)
         self.assertEqual(poor_clip, 0, "the point is that it covers, not that it clips")
-        self.assertGreater(poor_overlap, 50 * arrows.STROKE * OVERLAP_WEIGHTS["path"],
+        self.assertGreater(poor_overlap, 20 * arrows.STROKE * OVERLAP_WEIGHTS["path"],
                            f"an anchor across both arrows measured {poor_overlap:.0f} — if "
                            "nothing on this diagram can be covered, the search proves nothing")
+        self.assertGreater(poor_overlap, found, "and more than the one the search picked")
+        self.assertGreater(poor["landmarks"], 0,
+                           "it also covers a corner or an end, which is what the search ranks "
+                           "above everything it is willing to trade")
 
     def test_every_reference_diagram_places_without_clipping(self):
         for name, (_placed, report) in self.placed.items():
@@ -104,6 +113,75 @@ class TestPlacementAgainstRealDiagrams(unittest.TestCase):
         second, _ = place.place(ER, name="er")
         self.assertEqual([s["near"] for s in place.note_sites(first)],
                          [s["near"] for s in place.note_sites(second)])
+
+
+# THREE notes, which is the one thing neither sample set has: above `place.JOINT_MAX` the
+# search stops being exhaustive and settles one note at a time, so nothing measured on the
+# two sample sets exercises that path at all. Crowded on purpose — a note on the box every
+# arrow passes, so no position for it is clear and the least bad one has to ship.
+THREE_NOTES = {
+    "kind": "architecture",
+    "title": "Three notes on a crowded drawing",
+    "nodes": [
+        {"id": "shop", "label": "Storefront", "children": [
+            {"id": "cart", "label": "Cart", "role": "client"},
+            {"id": "pay", "label": "PayButton", "role": "client", "note": "new component"},
+        ]},
+        {"id": "svc", "label": "Payments service", "children": [
+            {"id": "api", "label": "capture API", "role": "svc", "note": "rate limited now"},
+            {"id": "worker", "label": "settlement worker", "role": "svc"},
+        ]},
+        {"id": "psp", "label": "Card processor", "role": "ext", "shape": "hexagon",
+         "note": "sandbox in staging"},
+        {"id": "ledger", "label": "Ledger", "role": "store", "shape": "cylinder"},
+    ],
+    "edges": [
+        {"from": "shop.cart", "to": "shop.pay", "label": "checkout"},
+        {"from": "shop.pay", "to": "svc.api", "label": "POST /capture"},
+        {"from": "svc.api", "to": "psp", "label": "authorize"},
+        {"from": "svc.api", "to": "ledger", "label": "reserve"},
+        {"from": "svc.worker", "to": "ledger", "label": "settle"},
+        {"from": "psp", "to": "svc.worker", "label": "webhook"},
+    ],
+}
+
+
+@unittest.skipUnless(HAVE_D2 and HAVE_BROWSER, "needs d2 and a browser")
+class TestMoreNotesThanTheGridCanAfford(unittest.TestCase):
+    """One placement pass over three notes: 24 candidates, about a third of the exhaustive
+    two-note search this file's other cases pay for.
+
+    What it is here to catch is a whole-pipeline claim that nothing else makes: that a
+    drawing where no placement is clear still ships the least bad one AND says so. Both
+    halves were silent before — the search reported only a note it could not fit without
+    cutting it off, so a note sitting across an arrow reached the reader with nothing said.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.figure = list(figure.draw({"crowded": THREE_NOTES}, target="embed",
+                                      theme="light"))[0]
+
+    def test_every_note_is_settled_and_none_is_cut_off(self):
+        placed = callout.notes(self.figure.svg)
+        self.assertEqual(len(placed), 3, "a note was dropped by the greedy path")
+        self.assertEqual(self.figure.placement, [], "nothing here should fail to fit")
+
+    def test_a_note_that_could_not_be_placed_clear_is_said_out_loud(self):
+        covering = [text for text, box in callout.notes(self.figure.svg)
+                    if arrows.hides(self.figure.svg, box).line]
+        self.assertTrue(covering, "this diagram is meant to be too crowded to place clear — "
+                                  "if it no longer is, the case has stopped testing anything")
+        said = " ".join(self.figure.advice)
+        for text in covering:
+            self.assertIn(repr(text), said,
+                          f"{text!r} covers line and nothing told the author")
+
+    def test_it_is_advice_rather_than_a_failure(self):
+        """The drawing is the best available, so it must not read as broken: `visualize`
+        prints advice as a warning and does not count it against its exit code."""
+        self.assertEqual([p for p in self.figure.problems if "covers" in p], [])
+        self.assertTrue(self.figure.ok, self.figure.problems + self.figure.blocked)
 
 
 if __name__ == "__main__":

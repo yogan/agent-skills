@@ -4,18 +4,41 @@ d2 cannot do this: `tooltip.near` takes one of eight fixed anchors, d2 avoids no
 it does not grow the canvas to fit a callout. So the renderer decides — render every anchor,
 measure in a browser, keep the best.
 
-What is optimised is READABILITY, as four terms compared in order:
+What is optimised is READABILITY, as five terms compared in order:
 
   1. **Clipping**, at 1e6, so it is never traded. An earlier 1e3 swapped a 31px clip for a
      little less overlap.
   2. **Text made unreadable**, in px². Also never traded — see `_score`.
   3. **The smallest glyph in the finished drawing.** An anchor can widen the canvas, and a
      wider canvas is scaled further down, so a callout can shrink every letter in the diagram.
-  4. **Overlap and page height, priced against each other** at `HEIGHT_PRICE`. Overlap is
+  4. **Landmarks covered** — the corners a route goes round, and its ends, being the arrowhead
+     or where the line leaves its box. A COUNT, not a price.
+  5. **Overlap and page height, priced against each other** at `HEIGHT_PRICE`. Overlap is
      weighted by what it damages (`browser.OVERLAP_WEIGHTS`): unweighted, the search optimises
      area and will hide a label to stay off a big rectangle.
 
-Often all four tie, because on a roomy diagram most anchors cover nothing. That is the model
+Term 4 is a rank rather than a price because that is what is actually true of a landmark: those
+are the parts of a route a reader cannot infer from what is still showing — a bridged run reads
+as one line, a corner can be half-guessed from its two runs, but nothing left in the picture
+says which way an arrow with no visible head was pointing. So **any position that keeps them
+clear beats any position that does not**, whatever it costs in page height or line covered. A
+price would have needed a number chosen to mean that, and would still have lost to a large
+enough height saving.
+
+It sits below glyph size on purpose: shrinking every letter in the figure to save one arrowhead
+is the worse trade, and a word nobody can read is worse still.
+
+A rank also has to degrade, and this one does. On a crowded drawing there may be no position
+that clears every landmark — measured, on a three-note figure whose 512 combinations were all
+enumerated, the best available still covers one corner — and then term 4 ties and term 5
+decides, so the search is back to minimising line and page. What a rank cannot do is report
+itself, so `figure` says out loud when the drawing that ships still covers one.
+
+Term 5 is priced by how much of it there is, so nothing needs a threshold to prefer covering
+less. Only what is REPORTED to an author needs a line drawn, and that line is the landmark:
+nothing is said about a stretch bridged mid-run.
+
+Often every term ties, because on a roomy diagram most anchors cover nothing. That is the model
 saying there is no readability argument left, and the tie falls to the order of `spec.NEAR`.
 
 Greedy settles one callout at a time and cannot see a pair that only works together, so a
@@ -39,14 +62,6 @@ CLIP_PENALTY = 1e6
 
 # Above this many callouts, search greedily instead of exhaustively.
 JOINT_MAX = 2
-
-# What one turn of a route costs when a callout covers it, in the same weighted units as
-# overlap. Not priced by its length, which is a dozen px of line and would round to nothing:
-# a reader follows a route by where it changes direction, and a box over the one corner
-# leaves two runs that cannot be told from two separate arrows. So it is charged as the line
-# a reader loses — `CORNER` px on each of the two runs the turn joins, at the stroke a route
-# is drawn with and the weight a route carries.
-TURN_PRICE = 2 * arrows.CORNER * arrows.STROKE * browser_mod.OVERLAP_WEIGHTS["path"]
 
 # What a pixel of page height is worth in the same units. The two must be priced, not ordered:
 # height first buried text to save 50px, overlap first spent 50px to save 315 units of noise.
@@ -143,23 +158,23 @@ def _score(measurement):
     placements: the architecture figure's chosen anchor covered 113px of line and a turn where
     three anchors that cover nothing scored worse.
 
-    **A turn a callout covers** is added here at `TURN_PRICE`, because its length prices it at
-    nothing while a reader loses the most useful thing on the route.
+    **Landmarks covered** is its own rank above this, not part of it: see the module
+    docstring. It is only ever a count, so nothing here decides how much a corner is worth.
 
     It ties often, and the tie falls to the order of `spec.NEAR`. That is deliberate: when
     several anchors are equally free, landing them on the same side as each other is a better
     answer than any number here can produce.
     """
     clip = sum(c["clipVsCard"] for c in measurement["callouts"])
-    overlap = (sum(c["overlap"] for c in measurement["callouts"])
-               + TURN_PRICE * (measurement.get("turns") or 0))
+    overlap = sum(c["overlap"] for c in measurement["callouts"])
+    landmarks = measurement.get("landmarks") or 0
     # What this ANCHOR hides, which is the total less the part the layout hides on its own.
     # `measure.js` banks both under one threshold, so the subtraction is exact rather than an
     # estimate — see there.
     hidden = (measurement.get("hiddenText") or 0) - (measurement.get("hiddenByLayout") or 0)
     fmin = measurement.get("fmin") or 0
     height = measurement.get("rend_h") or 0
-    return ((clip * CLIP_PENALTY, hidden, -round(fmin * 2) / 2,
+    return ((clip * CLIP_PENALTY, hidden, -round(fmin * 2) / 2, landmarks,
              overlap + HEIGHT_PRICE * height),
             clip, overlap)
 
@@ -215,20 +230,25 @@ def _measure_candidates(spec, name, combos, theme, standalone=False, layout=None
             small = (metrics["fmin"], metrics["rend_h"])
         except GateError:
             small = (None, None)
-        # Turns this candidate's callouts cover. Read off the SVG for the same reason as
-        # the glyph size: the module that knows how to read a route already exists, and a
-        # turn is a fact about the drawing's own coordinates rather than about the page.
-        turns = len(arrows.corners_under(svg, callout_mod.boxes(svg)))
-        return index, anchors, svg, small, turns
+        # Landmarks this candidate's callouts cover — corners and arrow ends. Read off the
+        # SVG for the same reason as the glyph size: the module that knows how to read a
+        # route already exists, and both are facts about the drawing's own coordinates rather
+        # than about the page. `arrows.hides` is the same call `figure` makes to tell an
+        # author what a note ended up covering, so the price and the report cannot disagree
+        # about what a landmark is.
+        landmarks = sum(hidden.turns + hidden.ends
+                        for hidden in (arrows.hides(svg, box)
+                                       for box in callout_mod.boxes(svg)))
+        return index, anchors, svg, small, landmarks
 
     for outcome in parallel.each(compile_one, enumerate(combos)):
         if outcome is None:
             continue
-        index, anchors, svg, small, turns = outcome
+        index, anchors, svg, small, landmarks = outcome
         jobs.append({"key": str(index),
                      "html": render_mod.harness_html(svg, theme=theme,
                                                      standalone=standalone)})
-        smallest.append((*small, turns))
+        smallest.append((*small, landmarks))
         kept.append(anchors)
     if not jobs:
         raise PlacementError(f"{name}: d2 compiled none of the {len(combos)} candidate "
@@ -237,9 +257,9 @@ def _measure_candidates(spec, name, combos, theme, standalone=False, layout=None
         results = browser_mod.measure(jobs)
     except browser_mod.BrowserError as exc:
         raise PlacementError(f"{name}: {exc}") from exc
-    for measurement, (fmin, rend_h, turns) in zip(results, smallest):
+    for measurement, (fmin, rend_h, landmarks) in zip(results, smallest):
         measurement["fmin"], measurement["rend_h"] = fmin, rend_h
-        measurement["turns"] = turns
+        measurement["landmarks"] = landmarks
     return list(zip(kept, results))
 
 
