@@ -45,7 +45,7 @@ ARCHITECTURE = {
             {"id": "gates", "label": "gates",
              "detail": "size · contrast · theming · clipping", "role": "svc"},
         ]},
-        {"id": "d2", "label": "d2 0.8.1", "role": "ext", "shape": "hexagon"},
+        {"id": "d2", "label": "d2 0.8.2", "role": "ext", "shape": "hexagon"},
         {"id": "chrome", "label": "headless Chrome", "role": "ext", "shape": "hexagon"},
     ],
     "edges": [

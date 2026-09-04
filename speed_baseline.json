@@ -2,52 +2,52 @@
   "machine": {
     "arch": "arm64",
     "cores": 12,
-    "d2": "0.8.1-HEAD",
-    "node": "v26.1.0",
+    "d2": "0.8.2",
+    "node": "v26.8.1",
     "python": "3.14.7",
     "system": "Darwin",
     "workers": 12
   },
-  "recorded": "2026-08-19",
+  "recorded": "2026-09-04",
   "scenarios": {
     "clipping_gate": {
       "compiles": 0,
       "core_usage": 0.083,
       "launches": 1,
       "pages": 5,
-      "seconds": 0.85
+      "seconds": 0.97
     },
     "corpus": {
       "compiles": 193,
-      "core_usage": 0.635,
+      "core_usage": 0.469,
       "launches": 27,
       "pages": 194,
-      "seconds": 24.61
+      "seconds": 19.54
     },
     "launch_floor": {
-      "seconds": 0.732
+      "seconds": 0.869
     },
     "one_figure": {
       "compiles": 66,
-      "core_usage": 0.514,
+      "core_usage": 0.337,
       "launches": 4,
       "pages": 66,
-      "seconds": 9.12
+      "seconds": 6.49
     },
     "page_cost": {
-      "seconds": 0.0291
+      "seconds": 0.032
     },
     "pages_per_launch": {
-      "value": 25.1
+      "value": 27.2
     },
     "ten_drawings": {
       "compiles": 62,
-      "core_usage": 0.177,
+      "core_usage": 0.12,
       "launches": 13,
       "pages": 13,
-      "seconds": 16.17
+      "seconds": 15.93
     }
   },
-  "summary": "Recorded on the engine as it stands: a document's diagrams are drawn at the same time, each connection is traced once per drawing, and browsers are started only once a batch is big enough to pay for one.",
-  "why": "Baseline for future comparisons. Nothing is being compared here."
+  "summary": "d2 moves from 0.8.1 to 0.8.2, and a note is now charged for the arrow line it actually hides rather than for the bounding box it sits inside. Whole-sample-set time is down about 6% with every count unchanged; one inspection costs 16% more, which is the new sampling.",
+  "why": "A route is sampled along its length inside the browser instead of being intersected as a bounding box, once per note per layout candidate. A route whose whole extent misses the note is ruled out before any sampling, which is what keeps the cost to a fraction of an inspection."
 }

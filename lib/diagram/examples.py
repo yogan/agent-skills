@@ -32,16 +32,16 @@ ever sees.
 
 So the rule for this file is not "pin" or "do not pin", it is: **a pin here must be the
 anchor the pass measures, and the corpus must render cleanly with no pass at all.** The state
-machine is the proof that this needs checking rather than assuming, twice over. It once pinned
-`bottom-left`, which lay across 69% of `max attempts` in the PORTRAIT layout it had then, and
-`center-left` was the only one of the eight that hid nothing.
+machine is the proof that this needs checking rather than assuming, three times over. It once
+pinned `bottom-left`, which lay across 69% of `max attempts` in the PORTRAIT layout it had
+then. Laid out landscape, `bottom-left` became what the pass picked. And once the search
+started charging a callout for the line it actually hides rather than for the box it sits in
+(`js/measure.js`, `place.TURN_PRICE`), `bottom-left` was covering 105px of route and
+`top-left` — which covers nothing, for 49px of height — is what it measures now.
 
-That figure is now laid out landscape — `route.straighten` fixed the arrowheads that used to
-push it to a wider rung, and the rung was the only thing keeping the wide candidate out (see
-`test_reference.MEASURED`). A pin is a statement about a shape, so both anchors changed hands:
-`center-left` now lands across `transport error`, and `bottom-left` — the one that used to be
-the worst of the eight — is what the pass measures and picks. **A pin here does not survive a
-layout change and must be re-derived rather than assumed to still hold.**
+**A pin here does not survive a layout change, and it does not survive a change to what the
+search measures. Re-derive it rather than assume it still holds:** `place.place` on the spec
+prints the answer, and three of these seven moved the last time it was asked.
 """
 
 ARCHITECTURE = {
@@ -61,7 +61,7 @@ ARCHITECTURE = {
                  "note": "new service", "near": "bottom-left"},
             ]},
             {"id": "redis", "label": "Redis", "role": "cache", "shape": "cylinder",
-             "note": "now fans out presence", "near": "bottom-left"},
+             "note": "now fans out presence", "near": "center-left"},
         ]},
         {"id": "pg", "label": "PostgreSQL", "role": "store", "shape": "cylinder"},
         {"id": "idp", "label": "OIDC provider", "role": "ext", "shape": "hexagon"},
@@ -92,7 +92,7 @@ SEQUENCE = {
         {"id": "editor", "label": "Editor", "group": "browser"},
         {"id": "api", "label": "GraphQL API", "group": "server"},
         {"id": "gw", "label": "Presence Gateway", "group": "server",
-         "note": "new in this MR", "near": "bottom-left"},
+         "note": "new in this MR", "near": "top-left"},
         {"id": "redis", "label": "Redis", "group": "server"},
     ],
     "messages": [
@@ -188,7 +188,7 @@ STATE = {
         {"id": "authenticating", "role": "working"},
         {"id": "live", "role": "steady"},
         {"id": "backoff", "label": "reconnect backoff", "role": "transient",
-         "note": "new retry path", "near": "bottom-left"},
+         "note": "new retry path", "near": "top-left"},
         {"id": "closed", "role": "terminal"},
     ],
     "transitions": [

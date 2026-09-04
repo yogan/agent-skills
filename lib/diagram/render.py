@@ -47,7 +47,7 @@ from .gates import size as size_gate
 # d2 version this recipe was measured against. Several behaviours it relies on are
 # undocumented (the table property coupling, the missing intrinsic size, the 1.3x header
 # scale), so a version bump is a reason to re-run the gates, not a routine upgrade.
-PINNED_VERSION = "0.8.1"
+PINNED_VERSION = "0.8.2"
 
 # d2's own callout paint, matched verbatim. Plain white with a grey hairline: invisible
 # against a dark page and too timid against a light one. Tagging it `d2-callout` at the

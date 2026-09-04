@@ -18,7 +18,8 @@ import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
-from lib.diagram import browser, place, render
+from lib.diagram import arrows, browser, place, render
+from lib.diagram.browser import OVERLAP_WEIGHTS
 from lib.diagram.examples import ER, REFERENCE
 from lib.diagram.gates import clipping
 
@@ -62,6 +63,12 @@ class TestPlacementAgainstRealDiagrams(unittest.TestCase):
         box; see `js/measure.js`. Before that a callout was charged for its own drop-shadow
         grazing a neighbour, so seven anchors that occlude nothing at all scored between 2907
         and 5280 and the search was ranking them by blur radius.
+
+        The numbers below are an order of magnitude smaller than they once were, and that is
+        the same story again: a callout is now charged for the LINE it hides rather than for
+        being inside a route's bounding box, so the bad anchor here reads 442 where it used to
+        read four figures. What it means is unchanged and now literal — 442 units is 110px of
+        route line, at 2px of stroke and weight 2.
         """
         _, report = self.placed["er"]
         self.assertEqual(place.unplaceable(report), [], f"search still clips: {report}")
@@ -70,11 +77,12 @@ class TestPlacementAgainstRealDiagrams(unittest.TestCase):
         self.assertLess(found, 1, f"the search should cover nothing here, not {found:.0f}")
 
         # Proof it had something to get wrong. `center-right` puts the new-table callout across
-        # both arrows leaving `presence_sessions`, and paths are weighted 2.
+        # both arrows leaving `presence_sessions`, and paths are weighted 2 — so the floor here
+        # is stated as the line it has to be hiding: 50px of it, against 110px measured.
         measured = place._measure_candidates(ER, "er", [("top-left", "center-right")], "light")
         _, poor_clip, poor_overlap = place._score(measured[0][1])
         self.assertEqual(poor_clip, 0, "the point is that it covers, not that it clips")
-        self.assertGreater(poor_overlap, 1000,
+        self.assertGreater(poor_overlap, 50 * arrows.STROKE * OVERLAP_WEIGHTS["path"],
                            f"an anchor across both arrows measured {poor_overlap:.0f} — if "
                            "nothing on this diagram can be covered, the search proves nothing")
 

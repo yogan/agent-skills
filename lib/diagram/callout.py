@@ -17,6 +17,7 @@ clipping it.
 """
 import re
 
+from . import arrows
 from . import browser as browser_mod
 
 # d2's own padding between the box and the text it holds, in px a side. Read off its output
@@ -112,6 +113,25 @@ def _new_x(rect_x, rect_w, trim, pointer):
     if base >= rect_w - CORNER:
         return rect_x + trim
     return rect_x + trim / 2
+
+
+def boxes(svg):
+    """Every callout's box, in the drawing's own coordinates.
+
+    Read from the SVG rather than from a browser because the callers that need it are
+    measuring the DRAWING against them — which turn a callout covers, which leg it
+    lies along — and the route geometry is only in these coordinates. The browser is
+    still the authority on what a callout looks like on a page; this is where it sits
+    on the picture.
+    """
+    out = []
+    for group in _GROUP.finditer(svg):
+        rect = _RECT.search(group.group(1))
+        if not rect:
+            continue
+        x, y, w, h = (float(v) for v in rect.groups())
+        out.append(arrows.Box((x, y, x + w, y + h)))
+    return out
 
 
 def fit(svg):

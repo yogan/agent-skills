@@ -58,6 +58,47 @@ class TestReadingARoute(unittest.TestCase):
         self.assertEqual([(leg[0], round(leg[3])) for leg in legs], [("v", 100), ("h", 50)])
 
 
+class TestCorners(unittest.TestCase):
+    """A route is followed by its changes of direction, so `place` prices a callout that
+    covers one. Counting them is the part that is easy to get wrong: `points` renders each
+    rounded corner as ONE short off-axis step, so every corner has two interior points and
+    counting points doubles the answer."""
+
+    def test_one_corner_is_counted_once(self):
+        pts = arrows.points("M 0 0 L 0 100 S 0 110 10 110 L 60 110")
+        self.assertEqual(len(arrows.corners(pts)), 1)
+
+    def test_a_straight_route_has_none(self):
+        self.assertEqual(arrows.corners(arrows.points("M 0 0 L 200 0")), [])
+
+    def test_a_diagonal_run_is_not_a_corner(self):
+        """The same distinction `CORNER` draws for `defects`: a long off-axis run is a
+        drawing fault, not a turn."""
+        pts = arrows.points("M 0 0 L 200 200")
+        self.assertEqual(arrows.corners(pts), [])
+
+    def test_the_corner_sits_between_its_two_runs(self):
+        pts = arrows.points("M 0 0 L 0 100 S 0 110 10 110 L 60 110")
+        (x, y), = arrows.corners(pts)
+        self.assertEqual((round(x), round(y)), (5, 105))
+
+    def test_a_box_over_the_corner_is_reported(self):
+        drawing = svg([("M 0 0 L 0 100 S 0 110 10 110 L 60 110", "")])
+        over = arrows.Box((0, 95, 20, 120))
+        self.assertEqual(len(arrows.corners_under(drawing, [over])), 1)
+
+    def test_a_box_over_a_straight_run_is_not(self):
+        """It covers line, which is charged as line — see `js/measure.js`. This term is
+        only about the turn."""
+        drawing = svg([("M 0 0 L 0 100 S 0 110 10 110 L 60 110", "")])
+        over = arrows.Box((30, 100, 55, 120))
+        self.assertEqual(arrows.corners_under(drawing, [over]), [])
+
+    def test_no_boxes_means_nothing_covered(self):
+        drawing = svg([("M 0 0 L 0 100 S 0 110 10 110 L 60 110", "")])
+        self.assertEqual(arrows.corners_under(drawing, []), [])
+
+
 class TestDiagonals(unittest.TestCase):
     """A rounded corner and a diagonal run look identical to anything that reads endpoints.
 

@@ -81,6 +81,25 @@ class CalloutCase(unittest.TestCase):
         callout._WIDTHS.update(self.original)
 
 
+class TestWhereTheBoxSits(CalloutCase):
+    """`boxes` is what lets the placement search ask the DRAWING what a callout covers —
+    which turn it hides, which leg it lies along. Those facts only exist in the drawing's
+    own coordinates, which is why this is read off the SVG and not off a browser."""
+
+    def test_it_reads_the_box_out_of_the_drawing(self):
+        self.assertEqual(callout.boxes(svg("center-right")),
+                         [(102.0, 21.0, 254.0, 65.0)])
+
+    def test_a_box_hanging_off_to_the_left_keeps_its_negative_x(self):
+        """`center-left` puts the box left of its target, so the drawing's own coordinates
+        go negative — and a pattern that only matches digits silently finds no callout."""
+        self.assertEqual(callout.boxes(svg("center-left")),
+                         [(-150.0, 21.0, 2.0, 65.0)])
+
+    def test_a_drawing_with_no_callout_has_none(self):
+        self.assertEqual(callout.boxes('<svg viewBox="0 0 10 10"></svg>'), [])
+
+
 class TestTheBoxFitsTheText(CalloutCase):
     def test_the_padding_ends_up_equal_on_both_sides(self):
         """The defect: d2 measures the note in its font, the page fills the box in another, and

@@ -18,12 +18,12 @@ import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
-from lib.diagram import place
+from lib.diagram import arrows, place
 from lib.diagram.examples import ARCHITECTURE, CLASS, ER, SEQUENCE, STATE
 from lib.diagram.spec import NEAR
 
 
-def fake_measurement(callouts, svg_clip=None, fmin=13.0):
+def fake_measurement(callouts, svg_clip=None, fmin=13.0, turns=0):
     """A measurement dict shaped like the browser's, for scoring tests.
 
     `measure.js` reports a callout's overflow against two boundaries and `_score` uses the
@@ -34,10 +34,13 @@ def fake_measurement(callouts, svg_clip=None, fmin=13.0):
     `fmin` is the smallest glyph in the finished drawing, which `_measure_candidates` attaches
     from the size gate. It defaults to a comfortable value so a test about overlap is not
     accidentally a test about glyph size.
+
+    `turns` is how many corners of a route the callouts cover, which `_measure_candidates`
+    reads off the SVG with `arrows.corners_under`.
     """
     return {"callouts": [{"clipVsCard": c, "clip": c if svg_clip is None else svg_clip[i],
                           "overlap": o} for i, (c, o) in enumerate(callouts)],
-            "fmin": fmin,
+            "fmin": fmin, "turns": turns,
             "svg": {"width": 100, "height": 100}, "overflow": {}, "offenders": []}
 
 
@@ -178,17 +181,59 @@ class TestScoring(unittest.TestCase):
 
     def test_height_is_priced_against_overlap_rather_than_ordered_against_it(self):
         """Whichever of the two goes first, the other becomes free. Ordered by height, the
-        search buried text to save 50px (an anchor covering 15228 beat one covering 3082);
-        ordered by overlap, it spent 47px of height to save 490 — noise on totals in the
-        thousands. The real ER numbers, both ways round."""
-        shorter = fake_measurement([(0, 3478)]); shorter["rend_h"] = 245
-        taller = fake_measurement([(0, 2988)]); taller["rend_h"] = 292
-        self.assertLess(place._score(shorter)[0], place._score(taller)[0],
-                        "47px of height must outrank a 490-unit overlap saving")
-        buried = fake_measurement([(0, 15228)]); buried["rend_h"] = 245
-        clean = fake_measurement([(0, 3082)]); clean["rend_h"] = 292
-        self.assertLess(place._score(clean)[0], place._score(buried)[0],
-                        "but 12000 units of covered text must outrank 47px of height")
+        search buried text to save 50px; ordered by overlap, it spent 47px of height to save
+        noise. So they are priced, and `HEIGHT_PRICE` is that price.
+
+        The first case is the reference state machine, measured: the anchor covering nothing
+        costs 38px of rendered height, and the short one covers 71 units of line and hides one
+        turn. It is a close call by construction — 38px against 53px of line — which is why
+        the price is derived from where figures like it flip rather than from a round ratio.
+
+        The second is deliberately NOT that figure. Pinning the graze at its real 71 units
+        leaves five units between pass and fail, so the test would be measuring the figure
+        rather than the rule: what has to hold is that a graze cannot buy page height, and a
+        number well clear of indifference is what says so.
+        """
+        short_but_covering = fake_measurement([(0, 71)], turns=1)
+        short_but_covering["rend_h"] = 164
+        clean_but_taller = fake_measurement([(0, 0)])
+        clean_but_taller["rend_h"] = 202
+        self.assertLess(place._score(clean_but_taller)[0],
+                        place._score(short_but_covering)[0],
+                        "38px of height must not buy a covered turn")
+        graze = fake_measurement([(0, 5)]); graze["rend_h"] = 164
+        self.assertLess(place._score(graze)[0], place._score(clean_but_taller)[0],
+                        "but a graze must not cost 38px of page either")
+
+    def test_the_price_stays_clear_of_where_a_real_figure_flips(self):
+        """A priced constant is only meaningful if the answer does not sit on the boundary.
+
+        Measured on the two sample-set figures that actually trade height against coverage:
+        the sequence is indifferent at 6.1 units per px and the state machine at 4.3, and
+        below both they place clear. At 4 the price sat 8% under the nearer of them, which a
+        slightly shorter note would have decided. Keep it a factor of two clear, and re-derive
+        it — by measuring where figures flip — rather than nudging it to fix one drawing.
+        """
+        nearest_flip = 4.3
+        self.assertLessEqual(place.HEIGHT_PRICE, nearest_flip / 2,
+                             "the height price is back at the edge of the band")
+
+    def test_a_covered_turn_costs_more_than_the_line_it_is_made_of(self):
+        """A turn is a dozen px of line and would round to nothing as ink, while it is the
+        most useful thing on the route: cover the one corner and two runs read as two
+        different arrows. So it is charged as the line a reader loses — `arrows.CORNER` px on
+        each of the runs it joins."""
+        one_turn = fake_measurement([(0, 0)], turns=1)
+        # The corner's own ink: at most `CORNER` px of a 2px line at weight 2.
+        the_corner_itself = fake_measurement([(0, 4 * arrows.CORNER)])
+        self.assertLess(place._score(the_corner_itself)[0], place._score(one_turn)[0],
+                        "a turn must cost more than the line its corner is drawn with")
+
+    def test_turns_are_summed_and_carried_in_the_overlap_figure(self):
+        """`_report` surfaces `overlap`, so a covered turn has to be visible there rather
+        than only inside the sort key."""
+        _total, _clip, overlap = place._score(fake_measurement([(0, 12)], turns=2))
+        self.assertEqual(overlap, 12 + 2 * place.TURN_PRICE)
 
     def test_a_glyph_difference_too_small_to_see_does_not_outrank_overlap(self):
         """Rounded to the nearest half pixel, so measurement noise cannot decide a layout."""

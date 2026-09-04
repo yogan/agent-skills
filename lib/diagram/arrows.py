@@ -172,6 +172,38 @@ def leg_boxes(d):
     return out
 
 
+def corners(pts):
+    """Where a route turns: the midpoint of each corner it goes round.
+
+    `points` renders one of d2's rounded corners as a single short off-axis STEP between
+    the two straight runs it joins, so a turn is that step — NOT an interior point of the
+    polyline, of which every corner has two. Anything off-axis and longer than `CORNER`
+    is not a corner at all but the diagonal `defects` reports.
+    """
+    out = []
+    for (x0, y0), (x1, y1) in zip(pts, pts[1:]):
+        dx, dy = abs(x1 - x0), abs(y1 - y0)
+        if dx > AXIS_EPS and dy > AXIS_EPS and max(dx, dy) <= CORNER:
+            out.append(((x0 + x1) / 2, (y0 + y1) / 2))
+    return out
+
+
+def corners_under(svg, boxes):
+    """Every turn in `svg` that one of `boxes` covers.
+
+    Its own term in the placement search rather than part of the line a callout hides,
+    because a turn is not priced by its length: a reader follows a route by its changes
+    of direction, and a box over the one place the line changes leaves two runs that
+    cannot be told from two different arrows. See `place.TURN_PRICE`.
+    """
+    found = []
+    for _tag, pts in connections(svg):
+        for point in corners(pts):
+            if any(box.holds(point) for box in boxes):
+                found.append(point)
+    return found
+
+
 def walk(pts, step=1.0):
     """The polyline sampled at ~`step` px, so an index into it is a distance along the line."""
     out = []

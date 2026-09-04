@@ -51,10 +51,19 @@ MEASURED = {
     # candidate had always existed and had always been refused, for text landing at 10.4px
     # against a floor of 11 — half the height for a quarter of the glyph size, a trade nobody
     # had ever actually looked at. It was looked at, and this is what came back.
-    "arch": (971, 478),
+    #
+    # 971x478 under d2 0.8.1. ELK lays this one wider in 0.8.2 — same emitted source, and a
+    # two-node graph compiles byte-identically on both, so it is the layout and not the text
+    # measurement. It costs glyph size, because the extra width is scaled out of the content
+    # column: node labels come out at 10.2px instead of 11.1px, against the 10px floor.
+    "arch": (1057, 423),
     # d2's own sequence engine lays this one out; the layout engine never touches it, and
     # dagre and elk output are byte-identical. 420 before the group legend added LEGEND_BAND.
-    "sequence": (663, 442),
+    #
+    # 442 while its callout was pinned `bottom-left`, where it lay along 45px of the message
+    # line below it. `top-left` covers nothing and costs these 49px; see `place.HEIGHT_PRICE`,
+    # which is what decides that trade and used to decide it the other way.
+    "sequence": (663, 491),
     # dagre: 935x285 at 11.6px — and its arrows pointed at the TABLE. `documents.owner_id` was
     # accepted and silently dropped, so the picture never showed the column-level fact the spec
     # asserted. The arrow now leaves the column, from a figure that is also smaller.
@@ -109,7 +118,11 @@ MEASURED = {
     # itself. But the THIRD break took its longest line from 9 characters to 5 and bought only
     # 5px for it. `d2.WRAP_SLACK` lets one line run over rather than spend another, so it folds
     # in two now — 5px wider, 6px shorter, and the only figure in either corpus that moves.
-    "state": (985, 229),
+    #
+    # 985x229 while the callout was pinned `bottom-left`, where it covered 105px of route.
+    # `top-left` covers none of it, and these 48px are what that costs — the same trade as
+    # `sequence` above, and the reason both moved at once.
+    "state": (985, 277),
 }
 
 HAVE_D2 = render.d2_version() is not None

@@ -28,7 +28,9 @@ import copy
 import itertools
 
 from .. import parallel
+from . import arrows
 from . import browser as browser_mod
+from . import callout as callout_mod
 from . import render as render_mod
 from .spec import NEAR, validate
 
@@ -38,12 +40,37 @@ CLIP_PENALTY = 1e6
 # Above this many callouts, search greedily instead of exhaustively.
 JOINT_MAX = 2
 
-# What a pixel of page height is worth in weighted-overlap units. The two must be priced, not
-# ordered: height first buried text to save 50px, overlap first spent 50px to save 315 units of
-# noise. Bucketing both is subtly wrong — two values closer than the bucket still land either
-# side of a boundary. At 20, the ER's 47px of height costs 940 units, which outranks a 490-unit
-# overlap saving, while burying a label (12146 units) would need 600px to justify.
-HEIGHT_PRICE = 20
+# What one turn of a route costs when a callout covers it, in the same weighted units as
+# overlap. Not priced by its length, which is a dozen px of line and would round to nothing:
+# a reader follows a route by where it changes direction, and a box over the one corner
+# leaves two runs that cannot be told from two separate arrows. So it is charged as the line
+# a reader loses — `CORNER` px on each of the two runs the turn joins, at the stroke a route
+# is drawn with and the weight a route carries.
+TURN_PRICE = 2 * arrows.CORNER * arrows.STROKE * browser_mod.OVERLAP_WEIGHTS["path"]
+
+# What a pixel of page height is worth in the same units. The two must be priced, not ordered:
+# height first buried text to save 50px, overlap first spent 50px to save 315 units of noise.
+# Bucketing both is subtly wrong — two values closer than the bucket still land either side of
+# a boundary.
+#
+# It was 20 while overlap was measured as box against box (`js/measure.js`), which counted the
+# empty middle of an L-shaped route and the empty interior of every container — inflating a real
+# overlap more than tenfold. Against honest numbers 20 buys any arrow for a few px of page:
+# measured on the reference state machine, the free anchor cost 38px of height (765 units at
+# that price) and saved 71 units of coverage, so the search hid a turn to save half a line of
+# scrolling.
+#
+# Set from the two figures that actually make this trade, by measuring where each of them flips
+# rather than by picking a ratio and checking it: the sequence is indifferent at 6.1 per px and
+# the state machine at 4.3, and every price below that gives both a placement covering nothing.
+# So 2 — a factor of two clear of the nearer flip, where 4 sat 8% under it and would have been
+# decided by a slightly shorter note. Nothing in either sample set or the held-out set moves
+# anywhere between 0.5 and 4.
+#
+# What bounds the other direction is not this number: a candidate that shrinks the drawing's
+# text ranks above anything here (see `_score`), so a cheap page cannot buy a smaller glyph, and
+# `gates/size` still refuses a figure taller than one viewport.
+HEIGHT_PRICE = 2
 
 DEFAULT_NEAR = "top-center"
 
@@ -108,18 +135,24 @@ def _score(measurement):
     further down, so one callout can shrink every letter in the figure. Rounded to the half
     pixel so rounding noise does not outrank a real overlap.
 
-    **Overlap** means OCCLUSION, not proximity: it is measured against the callout as painted,
-    where clipping uses that box plus the drop-shadow's reach (`js/measure.js` explains why the
-    two questions get different boxes). Charged on the grown box, a callout paid for its own
-    halo grazing a neighbour — which was the entire difference between the ER's top-row anchors,
-    all of which cover nothing.
+    **Overlap** means OCCLUSION, not proximity, and not containment either: it is what the
+    callout as painted actually hides, so a route is charged the length of line under the box
+    and a container only the border it crosses (`js/measure.js` has the geometry, and why
+    clipping gets a different box). Both proxies it replaced were charging emptiness — the
+    middle of an L-shaped route, the interior of a container — and both were deciding
+    placements: the architecture figure's chosen anchor covered 113px of line and a turn where
+    three anchors that cover nothing scored worse.
+
+    **A turn a callout covers** is added here at `TURN_PRICE`, because its length prices it at
+    nothing while a reader loses the most useful thing on the route.
 
     It ties often, and the tie falls to the order of `spec.NEAR`. That is deliberate: when
     several anchors are equally free, landing them on the same side as each other is a better
     answer than any number here can produce.
     """
     clip = sum(c["clipVsCard"] for c in measurement["callouts"])
-    overlap = sum(c["overlap"] for c in measurement["callouts"])
+    overlap = (sum(c["overlap"] for c in measurement["callouts"])
+               + TURN_PRICE * (measurement.get("turns") or 0))
     # What this ANCHOR hides, which is the total less the part the layout hides on its own.
     # `measure.js` banks both under one threshold, so the subtraction is exact rather than an
     # estimate — see there.
@@ -182,16 +215,20 @@ def _measure_candidates(spec, name, combos, theme, standalone=False, layout=None
             small = (metrics["fmin"], metrics["rend_h"])
         except GateError:
             small = (None, None)
-        return index, anchors, svg, small
+        # Turns this candidate's callouts cover. Read off the SVG for the same reason as
+        # the glyph size: the module that knows how to read a route already exists, and a
+        # turn is a fact about the drawing's own coordinates rather than about the page.
+        turns = len(arrows.corners_under(svg, callout_mod.boxes(svg)))
+        return index, anchors, svg, small, turns
 
     for outcome in parallel.each(compile_one, enumerate(combos)):
         if outcome is None:
             continue
-        index, anchors, svg, small = outcome
+        index, anchors, svg, small, turns = outcome
         jobs.append({"key": str(index),
                      "html": render_mod.harness_html(svg, theme=theme,
                                                      standalone=standalone)})
-        smallest.append(small)
+        smallest.append((*small, turns))
         kept.append(anchors)
     if not jobs:
         raise PlacementError(f"{name}: d2 compiled none of the {len(combos)} candidate "
@@ -200,8 +237,9 @@ def _measure_candidates(spec, name, combos, theme, standalone=False, layout=None
         results = browser_mod.measure(jobs)
     except browser_mod.BrowserError as exc:
         raise PlacementError(f"{name}: {exc}") from exc
-    for measurement, (fmin, rend_h) in zip(results, smallest):
+    for measurement, (fmin, rend_h, turns) in zip(results, smallest):
         measurement["fmin"], measurement["rend_h"] = fmin, rend_h
+        measurement["turns"] = turns
     return list(zip(kept, results))
 
 

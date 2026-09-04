@@ -87,10 +87,17 @@ before it is kept. Eleven of the twelve short approaches in the two corpora take
 It also steps a run out from under a callout **resting** on it. `place` decides where a callout
 goes by measuring what it OCCLUDES, so a box that stops a fraction of a px short of a line pays
 nothing for it and still reads as sitting on it — the reference state machine had 0.4px of gap
-over 214px of `user leaves`. Moving the callout instead was measured and is the more expensive
-answer: the only anchor on that figure free of every line is above the box rather than below it,
-and costs 43px of page. The line moves for nothing. What bounds it is the channel beyond: pushed
-further than it must be, a run starts crowding the next one, and there they are 30px apart.
+over 214px of `user leaves`. The line moves for nothing, and what bounds the move is the channel
+beyond: pushed further than it must be, a run starts crowding the next one, and there they are
+30px apart.
+
+That figure's callout is no longer below the box at all, and the reason is worth reading with
+the paragraph above: what a callout is charged for used to be the BOX of each thing it sat
+inside, which counted the empty middle of every L-shaped route, so a real overlap came out
+inflated more than tenfold and a page-height saving could always outbid one. Charged for the
+line it actually hides, the anchor above the box — free of every route, 48px taller — is what
+the search picks. `place.HEIGHT_PRICE` is the trade, and `place.TURN_PRICE` is why a corner
+counts for more than the dozen px of line it is drawn with.
 
 The same module repairs one other thing, and the tell for it is a single character. d2 draws an
 orthogonal corner as an `S` and a diagonal one as a `C`, so **a cubic in a connection path is a

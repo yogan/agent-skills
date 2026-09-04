@@ -107,6 +107,63 @@ class TestRealMeasurement(unittest.TestCase):
             [{"key": "s", "html": render.harness_html(svg)}])[0]
         self.assertGreater(measured["card"]["width"], measured["svg"]["width"])
 
+    def test_a_callout_is_charged_for_ink_and_not_for_a_bounding_box(self):
+        """What `overlap` means, and the two ways a box got it wrong.
+
+        An L-shaped route's bounding box is mostly the empty square inside its elbow, and a
+        container's box is empty by construction — so a callout in either was charged for
+        hiding nothing, while one lying along a straight run was charged the 2px sliver where
+        the two boxes meet. Measured on the reference architecture, that ranked the anchor
+        covering 113px of line and a turn above three anchors covering nothing at all.
+
+        Hand-built SVGs rather than a corpus figure: the point is which geometry is charged,
+        and a real drawing cannot isolate one element from the rest.
+        """
+        route = ('<path d="M 40 40 L 40 200 S 40 210 50 210 L 260 210" class="connection" '
+                 'stroke="black" fill="none" style="stroke-width:2;"/>')
+        # Deliberately under half the canvas: at 50% or more the loop skips an element
+        # outright, and a container that big would make both container cases read 0 for a
+        # reason that has nothing to do with what is being tested here.
+        container = ('<g class="box grp"><g class="shape"><rect x="20" y="20" width="180" '
+                     'height="150" stroke="black" fill="none" style="stroke-width:2;"/>'
+                     "</g></g>")
+        def harness(body, x, y):
+            note = (f'<g class="positioned-tooltip"><rect x="{x}" y="{y}" width="90" '
+                    f'height="40" class="d2-callout" fill="white" stroke="grey"/>'
+                    f'<foreignObject x="{x + 10}" y="{y + 10}" width="70" height="20">'
+                    '<div class="md"><p>a note</p></div></foreignObject></g>')
+            return render.harness_html(
+                f'<svg viewBox="0 0 320 260" width="320" height="260">{body}{note}</svg>')
+
+        # A route that runs straight, whose box has NO THICKNESS: Chrome reports this one as
+        # 200x0. Anything that rules a route out by the AREA of that box rules out every
+        # straight run there is — which a bent route cannot catch, since its box has both
+        # extents. That is a bug this file shipped for one commit.
+        straight = ('<path d="M 40 120 L 240 120" class="connection" stroke="black" '
+                    'fill="none" style="stroke-width:2;"/>')
+
+        jobs = [
+            # inside the elbow: the route's box covers it, the route itself does not
+            {"key": "elbow", "html": harness(route, 120, 90)},
+            # along the horizontal run, which is what a reader actually loses
+            {"key": "on-the-line", "html": harness(route, 120, 190)},
+            # the same, on a route that is nothing BUT a straight run
+            {"key": "on-a-flat-route", "html": harness(straight, 100, 100)},
+            # wholly inside the container, touching none of its border
+            {"key": "in-container", "html": harness(container, 60, 60)},
+            # straddling the container's left border
+            {"key": "on-the-border", "html": harness(container, -25, 60)},
+        ]
+        by_key = {r["key"]: r["callouts"][0]["overlap"] for r in browser.measure(jobs)}
+        self.assertEqual(by_key["elbow"], 0,
+                         "the empty middle of a route is not something a callout can cover")
+        self.assertGreater(by_key["on-the-line"], 0, "covering the line has to cost")
+        self.assertGreater(by_key["on-a-flat-route"], 0,
+                           "a route with no thickness to its box must still be sampled")
+        self.assertEqual(by_key["in-container"], 0,
+                         "a container's interior is empty; its title is charged as text")
+        self.assertGreater(by_key["on-the-border"], 0, "crossing the border does cost")
+
     def test_a_malformed_harness_raises_rather_than_returning_zeros(self):
         with self.assertRaises(browser.BrowserError):
             browser.measure([{"key": "bad", "html": "<html>no diagram here</html>"}])
