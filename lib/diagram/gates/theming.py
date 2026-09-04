@@ -21,13 +21,14 @@ from .. import palette
 from . import GateError, Result
 
 _VAR = re.compile(r"var\((--[\w-]+)\)")
-# A <text> with no class of its own. `\b` keeps it off `<textPath>`.
-_UNCLASSED = re.compile(r"<text\b(?![^>]*\bclass=)[^>]*>")
+# A <text> that names no font it will actually get: no class to take one from, and no
+# `font-family` of its own either. `\b` keeps it off `<textPath>`.
+_FONTLESS = re.compile(r"<text\b(?![^>]*\bclass=)(?![^>]*font-family)[^>]*>")
 
 
 def check(svg, name="diagram"):
     """Report colour literals with no CSS-var mapping, var refs with no definition, and text
-    with no class to take a font from."""
+    that names no font it will actually get."""
     if "<svg" not in svg:
         raise GateError("no <svg> element to check")
     problems = []
@@ -47,18 +48,27 @@ def check(svg, name="diagram"):
         problems.append(f"undefined CSS var(s): {', '.join(undefined)} — "
                         "not defined by palette.css_block()")
 
-    # The same failure in a property that is not a colour. d2 scopes its embedded font to
-    # `.text` / `.text-italic` and gives those classes nothing else, so a <text> WE add
-    # without one inherits whatever font the host page sets — Georgia on the explainer, which
-    # shipped a sequence diagram's group names in a serif while every label d2 drew was sans.
-    # It survived because it looks like a design choice rather than a bug, and because a
-    # standalone render has no page to inherit from and comes out right.
-    bare = len(_UNCLASSED.findall(svg))
+    # The same failure in a property that is not a colour: text that will be set in a font
+    # nobody chose. A <text> WE add with neither a class nor a font-family inherits whatever
+    # the host page sets — Georgia on the explainer, which shipped a sequence diagram's group
+    # names in a serif while every label d2 drew was sans. It survived because it looks like a
+    # design choice rather than a bug, and because a standalone render has no page to inherit
+    # from and comes out right.
+    #
+    # EITHER answer passes, because they fix different halves of the same problem. d2's own
+    # `.text` gets d2's face, which is the right one for text that belongs to the drawing —
+    # but d2 embeds it as a SUBSET of the glyphs the drawing uses, so text added afterwards
+    # loses whichever letters the drawing did not need, one character at a time. An annotation
+    # therefore names a complete stack itself (see `compact.ANNOTATION_FONT`). What is not
+    # allowed is neither.
+    bare = len(_FONTLESS.findall(svg))
     if bare:
-        problems.append(f"{bare} <text> element(s) with no class — d2 scopes its font to "
-                        "`.text`, so these inherit the host page's font instead (a serif, on "
-                        "the explainer page). Whatever adds them must set `class=\"text\"`")
+        problems.append(f"{bare} <text> element(s) name no font — with neither `class=\"text\"` "
+                        "nor a `font-family`, these are set in whatever the host page uses (a "
+                        "serif, on the explainer page). Text that belongs to the drawing takes "
+                        "d2's class; an annotation names a complete stack, since d2's face is "
+                        "only subsetted to the drawing's own glyphs")
 
     used = len({m.group(1) for m in _VAR.finditer(svg)})
     return Result(name, "theming", problems,
-                  f"{used} vars, {sum(missing.values())} unmapped, {bare} unclassed text")
+                  f"{used} vars, {sum(missing.values())} unmapped, {bare} fontless text")

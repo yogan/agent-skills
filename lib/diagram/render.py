@@ -966,9 +966,16 @@ def standalone(spec, name="diagram", theme="dark", binary="d2", layers=None, edg
 # builds a page, so the caption costs a line of HTML there. It matters most when one subject was
 # split across several images: without it, part three is anonymous and a cross-reference in a
 # callout points at a name the reader cannot see anywhere.
-TITLE_H = 34
+# Its own css, added up — not a round number over it. `font:600 15px` with no line-height
+# leaves the browser to pick one (~18px for this stack), and 34 reserved 7.4px more than the
+# caption draws: the surplus landed under the diagram, where it read as the drawing having
+# twice the bottom margin it has. Stating the line-height makes the arithmetic exact, and
+# `test_render` adds it up from these strings so the two cannot drift.
+TITLE_PAD = 8
+TITLE_LINE = 18
+TITLE_H = TITLE_PAD + TITLE_LINE
 TITLE_CSS = ("font:600 15px system-ui,-apple-system,'Segoe UI',sans-serif;"
-             "padding:8px 12px 0;letter-spacing:.2px")
+             f"line-height:{TITLE_LINE}px;padding:{TITLE_PAD}px 12px 0;letter-spacing:.2px")
 
 
 def rasterise_standalone(svg, svg_path, title=None, theme="dark"):

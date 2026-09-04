@@ -11,6 +11,7 @@ Run: `python3 lib/diagram/test_render.py`
 import contextlib
 import io
 import os
+import re
 import sys
 import unittest
 
@@ -416,6 +417,22 @@ class TestToolchain(unittest.TestCase):
         self.assertEqual(render.PINNED_VERSION, "0.8.2")
 
 
+
+
+class TestCaptionHeight(unittest.TestCase):
+    """The PNG page reserves `TITLE_H` for its caption. Reserving more than the caption draws
+    puts the surplus under the diagram, where it reads as the drawing having a bottom margin
+    it does not have — measured at 7.4px on every standalone PNG, legend or not."""
+
+    def test_the_reserved_height_is_the_css_added_up(self):
+        pad = int(re.search(r"padding:(\d+)px", render.TITLE_CSS).group(1))
+        line = int(re.search(r"line-height:(\d+)px", render.TITLE_CSS).group(1))
+        self.assertEqual(render.TITLE_H, pad + line)
+
+    def test_the_line_height_is_stated_rather_than_left_to_the_browser(self):
+        """`font:600 15px …` with no line-height leaves the browser to pick one, and then no
+        constant here can be right for every platform."""
+        self.assertIn("line-height:", render.TITLE_CSS)
 
 
 class TestLegendWiring(unittest.TestCase):

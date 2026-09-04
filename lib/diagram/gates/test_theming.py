@@ -25,10 +25,23 @@ class TestTextWithNoFontToTake(unittest.TestCase):
     no page to inherit from, and every review sheet is built on a sans-bodied page of its own.
     """
 
-    def test_a_text_with_no_class_fails(self):
+    def test_a_text_that_names_no_font_fails(self):
         result = theming.check('<svg><text x="1" y="2">library</text></svg>')
         self.assertFalse(result.ok)
-        self.assertIn("no class", result.problems[0])
+        self.assertIn("name no font", result.problems[0])
+
+    def test_a_text_naming_a_complete_stack_itself_passes(self):
+        """The other way to satisfy the same requirement, and the right one for an annotation:
+        d2's class brings d2's face, which is embedded as a SUBSET of the glyphs the drawing
+        uses — so text added after the drawing loses whichever letters the drawing did not
+        need, one character at a time. See `compact.ANNOTATION_FONT`."""
+        annotated = ('<svg><text x="1" y="2" style="font-family:system-ui,sans-serif">'
+                     "browser</text></svg>")
+        self.assertTrue(theming.check(annotated).ok)
+
+    def test_neither_a_class_nor_a_font_is_what_fails(self):
+        both_missing = '<svg><text x="1" y="2" style="font-size:12px">browser</text></svg>'
+        self.assertFalse(theming.check(both_missing).ok)
 
     def test_the_failure_says_what_it_will_look_like(self):
         result = theming.check('<svg><text x="1" y="2">library</text></svg>')

@@ -101,6 +101,12 @@ LEGEND_ROW_GAP = 0.55        # one wrapped row of swatches -> the next
 # keeps for itself, which is exactly how it reads. At 0.9 it lands within a px of it.
 LEGEND_EDGE_GAP = 0.9
 
+# The face every annotation this module draws is set in — the same stack `render`'s callout css
+# names. Annotations are not part of the drawing: d2's own face is embedded as a subset of the
+# glyphs the drawing happens to use, so text added afterwards has to bring a complete font of
+# its own or lose whichever letters the drawing did not need.
+ANNOTATION_FONT = "system-ui,-apple-system,'Segoe UI',sans-serif"
+
 # The size `callout.prime` measures a string at — `render`'s `.md p` rule, pinned by a test
 # so the two cannot drift apart. A measured width is an ADVANCE width and scales with the type
 # size, so a legend set at 14 is that measurement times 14/12.5. Nothing here counts
@@ -399,13 +405,18 @@ def add_group_legend(svg, lanes, pad=D2_PAD):
             f'<rect x="{x0:.1f}" y="{foot + GROUP_GAP:.1f}" width="{x1 - x0:.1f}" '
             f'height="{GROUP_RULE}" rx="{GROUP_RULE / 2:g}" fill="{rule}" '
             f'fill-opacity="{GROUP_OPACITY}"/>'
-            # `class="text"` is not decoration: d2 scopes its embedded font to that class and
-            # nothing else, so a <text> without it inherits the HOST PAGE's font — Georgia on
-            # the explainer, which put these three group names in a serif while every other
-            # label in the drawing was sans. The class sets font-family and nothing more, so
-            # the fill and size written here still win.
+            # The font is named OUTRIGHT, and both halves of that are load-bearing. Without
+            # any font-family this text inherits the host page's — Georgia on the explainer,
+            # which put these three names in a serif while every other label was sans. With
+            # d2's own `class="text"`, which is what that was first fixed with, it inherits a
+            # face d2 embeds as a SUBSET of the glyphs the DRAWING uses, so any letter a group
+            # name has and no lane label does is substituted one character at a time from a
+            # system font: measured elsewhere, that is a word with two typefaces in it. This
+            # is an annotation rather than part of the drawing, so it is set in the page's
+            # font like the role legend and the callouts, whole.
             f'<text x="{(x0 + x1) / 2:.1f}" y="{foot + GROUP_BASELINE:.1f}" fill="{name}" '
-            f'class="text" style="text-anchor:middle;font-size:{GROUP_FONT}px">'
+            f'style="text-anchor:middle;font-size:{GROUP_FONT}px;'
+            f'font-family:{ANNOTATION_FONT}">'
             f"{_escape(group)}</text>")
 
     return _append(_grown(svg, bottom=GROUP_BAND), marks)

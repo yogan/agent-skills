@@ -394,16 +394,18 @@ class TestGroupLegend(unittest.TestCase):
         # about the colours it exists to check.
         self.assertRegex(out, r'<text[^>]*fill="#27548f"')       # name: text-grade
 
-    def test_the_name_carries_d2s_own_text_class(self):
-        """Without it the name inherits the HOST PAGE's font. On the explainer that is Georgia,
-        so `skill` / `library` / `tools` shipped in a serif while every label d2 drew beside
-        them was sans — and it looked like a design choice rather than a bug. d2 scopes its
-        embedded font to `.text` and gives that class nothing else, so the fill and size
-        written here still win."""
+    def test_the_name_names_its_own_font(self):
+        """Two ways this has been wrong. With no font-family the name inherits the HOST PAGE's
+        — Georgia on the explainer, so `skill` / `library` / `tools` shipped in a serif beside
+        sans labels. With d2's `class="text"`, which is what that was first fixed with, it
+        inherits a face d2 embeds as a SUBSET of the glyphs the DRAWING uses, so a letter a
+        group name has and no lane label does is substituted one character at a time. Naming a
+        complete stack outright is the only version with neither failure."""
         out = compact.add_group_legend(self.svg(), self.LANES)
-        self.assertRegex(out, r'<text[^>]*class="text"')
-        self.assertEqual(re.findall(r'<text\b(?![^>]*\bclass=)', out), [],
-                         "every <text> this adds must carry a class to take a font from")
+        for mark in re.findall(r"<text[^>]*>", out):
+            self.assertIn(f"font-family:{compact.ANNOTATION_FONT}", mark)
+            self.assertNotIn('class="text"', mark,
+                             "d2's class would bring back the subsetted face")
 
     def test_the_rule_has_rounded_ends(self):
         out = compact.add_group_legend(self.svg(), self.LANES)
