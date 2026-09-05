@@ -39,17 +39,15 @@ shows the internal ones. `batches` is recorded and not shown: against `launches`
 much reuse the browser pool got, which is a question for a future session and not for a reader.
 
 **Count launches where a browser is BUILT, not where one is asked for.** A browser is kept and
-reused across batches now (`browser._Browser`), so the two stopped being the same event: on the
-old instrumentation — counting the calls that send a batch — a full check reported 31 browser
-starts when it started 5. `Probe._count_launches` counts constructions, which cannot drift from
-the truth. Pages are still counted at `browser._measure`, the private one, because the public
-call shards and counting it undercounts.
+reused across batches (`browser._Browser`), so the two are no longer the same event, and
+counting the calls that send a batch overstated the starts several times over. Pages are still
+counted at `browser._measure`, the private one, because the public call shards and counting it
+undercounts.
 
-**Every job is measured from cold.** `Probe` closes the pool on the way in, because the second
-repeat of a job would otherwise inherit the first one's browser and post a time no command can
-achieve — every real run is a process that begins with none. Warming up and discarding the first
-run, above, is about d2 and the filesystem; this is the opposite requirement and they do not
-conflict.
+**Every job is measured from cold.** `Probe` closes the browser pool on the way in: the second
+repeat would otherwise inherit the first one's browser and post a time no command can achieve,
+since every real run is a process that begins with none. Warming up and discarding the first
+run, above, is about d2 and the filesystem, and does not conflict with this.
 
 **Do not run anything else while it measures.** Including another copy of this.
 
@@ -171,15 +169,10 @@ class Probe:
     Counting and timing come from two different places on purpose.
 
     The COUNTS wrap what costs real time: a d2 compile, an inspection, and a browser start.
-
-    **An inspection and a browser start are counted in different places, and have to be.** They
-    used to be the same event — every batch started its own Chrome — so counting the three
-    calls that sent a batch gave both numbers at once. A browser is kept and reused now
-    (`browser._Browser`), and on that arrangement counting calls reported 31 browser starts for
-    a full check that starts 5. So the pages are counted where a batch is sent and the starts
-    where a browser is actually constructed, which is the only place that cannot drift from the
-    truth. `browser._measure` rather than `browser.measure` for the pages: the public one
-    shards, and counting it undercounts.
+    **An inspection and a browser start are counted in different places, and have to be** —
+    pages where a batch is sent, starts where a browser is constructed. They used to be the
+    same event, and are not since a browser began outliving its batch. See the module
+    docstring.
 
     The TIMELINE comes from `parallel.slot`, which is held for exactly as long as a subprocess
     is running. Timing the entry points instead would start the clock when a call is made
@@ -239,11 +232,8 @@ class Probe:
         parallel.slot = timed
 
     def __enter__(self):
-        # Cold, every time. A browser is kept and reused within a process, so the second
-        # repeat of a job would inherit the first one's — which reports "0 browser starts" for
-        # a job that plainly starts some, and takes a time no real run can achieve. Every real
-        # run is a command that begins with no browser, and this has to measure that one.
-        # Warming up and discarding the first run is about d2 and the filesystem, not this.
+        # Cold, every time: a repeat that inherited the last one's browser would post a time
+        # no command can achieve and no starts at all. See the module docstring.
         browser.shutdown()
         self._wrap(render, "compile_source", "compiles", lambda args: 0)
         self._wrap(browser, "_measure", "batches", lambda args: len(args[0]))
@@ -390,9 +380,8 @@ def measure_scenario(scenario, quick=False):
             # THAT run used the machine, and blending it with a slower run's would describe
             # neither.
             share = probe.core_usage(start, start + wall)
-    # `batches` is recorded but not shown: it is how many times a browser was ASKED for
-    # something, which against `launches` says how much reuse the pool got. The reader is
-    # served by the two numbers either side of it, and history is served by having it.
+    # `batches` is recorded but not shown: against `launches` it says how much reuse the
+    # browser pool got, which is a question for a later session rather than for a reader.
     result = {"seconds": round(best, 2), "compiles": counts.get("compiles", 0),
               "launches": counts.get("launches", 0), "pages": counts.get("pages", 0),
               "batches": counts.get("batches", 0), "core_usage": round(share, 3)}

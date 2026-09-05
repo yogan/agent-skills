@@ -220,45 +220,36 @@ range it was allowed to be in. Do that first.
 - Note placement is a measured search over eight anchors per note, swept until a pass moves
   nothing; `test_place_slow.py` covers it end to end in a real browser. Run `--slow` once, at
   the end, and only if you touched placement, callout geometry or the harness.
-- **`measure_speed.py` (repo root) is the answer to "did that make it slower?"** — don't hand-roll
-  a timing script, and don't trust one that was. It times four jobs against `speed_baseline.json`,
-  shows what moved, and its docstring carries the rules that make a timing honest (warm up and
-  discard the first run; best of N; alternate when comparing two versions; trust the counts over
-  the seconds). Every one of those is a mistake somebody here already made — a cold-vs-warm
-  comparison once reported a 34% win that was really 41%.
+- **`measure_speed.py` (repo root) is the answer to "did that make it slower?"** — don't
+  hand-roll a timing script, and don't trust one that was. It times four jobs against
+  `speed_baseline.json`, shows what moved, and its docstring carries the rules that make a
+  timing honest; every one of them is a mistake somebody here already made.
 
       python3 measure_speed.py            # ~4 minutes, writes and opens a report
       python3 measure_speed.py --update   # record this run as the new baseline
 
-- **Say which of these two a cost figure is for** — they differ by nearly 3x, and quoting one
-  for the other is how the old number here came to read 40s. Warm, all three sample sets, and
-  read them out of `speed_baseline.json` rather than from here if the number matters:
+  **`speed_baseline.json` is the only place a cost figure lives.** Copies elsewhere go stale
+  and then mislead, which is why there is no table of them here. `git log -p speed_baseline.json`
+  is the series and `measure_speed.py --from` rebuilds any report from a recorded run.
 
-  | | wall | layout candidates | browser starts |
-  |---|---|---|---|
-  | eleven diagrams arranged, no notes placed, no gates | ~6s | 68 | 1 |
-  | the same eleven, plus note placement and gates | ~13s | 112 | 5 |
-
-  **Note placement is most of the difference between those two rows, and it scales with the
+  **Say which job a figure is for.** `ten_drawings` arranges all eleven diagrams and places no
+  notes and runs no checks; `corpus` is the same eleven with both. They differ by about a
+  factor of two, and quoting one for the other is how a number here once read 40s.
+- **Note placement is most of the difference between those two jobs, and it scales with the
   diagram**, because every anchor tried is a d2 compile of the whole graph plus a page to
-  inspect. Counted, that is about 8 candidates for the first note on a diagram and about 14 for
-  each one after it — a settling round, plus the round that confirms the earlier notes against
-  where this one landed. It used to be 8^n up to two notes, which made two the dearest count a
-  diagram could have, dearer than three or four. **A note is the lever** if this ever needs to
-  be cheaper; the arrangement search is not, being a tenth of the same figure. `examples_large`
-  carried four notes when it was transcribed and carries one for this reason.
+  inspect. About 8 candidates for the first note on a diagram and about 14 for each one after
+  it — a settling round, plus the round that confirms the earlier notes against where this one
+  landed. **A note is the lever** if this ever needs to be cheaper; the arrangement search is
+  not, being a tenth of the same figure.
 
-  A first render in a fresh process costs ~25s more than a warm one. If a change appears to cost
-  much more than the figures above, something is re-deciding a layout that was already decided.
-- **Starting a browser costs ~20x what inspecting one more page in a running one does**, so the
-  renderer keeps one and reuses it — see [`browser.py`](browser.py). Read the pair out of
-  `speed_baseline.json`; quoted anywhere else they go stale, and twice have.
-
-  What follows from that is which count to watch. **Browser starts are now nearly flat in the
-  amount of work**: five of them serve all thirty-one batches of a full check, so a change that
-  adds batches is not thereby adding launches, and a change that adds a launch has done
-  something structural — a pool reset, or work escaping onto a thread the pool cannot reach.
-  `browser.SHARD_MIN` no longer governs this and has not since the pool arrived.
+  A first render in a fresh process costs ~25s more than a warm one. If a change costs much
+  more than the recorded figures, something is re-deciding a layout that was already decided.
+- **Starting a browser costs roughly 20x what inspecting one more page in a running one does**,
+  so the renderer keeps one and reuses it — see [`browser.py`](browser.py). What follows is
+  which count to watch: **browser starts are nearly flat in the amount of work now**, so a
+  change that adds batches is not thereby adding starts, and a change that adds a start has
+  done something structural — a pool reset, or work escaping onto a thread the pool cannot
+  reach. `browser.SHARD_MIN` does not govern this.
 - **A standalone render is never scaled.** `gates/size.analyse(standalone=True)` fixes the scale
   at 1.0, because a file is shown at natural size and zoomed by the reader. So every rule about
   a file's text is a rule about what was AUTHORED, and the text floors — which only ever bite

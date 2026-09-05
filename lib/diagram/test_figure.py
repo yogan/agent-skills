@@ -112,9 +112,9 @@ class TestTargets(Base):
 
 
 class TestBatching(Base):
-    def test_a_document_is_measured_in_one_browser_launch(self):
-        """The reason `draw` takes a mapping at all: starting Chrome costs far more than
-        measuring one more page, so a six-figure article pays for one launch and not six."""
+    def test_a_document_is_gated_in_one_batch(self):
+        """The reason `draw` takes a mapping at all: a six-figure article checks all six
+        together rather than one at a time."""
         figure.draw({"a": STATE, "b": STATE, "c": STATE})
         self.assertEqual(len(self.clipping_calls), 1)
         self.assertEqual(self.clipping_calls[0][0], ["a", "b", "c"])

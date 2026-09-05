@@ -6,8 +6,8 @@ split is the whole reason the browser side only measures: the interesting decisi
 clipping outranks overlap, when the sweep settles, ties resolve deterministically — are
 ordinary Python and get ordinary tests.
 
-The end-to-end cases that need d2 and a real browser live in test_place_slow.py, because even
-one two-callout search is 22 d2 compiles plus 22 browser measurements.
+The end-to-end cases that need d2 and a real browser live in test_place_slow.py, because every
+candidate there is a real d2 compile measured in a real browser.
 
 Run: `python3 lib/diagram/test_place.py`
 """
@@ -310,8 +310,7 @@ class TestTheSweep(unittest.TestCase):
     def test_a_second_callout_costs_seven_more_and_not_eight(self):
         """The combination it is already sitting on was measured when the first one settled,
         and every combination measured is kept. Skipping the re-measure is what makes sweeping
-        affordable — the whole search is 22 candidates where the exhaustive grid it replaced
-        was 64."""
+        affordable."""
         _, report = place.place(ER, name="er")
         self.assertEqual([len(combos) for combos in self.calls],
                          [len(NEAR), len(NEAR) - 1, len(NEAR) - 1])
@@ -436,14 +435,9 @@ class TestThePlateauTheSweepCannotCross(unittest.TestCase):
     every single-callout move away from it scores EXACTLY the same. With nothing to tell the
     moves apart the sweep never takes one, and the good pair is never reached.
 
-    It was measured before the grid was removed, and no real drawing produced one. Across 42
-    two-callout diagrams — the two in the sample sets, plus 40 built by hanging a second
-    callout on every one-callout sample, at two text lengths and on both targets — sweeping
-    reached the grid's answer every time. The reason it can be relied on is that these scores
-    are continuous px measurements: among those 42 the closest thing to a tie was two
-    candidates a thousandth of a pixel apart, which was enough to decide between them.
-
-    So this is the shape of an exact plateau, built by hand because geometry does not make one.
+    Accepting that was measured, not assumed: over 42 two-callout diagrams the sweep reached
+    the grid's answer every time, because these scores are continuous px measurements and do
+    not tie exactly. So the plateau below is built by hand — geometry does not make one.
     """
 
     # The start point is pinned HERE rather than taken from `examples.ER`, because the premise

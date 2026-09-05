@@ -299,12 +299,11 @@ flaw, or the specific answer to the question, it is a note.
 When you do add one, keep it to **2–4 words** in the reader's own language. Two or three across a
 whole diagram is plenty; annotating most of the boxes makes the annotations mean nothing.
 
-Notes are also, by a distance, the most expensive thing you can put in a spec. D2 reserves no
+Notes are also, by a distance, the most expensive thing you can put in a spec: D2 reserves no
 canvas for a callout, so the renderer finds a position for each by drawing the whole diagram
-again at every candidate position and measuring it in a browser — about eight redraws for the
-first note and about fourteen for each one after it. A spec with no notes skips all of that.
-The editorial reason above is the one that decides; this is a second reason pointing the same
-way, and it is why "one note per box" is never the answer.
+again at every candidate position and measuring it in a browser. That is seconds per note on a
+large diagram, and a spec with no notes skips it entirely. The editorial reason above is the
+one that decides; the clock only points the same way.
 
 Do not reach for styling to convey meaning instead. A thick border or an odd colour says
 "something here is special" without ever saying what.

@@ -89,11 +89,11 @@ def draw(specs, target="embed", theme="dark", place_callouts=True, gates=True, b
         raise ValueError(f"target must be one of {TARGETS}, not {target!r}")
     standalone = target == "file"
 
-    # One launch for every note in the document, before any of them is drawn. The width a note
-    # renders at depends on the string and nothing else, so measuring it here means the anchor
-    # search — 64 renders of the same spec — never pays for it again. See `callout.prime`.
-    # The legend's words go in with them: `compact.add_legend` lays a row out from measured
-    # widths and draws nothing without them, and this is the one launch that measures text.
+    # Every note in the document measured at once, before any of them is drawn. The width a
+    # note renders at depends on the string and nothing else, so measuring it here means the
+    # anchor search never pays for it again. See `callout.prime`. The legend's words go in with
+    # them: `compact.add_legend` lays a row out from measured widths and draws nothing without
+    # them.
     callout_mod.prime([site["note"] for spec in specs.values()
                        for site in place_mod.note_sites(spec)]
                       + [label for spec in specs.values()

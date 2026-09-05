@@ -42,22 +42,18 @@ Often every term ties, because on a roomy diagram most anchors cover nothing. Th
 saying there is no readability argument left, and the tie falls to the order of `spec.NEAR`.
 
 The search settles one callout at a time and then sweeps again, until a whole pass moves
-nothing. The second pass is what a single one cannot do: the first callout is settled against
-wherever the second still happens to be, and once the second has moved, the first one's answer
-was decided against a drawing that no longer exists.
-
-It replaced an exhaustive 8^n grid and reaches the same answer for a fraction of the
-compiling. Measured across 42 two-callout diagrams — the two in the sample sets, plus 40 built
-by hanging a second callout on every one-callout sample, at two text lengths and on both
-targets — the sweep and the grid agree on every one, at 22 candidates against 64. A single
-pass, which is what used to run above two callouts, disagreed on four: once by dropping the
-smallest text in the drawing to 9.0px against a 10px floor, once by laying the callouts across
-five times as much line for no saving anywhere else.
+nothing. **Both halves of that are load-bearing, and it replaced an exhaustive 8^n grid.**
+Sweeping is needed because a single pass settles the first callout against wherever the second
+still happens to be, and once the second moves, the first one's answer was decided against a
+drawing that no longer exists — measured over 42 two-callout diagrams, a single pass got four
+of them wrong, once badly enough to put the smallest text in the drawing under the 10px floor.
+The grid is not needed because on those same 42 the sweep reached its answer every time, for
+roughly a third of the compiling.
 
 What a sweep cannot reach and the grid could is a pair of anchors that works only together and
-sits on a plateau — every single-callout move away from it scoring exactly the same. No real
-drawing produced one, and the reason is that these scores are continuous px measurements:
-among those 42, the closest thing to a tie was two candidates a thousandth of a pixel apart.
+sits on a plateau, every single-callout move away from it scoring exactly the same. Nothing
+real produces one, because these scores are continuous px measurements and do not tie exactly;
+`test_place.TestThePlateauTheSweepCannotCross` is the shape of it, built by hand.
 
 Where no anchor is clip-free the fix is editorial: shorten the note.
 """
@@ -74,11 +70,10 @@ from .spec import NEAR, validate
 CLIP_PENALTY = 1e6
 
 # Most passes over the callouts the search will make before giving up on settling. A backstop,
-# not a budget: the argument in `_sweep` says it cannot be reached, and every diagram measured
-# settled inside three passes. It exists because this module has oscillated before — see
-# `lib/diagram/README.md`, "Dead ends". Hitting it is not an error — the placement returned is
-# still the cheapest one found — but it means that argument broke, and the `sweeps` count in
-# the placement report is where it shows.
+# not a budget — `_sweep` argues it cannot be reached, and real diagrams settle within three —
+# and it exists because this module has oscillated before (`lib/diagram/README.md`, "Dead
+# ends"). Reaching it is not an error, since the placement returned is still the cheapest found,
+# but it means that argument broke; the `sweeps` count in the placement report is where it shows.
 MAX_SWEEPS = 8
 
 # What a pixel of page height is worth in the same units. The two must be priced, not ordered:
@@ -217,10 +212,9 @@ def _measure_candidates(spec, name, combos, theme, standalone=False, layout=None
     produced them, which `parallel.each` preserves. See `lib/parallel.py` for why threads.
 
     Only one settling round is in here, so the fan-out is a round wide and the rounds are
-    sequential. That is the shape of the remaining cost, and it is why fewer candidates do not
-    always mean less waiting: on a small diagram with cores to spare, the sweep's 22 candidates
-    spread over three rounds take slightly longer than the old grid's 64 measured in one. The
-    saving is real where the fan-out saturates the machine, which is a large drawing.
+    sequential. That is why fewer candidates do not always mean less waiting: on a small
+    diagram with cores to spare, several short rounds can take longer than one wide one, and
+    the saving is real only where the fan-out saturates the machine.
     """
     from .gates import GateError, size as size_gate   # local: gates import render
 
@@ -308,19 +302,16 @@ def _sweep(spec, name, sites, theme, anchors, standalone=False, layout=None,
     Starts from whatever the spec already pinned, so a hand-chosen anchor is a starting point
     rather than something thrown away.
 
-    Two things keep the extra passes cheap enough for "sweep until it settles" to be the ending
-    condition rather than a fixed number of passes. Every combination measured is kept, so a
-    later pass re-offers a callout only the seven anchors it did not take — the eighth, the one
-    it is sitting on, was measured when it got there. And a callout is skipped outright while
-    none of the others has moved since it settled. Together those make a pass that changes
-    nothing cost no compiling at all.
+    Two things make a pass that changes nothing cost no compiling at all, which is what lets
+    "until it settles" be the ending condition rather than a fixed number of passes: every
+    combination measured is kept, so a later pass re-offers a callout only the seven anchors it
+    did not take; and a callout is skipped entirely while none of the others has moved since it
+    settled.
 
     It terminates. A move is only ever taken to a strictly cheaper combination, or sideways to
     an equally cheap one earlier in `anchors`, so the pair (cost, position in `anchors`) falls
-    on every move and no combination is ever current twice. `MAX_SWEEPS` is the backstop for
-    the one thing that would break that argument — a measurement that does not reproduce for
-    the same drawing — and is read from the module rather than taken as a default argument, so
-    that setting it in a session works.
+    on every move and no combination is ever current twice. `MAX_SWEEPS` backstops the one
+    thing that would break that — a measurement that does not reproduce for the same drawing.
     """
     current = tuple(site.get("near", DEFAULT_NEAR) for site in sites)
     seen = {}
@@ -363,12 +354,9 @@ def _sweep(spec, name, sites, theme, anchors, standalone=False, layout=None,
 def place(spec, name="diagram", theme="light", anchors=NEAR, standalone=False, pinned=None):
     """Return `(spec_with_anchors, report)`.
 
-    One search for every callout count — see `_sweep` and the module docstring. There used to
-    be two, an exhaustive grid below a count the grid could afford and a single settling pass
-    above it, and the count was the whole problem: two callouts were the most expensive number
-    a diagram could have, dearer than three or four, and the grid's own justification no longer
-    reproduced once a callout started being charged for the line it hides rather than for the
-    box it sits in.
+    One search for every callout count — see `_sweep` and the module docstring. Picking a
+    strategy by the count is what made two callouts the most expensive number a diagram could
+    have, dearer than three or four.
 
     `report` says what was chosen and what it cost, so a caller can surface "this callout could
     not be placed without clipping" rather than silently shipping the least-bad option. A spec

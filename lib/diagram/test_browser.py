@@ -5,8 +5,8 @@ Mostly about failing usefully: every error a caller can hit here is an environme
 and the message has to say what to install. The measurement smoke test needs node, a
 browser and d2, and skips visibly without them.
 
-The rest is about the browser being REUSED. That is the file's own cost as well as the
-renderer's — it used to start a Chrome per test and took 47s; sharing one takes 5.
+The rest is about the browser being REUSED, which is this file's own cost as much as the
+renderer's.
 
 Run: `python3 lib/diagram/test_browser.py`
 """
@@ -42,9 +42,8 @@ class TestTheBrowserPool(unittest.TestCase):
     """A browser outlives the batch it was started for, and nothing outlives the command.
 
     Starting Chrome costs roughly twenty times what measuring one more page in a running one
-    does, and the renderer's work arrives as many small batches — so a process per batch spent
-    most of a full check booting: 31 starts to draw the eleven sample diagrams, where three
-    do it now.
+    does, and the renderer's work arrives as many small batches, so a process per batch spent
+    most of a check booting.
     """
 
     def setUp(self):
@@ -72,8 +71,7 @@ class TestTheBrowserPool(unittest.TestCase):
         self.assertEqual(len(self.started), 1, "the second batch started another browser")
 
     def test_every_kind_of_request_shares_the_same_browser(self):
-        """Measuring, text widths and rasterising each used to start their own — three
-        separate copies of the same subprocess dance, and three Chromes."""
+        """Measuring, text widths and rasterising each used to start their own."""
         browser.text_widths(self.page()["html"])
         with self.assertRaises(browser.BrowserError):
             browser.measure([{"key": "bad", "html": "<html>nothing here</html>"}])

@@ -10,25 +10,20 @@ have no workable substitute:
   * **callout text size.** It is HTML in a `<foreignObject>`, laid out with the host page's
     CSS. Nothing outside a browser knows how big it comes out.
 
-Cost. Two numbers decide every other one here: **starting a node+Chrome that measures nothing,
-against measuring one more harness page in an already-started one.** They are of the order of
-0.7s and 0.03s respectively — twenty to one — and the pair actually recorded is in
-`speed_baseline.json`, because quoted here they go stale, and twice have.
+**Starting a node+Chrome costs roughly twenty times what measuring one more harness page in a
+running one does. So a browser is kept and reused** — that is what `_Browser` and the pool
+below are for. The work arrives as many small batches rather than one big one (a note's
+anchors, a spacing rung, a gate over several drawings), so a process per batch spent most of a
+check booting Chrome. Both costs and the ratio are recorded in `speed_baseline.json`; do not
+copy them here, where they go stale.
 
-**So a browser is kept and reused, and that is what `_Browser` and the pool below are for.**
-The work arrives as many small batches rather than one big one — a note's anchors, a spacing
-rung, a gate over five drawings — and a process per batch spent most of a full check booting
-Chrome. Recorded: a full check of the eleven sample diagrams sends the same 31 batches as it
-always did and starts 5 browsers where it started 31; one diagram from scratch sends 5 and
-starts 1. Nothing survives the command — `shutdown` is registered with `atexit`, and a browser
-is a child process, so it cannot outlive the run that started it.
+Nothing survives the command: `shutdown` is registered with `atexit`, and a browser is a child
+process. Fine for generating a document once, not fine per keystroke — keep this in the build
+step and never in a preview path.
 
-Fine for generating a document once; not fine per keystroke, so keep this in the build step
-and never in a preview path.
-
-The per-page figure was ~0.39s until `js/measure.js` stopped re-sampling every connection
-once per text label. If it ever climbs back, measure `measureInPage`'s sections before
-blaming the browser — the launch is the honest cost here and the page rarely is.
+If the per-page cost ever climbs, measure `measureInPage`'s sections before blaming the
+browser: it was once an order of magnitude worse for re-sampling every connection per text
+label, and the launch is normally the honest cost rather than the page.
 
 Deliberately `puppeteer-core` (29 MB, no bundled browser) driving the system Chrome, rather
 than `puppeteer` (which downloads its own ~550 MB Chromium). `js/measure.js` holds the
@@ -101,19 +96,11 @@ def requirements():
 # them one after another on one. Chrome instances are independent — the test runner has relied
 # on that from the start.
 #
-# What it trades has changed twice, and it is worth knowing which question the number is
-# answering. It began as "is another batch worth another Chrome", a ratio of the two costs
-# above, and was 8 while a page cost ~0.39s — a figure set by `measureInPage` re-sampling every
-# connection once per label, which it no longer does. Now that a browser is kept, a shard is
-# usually a browser that already exists, so the question is the milder "is this batch long
-# enough that measuring it serially is the thing to beat".
-#
-# Nothing reaches it today. Note placement, which it was raised to 24 for, no longer offers
-# more than eight candidates at once (see `place._sweep`), and the clipping gate sends one page
-# per diagram. It is left in place because a batch big enough WILL turn up — an explainer with
-# thirty diagrams gates them together — and because sharding is now nearly free, so the cost of
-# it being a little wrong is small. What is no longer true is that this number governs how many
-# browsers a check starts; the pool does.
+# It does NOT govern how many browsers a check starts; the pool does. And nothing in the
+# renderer reaches it today — note placement offers at most eight candidates at once (see
+# `place._sweep`) and the clipping gate one page per diagram — so it is here for the batch big
+# enough that will turn up, such as an explainer gating thirty diagrams together. Since a shard
+# is now usually a browser that already exists, being a little wrong costs little.
 SHARD_MIN = 24
 
 # Idle browsers, kept for the next batch. Borrowed under a slot and handed back when the batch
@@ -126,14 +113,9 @@ _IDLE_LOCK = threading.Lock()
 class _Browser:
     """One node+Chrome, kept alive across batches, spoken to a line at a time.
 
-    The process is cheap to talk to and expensive to start, which is the whole reason this
-    class exists: a full check of eleven diagrams asks for about thirty small batches — a
-    note's anchors, a spacing rung, a gate over five drawings — and used to start a Chrome for
-    every one of them.
-
-    Reads go through `select` on the raw pipe rather than `readline` on a buffered one,
-    because a buffered reader can be holding a complete line that `select` still calls
-    unready, and then the timeout below fires on a browser that already answered.
+    Reads go through `select` on the raw pipe rather than `readline` on a buffered one:
+    a buffered reader can be holding a complete line that `select` still calls unready, and
+    then the timeout below fires on a browser that already answered.
     """
 
     def __init__(self):
@@ -171,9 +153,7 @@ class _Browser:
         return json.loads(self._reply(timeout))
 
     def _reply(self, timeout):
-        # The caller's timeout covers the measuring only, where it used to cover a Chrome
-        # starting up as well — so a batch has strictly more room than it had, on the same
-        # number.
+        # `timeout` covers the measuring alone — starting the browser is not inside it.
         deadline = time.monotonic() + timeout
         while b"\n" not in self.buffer:
             left = deadline - time.monotonic()
@@ -192,9 +172,9 @@ class _Browser:
     def close(self):
         """Closing stdin is how the browser is asked to go; killing is for one that will not.
 
-        Called from `atexit` as well as on failure, so it has to be safe twice and safe on a
-        process that is already gone. Every pipe is closed either way: a browser discarded
-        because it had already died still holds three file descriptors until someone does.
+        Called from `atexit` as well as on failure, so it must be safe twice and safe on a
+        process already gone — which is also why the pipes are closed unconditionally: one that
+        died on its own still holds three file descriptors until someone does.
         """
         with contextlib.suppress(OSError, ValueError):
             self.proc.stdin.close()
@@ -242,10 +222,9 @@ def _ask(payload, timeout, doing):
     """One request, on a pooled browser, with one retry on a browser that had gone.
 
     The retry is what makes reuse safe rather than merely cheap: a pooled browser can be found
-    dead for reasons that have nothing to do with the request — Chrome crashed between batches,
-    or something reaped it — and a caller must not see that as a failed diagram. A batch the
-    browser genuinely could not measure is raised on the first attempt and never retried; the
-    two are told apart by `_Gone`.
+    dead for reasons unconnected to the request, and that must not read as a failed diagram. A
+    batch the browser could not MEASURE is a different thing and is raised at once; `_Gone`
+    tells the two apart.
     """
     problems = requirements()
     if problems:
@@ -287,17 +266,14 @@ atexit.register(shutdown)
 
 
 def measure(jobs, viewport=None, shadow=SHADOW_PX, weights=None, timeout=180):
-    """Measure a batch of harness pages, in as few browser launches as pay for themselves.
+    """Measure a batch of harness pages.
 
     `jobs` is a list of `{"key": ..., "html": ...}`. Returns a list of measurement dicts in
     the same order, each carrying the `key` back.
 
-    Batched on purpose: launching Chrome costs far more than measuring one more page, and the
-    placement search wants to compare 64 candidates at a time. Past `SHARD_MIN` per browser the
-    batch is split and the browsers run at once, because at 64 pages the per-page cost is what
-    dominates and a single launch measures them one after another. Raises BrowserError rather
-    than returning partial results — a half-measured placement search would silently pick a
-    worse anchor.
+    One browser measures the batch page by page, unless it is longer than `SHARD_MIN`, when it
+    is split and the pieces run at once. Raises rather than returning partial results — a
+    half-measured placement search would silently pick a worse anchor.
     """
     jobs = list(jobs)
     if not jobs:

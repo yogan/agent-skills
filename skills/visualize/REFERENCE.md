@@ -56,12 +56,8 @@ Any box, table, class or sequence lane may carry:
 place. Note that no example in this file uses one, deliberately: a callout is the exception, not
 part of the normal shape of a spec.
 
-Each one is also the most expensive thing in a spec, by a distance. D2 reserves no canvas for a
-callout, so the renderer has to find a position for each by drawing the whole diagram again at
-every candidate position and measuring the result in a browser: about eight redraws for the
-first note and about fourteen for each one after it. On a diagram the size of a full schema
-that is seconds per note, and a spec with no notes skips it entirely. Editorial judgement and
-the clock point the same way here — but the editorial reason is the one that decides.
+Each one is also the most expensive thing in a spec, by a distance — the renderer has to redraw
+and re-measure the whole diagram to place it, which is seconds per note on a large one.
 
 A note must point at something the reader would otherwise **miss or misread**. It must not
 describe what a box already is:
