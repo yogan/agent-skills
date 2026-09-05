@@ -217,9 +217,9 @@ range it was allowed to be in. Do that first.
 
 - The browser is in the render loop by decision, not accident — see
   [`browser.py`](browser.py) for the three things that have no substitute.
-- Callout placement is a measured search over eight anchors; `test_place_slow.py` covers it
-  and takes minutes. Run `--slow` once, at the end, and only if you touched placement,
-  callout geometry or the harness.
+- Note placement is a measured search over eight anchors per note, swept until a pass moves
+  nothing; `test_place_slow.py` covers it and takes minutes. Run `--slow` once, at the end, and
+  only if you touched placement, callout geometry or the harness.
 - **`measure_speed.py` (repo root) is the answer to "did that make it slower?"** — don't hand-roll
   a timing script, and don't trust one that was. It times four jobs against `speed_baseline.json`,
   shows what moved, and its docstring carries the rules that make a timing honest (warm up and
@@ -237,7 +237,7 @@ range it was allowed to be in. Do that first.
   | | wall | layout candidates | browser starts |
   |---|---|---|---|
   | eleven diagrams arranged, no notes placed, no gates | ~16s | 68 | 14 |
-  | the same eleven, plus note placement and gates | ~29s | 203 | 30 |
+  | the same eleven, plus note placement and gates | ~24s | 112 | 31 |
 
   **Note placement is most of the difference between those two rows, and it scales with the
   diagram.** Every anchor tried is a d2 compile of the whole graph plus a browser page, so on
@@ -245,6 +245,17 @@ range it was allowed to be in. Do that first.
   arranging and checking that whole diagram costs. It carried four when it was transcribed and
   those cost 20s between them, which is why it carries one. **A note is the lever** if this
   ever needs to be cheaper; the arrangement search is not, being a tenth of the same figure.
+
+  In candidates, that lever is about 8 for the first note on a diagram and about 14 for each
+  one after it, the second figure being a settling round plus the round that confirms the
+  earlier notes against where this one landed. It used to be 8^n up to two notes, which made
+  two the dearest count a diagram could have — dearer than three or four.
+
+  **Browser starts move the opposite way from candidates here, and both are in the table for
+  that reason.** A settling round is one browser start whatever it measures, so replacing one
+  wide round with three narrow ones trades compiling for launches. It is worth it at these
+  sizes — the eleven-diagram row above lost 91 candidates and gained one start — but a change
+  that adds rounds without removing candidates is paying twice.
 
   A first render in a fresh process costs ~25s more than a warm one. If a change appears to cost
   much more than the figures above, something is re-deciding a layout that was already decided.

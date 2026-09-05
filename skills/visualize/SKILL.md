@@ -299,6 +299,13 @@ flaw, or the specific answer to the question, it is a note.
 When you do add one, keep it to **2–4 words** in the reader's own language. Two or three across a
 whole diagram is plenty; annotating most of the boxes makes the annotations mean nothing.
 
+Notes are also, by a distance, the most expensive thing you can put in a spec. D2 reserves no
+canvas for a callout, so the renderer finds a position for each by drawing the whole diagram
+again at every candidate position and measuring it in a browser — about eight redraws for the
+first note and about fourteen for each one after it. A spec with no notes skips all of that.
+The editorial reason above is the one that decides; this is a second reason pointing the same
+way, and it is why "one note per box" is never the answer.
+
 Do not reach for styling to convey meaning instead. A thick border or an odd colour says
 "something here is special" without ever saying what.
 
@@ -348,10 +355,11 @@ python3 ~/.claude/skills/visualize/scripts/visualize.py spec.json
 That writes a **standalone SVG** — colours baked (light by default, since the image is viewed
 inside a frame it cannot paint; `--theme dark` for the other), the background painted, and the
 CSS its callout text needs carried inside the file —
-places every callout by measuring all eight candidate positions in a real browser, runs the
+places every callout by measuring the candidate positions in a real browser, runs the
 gates, and opens it. Full size, so the reader can zoom; there is no page and no width limit.
 
-Expect a few seconds per callout: the placement search is the cost, and it is why you never
+Expect a few seconds per callout, and more on a large diagram, since every candidate position
+is a redraw of the whole thing: the placement search is the cost, and it is why you never
 position anything by hand. A diagram with no notes skips it entirely and is fast.
 
 **Several diagrams: render them all with `--no-open`, then open them in ONE command.**

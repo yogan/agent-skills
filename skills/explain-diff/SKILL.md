@@ -213,6 +213,12 @@ everywhere is most of what makes a set of figures read as one system.
   is a caption, and it covers the edge labels underneath it. Never reach for styling to say
   something a note could say instead: `new` is the one exception, and only because it always
   travels with its words.
+- **Two or three notes across a whole diagram is plenty, and most diagrams want none.** They are
+  also the most expensive thing in a spec: D2 reserves no canvas for a callout, so the renderer
+  finds a position for each by drawing the whole diagram again at every candidate position and
+  measuring it in a browser — about eight redraws for the first note and fourteen for each one
+  after it. A document with several diagrams pays that per diagram, so a habit of annotating
+  every box is what makes a render take minutes. Judgement decides; the clock agrees.
 
 ##### In a `sequence`, an arrow means "A calls B"
 

@@ -41,14 +41,27 @@ nothing is said about a stretch bridged mid-run.
 Often every term ties, because on a roomy diagram most anchors cover nothing. That is the model
 saying there is no readability argument left, and the tie falls to the order of `spec.NEAR`.
 
-Greedy settles one callout at a time and cannot see a pair that only works together, so a
-small enough diagram gets the exhaustive 8^n search instead — affordable at n=2 (64), not at
-n=3 (512), hence `JOINT_MAX`.
+The search settles one callout at a time and then sweeps again, until a whole pass moves
+nothing. The second pass is what a single one cannot do: the first callout is settled against
+wherever the second still happens to be, and once the second has moved, the first one's answer
+was decided against a drawing that no longer exists.
+
+It replaced an exhaustive 8^n grid and reaches the same answer for a fraction of the
+compiling. Measured across 42 two-callout diagrams — the two in the sample sets, plus 40 built
+by hanging a second callout on every one-callout sample, at two text lengths and on both
+targets — the sweep and the grid agree on every one, at 22 candidates against 64. A single
+pass, which is what used to run above two callouts, disagreed on four: once by dropping the
+smallest text in the drawing to 9.0px against a 10px floor, once by laying the callouts across
+five times as much line for no saving anywhere else.
+
+What a sweep cannot reach and the grid could is a pair of anchors that works only together and
+sits on a plateau — every single-callout move away from it scoring exactly the same. No real
+drawing produced one, and the reason is that these scores are continuous px measurements:
+among those 42, the closest thing to a tie was two candidates a thousandth of a pixel apart.
 
 Where no anchor is clip-free the fix is editorial: shorten the note.
 """
 import copy
-import itertools
 
 from .. import parallel
 from . import arrows
@@ -60,8 +73,13 @@ from .spec import NEAR, validate
 # Clipping dominates overlap absolutely; see the module docstring.
 CLIP_PENALTY = 1e6
 
-# Above this many callouts, search greedily instead of exhaustively.
-JOINT_MAX = 2
+# Most passes over the callouts the search will make before giving up on settling. A backstop,
+# not a budget: the argument in `_sweep` says it cannot be reached, and every diagram measured
+# settled inside three passes. It exists because this module has oscillated before — see
+# `lib/diagram/README.md`, "Dead ends". Hitting it is not an error — the placement returned is
+# still the cheapest one found — but it means that argument broke, and the `sweeps` count in
+# the placement report is where it shows.
+MAX_SWEEPS = 8
 
 # What a pixel of page height is worth in the same units. The two must be priced, not ordered:
 # height first buried text to save 50px, overlap first spent 50px to save 315 units of noise.
@@ -192,11 +210,17 @@ def _measure_candidates(spec, name, combos, theme, standalone=False, layout=None
     usable answer.
 
     The candidates are compiled CONCURRENTLY, and this is the fan-out that made it worth having
-    a helper for: it is the biggest single cost in the renderer — a two-callout figure is 64 d2
-    runs, which is more compiling than the rest of a draw put together. They are independent by
-    construction, each working on its own deep copy of the spec, so the only thing the order
-    buys is being able to zip the results back against the anchors that produced them, which
-    `parallel.each` preserves. See `lib/parallel.py` for why threads.
+    a helper for: placement is the biggest single cost in the renderer, and a two-callout
+    diagram spends more d2 runs here than on the rest of a draw put together. They are
+    independent by construction, each working on its own deep copy of the spec, so the only
+    thing the order buys is being able to zip the results back against the anchors that
+    produced them, which `parallel.each` preserves. See `lib/parallel.py` for why threads.
+
+    Only one settling round is in here, so the fan-out is a round wide and the rounds are
+    sequential. That is the shape of the remaining cost, and it is why fewer candidates do not
+    always mean less waiting: on a small diagram with cores to spare, the sweep's 22 candidates
+    spread over three rounds take slightly longer than the old grid's 64 measured in one. The
+    saving is real where the fan-out saturates the machine, which is a large drawing.
     """
     from .gates import GateError, size as size_gate   # local: gates import render
 
@@ -263,72 +287,88 @@ def _measure_candidates(spec, name, combos, theme, standalone=False, layout=None
     return list(zip(kept, results))
 
 
-def _best(measured):
-    best = None
-    for anchors, measurement in measured:
-        total, clip, overlap = _score(measurement)
-        if best is None or total < best[0]:
-            best = (total, anchors, clip, overlap)
-    return best
-
-
-def _report(chosen, clip, overlap, strategy, candidates):
+def _report(chosen, clip, overlap, candidates, sweeps):
     """One entry per callout.
 
     `clip` and `overlap` are diagram-level sums, so every entry carries the same pair — and
-    critically, the pair describing the FINAL placement. Recording each greedy round's own
-    cost instead was actively misleading: the first round measures a combination that later
-    rounds go on to improve, so a finished, clip-free placement reported a clip and
-    `unplaceable()` raised a false alarm.
+    critically, the pair describing the FINAL placement. Recording each round's own cost
+    instead was actively misleading: the first round measures a combination that later rounds
+    go on to improve, so a finished, clip-free placement reported a clip and `unplaceable()`
+    raised a false alarm.
     """
     return [{"index": i, "near": chosen[i], "clip": clip, "overlap": overlap,
-             "strategy": strategy, "candidates": candidates}
+             "candidates": candidates, "sweeps": sweeps}
             for i in range(len(chosen))]
 
 
-def _greedy(spec, name, sites, theme, anchors, standalone=False, layout=None,
-            layers=None, edges=None):
-    """Settle one callout at a time, holding the others where they are.
-
-    Starts from whatever the spec already pinned, so a hand-chosen anchor is a starting
-    point rather than something thrown away.
-    """
-    current = [site.get("near", DEFAULT_NEAR) for site in sites]
-    clip = overlap = 0
-    candidates = 0
-    for i in range(len(sites)):
-        combos = []
-        for anchor in anchors:
-            trial = list(current)
-            trial[i] = anchor
-            combos.append(tuple(trial))
-        measured = _measure_candidates(spec, f"{name}-{i}", combos, theme,
-                                       standalone, layout, layers, edges)
-        _, chosen, clip, overlap = _best(measured)
-        current = list(chosen)
-        candidates += len(combos)
-    return tuple(current), clip, overlap, candidates
-
-
-def _joint(spec, name, sites, theme, anchors, standalone=False, layout=None,
+def _sweep(spec, name, sites, theme, anchors, standalone=False, layout=None,
            layers=None, edges=None):
-    """Exhaustive: every anchor for every callout. 8^n, so only for small n."""
-    combos = list(itertools.product(anchors, repeat=len(sites)))
-    measured = _measure_candidates(spec, name, combos, theme, standalone, layout,
-                                   layers, edges)
-    _, chosen, clip, overlap = _best(measured)
-    return chosen, clip, overlap, len(combos)
+    """Settle one callout at a time, sweeping until a whole pass moves nothing.
+
+    Starts from whatever the spec already pinned, so a hand-chosen anchor is a starting point
+    rather than something thrown away.
+
+    Two things keep the extra passes cheap enough for "sweep until it settles" to be the ending
+    condition rather than a fixed number of passes. Every combination measured is kept, so a
+    later pass re-offers a callout only the seven anchors it did not take — the eighth, the one
+    it is sitting on, was measured when it got there. And a callout is skipped outright while
+    none of the others has moved since it settled. Together those make a pass that changes
+    nothing cost no compiling at all.
+
+    It terminates. A move is only ever taken to a strictly cheaper combination, or sideways to
+    an equally cheap one earlier in `anchors`, so the pair (cost, position in `anchors`) falls
+    on every move and no combination is ever current twice. `MAX_SWEEPS` is the backstop for
+    the one thing that would break that argument — a measurement that does not reproduce for
+    the same drawing — and is read from the module rather than taken as a default argument, so
+    that setting it in a session works.
+    """
+    current = tuple(site.get("near", DEFAULT_NEAR) for site in sites)
+    seen = {}
+    candidates = moves = 0
+    # When each callout was last settled, as the move count at the time. A callout only needs
+    # looking at again once one of the others has moved — otherwise it is being offered the
+    # same anchors on the same drawing and would reach the same answer. That is what keeps a
+    # confirming pass from costing a full round per callout: the last one settled is always
+    # already right, and on a diagram that settles in one pass so is every other.
+    settled = {}
+    for sweeps in range(1, MAX_SWEEPS + 1):
+        moved = False
+        for i in range(len(sites)):
+            if settled.get(i) == moves:
+                continue
+            combos = [current[:i] + (anchor,) + current[i + 1:] for anchor in anchors]
+            fresh = [combo for combo in combos if combo not in seen]
+            if fresh:
+                measured = _measure_candidates(spec, f"{name}-{sweeps}-{i}", fresh, theme,
+                                               standalone, layout, layers, edges)
+                candidates += len(fresh)
+                seen.update((combo, _score(measurement)) for combo, measurement in measured)
+            # Anything d2 refused is simply not on offer. The tie-break is the order of
+            # `anchors` — `min` keeps the first of an equal set — and it is both what the
+            # module docstring's last paragraph promises and what makes a sideways move
+            # settle: once a callout is on the earliest of its equally-cheap anchors, it
+            # stays there and the search cannot cycle between them.
+            offered = [combo for combo in combos if combo in seen]
+            best = min(offered, key=lambda combo: seen[combo][0])
+            if best != current:
+                current, moved = best, True
+                moves += 1
+            settled[i] = moves
+        if not moved:
+            break
+    _, clip, overlap = seen[current]
+    return current, clip, overlap, candidates, sweeps
 
 
-def place(spec, name="diagram", theme="light", joint_max=JOINT_MAX, anchors=NEAR,
-          standalone=False, pinned=None):
+def place(spec, name="diagram", theme="light", anchors=NEAR, standalone=False, pinned=None):
     """Return `(spec_with_anchors, report)`.
 
-    Exhaustive whenever the callout count can afford it (`joint_max`), greedy above that. The
-    trigger is affordability, not clipping: it used to run greedy and escalate only on a clip,
-    which reached the right answer only because clipping used to be common. On the reference ER
-    greedy returns 5483 overlap where the grid finds 3123, because settling one callout at a
-    time cannot see a pair that only works together.
+    One search for every callout count — see `_sweep` and the module docstring. There used to
+    be two, an exhaustive grid below a count the grid could afford and a single settling pass
+    above it, and the count was the whole problem: two callouts were the most expensive number
+    a diagram could have, dearer than three or four, and the grid's own justification no longer
+    reproduced once a callout started being charged for the line it hides rather than for the
+    box it sits in.
 
     `report` says what was chosen and what it cost, so a caller can surface "this callout could
     not be placed without clipping" rather than silently shipping the least-bad option. A spec
@@ -347,25 +387,23 @@ def place(spec, name="diagram", theme="light", joint_max=JOINT_MAX, anchors=NEAR
     # ER gives 949x207 where the others give 862x257 — which is exactly why this must be fixed
     # once rather than re-decided per candidate.
     #
-    # The second reason is cost. A two-callout diagram is 64 candidates, each of which was
-    # running a ~4-compile search at ~330ms per ELK compile.
+    # The second reason is cost. Every candidate is a compile of the whole graph, and each one
+    # was running a ~4-compile layout search of its own at ~330ms per ELK compile.
     #
     # The standalone target has no layout to choose — its direction is a per-kind default in
     # `d2.DIRECTION` and it does not wrap — but it does have a spacing to settle, and for the
     # same two reasons: candidates measured at different spacings are candidates measured on
-    # different drawings, and escalating inside each one would put a browser launch inside the
-    # 64-candidate loop that exists to need only one.
+    # different drawings, and escalating inside each one would put a browser launch inside a
+    # loop that exists to need only one.
     #
     # `pinned` lets a caller that has already decided hand it over, which `figure.draw` does —
     # it needs the same pair for the FINAL render, and working it out twice was both the cost
     # and a correctness hole. See `render.choose_drawing`.
     layout, layers, edges = (pinned if pinned is not None
                              else render_mod.choose_drawing(spec, name, theme, standalone))
-    search = _joint if len(sites) <= joint_max else _greedy
-    chosen, clip, overlap, candidates = search(spec, name, sites, theme, anchors,
-                                               standalone, layout, layers, edges)
-    strategy = "joint" if search is _joint else "greedy"
-    return _apply(spec, chosen), _report(chosen, clip, overlap, strategy, candidates)
+    chosen, clip, overlap, candidates, sweeps = _sweep(spec, name, sites, theme, anchors,
+                                                       standalone, layout, layers, edges)
+    return _apply(spec, chosen), _report(chosen, clip, overlap, candidates, sweeps)
 
 
 def unplaceable(report):

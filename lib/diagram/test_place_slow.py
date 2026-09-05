@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """End-to-end callout placement: genuinely slow, and slow for a real reason.
 
-An exhaustive two-callout search is 64 candidates, each of which is a d2 compile plus a
-browser measurement. That is ~12s for one diagram and there is no way to fake it down —
-the whole point of the search is that the numbers come from a real browser laying out real
-`<foreignObject>` text. Mocking it would test the mock.
+A two-callout search is 22 candidates, each of which is a d2 compile plus a browser
+measurement, and there is no way to fake it down — the whole point of the search is that the
+numbers come from a real browser laying out real `<foreignObject>` text. Mocking it would test
+the mock.
 
 The search *logic* is covered quickly in test_place.py by substituting the measurement step;
 this file is what checks that the real thing agrees. Skipped by `run_tests.py` unless you
@@ -115,10 +115,11 @@ class TestPlacementAgainstRealDiagrams(unittest.TestCase):
                          [s["near"] for s in place.note_sites(second)])
 
 
-# THREE notes, which is the one thing neither sample set has: above `place.JOINT_MAX` the
-# search stops being exhaustive and settles one note at a time, so nothing measured on the
-# two sample sets exercises that path at all. Crowded on purpose — a note on the box every
-# arrow passes, so no position for it is clear and the least bad one has to ship.
+# THREE notes, which is the one thing neither sample set has: the sweep costs a settling round
+# per note and then a confirming one for every note settled before another moved, so a third
+# note is where that second half starts to be worth something and nothing measured on the two
+# sample sets exercises it. Crowded on purpose — a note on the box every arrow passes, so no
+# position for it is clear and the least bad one has to ship.
 THREE_NOTES = {
     "kind": "architecture",
     "title": "Three notes on a crowded drawing",
@@ -147,9 +148,10 @@ THREE_NOTES = {
 
 
 @unittest.skipUnless(HAVE_D2 and HAVE_BROWSER, "needs d2 and a browser")
-class TestMoreNotesThanTheGridCanAfford(unittest.TestCase):
-    """One placement pass over three notes: 24 candidates, about a third of the exhaustive
-    two-note search this file's other cases pay for.
+class TestThreeNotesOnOneDrawing(unittest.TestCase):
+    """Placement over three notes: a settling round for each, then a confirming round for
+    every note that settled before another one moved — tens of candidates, against the 512 an
+    exhaustive search of three notes would have been.
 
     What it is here to catch is a whole-pipeline claim that nothing else makes: that a
     drawing where no placement is clear still ships the least bad one AND says so. Both
@@ -164,7 +166,7 @@ class TestMoreNotesThanTheGridCanAfford(unittest.TestCase):
 
     def test_every_note_is_settled_and_none_is_cut_off(self):
         placed = callout.notes(self.figure.svg)
-        self.assertEqual(len(placed), 3, "a note was dropped by the greedy path")
+        self.assertEqual(len(placed), 3, "a note was dropped while settling")
         self.assertEqual(self.figure.placement, [], "nothing here should fail to fit")
 
     def test_a_note_that_could_not_be_placed_clear_is_said_out_loud(self):

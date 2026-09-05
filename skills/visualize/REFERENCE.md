@@ -56,6 +56,13 @@ Any box, table, class or sequence lane may carry:
 place. Note that no example in this file uses one, deliberately: a callout is the exception, not
 part of the normal shape of a spec.
 
+Each one is also the most expensive thing in a spec, by a distance. D2 reserves no canvas for a
+callout, so the renderer has to find a position for each by drawing the whole diagram again at
+every candidate position and measuring the result in a browser: about eight redraws for the
+first note and about fourteen for each one after it. On a diagram the size of a full schema
+that is seconds per note, and a spec with no notes skips it entirely. Editorial judgement and
+the clock point the same way here — but the editorial reason is the one that decides.
+
 A note must point at something the reader would otherwise **miss or misread**. It must not
 describe what a box already is:
 
@@ -69,9 +76,9 @@ describe what a box already is:
 If the fact is intrinsic to the thing, it belongs in the label or is already visible in the
 columns. If it is a change, a flaw, or the answer to the question that was asked, it is a note.
 
-**Leave `near` out.** The renderer measures all eight positions in a browser and picks the
-one that is not clipped and covers least. A hand-picked anchor is a starting point for that
-search, not an instruction — and hand-picked anchors have measurably lost to it before.
+**Leave `near` out.** The renderer measures every position in a browser and picks the one that
+is not clipped and covers least. A hand-picked anchor is a starting point for that search, not
+an instruction — and hand-picked anchors have measurably lost to it before.
 
 ## `architecture`
 

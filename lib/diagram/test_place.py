@@ -3,11 +3,11 @@
 
 The search logic is tested WITHOUT a browser by substituting the measurement step. That
 split is the whole reason the browser side only measures: the interesting decisions —
-clipping outranks overlap, greedy vs exhaustive, ties resolve deterministically — are
+clipping outranks overlap, when the sweep settles, ties resolve deterministically — are
 ordinary Python and get ordinary tests.
 
-The end-to-end cases that need d2 and a real browser live in test_place_slow.py, because an
-exhaustive two-callout search is 64 d2 compiles plus 64 browser measurements.
+The end-to-end cases that need d2 and a real browser live in test_place_slow.py, because even
+one two-callout search is 22 d2 compiles plus 22 browser measurements.
 
 Run: `python3 lib/diagram/test_place.py`
 """
@@ -268,21 +268,8 @@ class TestScoring(unittest.TestCase):
         clean = place._score(fake_measurement([(0, 100)], fmin=13.0))[0]
         self.assertLess(clean, noisy, "0.1px apart should tie on size, then overlap decides")
 
-    def test_best_picks_the_lowest_total(self):
-        measured = [(("a",), fake_measurement([(0, 50)])),
-                    (("b",), fake_measurement([(0, 10)])),
-                    (("c",), fake_measurement([(1, 0)]))]
-        total, anchors, clip, overlap = place._best(measured)
-        self.assertEqual(anchors, ("b",))
 
-    def test_best_is_deterministic_on_a_tie(self):
-        """Two anchors can be exactly equal; the first one offered wins, every time."""
-        measured = [(("first",), fake_measurement([(0, 7)])),
-                    (("second",), fake_measurement([(0, 7)]))]
-        self.assertEqual(place._best(measured)[1], ("first",))
-
-
-class TestSearchStrategy(unittest.TestCase):
+class TestTheSweep(unittest.TestCase):
     """Substitutes the measurement step, so no browser or d2 is involved."""
 
     def setUp(self):
@@ -303,41 +290,60 @@ class TestSearchStrategy(unittest.TestCase):
     def spy(self, spec, name, combos, theme, standalone=False, layout=None,
             layers=None, edges=None):
         self.calls.append(list(combos))
-        # Prefer "bottom-left" wherever it appears; everything else is worse. Nothing clips,
-        # so greedy always succeeds and the joint fallback stays untouched.
+        # Prefer "bottom-left" wherever it appears; everything else is worse. Nothing clips
+        # and nothing ties, so each callout's own best anchor is unambiguous and the passes
+        # after the first have only to confirm it.
         out = []
         for anchors in combos:
             overlap = sum(0 if a == "bottom-left" else 100 for a in anchors)
             out.append((anchors, fake_measurement([(0, overlap)])))
         return out
 
-    def test_two_callouts_are_searched_jointly_in_one_grid(self):
-        """Greedy used to be the default here, on the claim that it reached the same anchors.
-        It does not: settling one callout at a time cannot see a pair that only works
-        together, and on the real ER diagram that cost 5483 overlap against the grid's 216."""
-        place.place(ER, name="er")
-        self.assertEqual(len(self.calls), 1)
-        self.assertEqual(len(self.calls[0]), len(NEAR) ** 2)
-
-    def test_one_callout_tries_every_anchor(self):
-        place.place(STATE, name="state")
+    def test_one_callout_tries_every_anchor_once(self):
+        """And is never offered them again: with nothing else on the drawing to move, the
+        answer from the first round cannot change."""
+        _, report = place.place(STATE, name="state")
         self.assertEqual(len(self.calls), 1)
         self.assertEqual(len(self.calls[0]), len(NEAR))
+        self.assertEqual(report[0]["candidates"], len(NEAR))
 
-    def test_many_callouts_are_settled_one_at_a_time(self):
-        """One round of 8 per callout, never 8^n — that grid is unaffordable past two."""
+    def test_a_second_callout_costs_seven_more_and_not_eight(self):
+        """The combination it is already sitting on was measured when the first one settled,
+        and every combination measured is kept. Skipping the re-measure is what makes sweeping
+        affordable — the whole search is 22 candidates where the exhaustive grid it replaced
+        was 64."""
+        _, report = place.place(ER, name="er")
+        self.assertEqual([len(combos) for combos in self.calls],
+                         [len(NEAR), len(NEAR) - 1, len(NEAR) - 1])
+        self.assertEqual(report[0]["candidates"], 3 * len(NEAR) - 2)
+
+    def test_the_sweep_revisits_a_callout_settled_before_another_one_moved(self):
+        """The whole point of sweeping. The first callout was settled against wherever the
+        second still happened to be, so once the second has moved its answer was decided
+        against a drawing that no longer exists."""
+        place.place(ER, name="er")
+        self.assertEqual(len(self.calls), 3, "the first callout is offered its anchors again")
+        # The re-offer holds the SECOND callout at what it settled on, and varies the first.
+        self.assertTrue(all(combo[1] == "bottom-left" for combo in self.calls[2]))
+        self.assertEqual({combo[0] for combo in self.calls[2]},
+                         set(NEAR) - {"bottom-left"})
+
+    def test_the_last_callout_settled_is_not_offered_its_anchors_again(self):
+        """Nothing has moved since it chose, so it would reach the same answer. Without this
+        every confirming pass costs a full round per callout."""
         spec = {
             "kind": "state",
             "states": [{"id": f"s{i}", "role": "working", "note": "changed"} for i in range(3)]
                       + [{"id": "end", "role": "terminal"}],
             "transitions": [{"from": "s0", "to": "end"}],
         }
-        place.place(spec, name="s")
-        self.assertEqual(len(self.calls), 3)
-        for combos in self.calls:
-            self.assertEqual(len(combos), len(NEAR))
+        _, report = place.place(spec, name="s")
+        # Three rounds settling, then two confirming — not three.
+        n = len(NEAR)
+        self.assertEqual([len(combos) for combos in self.calls], [n, n - 1, n - 1, n - 1, n - 1])
+        self.assertEqual(report[0]["candidates"], n + 4 * (n - 1))
 
-    def test_greedy_keeps_earlier_decisions_while_settling_later_ones(self):
+    def test_a_callout_keeps_earlier_decisions_while_settling_later_ones(self):
         spec = {
             "kind": "state",
             "states": [{"id": f"s{i}", "role": "working", "note": "changed"} for i in range(3)]
@@ -348,7 +354,7 @@ class TestSearchStrategy(unittest.TestCase):
         # Round 2 varies only index 1, and index 0 is already fixed at the winner.
         self.assertTrue(all(combo[0] == "bottom-left" for combo in self.calls[1]))
 
-    def test_greedy_starts_from_an_anchor_the_spec_already_pinned(self):
+    def test_the_search_starts_from_an_anchor_the_spec_already_pinned(self):
         spec = {
             "kind": "state",
             "states": [{"id": "a", "role": "working", "note": "x", "near": "top-right"},
@@ -357,24 +363,53 @@ class TestSearchStrategy(unittest.TestCase):
                        {"id": "end", "role": "terminal"}],
             "transitions": [{"from": "a", "to": "end"}],
         }
-        place.place(spec, name="s", joint_max=0)
+        place.place(spec, name="s")
         self.assertTrue(all(combo[1] == "top-right" and combo[2] == "top-right"
                             for combo in self.calls[0]))
 
     def test_the_chosen_anchors_are_written_into_the_returned_spec(self):
+        """And they are the cheapest offered — the spy prices every anchor but one at 100."""
         out, report = place.place(ER, name="er")
         self.assertEqual([s["near"] for s in place.note_sites(out)],
                          ["bottom-left", "bottom-left"])
         self.assertEqual([e["near"] for e in report], ["bottom-left", "bottom-left"])
 
-    def test_the_report_records_the_strategy_and_the_candidate_count(self):
+    def test_a_tie_falls_to_the_first_anchor_offered(self):
+        """Two anchors can be exactly equal, and then the order of `spec.NEAR` decides — every
+        time, because the search has to be deterministic and because landing several callouts
+        on the same side is a better answer than any number in the score can produce.
+
+        It is also what stops a sweep cycling: a sideways move always goes earlier in NEAR, so
+        once a callout is on the first of its equally-cheap anchors it stays there."""
+        place._measure_candidates = (
+            lambda spec, name, combos, *a, **k: [(anchors, fake_measurement([(0, 7)]))
+                                                 for anchors in combos])
+        spec = copy.deepcopy(ER)
+        for site in place.note_sites(spec):
+            site["near"] = NEAR[-1]
+        out, report = place.place(spec, name="er")
+        self.assertEqual([s["near"] for s in place.note_sites(out)], [NEAR[0], NEAR[0]])
+        # Both moved sideways once and then stayed — a second pass, and only a second.
+        self.assertEqual(report[0]["sweeps"], 2)
+
+    def test_the_report_records_the_candidate_count_and_the_passes(self):
         _, report = place.place(ER, name="er")
-        self.assertEqual(report[0]["strategy"], "joint")
-        self.assertEqual(report[0]["candidates"], len(NEAR) ** 2)
+        self.assertEqual(report[0]["candidates"], 3 * len(NEAR) - 2)
+        self.assertEqual(report[0]["sweeps"], 2)
+
+    def test_a_settled_diagram_costs_one_confirming_pass_and_no_more(self):
+        """Every callout already on its best anchor: the first pass moves nothing, so there is
+        no second one."""
+        spec = copy.deepcopy(ER)
+        for site in place.note_sites(spec):
+            site["near"] = "bottom-left"
+        _, report = place.place(spec, name="er")
+        self.assertEqual(report[0]["sweeps"], 1)
+        self.assertEqual(report[0]["candidates"], 2 * len(NEAR) - 1)
 
     def test_every_report_entry_carries_the_FINAL_cost(self):
-        """Not each greedy round's own cost. Recording that made a finished, clip-free
-        placement report the first round's clip, and unplaceable() cried wolf."""
+        """Not each round's own cost. Recording that made a finished, clip-free placement
+        report the first round's clip, and unplaceable() cried wolf."""
         _, report = place.place(ER, name="er")
         self.assertEqual({e["clip"] for e in report}, {0})
         self.assertEqual(len({e["overlap"] for e in report}), 1)
@@ -395,16 +430,27 @@ class TestSearchStrategy(unittest.TestCase):
         self.assertEqual(self.calls, [])
 
 
-class TestJointEscalation(unittest.TestCase):
-    """The fallback exists for the case greedy cannot reach: two callouts that each look
-    fine alone and only fit in one particular combination. Greedy fixes the first one
-    against the wrong partner and never revisits it."""
+class TestThePlateauTheSweepCannotCross(unittest.TestCase):
+    """The one thing the exhaustive grid could do and sweeping cannot, pinned so nobody has to
+    rediscover it: a pair of anchors that works only together, surrounded by a plateau on which
+    every single-callout move away from it scores EXACTLY the same. With nothing to tell the
+    moves apart the sweep never takes one, and the good pair is never reached.
+
+    It was measured before the grid was removed, and no real drawing produced one. Across 42
+    two-callout diagrams — the two in the sample sets, plus 40 built by hanging a second
+    callout on every one-callout sample, at two text lengths and on both targets — sweeping
+    reached the grid's answer every time. The reason it can be relied on is that these scores
+    are continuous px measurements: among those 42 the closest thing to a tie was two
+    candidates a thousandth of a pixel apart, which was enough to decide between them.
+
+    So this is the shape of an exact plateau, built by hand because geometry does not make one.
+    """
 
     # The start point is pinned HERE rather than taken from `examples.ER`, because the premise
-    # depends on it exactly: greedy's reach is "one index at a time from wherever it starts".
-    # Read off the fixture, this broke silently the day the ER's own anchors moved — the good
-    # pair became reachable in round 0 and greedy stopped failing, which is the one thing this
-    # class needs it to do.
+    # depends on it exactly: the sweep's reach is "one index at a time from wherever it
+    # starts". Read off the fixture, this broke silently the day the ER's own anchors moved —
+    # the good pair became reachable in round 0 and the search stopped failing, which is the
+    # one thing this class needs it to do.
     START = ("top-left", "top-left")
 
     # Unreachable by changing one index at a time from START: every round-0 candidate clips
@@ -441,39 +487,38 @@ class TestJointEscalation(unittest.TestCase):
             out.append((anchors, fake_measurement([(clip, 100)])))
         return out
 
-    def test_greedy_alone_cannot_find_the_only_workable_pair(self):
-        """The premise of the whole fallback: this is a real limitation, not a hypothetical."""
-        _, report = place.place(self.spec, name="er", joint_max=0)
-        self.assertEqual(len(self.calls), 2)
-        self.assertGreater(report[0]["clip"], 0)
+    def test_the_only_workable_pair_is_not_reached(self):
+        """A real limitation, not a hypothetical — and the price of dropping a search that
+        rendered every combination of anchors for every callout."""
+        _, report = place.place(self.spec, name="er")
         self.assertNotEqual([e["near"] for e in report], list(self.ONLY_GOOD_PAIR))
+        self.assertGreater(report[0]["clip"], 0)
 
-    def test_the_joint_search_finds_the_only_workable_pair(self):
-        _, report = place.place(self.spec, name="er", joint_max=2)
-        self.assertEqual(report[0]["strategy"], "joint")
-        self.assertEqual([e["near"] for e in report], list(self.ONLY_GOOD_PAIR))
-        self.assertEqual(report[0]["clip"], 0)
+    def test_a_plateau_settles_at_once_rather_than_sweeping_over_it(self):
+        """Nothing moves, so there is no second pass. A search with no information to act on
+        should be cheap, not thorough."""
+        _, report = place.place(self.spec, name="er")
+        self.assertEqual(report[0]["sweeps"], 1)
+        self.assertEqual([len(combos) for combos in self.calls],
+                         [len(NEAR), len(NEAR) - 1])
 
-    def test_the_joint_search_costs_the_grid_and_nothing_else(self):
-        """It no longer runs greedy first and escalates, so the greedy rounds are not on the
-        bill — affordability is the trigger now, not a clip greedy left behind."""
-        _, report = place.place(self.spec, name="er", joint_max=2)
-        self.assertEqual(report[0]["candidates"], len(NEAR) ** 2)
-
-    def test_it_does_not_escalate_when_the_count_is_unaffordable(self):
-        """8^3 is 512 candidates; the clip is reported instead of paid for."""
+    def test_a_clip_no_anchor_can_avoid_is_reported_and_not_paid_for(self):
+        """Three callouts, every combination clipping: it says so rather than spending 8^3
+        candidates finding out the same thing."""
         spec = {
             "kind": "state",
             "states": [{"id": f"s{i}", "role": "working", "note": "changed"} for i in range(3)]
                       + [{"id": "end", "role": "terminal"}],
             "transitions": [{"from": "s0", "to": "end"}],
         }
-        _, report = place.place(spec, name="s", joint_max=2)
-        self.assertEqual(report[0]["strategy"], "greedy")
+        _, report = place.place(spec, name="s")
         self.assertTrue(place.unplaceable(report))
+        # Three settling rounds and two confirming ones; the grid would have been 8^3.
+        n = len(NEAR)
+        self.assertEqual(report[0]["candidates"], n + 4 * (n - 1))
 
     def test_a_still_clipped_result_is_surfaced_rather_than_hidden(self):
-        _, report = place.place(self.spec, name="er", joint_max=0)
+        _, report = place.place(self.spec, name="er")
         self.assertTrue(place.unplaceable(report),
                         "a placement that could not avoid clipping must say so")
 
@@ -489,7 +534,9 @@ class TestOneDrawingForTheWholeSearch(unittest.TestCase):
     reference ER had its cardinality label on the `presence_sessions` table.
 
     Chosen ONCE and passed down, never escalated per candidate: `_measure_candidates` measures
-    all 64 in a single browser launch, and a ladder inside the loop would launch 64.
+    a whole round in a single browser launch, and a ladder inside the loop would launch one per
+    candidate. The sweep makes several rounds, so what these check is that every one of them
+    was held at the same drawing — not how many there were.
     """
 
     def setUp(self):
@@ -515,13 +562,15 @@ class TestOneDrawingForTheWholeSearch(unittest.TestCase):
 
     def test_the_embedded_search_is_held_at_one_layout_and_one_spacing(self):
         place.place(ER, name="er")
-        self.assertEqual(self.seen,
-                         [{"standalone": False, "layout": ("down", None), "layers": 15}])
+        self.assertTrue(self.seen)
+        self.assertEqual(set(map(repr, self.seen)),
+                         {repr({"standalone": False, "layout": ("down", None), "layers": 15})})
 
     def test_the_standalone_search_is_held_at_one_spacing_and_asks_for_no_layout(self):
         place.place(ER, name="er", standalone=True)
-        self.assertEqual(self.seen,
-                         [{"standalone": True, "layout": None, "layers": 30}])
+        self.assertTrue(self.seen)
+        self.assertEqual(set(map(repr, self.seen)),
+                         {repr({"standalone": True, "layout": None, "layers": 30})})
 
 
 class TestUnplaceable(unittest.TestCase):

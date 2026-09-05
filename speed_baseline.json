@@ -15,39 +15,39 @@
       "core_usage": 0.083,
       "launches": 1,
       "pages": 5,
-      "seconds": 0.99
+      "seconds": 0.84
     },
     "corpus": {
-      "compiles": 203,
-      "core_usage": 0.392,
-      "launches": 30,
-      "pages": 204,
-      "seconds": 28.5
+      "compiles": 112,
+      "core_usage": 0.285,
+      "launches": 31,
+      "pages": 113,
+      "seconds": 23.9
     },
     "launch_floor": {
-      "seconds": 0.892
+      "seconds": 0.683
     },
     "one_figure": {
-      "compiles": 66,
-      "core_usage": 0.319,
-      "launches": 4,
-      "pages": 66,
-      "seconds": 6.22
+      "compiles": 24,
+      "core_usage": 0.136,
+      "launches": 5,
+      "pages": 24,
+      "seconds": 5.88
     },
     "page_cost": {
-      "seconds": 0.0311
+      "seconds": 0.0337
     },
     "pages_per_launch": {
-      "value": 28.6
+      "value": 20.3
     },
     "ten_drawings": {
       "compiles": 68,
-      "core_usage": 0.157,
+      "core_usage": 0.159,
       "launches": 14,
       "pages": 14,
-      "seconds": 16.47
+      "seconds": 15.51
     }
   },
-  "summary": "Two rules were added to the drawing \u2014 an edge label keeps clear of every line but its own, and arrows arriving at one box land on a single line or far enough apart to read as two \u2014 and an eleventh diagram joins the sample sets to hold them: one large ER, three times the area of anything else and the only thing here with arrows close enough together to crowd each other. A full check therefore has more to do than the recorded numbers did, and is slower for that reason rather than because anything got worse. Per diagram nothing moved.",
-  "why": "The label search gained one term per candidate and route repair gained a pass that groups arrowheads by where they arrive; both are arithmetic over geometry already parsed, so neither adds a d2 compile or a browser start. Every count that grew is the eleventh diagram's own \u2014 10 more layout candidates and 3 more browser starts, of which its single note is 8 and 1."
+  "summary": "Note placement is one search now \u2014 settle each note, sweep until a pass moves nothing \u2014 where it used to be an exhaustive 8^n grid below two notes and a single settling pass above. A full check of all eleven diagrams does 91 fewer layout candidates for one more browser start, and no diagram's placement changed.",
+  "why": "The grid's justification no longer reproduced, and two notes had become the dearest count a diagram could have \u2014 dearer than three or four. Sweeping reaches the grid's answer on all 42 two-note diagrams measured, at 22 candidates against 64, and gives three- and four-note diagrams the better search too."
 }

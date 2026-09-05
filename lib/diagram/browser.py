@@ -10,17 +10,17 @@ have no workable substitute:
   * **callout text size.** It is HTML in a `<foreignObject>`, laid out with the host page's
     CSS. Nothing outside a browser knows how big it comes out.
 
-Cost, measured on the machine this was developed on, so nobody has to re-derive it. Two
-numbers decide every other one here: **starting a node+Chrome that measures nothing costs
-~0.74s, and measuring one more harness page in an already-started one costs ~0.030s.** So
-this file is dominated by how many browsers it starts, not by how much it measures in them
-— which is what `SHARD_MIN` below trades, and it is why a single-page measurement is the
-expensive shape.
+Cost. Two numbers decide every other one here: **starting a node+Chrome that measures nothing,
+against measuring one more harness page in an already-started one.** They are of the order of
+0.7s and 0.03s respectively, and the pair actually recorded is in `speed_baseline.json` —
+quoted here they go stale, and have. So this file is dominated by how many browsers it starts,
+not by how much it measures in them, and that is why a single-page measurement is the expensive
+shape.
 
-End to end, warm: ~9.3s for one standalone figure with two callouts (66 candidate renders,
-4 launches), and ~0.9s for the clipping gate over the reference corpus (5 figures, one
-launch). Fine for generating a document once; not fine per keystroke, so keep this in the
-build step and never in a preview path.
+End to end, warm: ~5.9s for one standalone figure with two callouts (24 candidate renders,
+5 launches), and ~0.8s for the clipping gate over five figures in one launch. Fine for
+generating a document once; not fine per keystroke, so keep this in the build step and never in
+a preview path.
 
 The per-page figure was ~0.39s until `js/measure.js` stopped re-sampling every connection
 once per text label. If it ever climbs back, measure `measureInPage`'s sections before
@@ -89,20 +89,23 @@ def requirements():
 
 # Pages per browser, once there are enough of them to be worth a second one. Splitting below
 # this spends more on starting Chrome than it saves; above it the batch divides across
-# `parallel.WORKERS` browsers, which is what takes the 64-candidate placement search off the
-# critical path. Chrome instances are independent — the test runner has relied on that from the
-# start.
+# `parallel.WORKERS` browsers. Chrome instances are independent — the test runner has relied on
+# that from the start.
 #
 # The number is a ratio of two measured costs, so re-derive it rather than guessing whenever
-# either moves: a node+Chrome that measures nothing costs ~0.89s, and one more harness page
-# costs ~0.031s, so a launch buys about 29 pages. `SHARD_MIN` sits under that ratio and has
-# done since the page cost dropped; closing the gap changes how many browsers every check
-# starts, so it is a measurement of its own rather than a tidy-up. It was 8 for as long as a
-# page cost ~0.39s —
-# a figure set by `measureInPage` re-sampling every connection once per label, which it no
-# longer does. Getting this wrong is quiet: too low and the corpus pays for browsers it did not
-# need, too high and the placement search measures 64 pages in one process while the rest of
-# the machine idles.
+# either moves: a node+Chrome that measures nothing, against one more harness page in a running
+# one. `speed_baseline.json` records both and their ratio as `pages_per_launch`; `SHARD_MIN` is
+# meant to sit under it. **It does not today** — the last recorded ratio is 20.3 against this
+# 24, and closing that gap changes how many browsers every check starts, so it is a measurement
+# of its own rather than a tidy-up. It was 8 for as long as a page cost ~0.39s, a figure set by
+# `measureInPage` re-sampling every connection once per label, which it no longer does.
+#
+# **What this no longer trades is note placement.** It existed to split that search's
+# 64-candidate batch across browsers; the search now settles one note at a time and never
+# offers more than eight candidates at once (see `place._sweep`), so every placement round is
+# one launch whatever this says. What is left under it is the clipping gate's batch, which is
+# one page per diagram, and `render._faults`, which is a single page and therefore the
+# expensive shape this file warns about.
 SHARD_MIN = 24
 
 
