@@ -218,8 +218,8 @@ range it was allowed to be in. Do that first.
 - The browser is in the render loop by decision, not accident — see
   [`browser.py`](browser.py) for the three things that have no substitute.
 - Note placement is a measured search over eight anchors per note, swept until a pass moves
-  nothing; `test_place_slow.py` covers it and takes minutes. Run `--slow` once, at the end, and
-  only if you touched placement, callout geometry or the harness.
+  nothing; `test_place_slow.py` covers it end to end in a real browser. Run `--slow` once, at
+  the end, and only if you touched placement, callout geometry or the harness.
 - **`measure_speed.py` (repo root) is the answer to "did that make it slower?"** — don't hand-roll
   a timing script, and don't trust one that was. It times four jobs against `speed_baseline.json`,
   shows what moved, and its docstring carries the rules that make a timing honest (warm up and
@@ -236,32 +236,29 @@ range it was allowed to be in. Do that first.
 
   | | wall | layout candidates | browser starts |
   |---|---|---|---|
-  | eleven diagrams arranged, no notes placed, no gates | ~16s | 68 | 14 |
-  | the same eleven, plus note placement and gates | ~24s | 112 | 31 |
+  | eleven diagrams arranged, no notes placed, no gates | ~6s | 68 | 1 |
+  | the same eleven, plus note placement and gates | ~13s | 112 | 5 |
 
   **Note placement is most of the difference between those two rows, and it scales with the
-  diagram.** Every anchor tried is a d2 compile of the whole graph plus a browser page, so on
-  `examples_large` — eight tables, 2274px wide — a note costs about 5s, which is also what
-  arranging and checking that whole diagram costs. It carried four when it was transcribed and
-  those cost 20s between them, which is why it carries one. **A note is the lever** if this
-  ever needs to be cheaper; the arrangement search is not, being a tenth of the same figure.
-
-  In candidates, that lever is about 8 for the first note on a diagram and about 14 for each
-  one after it, the second figure being a settling round plus the round that confirms the
-  earlier notes against where this one landed. It used to be 8^n up to two notes, which made
-  two the dearest count a diagram could have — dearer than three or four.
-
-  **Browser starts move the opposite way from candidates here, and both are in the table for
-  that reason.** A settling round is one browser start whatever it measures, so replacing one
-  wide round with three narrow ones trades compiling for launches. It is worth it at these
-  sizes — the eleven-diagram row above lost 91 candidates and gained one start — but a change
-  that adds rounds without removing candidates is paying twice.
+  diagram**, because every anchor tried is a d2 compile of the whole graph plus a page to
+  inspect. Counted, that is about 8 candidates for the first note on a diagram and about 14 for
+  each one after it — a settling round, plus the round that confirms the earlier notes against
+  where this one landed. It used to be 8^n up to two notes, which made two the dearest count a
+  diagram could have, dearer than three or four. **A note is the lever** if this ever needs to
+  be cheaper; the arrangement search is not, being a tenth of the same figure. `examples_large`
+  carried four notes when it was transcribed and carries one for this reason.
 
   A first render in a fresh process costs ~25s more than a warm one. If a change appears to cost
   much more than the figures above, something is re-deciding a layout that was already decided.
-- **The browser's cost is the number of browsers, not the amount inspected.** A browser that
-  inspects nothing costs ~0.89s to start; one more inspection in a running one costs ~0.031s.
-  `browser.SHARD_MIN` is the ratio of those two and has to be re-derived when either moves.
+- **Starting a browser costs ~20x what inspecting one more page in a running one does**, so the
+  renderer keeps one and reuses it — see [`browser.py`](browser.py). Read the pair out of
+  `speed_baseline.json`; quoted anywhere else they go stale, and twice have.
+
+  What follows from that is which count to watch. **Browser starts are now nearly flat in the
+  amount of work**: five of them serve all thirty-one batches of a full check, so a change that
+  adds batches is not thereby adding launches, and a change that adds a launch has done
+  something structural — a pool reset, or work escaping onto a thread the pool cannot reach.
+  `browser.SHARD_MIN` no longer governs this and has not since the pool arrived.
 - **A standalone render is never scaled.** `gates/size.analyse(standalone=True)` fixes the scale
   at 1.0, because a file is shown at natural size and zoomed by the reader. So every rule about
   a file's text is a rule about what was AUTHORED, and the text floors — which only ever bite

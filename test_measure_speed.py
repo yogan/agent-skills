@@ -22,6 +22,21 @@ sys.path.insert(0, HERE)
 import measure_speed as speed                                  # noqa: E402
 
 
+class _FakeBrowser:
+    """Enough of `browser._Browser` for the pool to hold it and `shutdown` to close it.
+
+    No process involved. What the probe does with browsers is bookkeeping — reset the pool,
+    count the constructions, leave none behind — and a real Chrome would make these the
+    slowest tests in a file whose whole point is that it starts none.
+    """
+
+    def __init__(self):
+        self.closed = False
+
+    def close(self):
+        self.closed = True
+
+
 def machine(**overrides):
     base = {"system": "Darwin", "arch": "arm64", "cores": 12, "python": "3.14.7",
             "node": "v22.0.0", "d2": "v0.6.0", "workers": 12}
@@ -176,6 +191,36 @@ class TestProbeRestoresWhatItPatched(unittest.TestCase):
             with speed.Probe():
                 raise ValueError("boom")
         self.assertIs(render.compile_source, before)
+
+    def test_a_browser_started_earlier_does_not_serve_the_job_being_timed(self):
+        """The pool keeps a browser between batches, so the second repeat of a job would
+        inherit the first one's — a time no command can achieve, and a browser-start count of
+        zero for a job that starts one. Every real run begins with no browser."""
+        from lib.diagram import browser
+        browser._IDLE.append(_FakeBrowser())
+        with speed.Probe():
+            self.assertEqual(browser._IDLE, [], "a warm browser survived into the timed run")
+
+    def test_it_leaves_no_browser_behind_for_the_next_job(self):
+        """The same lie in the other direction: the job after this one would start warm."""
+        from lib.diagram import browser
+        with speed.Probe():
+            browser._IDLE.append(_FakeBrowser())
+        self.assertEqual(browser._IDLE, [])
+
+    def test_a_browser_is_counted_where_it_is_constructed(self):
+        """Not where a batch is sent. Counting the calls that send one reported 31 browser
+        starts for a full check that starts 5, once a browser began outliving its batch."""
+        from lib.diagram import browser
+        real = browser._Browser
+        browser._Browser = _FakeBrowser     # the probe subclasses whatever it finds
+        try:
+            with speed.Probe() as probe:
+                browser._Browser()
+                browser._Browser()
+        finally:
+            browser._Browser = real
+        self.assertEqual(probe.counts["launches"], 2)
 
 
 class TestRows(unittest.TestCase):

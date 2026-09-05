@@ -5,6 +5,9 @@ Mostly about failing usefully: every error a caller can hit here is an environme
 and the message has to say what to install. The measurement smoke test needs node, a
 browser and d2, and skips visibly without them.
 
+The rest is about the browser being REUSED. That is the file's own cost as well as the
+renderer's — it used to start a Chrome per test and took 47s; sharing one takes 5.
+
 Run: `python3 lib/diagram/test_browser.py`
 """
 import os
@@ -32,6 +35,84 @@ class TestAvailability(unittest.TestCase):
 
     def test_an_empty_batch_short_circuits_without_launching_anything(self):
         self.assertEqual(browser.measure([]), [])
+
+
+@unittest.skipUnless(HAVE_BROWSER, "needs node and a browser")
+class TestTheBrowserPool(unittest.TestCase):
+    """A browser outlives the batch it was started for, and nothing outlives the command.
+
+    Starting Chrome costs roughly twenty times what measuring one more page in a running one
+    does, and the renderer's work arrives as many small batches — so a process per batch spent
+    most of a full check booting: 31 starts to draw the eleven sample diagrams, where three
+    do it now.
+    """
+
+    def setUp(self):
+        browser.shutdown()          # a pool left by another test would mask a start
+        self.started = []
+        self.real = browser.subprocess.Popen
+
+        def spy(cmd, *args, **kwargs):
+            if isinstance(cmd, list) and cmd[:1] == ["node"]:
+                self.started.append(cmd)
+            return self.real(cmd, *args, **kwargs)
+
+        browser.subprocess.Popen = spy
+
+    def tearDown(self):
+        browser.subprocess.Popen = self.real
+        browser.shutdown()
+
+    def page(self):
+        return {"key": "p", "html": "<html><body><span data-w>x</span></body></html>"}
+
+    def test_a_second_batch_reuses_the_browser_the_first_one_started(self):
+        browser.text_widths(self.page()["html"])
+        browser.text_widths(self.page()["html"])
+        self.assertEqual(len(self.started), 1, "the second batch started another browser")
+
+    def test_every_kind_of_request_shares_the_same_browser(self):
+        """Measuring, text widths and rasterising each used to start their own — three
+        separate copies of the same subprocess dance, and three Chromes."""
+        browser.text_widths(self.page()["html"])
+        with self.assertRaises(browser.BrowserError):
+            browser.measure([{"key": "bad", "html": "<html>nothing here</html>"}])
+        browser.text_widths(self.page()["html"])
+        self.assertEqual(len(self.started), 1)
+
+    def test_a_page_it_cannot_measure_does_not_cost_the_browser(self):
+        """The batch fails; the browser is still good. Otherwise one malformed harness makes
+        the next caller pay for a Chrome."""
+        with self.assertRaises(browser.BrowserError):
+            browser.measure([{"key": "bad", "html": "<html>nothing here</html>"}])
+        self.assertEqual(len(browser._IDLE), 1, "a measurement error retired the browser")
+
+    def test_a_browser_that_died_between_batches_is_replaced_rather_than_raised(self):
+        """A pooled browser can be gone for reasons that are nothing to do with the request —
+        Chrome crashed, something reaped it — and that must not read as a failed diagram."""
+        browser.text_widths(self.page()["html"])
+        self.assertEqual(len(browser._IDLE), 1)
+        browser._IDLE[0].proc.kill()
+        browser._IDLE[0].proc.wait(timeout=10)
+        self.assertEqual(browser.text_widths(self.page()["html"]), [browser.text_widths(
+            self.page()["html"])[0]])
+        self.assertEqual(len(self.started), 2, "it should have started exactly one more")
+
+    def test_shutdown_leaves_nothing_running(self):
+        """`atexit` calls this. A browser surviving the command is the failure mode that
+        matters — it holds hundreds of MB and nobody is left to notice."""
+        browser.text_widths(self.page()["html"])
+        pooled = list(browser._IDLE)
+        self.assertEqual(len(pooled), 1)
+        browser.shutdown()
+        self.assertEqual(browser._IDLE, [])
+        for one in pooled:
+            self.assertIsNotNone(one.proc.poll(), "the browser is still running after shutdown")
+
+    def test_shutdown_is_safe_to_call_twice_and_on_an_empty_pool(self):
+        browser.shutdown()
+        browser.shutdown()
+        self.assertEqual(browser._IDLE, [])
 
 
 class TestErrorMessages(unittest.TestCase):

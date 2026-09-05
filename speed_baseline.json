@@ -11,43 +11,47 @@
   "recorded": "2026-09-05",
   "scenarios": {
     "clipping_gate": {
+      "batches": 1,
       "compiles": 0,
       "core_usage": 0.083,
       "launches": 1,
       "pages": 5,
-      "seconds": 0.84
+      "seconds": 0.6
     },
     "corpus": {
+      "batches": 31,
       "compiles": 112,
-      "core_usage": 0.285,
-      "launches": 31,
+      "core_usage": 0.362,
+      "launches": 5,
       "pages": 113,
-      "seconds": 23.9
+      "seconds": 12.86
     },
     "launch_floor": {
-      "seconds": 0.683
+      "seconds": 0.681
     },
     "one_figure": {
+      "batches": 5,
       "compiles": 24,
-      "core_usage": 0.136,
-      "launches": 5,
+      "core_usage": 0.197,
+      "launches": 1,
       "pages": 24,
-      "seconds": 5.88
+      "seconds": 2.89
     },
     "page_cost": {
-      "seconds": 0.0337
+      "seconds": 0.0335
     },
     "pages_per_launch": {
       "value": 20.3
     },
     "ten_drawings": {
+      "batches": 14,
       "compiles": 68,
-      "core_usage": 0.159,
-      "launches": 14,
+      "core_usage": 0.279,
+      "launches": 1,
       "pages": 14,
-      "seconds": 15.51
+      "seconds": 6.15
     }
   },
-  "summary": "Note placement is one search now \u2014 settle each note, sweep until a pass moves nothing \u2014 where it used to be an exhaustive 8^n grid below two notes and a single settling pass above. A full check of all eleven diagrams does 91 fewer layout candidates for one more browser start, and no diagram's placement changed.",
-  "why": "The grid's justification no longer reproduced, and two notes had become the dearest count a diagram could have \u2014 dearer than three or four. Sweeping reaches the grid's answer on all 42 two-note diagrams measured, at 22 candidates against 64, and gives three- and four-note diagrams the better search too."
+  "summary": "The browser is started once and kept, instead of a fresh node+Chrome per batch of pages. A full check of the eleven sample diagrams starts 5 browsers where it started 31, for the same 31 batches and the same 112 layout candidates, and takes 12.4s where it took 23.9s. Nothing rendered differently.",
+  "why": "Starting Chrome costs about twenty times what inspecting one more page in a running one does, and the renderer's work arrives as many small batches \u2014 a note's anchors, a spacing rung, a gate \u2014 so a process per batch spent most of a check booting. Two counts were also wrong and are fixed here: browser starts were counted where a batch was sent rather than where a browser is built, which reported 31 for a check that starts 5, and each repeat of a job now begins with no browser so its time is one a real command can achieve."
 }

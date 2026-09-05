@@ -211,8 +211,7 @@ directly, e.g.:
 
     python3 skills/rework-mr/scripts/test_threads.py
 
-To run everything: `python3 run_tests.py` (~85s, most of it browser launches and d2). While
-editing, run less:
+To run everything: `python3 run_tests.py` (~40s, most of it d2). While editing, run less:
 
 - `python3 run_tests.py --changed` — resolves your uncommitted edits through the repo's import
   graph and runs every test that reaches them. Touching `lib/gitlab.py` runs 4 files in 1s;
@@ -256,14 +255,14 @@ Real skill runs are NOT tidied up. `/tmp/<date>-diagram-<slug>.svg` is somebody'
 
 `test_repo_hygiene.py` enforces both halves, statically and by measuring.
 
-**`--slow` brings the whole run to ~120s. Do not put it in an edit-test loop.** A `*_slow.py` file
+**`--slow` brings the whole run to ~45s. Do not put it in an edit-test loop.** A `*_slow.py` file
 is one whose cost is irreducible, and there are two, which is the thing to know before typing
 the flag:
 
 | file | cost | why it cannot be faster |
 |---|---|---|
-| `lib/diagram/test_place_slow.py` | ~55s alone, ~110s inside a full `--slow` run | every assertion is a real callout-placement search — 64 d2 compiles per two-callout diagram, each measured in a real browser. Faking it would test the fake. The compiles run concurrently now, which is why it costs so much more when the rest of the suite is competing for the same cores. |
-| `hooks/test_paste_gate_slow.py` | ~36s | real `time.sleep()` in a subprocess, unmockable from the test. |
+| `hooks/test_paste_gate_slow.py` | ~24s alone, and it sets the pace for the whole `--slow` run | real `time.sleep()` in a subprocess, unmockable from the test. |
+| `lib/diagram/test_place_slow.py` | ~13s alone, ~20-30s inside a full `--slow` run | every assertion is a real note-placement search, measured in a real browser. Faking it would test the fake. The compiles run concurrently, which is why it costs more when the rest of the suite is competing for the same cores. |
 
 Run `--slow` **once**, at the end, and only if you touched `place.py`, the harness geometry,
 callout anchoring, or the paste gate. Otherwise the plain fast suite is the gate. Every run
