@@ -363,6 +363,7 @@ The shared `Stop` hook (`hooks/paste-gate.py` + this skill's `scripts/paste-gate
 registered in `settings.json` — see the repo README; without it, pasted blocks get silently
 paraphrased away.
 `glab` authenticated; a review worktree (or willingness to create one); run inside the target
-repo. `python3`; macOS for `clip.sh`. Build blocks: the `explain-branch` and `review-branch`
+repo. `python3`. (`clip.sh` copies to the clipboard via macOS `pbcopy`; where that is
+missing the copy is skipped and nothing else changes.) Build blocks: the `explain-branch` and `review-branch`
 skills installed. `findings.py` subcommands: sync·todo·present·resume·updates·bodies·quote·diff·candidates·
 import·add·set·drop·merge·link·head·base·set-head·worktree·prune·path (run any with `-h`).

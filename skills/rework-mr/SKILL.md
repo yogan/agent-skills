@@ -279,7 +279,8 @@ Per topic:
 
 ## Prerequisites
 
-`glab` authenticated; run on (or pass `--iid N` for) the MR branch. `python3`; macOS for `clip.sh`.
+`glab` authenticated; run on (or pass `--iid N` for) the MR branch. `python3`. (`clip.sh` copies to the clipboard via macOS `pbcopy`; where that is missing the
+copy is skipped — the draft is in the chat message and `p` posts through `glab` regardless.)
 `threads.py` subcommands: sync·todo·present·bodies·plans·quote·url·reply·reply-view·set·merge·path
 (plus `change-view`/`diff-view`, the bodies of the two .sh views below).
 `diff-url.py` (baseline·url), `clip.sh` (guards + copies), `guard-reply.sh` (topic-handle gate

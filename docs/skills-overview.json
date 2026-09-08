@@ -1,0 +1,112 @@
+{
+  "kind": "architecture",
+  "title": "How the skills fit together",
+  "slug": "agent-skills-overview",
+  "legend": {
+    "svc": "a skill you install",
+    "store": "shared code, comes with the clone"
+  },
+  "nodes": [
+    {
+      "id": "review_mr",
+      "label": "/review-mr",
+      "role": "svc",
+      "detail": "someone else's MR"
+    },
+    {
+      "id": "rework_mr",
+      "label": "/rework-mr",
+      "role": "svc",
+      "detail": "your own MR"
+    },
+    {
+      "id": "review_branch",
+      "label": "/review-branch",
+      "role": "svc",
+      "detail": "local critique"
+    },
+    {
+      "id": "explain_branch",
+      "label": "/explain-branch",
+      "role": "svc",
+      "detail": "a chapter per commit"
+    },
+    {
+      "id": "explain_diff",
+      "label": "/explain-diff",
+      "role": "svc",
+      "detail": "one change explained"
+    },
+    {
+      "id": "visualize",
+      "label": "/visualize",
+      "role": "svc",
+      "detail": "one diagram of the code"
+    },
+    {
+      "id": "engine",
+      "label": "diagram engine",
+      "role": "store",
+      "detail": "lib/diagram"
+    },
+    {
+      "id": "plumbing",
+      "label": "GitLab plumbing",
+      "role": "store",
+      "detail": "lib/, per-MR state"
+    },
+    {
+      "id": "hook",
+      "label": "paste-gate Stop hook",
+      "role": "store",
+      "detail": "hooks/, registered by hand"
+    }
+  ],
+  "edges": [
+    {
+      "from": "review_mr",
+      "to": "explain_branch",
+      "label": "explainer, opt-in"
+    },
+    {
+      "from": "review_mr",
+      "to": "review_branch",
+      "label": "seeds findings"
+    },
+    {
+      "from": "explain_branch",
+      "to": "explain_diff",
+      "label": "resolves + renders"
+    },
+    {
+      "from": "explain_diff",
+      "to": "engine",
+      "label": "draws"
+    },
+    {
+      "from": "visualize",
+      "to": "engine",
+      "label": "draws"
+    },
+    {
+      "from": "review_mr",
+      "to": "plumbing",
+      "label": "threads, diffs"
+    },
+    {
+      "from": "rework_mr",
+      "to": "plumbing",
+      "label": "threads, diffs"
+    },
+    {
+      "from": "review_mr",
+      "to": "hook",
+      "label": "pastes gated"
+    },
+    {
+      "from": "rework_mr",
+      "to": "hook",
+      "label": "pastes gated"
+    }
+  ]
+}

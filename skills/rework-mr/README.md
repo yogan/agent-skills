@@ -8,7 +8,9 @@ reply per topic. See [SKILL.md](SKILL.md) for the full flow and
 ## Prerequisites
 
 - `glab` authenticated (`glab auth status`), run on or `--iid N` for the MR branch.
-- `python3`; macOS for `clip.sh` (uses `pbcopy`).
+- `python3`.
+- Optional: macOS `pbcopy`, which `clip.sh` uses to put a draft on the clipboard. Without it
+  the copy step is skipped; the draft is shown in chat and posting is unaffected.
 
 ## Required setup — the paste-enforcement Stop hook
 
