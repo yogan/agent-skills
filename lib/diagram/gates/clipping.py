@@ -5,7 +5,7 @@ by writing the static version twice and throwing it away twice:
 
   * it ignored `transform="translate()"`, which reimplementing correctly means
     reimplementing SVG's coordinate system;
-  * it could not see `<foreignObject>` content — the callout text — at all;
+  * it could not see `<foreignObject>` content — a legend's words — at all;
   * it could not account for a CSS `drop-shadow`'s spread, which no geometry API reports.
 
 That last one produced a green result that was simply false: a callout flush with the edge

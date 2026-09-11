@@ -7,8 +7,8 @@ have no workable substitute:
     ignores `transform="translate()"` and it cannot see a CSS drop-shadow's spread.
   * **callout placement.** d2 takes one of eight fixed anchors and does no overlap
     avoidance, so choosing well means rendering the alternatives and looking at them.
-  * **callout text size.** It is HTML in a `<foreignObject>`, laid out with the host page's
-    CSS. Nothing outside a browser knows how big it comes out.
+  * **annotation text size.** A legend's words are HTML this repo writes itself, laid out
+    with the host page's CSS. Nothing outside a browser knows how big they come out.
 
 **Starting a node+Chrome costs roughly twenty times what measuring one more harness page in a
 running one does. So a browser is kept and reused** — that is what `_Browser` and the pool

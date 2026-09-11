@@ -414,7 +414,7 @@ class TestToolchain(unittest.TestCase):
 
     def test_the_pinned_version_is_recorded(self):
         """The recipe leans on undocumented behaviour, so the version is part of it."""
-        self.assertEqual(render.PINNED_VERSION, "0.8.2")
+        self.assertEqual(render.PINNED_VERSION, "0.9.0")
 
 
 

@@ -6,19 +6,20 @@ in ways that look like a styling opinion rather than a bug:
   1. **ids are global.** d2 self-scopes its CSS as `.d2-<hash>`, but marker and pattern
      ids are not namespaced, so two diagrams on one page collide and the second one's
      arrowheads come from the first.
-  2. **the callout is unstyleable.** d2 paints a `tooltip.near` box plain
-     `fill="white" stroke="#DEE1EB"` and exposes no hook for it, so its colours are
-     retargeted by matching that exact attribute pair.
+  2. **the callout is unstyleable.** d2 paints a `tooltip.near` box near-white with a grey
+     hairline and exposes no hook for it, so its colours are retargeted by matching the exact
+     run of attributes it writes — see `palette.CALLOUT_PAINT` for why the class is in it.
   3. **there is no intrinsic size**, only a viewBox — so `width:auto` lets the browser
      *enlarge* the drawing and every glyph with it. See `pin_intrinsic`.
   4. **colour literals are baked in**, so they cannot follow a theme toggle until they
      are rewritten to CSS vars (`palette.to_vars`).
 
-And one thing the SVG cannot fix about itself: `HOST_CSS` is required for callout text to
-render inside its box at all. An SVG produced here, opened on its own in a browser, still
-shows clipped callouts. That coupling is real and documented rather than designed away —
-d2 gives the callout no styling surface, so somebody has to own it, and the page is the
-only party that can.
+And one thing the SVG cannot fix about itself: `HOST_CSS` is required for a legend's words to
+render inside their box at all, and for the depth that makes a callout read as sitting above
+the drawing. An SVG produced here, opened on its own in a browser, shows a legend clipped to
+the top sliver of its glyphs. That coupling is real and documented rather than designed away —
+the words are HTML with no paragraph reset of their own, so somebody has to own it, and the
+page is the only party that can.
 """
 import functools
 import math
@@ -47,17 +48,18 @@ from .gates import size as size_gate
 # d2 version this recipe was measured against. Several behaviours it relies on are
 # undocumented (the table property coupling, the missing intrinsic size, the 1.3x header
 # scale), so a version bump is a reason to re-run the gates, not a routine upgrade.
-PINNED_VERSION = "0.8.2"
+PINNED_VERSION = "0.9.0"
 
 # d2's own callout paint, matched verbatim. Plain white with a grey hairline: invisible
 # against a dark page and too timid against a light one. Tagging it `d2-callout` at the
 # same time is what gives HOST_CSS something to select — d2 offers no class of its own.
 CALLOUT_ATTRS = palette.CALLOUT_PAINT
-CALLOUT_REPLACEMENT = ('class="d2-callout" fill="var(--d-callout-bg)" '
-                       'stroke="var(--d-callout-br)"')
+CALLOUT_REPLACEMENT = ('class="d2-callout" stroke="var(--d-callout-br)" '
+                       'fill="var(--d-callout-bg)"')
 
-# The size a callout's note and a legend's labels are set at. Annotation words are HTML in a
-# `<foreignObject>`, so this size lives in the css below rather than in the SVG.
+# The size a callout's note and a legend's labels are set at. A note gets it written into the
+# SVG (`callout.fit`, which re-cuts the box to match); a legend's words are HTML and take it
+# from the css below.
 #
 # d2's own label size, and equal is not a coincidence. It was 12.5 — a css default nobody
 # chose — and once `gates/size` began counting these words that became the binding constraint
@@ -75,15 +77,16 @@ ANNOTATION_PX = d2mod.BASE_FONT
 #
 # Scoped rather than global, and emitted once per container: a page with two places a diagram
 # can appear — an inline card and a click-to-enlarge overlay, say — has to ship this for both.
-# A container that never got it draws a callout as an empty box, which reads as a rendering
-# fault in the diagram and is a missing rule on the page.
+# A container that never got it draws a legend as an empty band and a callout flat against
+# the drawing, which reads as a rendering fault in the diagram and is a missing rule on the
+# page.
 CONTENT_CSS = """\
-/* d2 emits a callout as <foreignObject height="24"><div class="md"><p>…</p></div>, and
-   ships no paragraph reset. The browser default `p{{margin:1em 0}}` then pushes the text
-   out of its 24px box and only the top sliver of the glyphs shows — which reads as a
-   colour or contrast problem and is actually a clip. The missing font-family is the
-   second half of the same bug: the div otherwise inherits the page's body font, whose
-   metrics differ from the font d2 measured the box with, so the text re-wraps. */
+/* A legend's words go in as <foreignObject><div class="md"><p>…</p></div> with no paragraph
+   reset (see compact.add_legend). The browser default `p{{margin:1em 0}}` then pushes the
+   text out of the box it was given and only the top sliver of the glyphs shows — which reads
+   as a colour or contrast problem and is actually a clip. The missing font-family is the
+   second half of the same bug: the div otherwise inherits the page's body font, whose metrics
+   differ from the ones the row was laid out with, so the words re-wrap. */
 {scope} foreignObject{{overflow:visible}}
 {scope} foreignObject .md{{display:flex;align-items:center;height:100%;
   font-family:system-ui,-apple-system,'Segoe UI',sans-serif}}
@@ -859,7 +862,7 @@ def render(spec, name="diagram", binary="d2", theme_vars=True, wrap_edges=None,
 # CSS for a standalone image. Not the same as HOST_CSS: the page rules (`max-width:100%`,
 # `height:auto`) exist to fit a drawing into a content column and would fight a viewer that
 # is meant to show it at full size and let you zoom. What carries over is the part that is
-# not styling at all — the paragraph reset and font-family a callout's `<foreignObject>`
+# not styling at all — the paragraph reset and font-family a legend's `<foreignObject>`
 # needs — plus the callout depth, baked to one theme since there is nothing to toggle.
 STANDALONE_CSS = f"""\
 foreignObject{{overflow:visible}}
@@ -957,8 +960,8 @@ def standalone(spec, name="diagram", theme="dark", binary="d2", layers=None, edg
     2. **The canvas is painted** (see d2.py's `_prelude`). Left transparent, the drawing is
        composited onto whatever the viewer uses, and a dark one on white gives its muted edge
        labels no contrast at all.
-    3. **The CSS travels inside the file**, because a callout's text is HTML in a
-       `<foreignObject>` and d2 ships no paragraph reset for it.
+    3. **The CSS travels inside the file**, because a legend's words are HTML in a
+       `<foreignObject>` that ships no paragraph reset of its own.
 
     Dark by default, which reverses an earlier decision: the output is rasterised and handed to
     the system image viewer, whose chrome follows the OS appearance — so on a dark desktop a

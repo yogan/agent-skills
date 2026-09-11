@@ -105,12 +105,20 @@ ENGINE_LOCKED = {
 }
 
 # How d2 paints a `tooltip.near` callout, exactly. It exposes no styling hook for one at all,
-# so `render.postprocess` retargets this attribute pair — and it lives HERE rather than there
+# so `render.postprocess` retargets this attribute run — and it lives HERE rather than there
 # because it is also the only way to RECOGNISE a callout before that retarget has happened.
 # Two passes need to, and both run first: `edgelabel._kind`, and `route._clear` through it.
 # Matching only the `class="d2-callout"` spelling recognised no callout at all, which is the
 # same trap `edgelabel._GRP` documents for container borders.
-CALLOUT_PAINT = 'fill="white" stroke="#DEE1EB"'
+#
+# **The class attribute is part of the run, not incidental.** d2 states the same two colours a
+# second time through those CSS classes, and a class selector outranks a presentation
+# attribute — so a retarget rewriting only `stroke` and `fill` is overruled by d2's own
+# stylesheet, and the callout keeps a near-white box with a hairline border that is invisible
+# on a dark page. Consuming the whole run takes the element out of that stylesheet's reach.
+# Matched verbatim against d2's raw output, which is why the retarget runs before
+# `to_vars` — see `render.postprocess`.
+CALLOUT_PAINT = 'stroke="#DEE1EB" fill="#FFFFFF" class=" stroke-N5 fill-N7"'
 
 # Vars with no literal of their own — see `CALLOUT_PAINT` above for how d2 paints one.
 EXTRA_VARS = {

@@ -267,8 +267,9 @@ class TestStandaloneImage(unittest.TestCase):
         _, out, _ = run("--no-open", "--no-png", "--no-place", "--theme", "dark", spec=STATE)
         self.assertNotEqual(self.canvas_fill(read(out.strip())), "#1f2229")
 
-    def test_the_callout_css_travels_inside_the_file(self):
-        """Callout text is HTML in a foreignObject and d2 ships no paragraph reset for it."""
+    def test_the_annotation_css_travels_inside_the_file(self):
+        """A legend's words are HTML in a foreignObject that ships no paragraph reset, and a
+        standalone image has no host page to supply one."""
         _, out, _ = run("--no-open", "--no-png", "--no-place", spec=STATE)
         svg = read(out.strip())
         self.assertIn("<style>", svg)

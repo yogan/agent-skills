@@ -290,9 +290,8 @@ def add_legend(svg, entries, font, pad=D2_PAD):
     shown to clear it — and unlike a callout's words, whose size lives in the PAGE's CSS and
     is therefore invisible to `gates/size`, this size is written into the SVG and checked.
 
-    The words are HTML in a `<foreignObject>`, exactly as a callout's are, and that is not a
-    stylistic choice. d2 embeds its font as a SUBSET of the glyphs the drawing happens to
-    use — 3.4KB a face — so any letter the legend introduces is missing from it and the
+    The words are HTML in a `<foreignObject>`, and that is not a stylistic choice. d2 embeds
+    its font as a SUBSET of the glyphs the drawing happens to use — 3.4KB a face — so any letter the legend introduces is missing from it and the
     browser substitutes that ONE character from a system face. The result is a word with two
     typefaces in it: measured on a real figure, the `q` and `b` of "queryable" and the `v` of
     "live" were the only letters absent from the drawing, and they were exactly the ones that
@@ -645,10 +644,15 @@ def compact_sequence(svg):
         body = svg[start:end]
         if 'class="shape"' in body:
             actors.append(body)
-        elif "<foreignObject" in body:
-            # A callout. It is anchored to a participant's box rather than to the canvas
-            # (see place.py), so re-stacking the rows below it leaves it correctly placed,
-            # and moving it here would drag it away from the shape it points at.
+        elif 'class="md' in body:
+            # A callout, recognised by the markdown block d2 wraps a note's words in — the
+            # one piece of the markup that says "these are a note's words" whatever element
+            # d2 chooses to hold them in. Nothing else in a sequence carries one this early:
+            # the legend, the only other markdown here, is drawn after compaction.
+            #
+            # A callout is anchored to a participant's box rather than to the canvas (see
+            # place.py), so re-stacking the rows below it leaves it correctly placed, and
+            # moving it here would drag it away from the shape it points at.
             continue
         elif _is_lifeline(body):
             lifelines.append((start, end))

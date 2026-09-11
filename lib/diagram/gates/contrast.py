@@ -19,12 +19,11 @@ Two things it deliberately does:
   * **Both themes, always.** A single-theme check is not half a gate, it is a gate that
     misses the entire class of bug this was built for.
 
-What it cannot see, stated plainly rather than papered over: **callout text**. d2 renders a
-`tooltip.near` label as a `<foreignObject>` — HTML inside SVG — whose colour is inherited
-from the host page's CSS, not declared in the SVG. Nothing in the file says what colour
-that text is, so no structural check can rule on it. The callout *box* colours are checked
-(they resolve through the palette); its text is covered by the clipping gate in a real
-browser and by the fixed `--d-callout-bg` / page-foreground pairing.
+A callout's note is checked like any other word: d2 draws it as SVG text carrying its own
+fill, which resolves through the palette, so the file says what colour it is. That was not
+always true — the note used to be HTML whose colour came from the host page's CSS, where
+nothing structural could rule on it — and the note-words row in `README.md` is the defect
+that bought the rule.
 """
 import re
 
@@ -46,9 +45,9 @@ _MASK = re.compile(r"<mask\b.*?</mask>", re.S)
 _SHAPE = re.compile(r"<(rect|ellipse|circle|polygon|path)\b([^>]*)>")
 _NODES = re.compile(r"<g\b[^>]*>|</g>|<text\b[^>]*>.*?</text>"
                     r"|<foreignObject\b[^>]*>.*?</foreignObject>", re.S)
-# The words inside an annotation: HTML in a `<foreignObject>`, which is how a callout's note
-# and a role legend's labels are drawn (see `compact.add_legend` on why they are not SVG text
-# — d2's embedded face is a subset of the drawing's own glyphs).
+# The words inside a legend: HTML in a `<foreignObject>` (see `compact.add_legend` on why they
+# are not SVG text — d2's embedded face is a subset of the drawing's own glyphs). A callout's
+# note needs no rule of its own here, being ordinary SVG text with its fill in the file.
 _HTML_TEXT = re.compile(r"<p\b([^>]*)>(.*?)</p>", re.S)
 
 
@@ -196,11 +195,10 @@ def texts(svg, html_size=ANNOTATION_PX):
     Ancestor classes matter because SVG text is routinely coloured by a rule scoped to a
     parent group rather than by an attribute on the element itself.
 
-    ANNOTATION text is included, and it took a real defect to add: a callout's note and a
-    legend's labels are HTML in a `<foreignObject>`, so a checker that reads `<text>` alone
-    sees none of them. A legend shipped in black on a dark page at 1.18:1 while this gate
-    reported the figure at 5.05:1 — it was measuring everything except the words that were
-    wrong. Its colour comes from an inline `color:` or from d2's own `.color-N1` rule, both
+    ANNOTATION text is included, and it took a real defect to add: a legend's labels are HTML
+    in a `<foreignObject>`, so a checker that reads `<text>` alone sees none of them. A legend
+    shipped in black on a dark page at 1.18:1 while this gate reported the figure at 5.05:1 —
+    it was measuring everything except the words that were wrong. Its colour comes from an inline `color:` or from d2's own `.color-N1` rule, both
     of which are in the file; its SIZE may not be, since `.md p` lives in the host page's css
     for an embedded figure — so `html_size` says what the repo sets it to, defaulting to
     exactly that.

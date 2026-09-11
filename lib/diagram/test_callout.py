@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""Re-cutting a callout box to the text it holds, on d2's own output shapes.
+"""Setting a note in the drawing's own type and re-cutting its box, on d2's output shapes.
 
-No browser: the one thing that needs one is measuring how wide a string renders, and that is
-`browser.text_widths`, which this module caches. Everything below seeds the cache and checks
-the geometry, because the geometry is where this can go wrong silently — a box trimmed from the
-wrong side moves the pointer off the thing the note is about, and the note then points at a
-neighbour.
+No browser: a note's width is d2's own measurement scaled by the type ratio, and the one thing
+that does need a browser — how wide a legend's words render — is `browser.text_widths`, which
+this module caches. Everything below checks the geometry, because the geometry is where this
+can go wrong silently: a box trimmed from the wrong side moves the pointer off the thing the
+note is about, and the note then points at a neighbour.
 
 The fixtures are d2's real output for each `tooltip.near`, copied from a render. Which side the
 pointer sits on is the whole input to the decision, and inventing it would have tested the
@@ -22,43 +22,63 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspa
 
 from lib.diagram import browser, callout  # noqa: E402
 
-# d2's own geometry for a 20-character note, per anchor: the box, the pointer triangle and the
-# foreignObject that holds the text. 152 wide with a 132 foreignObject — 10px of padding a side.
+# d2's own geometry for a 20-character note, per anchor: the box, the pointer triangle, the
+# box d2 puts the words in and the words themselves. 152 wide holding a 132 words-box — 10px
+# of padding a side. Copied from a real render at each anchor; the pointer's side is the whole
+# input to the re-cut decision, and inventing it would have tested the invention.
 SHAPES = {
     # pointer under the box, 20px in from the LEFT corner
-    "top-left": ('<rect x="12" y="-42" width="152" height="44" rx="4" ry="4"/>'
-                 '<path d="M 28 2 L 36 2 L 32 10 Z"/>'
-                 '<foreignObject x="22" y="-32" width="132" height="24">'),
+    "top-left": (
+        '<rect x="146" y="-42" width="152" height="44" rx="4" ry="4" />'
+        '<path d="M 162 2 L 170 2 L 166 10 Z" />'
+        '<svg x="156" y="-32" width="132" height="24" viewBox="0 0 132 24" overflow="hidden">'
+    ),
     # pointer under the box, at its MIDDLE
-    "top-center": ('<rect x="-24" y="-42" width="152" height="44" rx="4" ry="4"/>'
-                   '<path d="M 48 2 L 56 2 L 52 10 Z"/>'
-                   '<foreignObject x="-14" y="-32" width="132" height="24">'),
+    "top-center": (
+        '<rect x="124" y="-42" width="152" height="44" rx="4" ry="4" />'
+        '<path d="M 196 2 L 204 2 L 200 10 Z" />'
+        '<svg x="134" y="-32" width="132" height="24" viewBox="0 0 132 24" overflow="hidden">'
+    ),
     # pointer under the box, 20px in from the RIGHT corner
-    "top-right": ('<rect x="-60" y="-42" width="152" height="44" rx="4" ry="4"/>'
-                  '<path d="M 68 2 L 76 2 L 72 10 Z"/>'
-                  '<foreignObject x="-50" y="-32" width="132" height="24">'),
+    "top-right": (
+        '<rect x="102" y="-42" width="152" height="44" rx="4" ry="4" />'
+        '<path d="M 230 2 L 238 2 L 234 10 Z" />'
+        '<svg x="112" y="-32" width="132" height="24" viewBox="0 0 132 24" overflow="hidden">'
+    ),
     # pointer on the box's RIGHT edge, box hanging off to the left
-    "center-left": ('<rect x="-150" y="21" width="152" height="44" rx="4" ry="4"/>'
-                    '<path d="M 2 39 L 2 47 L 10 43 Z"/>'
-                    '<foreignObject x="-140" y="31" width="132" height="24">'),
+    "center-left": (
+        '<rect x="-16" y="23" width="152" height="44" rx="4" ry="4" />'
+        '<path d="M 136 41 L 136 49 L 144 45 Z" />'
+        '<svg x="-6" y="33" width="132" height="24" viewBox="0 0 132 24" overflow="hidden">'
+    ),
     # pointer on the box's LEFT edge, box hanging off to the right
-    "center-right": ('<rect x="102" y="21" width="152" height="44" rx="4" ry="4"/>'
-                     '<path d="M 102 39 L 102 47 L 94 43 Z"/>'
-                     '<foreignObject x="112" y="31" width="132" height="24">'),
+    "center-right": (
+        '<rect x="264" y="23" width="152" height="44" rx="4" ry="4" />'
+        '<path d="M 264 41 L 264 49 L 256 45 Z" />'
+        '<svg x="274" y="33" width="132" height="24" viewBox="0 0 132 24" overflow="hidden">'
+    ),
 }
 
 NOTE = "the only entry point"
 
+# What d2 sets a note at, and what the re-cut brings it to. The trim is the ratio between them
+# applied to the words-box, so every expected number below is derived rather than typed.
+TRIM = 132 * (1 - callout.D2_NOTE_PX ** -1 * 13)
+
 
 def svg(anchor, note=NOTE):
-    body = SHAPES[anchor] + f'<div class="md"><p>{note}</p>\n</div></foreignObject>'
+    """One callout, in the markup d2 emits: the words are SVG text inside its markdown block,
+    which is nested inside the group — so the group's own end tag is not the first one."""
+    body = (SHAPES[anchor]
+            + f'<g class="md md-native"><text x="0.000" y="18.000" class="md-text text" '
+              f'font-size="16.000" xml:space="preserve">{note}</text></g></svg>')
     return f'<svg viewBox="0 0 400 400"><g class="positioned-tooltip">{body}</g></svg>'
 
 
 def boxes(out):
-    """(rect x, rect width, foreignObject x, foreignObject width) after the re-cut."""
+    """(rect x, rect width, words-box x, words-box width) after the re-cut."""
     rect = re.search(r'<rect x="([-\d.]+)" y="[-\d.]+" width="([\d.]+)"', out)
-    obj = re.search(r'<foreignObject x="([-\d.]+)" y="[-\d.]+" width="([\d.]+)"', out)
+    obj = re.search(r'<svg x="([-\d.]+)" y="[-\d.]+" width="([\d.]+)"', out)
     return (float(rect.group(1)), float(rect.group(2)),
             float(obj.group(1)), float(obj.group(2)))
 
@@ -68,6 +88,12 @@ def pointer(out):
     return [float(v) for v in
             re.search(r'<path d="M ([-\d.]+) [-\d.]+ L ([-\d.]+) [-\d.]+ '
                       r'L ([-\d.]+) [-\d.]+ Z"', out).groups()]
+
+
+def note_type(out):
+    """(font size, baseline y) of the note's words."""
+    return (float(re.search(r'font-size="([\d.]+)"', out).group(1)),
+            float(re.search(r'<text[^>]*?\sy="([\d.]+)"', out).group(1)))
 
 
 class CalloutCase(unittest.TestCase):
@@ -88,54 +114,92 @@ class TestWhereTheBoxSits(CalloutCase):
 
     def test_it_reads_the_box_out_of_the_drawing(self):
         self.assertEqual(callout.boxes(svg("center-right")),
-                         [(102.0, 21.0, 254.0, 65.0)])
+                         [(264.0, 23.0, 416.0, 67.0)])
 
     def test_the_note_comes_back_with_its_box(self):
         """Paired here rather than by a caller zipping two lists: which order d2 emits
         callouts in is d2's business, and a message that names the wrong note is worse
         than no message."""
         self.assertEqual(callout.notes(svg("center-right")),
-                         [(NOTE, (102.0, 21.0, 254.0, 65.0))])
+                         [(NOTE, (264.0, 23.0, 416.0, 67.0))])
+
+    def test_the_note_is_read_from_past_the_nested_group(self):
+        """The words sit inside a `<g>` of d2's own, so a body that ends at the first close
+        tag ends before them — and the note comes back empty while its box looks right."""
+        self.assertEqual(callout.notes(svg("top-left"))[0][0], NOTE)
+
+    def test_a_note_broken_over_two_lines_reads_back_as_one_string(self):
+        """It is the key `known` is measured against, so anything else silently misses."""
+        two = svg("top-left").replace(
+            f">{NOTE}<",
+            '>the only</text><text x="0" y="30" class="md-text text">entry point<')
+        self.assertEqual(callout.notes(two)[0][0], NOTE)
 
     def test_a_callout_whose_text_cannot_be_read_still_yields_its_box(self):
         """The box is what a caller measures against; the text is for saying which note
         it was. Losing the second must not lose the first."""
-        stripped = svg("center-right").replace("<p>", "<b>").replace("</p>", "</b>")
+        stripped = re.sub(r"<text.*?</text>", "", svg("center-right"), flags=re.S)
         self.assertEqual(callout.notes(stripped),
-                         [("", (102.0, 21.0, 254.0, 65.0))])
+                         [("", (264.0, 23.0, 416.0, 67.0))])
 
     def test_a_box_hanging_off_to_the_left_keeps_its_negative_x(self):
         """`center-left` puts the box left of its target, so the drawing's own coordinates
         go negative — and a pattern that only matches digits silently finds no callout."""
         self.assertEqual(callout.boxes(svg("center-left")),
-                         [(-150.0, 21.0, 2.0, 65.0)])
+                         [(-16.0, 23.0, 136.0, 67.0)])
 
     def test_a_drawing_with_no_callout_has_none(self):
         self.assertEqual(callout.boxes('<svg viewBox="0 0 10 10"></svg>'), [])
 
 
+class TestTheNoteIsSetInTheDrawingsOwnType(CalloutCase):
+    """d2 sets a note several points above the labels of the drawing it annotates, so the
+    annotation reads louder than the picture. `fit` re-sets it and re-cuts the box to match."""
+
+    def test_the_words_come_out_at_the_annotation_size(self):
+        from lib.diagram import render
+        size, _baseline = note_type(callout.fit(svg("center-right")))
+        self.assertEqual(size, render.ANNOTATION_PX)
+
+    def test_the_baseline_follows_the_size_so_the_words_stay_centred(self):
+        """Smaller type on d2's own baseline sits low in a box whose height does not change."""
+        before = note_type(svg("center-right"))[1]
+        after = note_type(callout.fit(svg("center-right")))[1]
+        self.assertLess(after, before)
+
+    def test_the_box_keeps_its_height(self):
+        """Which is what holds the callout's own height where every pinned figure has it."""
+        out = callout.fit(svg("center-right"))
+        self.assertIn('height="44"', out)
+        self.assertIn('height="24"', out)
+
+
 class TestTheBoxFitsTheText(CalloutCase):
     def test_the_padding_ends_up_equal_on_both_sides(self):
-        """The defect: d2 measures the note in its font, the page fills the box in another, and
-        all 22px of the difference collects on one side.
-        """
-        callout._WIDTHS[NOTE] = 114.0
+        """The defect: the box is cut for d2's type and filled with ours, and all of the
+        difference collects on one side."""
         rect_x, rect_w, obj_x, obj_w = boxes(callout.fit(svg("center-right")))
-        self.assertEqual(obj_w, 114.0)
-        self.assertEqual(obj_x - rect_x, callout.PAD)
-        self.assertEqual((rect_x + rect_w) - (obj_x + obj_w), callout.PAD)
+        self.assertAlmostEqual(obj_w, 132.0 - TRIM, delta=0.01)
+        self.assertAlmostEqual(obj_x - rect_x, callout.PAD, delta=0.01)
+        self.assertAlmostEqual((rect_x + rect_w) - (obj_x + obj_w), callout.PAD, delta=0.01)
 
     def test_the_box_is_the_text_plus_two_paddings(self):
-        callout._WIDTHS[NOTE] = 114.0
         _rect_x, rect_w, _obj_x, _obj_w = boxes(callout.fit(svg("center-right")))
-        self.assertEqual(rect_w, 114.0 + 2 * callout.PAD)
+        self.assertAlmostEqual(rect_w, (132.0 - TRIM) + 2 * callout.PAD, delta=0.01)
+
+    def test_the_width_is_d2s_own_measurement_scaled_not_a_browsers(self):
+        """No browser is consulted: d2 measured the note in the font it embeds, and an advance
+        width scales with the type size. A seeded measurement must therefore change nothing."""
+        callout._WIDTHS[NOTE] = 999.0
+        with_cache = callout.fit(svg("center-right"))
+        callout._WIDTHS.clear()
+        self.assertEqual(callout.fit(svg("center-right")), with_cache)
 
 
 class TestThePointerNeverMoves(CalloutCase):
     """It points AT the thing the note is about, so it is the one part that may not shift."""
 
     def test_every_anchor_keeps_its_pointer(self):
-        callout._WIDTHS[NOTE] = 114.0
         for anchor in SHAPES:
             before = pointer(svg(anchor))
             after = pointer(callout.fit(svg(anchor)))
@@ -143,46 +207,32 @@ class TestThePointerNeverMoves(CalloutCase):
 
     def test_a_box_hanging_off_to_the_left_gives_way_on_its_far_side(self):
         """`center-left` puts the pointer on the box's RIGHT edge, so that edge stays."""
-        callout._WIDTHS[NOTE] = 114.0
         rect_x, rect_w, _obj_x, _obj_w = boxes(callout.fit(svg("center-left")))
-        self.assertEqual(rect_x + rect_w, -150 + 152, "the pointer edge must not move")
+        self.assertAlmostEqual(rect_x + rect_w, -16 + 152, delta=0.01,
+                               msg="the pointer edge must not move")
 
     def test_a_box_hanging_off_to_the_right_gives_way_on_its_far_side(self):
-        callout._WIDTHS[NOTE] = 114.0
         rect_x, _rect_w, _obj_x, _obj_w = boxes(callout.fit(svg("center-right")))
-        self.assertEqual(rect_x, 102, "the pointer edge must not move")
+        self.assertAlmostEqual(rect_x, 264, delta=0.01, msg="the pointer edge must not move")
 
     def test_a_centred_box_closes_in_from_both_sides(self):
-        callout._WIDTHS[NOTE] = 114.0
         rect_x, rect_w, _obj_x, _obj_w = boxes(callout.fit(svg("top-center")))
-        self.assertAlmostEqual(rect_x + rect_w / 2, -24 + 152 / 2, delta=0.01)
+        self.assertAlmostEqual(rect_x + rect_w / 2, 124 + 152 / 2, delta=0.01)
 
     def test_a_corner_anchored_box_keeps_the_corner_the_pointer_is_near(self):
-        callout._WIDTHS[NOTE] = 114.0
         left_x, _w, _ox, _ow = boxes(callout.fit(svg("top-left")))
-        self.assertEqual(left_x, 12)
+        self.assertAlmostEqual(left_x, 146, delta=0.01)
         right_x, right_w, _ox, _ow = boxes(callout.fit(svg("top-right")))
-        self.assertEqual(right_x + right_w, -60 + 152)
+        self.assertAlmostEqual(right_x + right_w, 102 + 152, delta=0.01)
 
 
 class TestItDeclines(CalloutCase):
-    def test_an_unmeasured_note_is_left_exactly_as_d2_drew_it(self):
-        """Every fast test in the suite renders without priming, and must get d2's own box.
-        Estimating the width from a character count was the alternative and is the wrong risk:
-        the text is `nowrap` in an `overflow:visible` box, so an underestimate spills the note
-        out over the drawing rather than clipping it.
-        """
-        self.assertEqual(callout.fit(svg("top-left")), svg("top-left"))
-
-    def test_a_note_wider_than_its_box_is_left_alone(self):
-        """Growing would paper over a note that is already overflowing; the fix is fewer
-        words, and the clipping gate says so."""
-        callout._WIDTHS[NOTE] = 200.0
-        self.assertEqual(callout.fit(svg("top-left")), svg("top-left"))
-
-    def test_a_trim_too_small_to_see_is_not_made(self):
-        callout._WIDTHS[NOTE] = 132.0 - callout.MIN_TRIM / 2
-        self.assertEqual(callout.fit(svg("top-left")), svg("top-left"))
+    def test_a_group_that_is_not_the_expected_shape_is_left_alone(self):
+        """A partial re-cut is worse than d2's own box: the words would keep a size the box
+        was not cut for."""
+        no_pointer = svg("top-left").replace(
+            '<path d="M 162 2 L 170 2 L 166 10 Z" />', "")
+        self.assertEqual(callout.fit(no_pointer), no_pointer)
 
     def test_an_svg_with_no_callout_is_returned_unchanged(self):
         plain = '<svg viewBox="0 0 10 10"><rect x="0" y="0" width="1" height="1"/></svg>'

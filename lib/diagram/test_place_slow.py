@@ -154,9 +154,17 @@ class TestThreeNotesOnOneDrawing(unittest.TestCase):
     exhaustive search of three notes would have been.
 
     What it is here to catch is a whole-pipeline claim that nothing else makes: that a
-    drawing where no placement is clear still ships the least bad one AND says so. Both
-    halves were silent before — the search reported only a note it could not fit without
-    cutting it off, so a note sitting across an arrow reached the reader with nothing said.
+    drawing this crowded still settles every note and ships the least bad placement, rather
+    than dropping one or cutting one off.
+
+    It used to carry the other half too — that a note covering an arrow is said out loud —
+    and it cannot any more, because on this drawing the search now finds two placements that
+    cover nothing at all and one that covers plain line only. Line alone is deliberately not
+    reported (see `figure._coverage_advice` on why: a bridged gap mid-run reads straight
+    through, and saying so every time is noise that gets switched off), so the case below
+    pins that silence instead. The landmark half — a corner or an arrow's end under a note,
+    which IS reported — is driven by `test_figure.TestCoverageAdvice` against a drawing built
+    for it; manufacturing one here would be measuring a figure nobody renders.
     """
 
     @classmethod
@@ -169,15 +177,21 @@ class TestThreeNotesOnOneDrawing(unittest.TestCase):
         self.assertEqual(len(placed), 3, "a note was dropped while settling")
         self.assertEqual(self.figure.placement, [], "nothing here should fail to fit")
 
-    def test_a_note_that_could_not_be_placed_clear_is_said_out_loud(self):
-        covering = [text for text, box in callout.notes(self.figure.svg)
-                    if arrows.hides(self.figure.svg, box).line]
-        self.assertTrue(covering, "this diagram is meant to be too crowded to place clear — "
-                                  "if it no longer is, the case has stopped testing anything")
+    def test_a_note_over_plain_line_is_left_unsaid(self):
+        """The noise rule, end to end. A note bridging the middle of a run hides no landmark,
+        and the eye reads straight through it — so the author is told nothing about it."""
+        over_line = [text for text, box in callout.notes(self.figure.svg)
+                     if arrows.hides(self.figure.svg, box).line
+                     and not arrows.hides(self.figure.svg, box).turns
+                     and not arrows.hides(self.figure.svg, box).ends]
+        self.assertTrue(over_line,
+                        "this drawing is meant to be crowded enough that one note ends up "
+                        "over a run — if it no longer is, the case has stopped testing "
+                        "anything")
         said = " ".join(self.figure.advice)
-        for text in covering:
-            self.assertIn(repr(text), said,
-                          f"{text!r} covers line and nothing told the author")
+        for text in over_line:
+            self.assertNotIn(repr(text), said,
+                             f"{text!r} covers line only and should not be mentioned")
 
     def test_it_is_advice_rather_than_a_failure(self):
         """The drawing is the best available, so it must not read as broken: `visualize`

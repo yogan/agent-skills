@@ -88,10 +88,13 @@ MIN_READABLE_DETAIL = 7.5
 # "1 doc :" / "n sessions" and being folded onto a third line to save nine pixels of width.
 MIN_READABLE_EDGE = 9.0
 
-# What annotation words — a callout's note, a legend's labels — are set at when their element
-# does not say. They are HTML, so that size is `render.ANNOTATION_PX` in the host page's css
-# and an embedded SVG does not carry it. Pinned to that css by `test_size`, since this module
-# cannot import `render`: `render` imports it.
+# What a legend's words are set at when their element does not say. They are HTML, so that
+# size can live in the host page's css rather than in an embedded SVG. Pinned to that css by
+# `test_size`, since this module cannot import `render`: `render` imports it.
+#
+# A callout's note needs no default: `callout.fit` writes its size into the SVG, so it arrives
+# in the ordinary font pool below and is counted as primary text — which a note is, being prose
+# the reader has to read rather than a subtitle.
 ANNOTATION_PX = 13
 
 _FONT_ATTR = re.compile(r'font-size="([\d.]+)')
@@ -100,9 +103,9 @@ _FONT_CSS = re.compile(r"font-size:\s*([\d.]+)px")
 _DETAIL_SPAN = re.compile(r'<tspan class="d2-detail"[^>]*font-size:\s*([\d.]+)px')
 # An edge label: d2's own class for one, which the post-processing leaves in place.
 _EDGE_TEXT = re.compile(r'<text[^>]*class="text-italic[^"]*"[^>]*font-size:\s*([\d.]+)px')
-# The words of an annotation: HTML in a `<foreignObject>` — a callout's note, a legend's
-# labels. The size is captured when the element states one and is None when it does not, which
-# is the normal case for a callout: that rule is in the host page's css.
+# A legend's words: HTML in a `<foreignObject>` this repo writes. The size is captured when
+# the element states one and is None when it does not, in which case it comes from the host
+# page's css and `ANNOTATION_PX` stands in for it.
 _HTML_TEXT = re.compile(r"<p\b([^>]*)>(?:(?!</p>).)+</p>", re.S)
 _HTML_SIZE = re.compile(r"font-size:\s*([\d.]+)")
 _VIEWBOX = re.compile(r'viewBox="[-\d.]+ [-\d.]+ ([\d.]+) ([\d.]+)"')
@@ -153,12 +156,11 @@ def analyse(svg, avail_w=AVAIL_W, standalone=False):
     # exact when they agree and conservative when they do not.
     details = [float(x) for x in _DETAIL_SPAN.findall(svg)]
     edges = [float(x) for x in _EDGE_TEXT.findall(svg)]
-    # Annotation words — a callout's note, a legend's labels — are HTML in a `<foreignObject>`,
-    # and their size is only in the SVG when they say so inline. A callout's comes from the
-    # HOST PAGE's `.md p` rule, so nothing in the file states it and this pool never contained
-    # it: measured, a four-note figure 1071px wide rendered its callout words at 9.7px with
-    # every glyph check passing. Counted as primary text, because a note is prose the reader
-    # has to read, not a subtitle.
+    # A legend's words are HTML in a `<foreignObject>`, and their size is only in the SVG when
+    # they say so inline — otherwise it comes from the host page's rule and nothing in the file
+    # states it. Counting them at all took a defect: measured, a four-note figure 1071px wide
+    # rendered annotation words at 9.7px with every glyph check passing. Primary text, because
+    # these are words the reader has to read, not a subtitle.
     annotations = []
     for m in _HTML_TEXT.finditer(svg):
         stated = _HTML_SIZE.search(m.group(1))

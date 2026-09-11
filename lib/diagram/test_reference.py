@@ -18,7 +18,7 @@ import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
-from lib.diagram import compact, palette, render
+from lib.diagram import callout, compact, palette, render
 from lib.diagram.examples import REFERENCE
 from lib.diagram.gates import contrast, size, theming
 from lib.diagram.spec import content_warnings
@@ -63,7 +63,13 @@ MEASURED = {
     # 442 while its callout was pinned `bottom-left`, where it lay along 45px of the message
     # line below it. `top-left` covers nothing and costs these 49px; see `place.HEIGHT_PRICE`,
     # which is what decides that trade and used to decide it the other way.
-    "sequence": (663, 491),
+    #
+    # 491 under d2 0.8.2, whose canvas stopped at the drawing and left a callout to hang off
+    # it — the premise `place.py` was written against. 0.9.0's canvas encloses the callout, so
+    # an anchor that overhangs now costs page instead of being cut: this figure is 53px
+    # taller than the same drawing with its notes removed. The pin moves by 4px, which is
+    # all that is left once the anchor the pass already picked is paid for.
+    "sequence": (663, 495),
     # dagre: 935x285 at 11.6px — and its arrows pointed at the TABLE. `documents.owner_id` was
     # accepted and silently dropped, so the picture never showed the column-level fact the spec
     # asserted. The arrow now leaves the column, from a figure that is also smaller.
@@ -93,14 +99,26 @@ MEASURED = {
     # candidate was sitting there passing every gate, and the fold was bought for a slightly
     # less extreme SHAPE. `render._folds` ranks an unbroken label above that, so all three read
     # on one line now and the figure is 31px wider for it.
-    "er": (892, 257),
+    #
+    # 257 under d2 0.8.2, whose canvas stopped at the drawing and left a callout to hang off
+    # it — the premise `place.py` was written against. 0.9.0's canvas encloses the callout, so
+    # an anchor that overhangs now costs page instead of being cut: this figure is 53px
+    # taller than the same drawing with its notes removed. The pin moves by 3px, which is
+    # all that is left once the anchor the pass already picked is paid for.
+    "er": (892, 260),
     # dagre: 899x357 at 12.1px. This is the biggest single gain in the corpus — barely half
     # the width, and 14.0px text because none of it is scaled away. 411 while its callout was
     # pinned `bottom-left`; `center-right`, where the pass puts it, reaches out to the side.
     # 450 before the edge-spacing rung that takes the arrowhead on `implements` off its corner.
     # 490 while that rung was the only way to buy it — `route.straighten` now does the same
     # thing for nothing, so the 40px come back and this is the 450 it was before.
-    "class": (498, 450),
+    #
+    # 498 wide under d2 0.8.2, whose canvas stopped at the drawing and left a callout to hang off
+    # it — the premise `place.py` was written against. 0.9.0's canvas encloses the callout, so
+    # an anchor that overhangs now costs page instead of being cut: this figure is 98px
+    # wider than the same drawing with its notes removed. The pin moves by 11px, which is
+    # all that is left once the anchor the pass already picked is paid for.
+    "class": (509, 450),
     # dagre: 376x796, same 13.0px text. 205px shorter for nothing given up. 327 while this
     # pinned no anchor at all, which put its callout across 26% of `transport error`.
     # 591 before the edge-spacing rung — three arrowheads here were painted across their turn,
@@ -122,7 +140,13 @@ MEASURED = {
     # 985x229 while the callout was pinned `bottom-left`, where it covered 105px of route.
     # `top-left` covers none of it, and these 48px are what that costs — the same trade as
     # `sequence` above, and the reason both moved at once.
-    "state": (985, 277),
+    #
+    # 277 under d2 0.8.2, whose canvas stopped at the drawing and left a callout to hang off
+    # it — the premise `place.py` was written against. 0.9.0's canvas encloses the callout, so
+    # an anchor that overhangs now costs page instead of being cut: this figure is 53px
+    # taller than the same drawing with its notes removed. The pin moves by 4px, which is
+    # all that is left once the anchor the pass already picked is paid for.
+    "state": (985, 281),
 }
 
 HAVE_D2 = render.d2_version() is not None
@@ -277,10 +301,18 @@ class TestReferenceCorpus(unittest.TestCase):
                              f"{name} still carries d2's own callout paint")
 
     def test_every_annotated_diagram_has_a_visible_callout_not_just_a_title(self):
-        """`tooltip` alone is a hover-only <title>; only `tooltip.near` is visible."""
+        """`tooltip` alone is a hover-only <title>, and nothing on screen announces one; only
+        `tooltip.near` draws a box a reader can see.
+
+        Asked through the note's own WORDS rather than through the element holding them. Which
+        element that is belongs to d2 and does change between versions, where a box drawn with
+        nothing in it is the failure worth naming either way.
+        """
         for name in ("arch", "sequence", "er", "class", "state"):
-            self.assertIn("foreignObject", self.svgs[name],
-                          f"{name} has no callout foreignObject")
+            drawn = callout.notes(self.svgs[name])
+            self.assertTrue(drawn, f"{name} drew no callout at all")
+            for text, _box in drawn:
+                self.assertTrue(text.strip(), f"{name} drew a callout with no words in it")
 
 
 @unittest.skipUnless(HAVE_D2, "d2 is not installed (brew install d2)")

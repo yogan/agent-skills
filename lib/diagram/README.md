@@ -57,7 +57,7 @@ preference: the goal is for every line here to be a check.
 | Edge labels near the same height share one, where they can | `edgelabel._align_rows` |
 | A label never sits on a box, a container border or a container title | `edgelabel._key` |
 | Text is never unreadable, clipped, or under a callout | `gates/` |
-| **A note's own words are text too** — same legibility floor, same contrast rule as a label | `gates/size` + `gates/contrast`, both reading `<foreignObject>` |
+| **A note's own words are text too** — same legibility floor, same contrast rule as a label | `gates/size` + `gates/contrast`; a note is SVG text, a legend's words are `<foreignObject>` and both gates read those too |
 | **No run of an arrow is diagonal** — every straight stretch is vertical or horizontal | `arrows.defects` + `test_arrows`, and `route._square` below its threshold |
 | **An arrowhead sits on straight line**, never across the turn it just came round | `d2.ELK_EDGE_LADDER` + `test_arrows` |
 | **No gap immediately before an arrowhead**, including the ones d2 cuts for its own labels | `arrows.shortfall` in `edgelabel._key`, `render._climb_layers` + `test_arrows` |
@@ -66,13 +66,18 @@ preference: the goal is for every line here to be a check.
 | **Two arrows arriving at one box land on one line, or far enough apart to read as two** | `route._converge` + `test_route` |
 | **A callout never covers a corner or an arrowhead** where any of the eight positions avoids it | `place._score`'s landmark rank + `test_place`, and `figure._coverage_advice` says so when none of them does |
 
-**The note-words row took a defect to write down.** A callout's note and a role legend's
-labels are HTML in a `<foreignObject>`, not SVG text, so neither gate could see them: a
-legend shipped black on a dark page at 1.18:1 while the contrast gate reported the figure at
-5.05:1, and a callout's 12.5px words rendered at 9.7px on a scaled figure with every glyph
-check passing. Both gates read that markup now, and the size they assume when the file does
-not state one is `render.ANNOTATION_PX` — which is why that constant is `d2.BASE_FONT` rather
-than the css default it used to be.
+**The note-words row took a defect to write down.** A figure's annotations were HTML in a
+`<foreignObject>` rather than SVG text, so neither gate could see them: a legend shipped black
+on a dark page at 1.18:1 while the contrast gate reported the figure at 5.05:1, and a note's
+12.5px words rendered at 9.7px on a scaled figure with every glyph check passing. Both gates
+read that markup now, and the size they assume when the file does not state one is
+`render.ANNOTATION_PX` — which is why that constant is `d2.BASE_FONT` rather than the css
+default it used to be.
+
+A note needs none of that any more: d2 draws it as SVG text, and `callout.fit` writes the size
+in, so it reaches both gates as an ordinary word. Only a legend still goes in as HTML, and it
+does so deliberately — d2 embeds its face as a subset of the glyphs the drawing uses, so words
+added afterwards have to bring a complete font of their own.
 
 **The label-clearance row is the section below on terms that pay for the wrong answer, in its
 purest form.** `_key`'s hidden-line term is an AREA, and a label lying ALONG a horizontal run

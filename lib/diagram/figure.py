@@ -89,15 +89,13 @@ def draw(specs, target="embed", theme="dark", place_callouts=True, gates=True, b
         raise ValueError(f"target must be one of {TARGETS}, not {target!r}")
     standalone = target == "file"
 
-    # Every note in the document measured at once, before any of them is drawn. The width a
-    # note renders at depends on the string and nothing else, so measuring it here means the
-    # anchor search never pays for it again. See `callout.prime`. The legend's words go in with
-    # them: `compact.add_legend` lays a row out from measured widths and draws nothing without
-    # them.
-    callout_mod.prime([site["note"] for spec in specs.values()
-                       for site in place_mod.note_sites(spec)]
-                      + [label for spec in specs.values()
-                         for label in (spec.get("legend") or {}).values()])
+    # Every legend label in the document measured at once, before anything is drawn:
+    # `compact.add_legend` lays a row out from measured widths and draws nothing without them,
+    # and a width depends on the string and nothing else, so measuring here means no later
+    # render pays for it again. See `callout.prime`. A document with no legend measures
+    # nothing, and therefore starts no browser for this.
+    callout_mod.prime([label for spec in specs.values()
+                       for label in (spec.get("legend") or {}).values()])
 
     def one(item):
         name, spec = item
@@ -320,8 +318,8 @@ def _place(spec, name, theme, standalone, pinned):
     """Measure the anchors, and report a callout no anchor can fit.
 
     A placement failure is not fatal: the spec's own `near` values still render. It has to be
-    said out loud, though, because the callouts are then positioned by guess — d2 reserves no
-    canvas space for one, so an unmeasured anchor may well be clipped.
+    said out loud, though, because the callouts are then positioned by guess — and d2 accepts
+    an anchor that sits a note squarely on a label, having measured nothing.
     """
     if not browser_mod.available():
         # Said only when there is something to place. A diagram with no callouts needs no
@@ -329,8 +327,8 @@ def _place(spec, name, theme, standalone, pinned):
         if not place_mod.note_sites(spec):
             return spec, []
         return spec, [f"{name}: no browser, so its callouts were not placed by measurement "
-                      f"({'; '.join(browser_mod.requirements())}) — d2 reserves no canvas "
-                      "space for a callout, so one may well be clipped"]
+                      f"({'; '.join(browser_mod.requirements())}) — d2 avoids no overlaps, so "
+                      "one may well be sitting on a label"]
     try:
         placed, report = place_mod.place(spec, name=name, theme=theme,
                                          standalone=standalone, pinned=pinned)
@@ -382,10 +380,10 @@ def _clipping_gate(drawn, theme, standalone):
     """The one gate that needs a browser, run over every figure at once.
 
     Separated from the rest for cost, not for category: launching Chrome dominates measuring
-    one more page. It is also the only gate that can see a callout cut off or a label buried
-    under one, because a callout's text is HTML in a `<foreignObject>` and a CSS drop-shadow's
-    spread is invisible to every static check — so when it cannot run, that is reported as
-    loudly as a failure.
+    one more page. It is also the only gate that can see a label buried under a callout or a
+    legend's words cut off, because a CSS drop-shadow's spread is invisible to every static
+    check and a `<foreignObject>`'s laid-out size exists only in a browser — so when it cannot
+    run, that is reported as loudly as a failure.
     """
     if not drawn:
         return drawn

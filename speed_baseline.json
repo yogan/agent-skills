@@ -2,13 +2,13 @@
   "machine": {
     "arch": "arm64",
     "cores": 12,
-    "d2": "0.8.2",
-    "node": "v26.8.1",
+    "d2": "0.9.0",
+    "node": "v26.8.2",
     "python": "3.14.7",
     "system": "Darwin",
     "workers": 12
   },
-  "recorded": "2026-09-05",
+  "recorded": "2026-09-11",
   "scenarios": {
     "clipping_gate": {
       "batches": 1,
@@ -16,42 +16,42 @@
       "core_usage": 0.083,
       "launches": 1,
       "pages": 5,
-      "seconds": 0.6
+      "seconds": 0.64
     },
     "corpus": {
-      "batches": 31,
-      "compiles": 112,
-      "core_usage": 0.362,
+      "batches": 30,
+      "compiles": 106,
+      "core_usage": 0.299,
       "launches": 5,
-      "pages": 113,
-      "seconds": 12.86
+      "pages": 106,
+      "seconds": 9.77
     },
     "launch_floor": {
-      "seconds": 0.681
+      "seconds": 0.734
     },
     "one_figure": {
-      "batches": 5,
-      "compiles": 24,
-      "core_usage": 0.197,
+      "batches": 4,
+      "compiles": 17,
+      "core_usage": 0.121,
       "launches": 1,
-      "pages": 24,
-      "seconds": 2.89
+      "pages": 17,
+      "seconds": 1.67
     },
     "page_cost": {
-      "seconds": 0.0335
+      "seconds": 0.0313
     },
     "pages_per_launch": {
-      "value": 20.3
+      "value": 23.5
     },
     "ten_drawings": {
       "batches": 14,
       "compiles": 68,
-      "core_usage": 0.279,
+      "core_usage": 0.219,
       "launches": 1,
       "pages": 14,
-      "seconds": 6.15
+      "seconds": 4.18
     }
   },
-  "summary": "The browser is started once and kept, instead of a fresh node+Chrome per batch of pages. A full check of the eleven sample diagrams starts 5 browsers where it started 31, for the same 31 batches and the same 112 layout candidates, and takes 12.4s where it took 23.9s. Nothing rendered differently.",
-  "why": "Starting Chrome costs about twenty times what inspecting one more page in a running one does, and the renderer's work arrives as many small batches \u2014 a note's anchors, a spacing rung, a gate \u2014 so a process per batch spent most of a check booting. Two counts were also wrong and are fixed here: browser starts were counted where a batch was sent rather than where a browser is built, which reported 31 for a check that starts 5, and each repeat of a job now begins with no browser so its time is one a real command can achieve."
+  "summary": "d2 upgraded from 0.8.2 to 0.9.0. Two things in it could move a number. A callout's note is no longer measured in a browser at all, so a document whose diagrams carry notes but no legend starts no browser for annotation widths. And a sequence diagram's rows compact again: the new version's callout markup was being read as a message row, which made the pass bail out and left every annotated sequence at d2's own spacing. The machine also picked up a node patch release between the two baselines, which nobody here asked for and which any remaining second belongs to as much as to this change.",
+  "why": "The note's width now comes from d2's own measurement scaled by the type ratio \u2014 it measures the words in the font it embeds with the figure, and an advance width scales with the size \u2014 where it used to come from a browser laying the same words out in the page's font. Row compaction recognises a callout by the markdown block d2 wraps a note's words in, rather than by the element that block happened to be made of."
 }

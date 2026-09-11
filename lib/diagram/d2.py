@@ -318,12 +318,12 @@ def _note(obj, indent):
     Adding `tooltip.near` is what makes the callout permanent.
 
     Two consequences the rest of the pipeline has to absorb, both measured:
-      * d2 reserves no canvas space for the callout, so an edge-anchored one is silently
-        cut off. Which anchor to use is therefore a *measured* decision, not a guess —
-        hence the browser placement pass and the clipping gate.
-      * the callout text is a `<foreignObject>` (HTML inside SVG). Browsers render it;
-        rasterisers like `rsvg-convert` silently drop it, so any check that goes through
-        one cannot see callout text at all.
+      * d2 avoids no overlaps, so the anchor it accepts will sit a note on a lane header or
+        a member name given the chance. Which anchor to use is therefore a *measured*
+        decision, not a guess — hence the browser placement pass.
+      * the canvas stretches to hold whichever anchor is chosen, so a wide note is paid for
+        in page rather than cut off: it makes the figure bigger, the content column scales
+        the result down, and what that costs lands on the size gate.
     """
     if not obj.get("note"):
         return []

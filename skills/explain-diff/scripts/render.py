@@ -367,9 +367,9 @@ CSS = (
   .diagram-lightbox-content svg { display: block; width: 100%; height: 100%; object-fit: contain; }
   /* A D2 diagram's own colours are var(--d-*) references, so it follows this page's light/dark
      toggle with no redraw. The rest of what lib/diagram appends below is not styling but a
-     requirement: D2 renders a callout's text as HTML in a <foreignObject> and ships no paragraph
-     reset for it, so without that reset the browser default margin pushes the text out of its
-     24px box and only the tops of the glyphs show. See lib/diagram/render.py's HOST_CSS. */
+     requirement: a figure's legend goes in as HTML with no paragraph reset, so without one the
+     browser default margin pushes the words out of their box and only the tops of the glyphs
+     show. See lib/diagram/render.py's HOST_CSS. */
   table { border-collapse: collapse; width: 100%; margin: 1rem 0; font-size: .92rem; }
   th, td { border: 1px solid var(--border); padding: .5rem .7rem; text-align: left; }
   th { background: var(--th-bg); }

@@ -247,15 +247,17 @@ COVERED = ('<svg viewBox="0 0 300 100">'
            '<path d="M 10 50 L 190 50" class="connection" stroke="black" fill="none" '
            'style="stroke-width:2;" marker-end="url(#head)"/>'
            '<g class="positioned-tooltip"><rect x="150" y="30" width="80" height="40"/>'
-           '<foreignObject x="160" y="40" width="60" height="20">'
-           '<div class="md"><p>new</p></div></foreignObject></g></svg>')
+           '<svg x="160" y="40" width="60" height="20" viewBox="0 0 60 20">'
+           '<g class="md md-native"><text x="0" y="15" class="md-text text">new</text>'
+           '</g></svg></g></svg>')
 CLEAR = COVERED.replace('<rect x="150" y="30"', '<rect x="150" y="2"')
 
 
 class TestPriming(Base):
     """One browser launch measures every string the drawing needs a width for, before any
     figure is drawn. A string that misses it is not drawn at all — see `compact.add_legend` —
-    so what is tested here is that the legend's words are in that batch with the notes."""
+    so what is tested here is that a legend's words reach that batch, and that a note's do
+    not: a note is measured by d2 itself, in the font it embeds with the figure."""
 
     LEGENDED = {"kind": "state", "legend": {"steady": "running today"},
                 "states": [{"id": "a", "role": "steady", "note": "new"},
@@ -272,14 +274,14 @@ class TestPriming(Base):
         figure.callout_mod.prime = self.real_prime
         super().tearDown()
 
-    def test_a_legends_words_are_measured_with_the_notes(self):
+    def test_a_legends_words_are_measured(self):
         figure.draw({"flow": self.LEGENDED})
-        self.assertIn("running today", self.primed)
-        self.assertIn("new", self.primed)
+        self.assertEqual(self.primed, ["running today"])
 
-    def test_a_diagram_with_no_legend_primes_only_its_notes(self):
+    def test_a_diagram_with_no_legend_measures_nothing_and_starts_no_browser(self):
+        """Its notes need no measuring, so a figure that only has notes pays for no launch."""
         figure.draw({"flow": NOTED})
-        self.assertEqual(self.primed, ["new"])
+        self.assertEqual(self.primed, [])
 
 
 class TestCoverageAdvice(Base):

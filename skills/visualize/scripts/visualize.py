@@ -11,7 +11,7 @@ through this script (and without needing this skill installed).
     python3 visualize.py --format css                 # -> the CSS that page must ship
 
 The default output is a **standalone image**: colours baked to one theme, the page background
-painted, and the CSS a callout's `<foreignObject>` text needs carried inside the file. Both an
+painted, and the CSS a legend's `<foreignObject>` words need carried inside the file. Both an
 SVG and a PNG are written, and the PNG is what gets opened — macOS renders SVG through Quick
 Look, which ignores the canvas and crops the drawing square, so handing a viewer the SVG shows
 the reader something we never rendered. No HTML wrapper either way. A page around a single

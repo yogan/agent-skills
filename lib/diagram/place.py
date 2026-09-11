@@ -1,8 +1,13 @@
 """Choosing where each callout sits, by measuring the alternatives.
 
-d2 cannot do this: `tooltip.near` takes one of eight fixed anchors, d2 avoids no overlaps, and
-it does not grow the canvas to fit a callout. So the renderer decides — render every anchor,
-measure in a browser, keep the best.
+d2 cannot do this: `tooltip.near` takes one of eight fixed anchors and d2 avoids no overlaps,
+so an anchor it accepts happily parks a note on a lane header. So the renderer decides — render
+every anchor, measure in a browser, keep the best.
+
+The canvas does stretch to hold whichever anchor is chosen, so a bad one is no longer cut off;
+it costs the two things every term below prices instead — the drawing it covers, and the page
+it buys. Clipping still ranks first because a shadow can reach past the card the figure sits
+in, and because nothing here may trade away being visibly cut.
 
 What is optimised is READABILITY, as five terms compared in order:
 

@@ -28,21 +28,6 @@ HAVE_BROWSER = browser.available()
 HAVE_D2 = render.d2_version() is not None
 
 # A wide diagram whose right-most node carries a callout too long to fit beside it.
-CLIPPED_SPEC = {
-    "kind": "architecture",
-    "direction": "right",
-    "nodes": [
-        {"id": "a", "label": "Client application", "role": "client"},
-        {"id": "b", "label": "Gateway service", "role": "svc"},
-        {"id": "c", "label": "Primary datastore cluster", "role": "store",
-         "note": "this callout is deliberately far too long to fit anywhere",
-         "near": "center-right"},
-    ],
-    "edges": [{"from": "a", "to": "b", "label": "request"},
-              {"from": "b", "to": "c", "label": "persist"}],
-}
-
-
 class TestFailsLoudlyWhenItCannotRun(unittest.TestCase):
     def setUp(self):
         self.real = browser.measure
@@ -102,10 +87,10 @@ class TestVerdicts(unittest.TestCase):
 
     def test_the_failure_names_the_offending_element(self):
         self.fake({"left": 0, "right": 27, "top": 0, "bottom": 0},
-                  offenders=[{"tag": "foreignobject", "text": "new table",
+                  offenders=[{"tag": "text", "text": "new table",
                               "callout": True, "over": {}}])
         problem = clipping.check("<svg/>", "d").problems[0]
-        self.assertIn("foreignobject(callout)", problem)
+        self.assertIn("text(callout)", problem)
         self.assertIn("new table", problem)
 
     def test_the_failure_says_what_to_do_about_it(self):
@@ -151,17 +136,29 @@ class TestAgainstRealDiagrams(unittest.TestCase):
         bad = [(r.name, p) for r in clipping.check_many(svgs) for p in r.problems]
         self.assertEqual(bad, [])
 
-    def test_the_gate_really_fires_on_a_clipped_callout(self):
-        """Proof it can fail. Without this the passing corpus above proves nothing."""
-        svg = render.render(CLIPPED_SPEC, name="clipbait")
-        result = clipping.check(svg, "clipbait")
-        self.assertFalse(result.ok, "a callout that overflows the card must be caught")
-        self.assertIn("CLIPPED", result.problems[0])
+    def test_the_gate_really_fires_on_a_callout_outside_the_card(self):
+        """Proof it can fail, and proof it sees the callout's WORDS and not just its box —
+        the message has to name the note, because the remedy is to shorten it.
 
-    def test_it_sees_foreignobject_callout_text_that_a_rasteriser_would_drop(self):
-        svg = render.render(CLIPPED_SPEC, name="clipbait")
+        The drawing is built here rather than rendered. d2 reserves canvas space for a
+        callout, so a figure it lays out cannot be made to clip one, and a gate whose only
+        observed answer is "clean" has not been shown to be capable of another. Everything
+        about the measurement is still real: a browser lays this out under the page's own CSS,
+        exactly as it does a figure.
+        """
+        svg = ('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 100" '
+               'width="200" height="100">'
+               '<rect x="10" y="10" width="80" height="40" fill="#888888"/>'
+               '<g class="positioned-tooltip">'
+               '<rect class="d2-callout" x="-260" y="20" width="240" height="44" rx="4" '
+               'ry="4" fill="#fff4e8" stroke="#b5541f"/>'
+               '<svg x="-250" y="30" width="220" height="24" viewBox="0 0 220 24">'
+               '<g class="md md-native"><text x="0" y="17" class="md-text text" '
+               'font-size="13">far outside the card</text></g></svg></g></svg>')
         result = clipping.check(svg, "clipbait")
-        self.assertIn("foreignobject", result.problems[0])
+        self.assertFalse(result.ok, "a callout outside the card must be caught")
+        self.assertIn("CLIPPED", result.problems[0])
+        self.assertIn("far outside the card", result.problems[0])
 
     def test_it_catches_a_label_a_callout_is_sitting_on_top_of(self):
         """The occluded half of the hidden-text check: geometry painted over a word.
