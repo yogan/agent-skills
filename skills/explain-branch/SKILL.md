@@ -81,9 +81,9 @@ Structure the spec's `"sections"` as:
    three steps: first ..., then ..., finally ..."). This is what keeps the "high-level view"
    intact even though the detail is now chaptered.
 2. **One chapter per substantial commit**, in build order, `id: "chapter-N"`, heading titled
-   by what the commit *does* (not its raw subject line) — e.g. "Chapter 2: Making `x-extract-method`
+   by what the commit *does* (not its raw subject line) — e.g. "Chapter 2: Making `x-retry-policy`
    mandatory", not "Chapter 2: 9f8e7d6". Give the section a `"commit"` field — e.g.
-   `{"hash": "9f8e7d6", "subject": "refactor(ABC-123): make the extraction header explicit, skip fields without one", "url": ..., "diffstat": {...}}`
+   `{"hash": "9f8e7d6", "subject": "refactor(ABC-123): make the retry header explicit, skip requests without one", "url": ..., "diffstat": {...}}`
    — `render.py` renders the muted citation line under the `<h2>` automatically; don't
    hand-write that `<p>` into the chapter's own `"html"`. `"hash"` is the short SHA from Step
    2's `git log`; `"diffstat"` is `git show --shortstat <full-sha>` parsed the same way as the
@@ -107,8 +107,9 @@ Structure the spec's `"sections"` as:
 
 Leave the spec's top-level `"quiz"` empty — all questions live on their chapter.
 
-Content rules (diagrams, code-block language classes, `.callout`/`.diagram` divs, Kleppmann-ish
-voice) are identical to explain-diff's — see its `SKILL.md` for the full list; not repeated here.
+Content rules (which fields take markup and which are plain text, diagrams, code-block language
+classes, `.callout`/`.diagram` divs, Kleppmann-ish voice) are identical to explain-diff's — see
+its `SKILL.md` for the full list; not repeated here.
 
 One thing the chapter structure makes worse, so it is worth repeating: **a diagram per chapter is
 not the goal.** Chapters tempt you into one figure each for symmetry, which is exactly the padding

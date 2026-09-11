@@ -177,19 +177,29 @@ Option order within each quiz question is randomized by the renderer at render t
 list them in whatever order reads naturally when writing the spec; don't try to
 manually vary position to "seem random", the script already guarantees it.
 
-Quiz `question` and option `text` fields are plain text, not HTML — backtick
-spans like `` `origin/main` `` are auto-converted to inline `<code>` (everything
-else is HTML-escaped). The "html" fields on sections are raw HTML you write
-directly — use real markup (headings, <pre> blocks, tables, ".callout" divs per
-the CSS classes below, `{{diagram:name}}` tokens per the "diagrams" section
-above), not markdown.
+**A section's "html" is the only field you write markup into. Every other field is plain
+text.** This is the one contract worth getting right, because both halves fail visibly and
+silently: markup in a plain-text field reaches the reader as angle brackets, and an entity
+you encode yourself reaches it as "&amp;amp;". So write the literal character — `Background &
+intuition`, never `Background &amp; intuition` — and mark code with backticks, never with a
+`<code>` tag. FIELD_CONTRACT in this file is the enforced version of the table below.
 
-"subtitle" is plain text too, with the same backtick-to-`<code>` convention, plus one
-more: a markdown link `[label](https://...)` renders as a real `<a target="_blank">`.
-Use this for a source link picked up during data gathering (e.g. an MR's `web_url` from
-`glab`) — don't hand-write raw backticks or a bare URL where a link is available:
+| field | what you write |
+|---|---|
+| section "html" | raw HTML: headings, `<pre>` blocks, tables, ".callout" divs per the CSS classes below, `{{diagram:name}}` tokens. Not markdown, and backticks left here render as literal backticks. |
+| "title", section "heading" | plain text; `` `backticks` `` become `<code>`. A tag here is an **error** — the renderer refuses the spec and names the field, because a heading is the one place where a tag can only be a mistake. |
+| quiz "question", option "text", commit "subject" | plain text; `` `backticks` `` become `<code>`. A tag is escaped and shown as text, so a question that quotes HTML reads correctly. |
+| "subtitle" | as above, plus a markdown link `[label](https://...)` becoming a real `<a target="_blank">`. |
+| section "id", commit "url" | plain text; escaped into an attribute, never rendered. |
+
+Use the subtitle's link for a source picked up during data gathering (e.g. an MR's `web_url`
+from `glab`) — don't hand-write raw backticks or a bare URL where a link is available:
 
     "subtitle": "[MR !123](https://gitlab.example.com/.../merge_requests/123) · `fix/drop-legacy-auth` · commit `a1b2c3d4`"
+
+One wrinkle, handled for you: the document "title" also fills the `<title>` element, whose
+content the browser reads as text — so the browser tab gets the same prose with its backticks
+dropped, while the `<h1>` on the page gets the real `<code>`.
 
 The page defaults to the reader's OS light/dark preference
 (`prefers-color-scheme`) and includes a manual toggle button that overrides it,
@@ -862,22 +872,118 @@ def slugify(text: str) -> str:
     return re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-")
 
 
-def format_inline(text: str) -> str:
-    """Escape plain text, then turn `` `code` `` spans into <code> (each side already escaped)."""
-    escaped = html.escape(text)
-    return re.sub(r"`([^`]+)`", r"<code>\1</code>", escaped)
+# ── The plain-text / markup contract ──────────────────────────────────────────────────────
+#
+# Which author-supplied fields are prose and which are markup used to live only in the call
+# sites, and an authoring agent cannot read call sites — so it guessed, differently in
+# different places, and one document shipped a heading as a visible "&amp;amp;" while two more
+# headings on the same page showed the angle brackets of a <code> tag. FIELD_CONTRACT
+# below is the single declaration of the answer, held to from three sides: the module
+# docstring documents it for whoever writes a spec, `check_plain_text_fields` validates a
+# spec through it before anything renders, and test_render.py fails when this file reads a
+# field the table does not classify. Classifying a new spec field here is therefore a
+# precondition for rendering it, not an afterthought.
+
+HEADING = "heading"        # Plain text; `backticks` become <code>. Markup is REJECTED — the
+                           # document title and a section heading are the two places a tag
+                           # can only be a mistake, and one that slips through reaches the
+                           # reader as angle brackets in a heading.
+PROSE = "prose"            # Plain text; `backticks` become <code>. A tag here is escaped and
+                           # shows as text rather than being refused, because that is what an
+                           # author quoting HTML in a quiz question actually wants.
+PROSE_LINK = "prose+link"  # PROSE, plus a markdown [label](url) becoming a real link.
+MARKUP = "markup"          # Raw HTML the author writes, passed through untouched.
+ATTR = "attr"              # Goes into an HTML attribute; escaped, never rendered as text.
+STRUCTURE = "structure"    # A container this file walks into, not a value it renders.
+OPAQUE = "opaque"          # A nested spec in another module's vocabulary (lib/diagram's).
+                           # Not this contract's business, and deliberately not walked: the
+                           # field names inside it answer to that spec, not to this table.
+DATA = "data"              # A value that never becomes page text: a count, a flag, a filename.
+
+FIELD_CONTRACT = {
+    # The document
+    "title": HEADING,
+    "subtitle": PROSE_LINK,
+    "slug": DATA,              # goes into the output filename
+    "diagrams": OPAQUE,        # keyed by name; each value is a lib/diagram spec
+    "kind": OPAQUE,            # read only to route a diagram spec to lib/diagram
+    # A section
+    "sections": STRUCTURE,
+    "id": ATTR,                # the <h2>'s id and the table-of-contents link target
+    "heading": HEADING,
+    "html": MARKUP,
+    # A section's commit citation
+    "commit": STRUCTURE,
+    "hash": PROSE,
+    "subject": PROSE,
+    "url": ATTR,
+    # A diffstat, top-level or per-commit
+    "diffstat": STRUCTURE,
+    "files": DATA,
+    "insertions": DATA,
+    "deletions": DATA,
+    # A quiz question, top-level or per-section
+    "quiz": STRUCTURE,
+    "question": PROSE,
+    "options": STRUCTURE,
+    "text": PROSE,
+    "correct": DATA,
+}
+
+# Tag-shaped, checked against the *unescaped* text so a heading reaches the same verdict
+# whether its author wrote "<code>" or "&lt;code&gt;" — both render as visible angle brackets.
+_TAG_RE = re.compile(r"</?[a-zA-Z][^>]*>")
+
+_CODE_SPAN_RE = re.compile(r"`([^`]+)`")
+
+# One value the contract classifies, with where it was found: `path` for the message an author
+# has to act on, `name` for the lookup, and `parent` so a section's heading can be reported
+# with the section's own id next to it.
+SpecField = collections.namedtuple("SpecField", "path name value parent")
+
+
+def escape_once(text: str) -> str:
+    """Escape for HTML, undoing one round of encoding first.
+
+    Every plain-text field is escaped on the way into the page, so a spec that already
+    encoded its own entities would be escaped a second time and reach the reader as a
+    visible "&amp;amp;". Unescaping first makes the two spellings of one character converge:
+    an author who writes "&" and an author who writes "&amp;" both get one "&" on the page.
+    The cost is the field's one genuinely ambiguous case — prose that means to show an entity
+    literally cannot say so — which is why the contract calls these fields prose and nothing
+    else.
+    """
+    return html.escape(html.unescape(text))
+
+
+def format_inline(text: str, *, code_spans: bool = True) -> str:
+    """Render a HEADING or PROSE field: escaped plain text, `` `code` `` spans becoming <code>.
+
+    Both treatments render identically; they differ only in whether
+    `check_plain_text_fields` lets markup through, which is a question about the spec rather
+    than about the output.
+
+    `code_spans=False` renders the same prose for a destination that cannot hold an element
+    at all — the <title> element, whose content the HTML parser reads as text, so a <code> in
+    it would show up as angle brackets on the browser tab. Backticks are dropped there rather
+    than shown, since they are markup the reader was never meant to see.
+    """
+    if not code_spans:
+        return escape_once(_CODE_SPAN_RE.sub(r"\1", text))
+    return _CODE_SPAN_RE.sub(r"<code>\1</code>", escape_once(text))
 
 
 def format_meta(text: str) -> str:
-    """Like format_inline, plus markdown links `[label](url)` -> a real <a> tag. Used for
-    the subtitle line (e.g. an MR link picked up from `glab`), not for quiz text."""
-    escaped = html.escape(text)
+    """Render the PROSE_LINK field (the subtitle): format_inline plus markdown links
+    `[label](url)` -> a real <a> tag. Used for a source link picked up during data gathering
+    (e.g. an MR's web_url from `glab`), not for quiz text."""
+    escaped = escape_once(text)
     escaped = re.sub(
         r"\[([^\]]+)\]\((https?://[^\s)]+)\)",
         r'<a href="\2" target="_blank" rel="noopener noreferrer">\1</a>',
         escaped,
     )
-    escaped = re.sub(r"`([^`]+)`", r"<code>\1</code>", escaped)
+    escaped = _CODE_SPAN_RE.sub(r"<code>\1</code>", escaped)
     # Break onto a new line after a long MR title instead of an arbitrary width-based wrap.
     return re.sub(r"(</a>)\s*·\s*", r"\1<br>", escaped, count=1)
 
@@ -897,10 +1003,10 @@ def format_diffstat(diffstat: dict) -> str:
 def format_commit_byline(commit: dict) -> str:
     """Render a section's commit citation line: hash chip + subject (linked to `url` when
     given) + optional diffstat - see the module docstring for the field shapes."""
-    subject = html.escape(commit["subject"])
+    subject = format_inline(commit["subject"])
     if commit.get("url"):
         subject = f'<a href="{html.escape(commit["url"])}" target="_blank" rel="noopener noreferrer">{subject}</a>'
-    line = f'commit <code>{html.escape(commit["hash"])}</code> — {subject}'
+    line = f'commit <code>{format_inline(commit["hash"])}</code> — {subject}'
     if commit.get("diffstat"):
         line += " · " + format_diffstat(commit["diffstat"])
     return f'<p style="color:var(--muted); margin-top:-.5rem; font-size:.85em;">{line}</p>'
@@ -933,6 +1039,70 @@ def render_quiz_blocks(quiz: list) -> str:
         )
         blocks.append(f'<div class="quiz-q">\n<p><strong>{format_inline(q["question"])}</strong></p>\n{opts}\n</div>')
     return "\n\n".join(blocks)
+
+
+def walk_spec_fields(value, trail: str = "spec", parent: dict = None):
+    """Every value in a spec that FIELD_CONTRACT has something to say about, depth-first.
+
+    Structural, so it finds a field wherever it occurs — a quiz question reads the same
+    whether it hangs off the document or off a chapter, and a checker that enumerated the
+    known locations instead would miss the next place one gets attached.
+
+    An OPAQUE field is yielded but not descended into: the names inside a diagram spec are
+    lib/diagram's vocabulary, and reading them against this table would classify a state's
+    "label" as though it were one of this file's fields.
+    """
+    if isinstance(value, dict):
+        for name, inner in value.items():
+            path = f"{trail}.{name}"
+            yield SpecField(path, name, inner, value)
+            if FIELD_CONTRACT.get(name) is not OPAQUE:
+                yield from walk_spec_fields(inner, path, value)
+    elif isinstance(value, list):
+        for index, item in enumerate(value):
+            yield from walk_spec_fields(item, f"{trail}[{index}]", parent)
+
+
+def check_plain_text_fields(spec: dict) -> None:
+    """Refuse to render a spec that writes markup into a field the contract calls plain text.
+
+    Scoped to HEADING — the document title and section headings — because those are the only
+    fields where a tag cannot be what the author meant: they are escaped on the way out, so
+    the tag arrives as angle brackets inside a heading. A PROSE field is left permissive on
+    purpose, since a quiz question about HTML escaping legitimately quotes one.
+
+    Every offender is reported together rather than the first one raising, because the author
+    is an agent regenerating the whole spec: one pass naming all of them costs a retry, and
+    one-at-a-time costs a retry each.
+    """
+    offenders = [f for f in walk_spec_fields(spec)
+                 if FIELD_CONTRACT.get(f.name) is HEADING
+                 and isinstance(f.value, str) and _TAG_RE.search(html.unescape(f.value))]
+    if not offenders:
+        return
+
+    print(
+        f"ERROR: {len(offenders)} field(s) the spec format calls plain text contain HTML. "
+        f"The renderer escapes these fields, so every tag below would reach the reader as "
+        f"visible angle brackets in a heading. Mark code with backticks instead — they are "
+        f"converted to <code> for you:",
+        file=sys.stderr,
+    )
+    for field in offenders:
+        where = field.path
+        if field.parent.get("id"):
+            where += f' (id "{field.parent["id"]}")'
+        print(f"\n  {where}\n      {field.value}", file=sys.stderr)
+        # A suggestion only where it is certainly right. <code> is the tag an author reaches
+        # for in a heading and the one backticks replace exactly; anything else (a <b>, a
+        # nested <span>) has no mechanical equivalent here and guessing one would teach the
+        # author that markup in a heading is negotiable. Derived from the unescaped text, so
+        # a heading that arrived double-encoded gets a suggestion in the spelling it should
+        # have had rather than one carrying the encoding forward.
+        backticked = re.sub(r"</?code>", "`", html.unescape(field.value))
+        if not _TAG_RE.search(backticked):
+            print(f"  →   {backticked}", file=sys.stderr)
+    sys.exit(1)
 
 
 def check_length_bias(quiz: list) -> None:
@@ -988,7 +1158,8 @@ def render(spec: dict) -> str:
     diagrams = spec.get("diagrams", {})
 
     toc_items = "\n".join(
-        f'  <li><a href="#{s["id"]}">{html.escape(s["heading"])}</a></li>' for s in sections
+        f'  <li><a href="#{html.escape(s["id"])}">{format_inline(s["heading"])}</a></li>'
+        for s in sections
     )
     if quiz:
         toc_items += '\n  <li><a href="#quiz">Quiz</a></li>'
@@ -996,7 +1167,8 @@ def render(spec: dict) -> str:
     def render_section(s: dict) -> str:
         body = render_diagrams_in_html(s["html"], diagrams)
         byline = format_commit_byline(s["commit"]) + "\n" if s.get("commit") else ""
-        out = f'<h2 id="{s["id"]}">{html.escape(s["heading"])}</h2>\n{byline}{body}'
+        out = (f'<h2 id="{html.escape(s["id"])}">{format_inline(s["heading"])}</h2>\n'
+               f"{byline}{body}")
         if s.get("quiz"):
             out += '\n\n<h3>Check your understanding</h3>\n\n' + render_quiz_blocks(s["quiz"])
         return out
@@ -1017,7 +1189,7 @@ def render(spec: dict) -> str:
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>{html.escape(title)}</title>
+<title>{format_inline(title, code_spans=False)}</title>
 <style>{CSS}</style>
 <script>{THEME_INIT_JS}</script>
 </head>
@@ -1029,7 +1201,7 @@ def render(spec: dict) -> str:
 <div class="diagram-lightbox-content"></div>
 </div>
 
-<h1>{html.escape(title)}</h1>
+<h1>{format_inline(title)}</h1>
 {f'<p style="color:var(--muted); margin-top:-.5rem;">{subtitle_html}</p>' if subtitle_html else ''}
 
 <div class="toc">
@@ -1064,6 +1236,9 @@ def main():
     args = ap.parse_args()
 
     spec = json.loads(args.spec.read_text(encoding="utf-8"))
+    # Before the editorial check below, and with no override flag: a heading carrying markup
+    # is a broken page, not a judgement call about the writing.
+    check_plain_text_fields(spec)
     if not args.allow_length_bias:
         check_length_bias(collect_all_quiz_questions(spec))
     out_html = render(spec)

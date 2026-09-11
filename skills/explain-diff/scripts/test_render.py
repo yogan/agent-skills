@@ -8,6 +8,7 @@ Regression tests are grounded in real bugs from this file's git history (see eac
 docstring for the commit); everything else covers the main documented behavior of the
 pure formatting functions and the top-level render() assembly.
 """
+import ast
 import contextlib
 import io
 import os
@@ -117,6 +118,156 @@ class TestFormatCommitByline(unittest.TestCase):
 class TestFormatInline(unittest.TestCase):
     def test_code_span_and_escaping(self):
         self.assertEqual(R.format_inline("a `b<c>` d"), "a <code>b&lt;c&gt;</code> d")
+
+    def test_an_already_encoded_entity_is_not_encoded_again(self):
+        self.assertEqual(R.format_inline("a &amp; b"), "a &amp; b")
+
+    def test_both_spellings_of_one_character_converge(self):
+        self.assertEqual(R.format_inline("a & b"), R.format_inline("a &amp; b"))
+
+    def test_without_code_spans_the_backticks_are_dropped_not_shown(self):
+        """For a destination that cannot hold an element (the <title> element), backticks are
+        markup the reader was never meant to see."""
+        self.assertEqual(R.format_inline("the `--retry` flag", code_spans=False), "the --retry flag")
+
+
+class TestTheFieldContract(unittest.TestCase):
+    """FIELD_CONTRACT answers "is this field prose or markup?" once, for every field. It is
+    only worth having if it cannot fall behind the renderer, so this reads every spec field
+    render.py actually touches straight out of its syntax tree and holds the two sets equal.
+    Adding a spec field then fails here until it has been classified — which is the whole
+    point: the bug this table exists to stop was an undocumented treatment being guessed."""
+
+    # Every string-keyed read in render.py is a spec field today, with no exceptions. Should
+    # one appear — a module-level dict of this file's own, subscripted by a literal — name it
+    # here rather than weakening the check.
+    KEYS_THAT_ARE_NOT_SPEC_FIELDS = frozenset()
+
+    @classmethod
+    def setUpClass(cls):
+        with open(os.path.join(HERE, "render.py"), encoding="utf-8") as f:
+            source = f.read()
+        keys = set()
+        for node in ast.walk(ast.parse(source)):
+            # `spec["title"]`, `s["heading"]`, …
+            if isinstance(node, ast.Subscript) and isinstance(node.slice, ast.Constant) \
+                    and isinstance(node.slice.value, str):
+                keys.add(node.slice.value)
+            # `spec.get("subtitle")`, …
+            elif isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) \
+                    and node.func.attr == "get" and node.args \
+                    and isinstance(node.args[0], ast.Constant) \
+                    and isinstance(node.args[0].value, str):
+                keys.add(node.args[0].value)
+            # `"kind" not in diagram` — a field can be read by testing for it, and one read
+            # only that way would otherwise slip past unclassified.
+            elif isinstance(node, ast.Compare) and isinstance(node.left, ast.Constant) \
+                    and isinstance(node.left.value, str) \
+                    and any(isinstance(op, (ast.In, ast.NotIn)) for op in node.ops):
+                keys.add(node.left.value)
+        cls.read = keys - cls.KEYS_THAT_ARE_NOT_SPEC_FIELDS
+
+    def test_every_field_the_renderer_reads_is_classified(self):
+        self.assertEqual(self.read - set(R.FIELD_CONTRACT), set())
+
+    def test_every_classified_field_is_one_the_renderer_reads(self):
+        """A stale entry is as misleading as a missing one — it documents a field that no
+        longer exists as though a spec could still carry it."""
+        self.assertEqual(set(R.FIELD_CONTRACT) - self.read, set())
+
+
+class TestWalkSpecFields(unittest.TestCase):
+    def test_it_finds_a_field_wherever_it_hangs(self):
+        """A quiz question reads the same on the document as on a chapter, so the walk is
+        structural rather than a list of the places one is known to appear."""
+        spec = {"quiz": [{"question": "top"}],
+                "sections": [{"id": "c1", "quiz": [{"question": "chapter"}]}]}
+        questions = [f.value for f in R.walk_spec_fields(spec) if f.name == "question"]
+        self.assertEqual(sorted(questions), ["chapter", "top"])
+
+    def test_a_field_is_reported_with_the_dict_it_came_from(self):
+        spec = {"sections": [{"id": "c1", "heading": "Chapter 1"}]}
+        heading = next(f for f in R.walk_spec_fields(spec) if f.name == "heading")
+        self.assertEqual(heading.path, "spec.sections[0].heading")
+        self.assertEqual(heading.parent["id"], "c1")
+
+    def test_a_diagram_spec_is_not_walked_into(self):
+        """Its field names are lib/diagram's vocabulary — a state's "label" is not one of
+        this file's fields and must not be judged against this table."""
+        spec = {"diagrams": {"flow": {"kind": "state",
+                                      "states": [{"id": "a", "label": "<b>a</b>"}]}}}
+        names = {f.name for f in R.walk_spec_fields(spec)}
+        self.assertEqual(names, {"diagrams"})
+
+
+class TestCheckPlainTextFields(unittest.TestCase):
+    """The gate: a heading carrying markup is refused before anything renders. Its shape
+    mirrors check_length_bias below — one explanatory message on stderr, then exit 1."""
+
+    def _refusal(self, spec):
+        with self.assertRaises(SystemExit):
+            with contextlib.redirect_stderr(io.StringIO()) as err:
+                R.check_plain_text_fields(spec)
+        return err.getvalue()
+
+    def test_a_spec_written_to_the_contract_passes(self):
+        R.check_plain_text_fields({
+            "title": "Making `backoff` mandatory",
+            "subtitle": "[MR !123](https://example.com/123) · commit `abcd123`",
+            "sections": [{"id": "c1", "heading": "Chapter 1: The `backoff` helper",
+                          "html": "<p>Real <code>markup</code> belongs here.</p>"}],
+        })
+
+    def test_a_tag_in_a_heading_is_refused_and_the_field_named(self):
+        """The reported bug: a chapter heading authored with a <code> tag reached the
+        page as angle brackets, in more than one chapter of the same document."""
+        err = self._refusal({"sections": [
+            {"id": "chapter-1", "heading": "Chapter 1: The <code>backoff</code> helper"}]})
+        self.assertIn("spec.sections[0].heading", err)
+        self.assertIn('id "chapter-1"', err)
+
+    def test_the_refusal_shows_the_backtick_form_to_write_instead(self):
+        err = self._refusal({"title": "Declaring <code>backoff</code> on every retry"})
+        self.assertIn("Declaring `backoff` on every retry", err)
+
+    def test_the_double_encoded_spelling_is_caught_too(self):
+        """A heading is judged on its unescaped text, so "&lt;code&gt;" is the same defect as
+        "<code>" — both reach the reader as angle brackets."""
+        err = self._refusal({"sections": [
+            {"id": "c1", "heading": "The &lt;code&gt;backoff&lt;/code&gt; helper"}]})
+        self.assertIn("The `backoff` helper", err)
+
+    def test_a_tag_it_cannot_rewrite_is_reported_without_a_suggestion(self):
+        """Backticks replace <code> exactly and nothing else, and inventing an equivalent for
+        a <b> would teach the author that markup in a heading is negotiable."""
+        err = self._refusal({"sections": [{"id": "c1", "heading": "A <b>bold</b> claim"}]})
+        self.assertIn("A <b>bold</b> claim", err)
+        self.assertNotIn("→", err)
+
+    def test_every_offender_is_reported_in_one_pass(self):
+        """The author is an agent regenerating the whole spec: naming all of them costs one
+        retry, naming the first costs a retry each."""
+        err = self._refusal({"title": "The <code>backoff</code> helpers",
+                             "sections": [{"id": "c1", "heading": "Chapter 1: <code>backoff</code>"},
+                                          {"id": "c4", "heading": "Chapter 4: <code>backoff</code>"}]})
+        self.assertIn("3 field(s)", err)
+        self.assertIn('id "c1"', err)
+        self.assertIn('id "c4"', err)
+
+    def test_a_tag_in_quiz_text_is_allowed(self):
+        """PROSE is permissive on purpose: a question about HTML escaping quotes a tag, and
+        escaping it to visible text is exactly what the author wanted."""
+        R.check_plain_text_fields({"quiz": [{
+            "question": "What does <script> render as here?",
+            "options": [{"text": "<b>text</b>", "correct": True}]}]})
+
+    def test_a_tag_in_a_diagram_label_is_not_this_gate_s_business(self):
+        R.check_plain_text_fields({"diagrams": {"flow": {
+            "kind": "state", "states": [{"id": "a", "label": "<b>a</b>"}]}}})
+
+    def test_markup_in_a_section_s_html_is_the_whole_point_of_that_field(self):
+        R.check_plain_text_fields({"sections": [
+            {"id": "c1", "heading": "Chapter 1", "html": "<p>A <code>tag</code> here.</p>"}]})
 
 
 class TestSlugify(unittest.TestCase):
@@ -501,6 +652,79 @@ class TestRender(unittest.TestCase):
         self.assertIn(">MR !123</a>", out)
         self.assertIn('<h2 id="background">Background</h2>', out)
         self.assertIn('<h2 id="quiz">Quiz</h2>', out)
+
+    def test_pre_encoded_heading_is_not_escaped_twice(self):
+        """The reported bug: a heading written as "&amp;" reached the page as "&amp;amp;",
+        in the <h2> and in the table-of-contents link alike."""
+        spec = self._spec(
+            sections=[{"id": "intro", "heading": "Background &amp; intuition", "html": "<p>x</p>"}]
+        )
+        out = R.render(spec)
+        self.assertIn('<h2 id="intro">Background &amp; intuition</h2>', out)
+        self.assertIn('<a href="#intro">Background &amp; intuition</a>', out)
+        self.assertNotIn("&amp;amp;", out)
+
+    def test_plain_ampersand_in_heading_is_escaped_once(self):
+        """The spelling the contract asks for has to give the same page as the one above."""
+        spec = self._spec(
+            sections=[{"id": "intro", "heading": "Background & intuition", "html": "<p>x</p>"}]
+        )
+        out = R.render(spec)
+        self.assertIn('<h2 id="intro">Background &amp; intuition</h2>', out)
+        self.assertNotIn("&amp;amp;", out)
+
+    def test_title_is_not_escaped_twice(self):
+        out = R.render(self._spec(title="Retry &amp; backoff"))
+        self.assertIn("<title>Retry &amp; backoff</title>", out)
+        self.assertIn("<h1>Retry &amp; backoff</h1>", out)
+        self.assertNotIn("&amp;amp;", out)
+
+    def test_backticks_in_a_heading_become_code(self):
+        """The other half of the reported bug: the author wanted an identifier set apart in a
+        chapter heading and wrote a <code> tag, because backticks did nothing here. They do
+        now, which is also what explain-branch's documented chapter-heading example writes."""
+        spec = self._spec(sections=[{"id": "chapter-1", "html": "<p>x</p>",
+                                     "heading": "Chapter 1: The `backoff` helper"}])
+        out = R.render(spec)
+        self.assertIn('<h2 id="chapter-1">Chapter 1: The <code>backoff</code> helper</h2>', out)
+        self.assertIn("Chapter 1: The <code>backoff</code> helper</a>", out)
+
+    def test_the_browser_tab_gets_the_title_without_the_element(self):
+        """<title>'s content is read as text by the HTML parser, so an element in it would
+        show up as angle brackets on the tab — the same prose goes there with its backticks
+        dropped, while the <h1> on the page gets the real <code>."""
+        out = R.render(self._spec(title="Making `backoff` mandatory"))
+        self.assertIn("<title>Making backoff mandatory</title>", out)
+        self.assertIn("<h1>Making <code>backoff</code> mandatory</h1>", out)
+
+    def test_a_heading_that_got_past_the_gate_is_still_inert(self):
+        """check_plain_text_fields refuses this spec, but render() is reachable on its own
+        (and is what the tests here call), so unescaping must not turn it into a hole: a real
+        tag in a heading stays text either way."""
+        spec = self._spec(
+            sections=[{"id": "intro", "heading": "<script>alert(1)</script>", "html": "<p>x</p>"}]
+        )
+        out = R.render(spec)
+        self.assertNotIn("<script>alert(1)</script>", out)
+        self.assertIn("&lt;script&gt;alert(1)&lt;/script&gt;", out)
+
+    def test_a_script_tag_in_quiz_text_is_inert(self):
+        """Quiz text is deliberately permissive about markup — a question may quote HTML —
+        so the escaping is the only thing keeping it from executing."""
+        out = R.render(self._spec(quiz=[{
+            "question": "What does <script>alert(1)</script> render as?",
+            "options": [{"text": "<b>text</b>", "correct": True},
+                        {"text": "nothing at all", "correct": False}]}]))
+        self.assertNotIn("<script>alert(1)</script>", out)
+        self.assertIn("&lt;script&gt;alert(1)&lt;/script&gt;", out)
+        self.assertIn("&lt;b&gt;text&lt;/b&gt;", out)
+
+    def test_a_section_id_is_escaped_into_its_attribute(self):
+        """It lands in an id="" and an href="#", so a quote in it would end the attribute."""
+        out = R.render(self._spec(
+            sections=[{"id": 'a"b', "heading": "Background", "html": "<p>x</p>"}]))
+        self.assertIn('<h2 id="a&quot;b">', out)
+        self.assertIn('<a href="#a&quot;b">', out)
 
     def test_diffstat_appended_without_subtitle_has_no_leading_separator(self):
         out = R.render(self._spec(subtitle="", diffstat={"files": 3, "insertions": 10}))
