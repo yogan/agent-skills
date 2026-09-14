@@ -484,7 +484,7 @@ class TestLegendWiring(unittest.TestCase):
         with contextlib.redirect_stderr(io.StringIO()) as err:
             out = render._maybe_legend("<svg id='keep'/>", self.ER, "er", False, 8)
         self.assertEqual(out, "<svg id='keep'/>")
-        self.assertIn("say what they mean in the prose", err.getvalue())
+        self.assertIn("say so in the prose", err.getvalue())
 
 
 class TestEdgeLabelsOfASpec(unittest.TestCase):

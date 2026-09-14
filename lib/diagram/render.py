@@ -339,7 +339,8 @@ def _maybe_compact(raw, spec, name, standalone=False):
 
 
 def _maybe_legend(svg, spec, name, standalone, pad):
-    """Draw the legend the spec asked for, explaining what its role colours mean here.
+    """Draw the legend the spec asked for: what its role colours mean here, and what the
+    accent marking a box the change added means, either or both.
 
     Swallowed like the other annotations, and the warning has to say what the reader loses:
     without it the drawing still ships, and its colours are then unexplained — which for a
@@ -358,7 +359,14 @@ def _maybe_legend(svg, spec, name, standalone, pad):
     table = spec.get("kind") in ("er", "class")
     entries = []
     for role, label in legend.items():
-        if table:
+        if role == "new":
+            # The accent marking a box the change added. On a table it is the fill, because a
+            # table has no border of its own to colour; anywhere else it is the border, so the
+            # swatch shows a plain box wearing it — the same thing the reader is matching
+            # against on the canvas, where the box underneath keeps whatever role it had.
+            fill = palette.ACCENT if table else palette.vars_for("neutral")[0]
+            stroke = palette.ACCENT
+        elif table:
             # A table is painted with one colour for border, header and text, so a swatch of
             # that colour IS what the reader is matching against.
             fill = stroke = palette.vars_for(role, table=True)
@@ -369,8 +377,17 @@ def _maybe_legend(svg, spec, name, standalone, pad):
     try:
         return compact.add_legend(svg, entries, font, pad=pad)
     except compact.CompactError as exc:
-        print(f"{name}: could not draw the legend ({exc}) — the colours are unexplained, so "
-              "say what they mean in the prose", file=sys.stderr)
+        # What the reader loses, said exactly, because the two entries are not equivalent: a
+        # role colour at least sits on a shape whose kind they can see, where an accent on one
+        # box says only "this one is special". A drawing may carry either or both.
+        accent = "new" in legend
+        roles = any(key != "new" for key in legend)
+        lost = ("the accent marking what the change added is unexplained, and so are the "
+                "colours" if accent and roles
+                else "the accent marking what the change added is unexplained" if accent
+                else "the colours are unexplained")
+        print(f"{name}: could not draw the legend ({exc}) — {lost}, so say so in the prose",
+              file=sys.stderr)
         return svg
 
 
@@ -791,9 +808,15 @@ def _one(spec, name, binary, direction, wrap, layers, edges):
 
 
 def _edge_labels(spec):
-    """Every edge label in a spec, in document order, whatever the kind calls its edges."""
+    """Every edge label in a spec, in document order, whatever the kind calls its edges.
+
+    The three keys are the three `spec._check_edges` validates. An `er` names its edges
+    `edges` like everything else: a fourth key was read here for a while, and no spec has
+    ever been able to carry one — `validate` ignores a top-level key it does not know, so a
+    diagram written that way loses its edges everywhere else too.
+    """
     seen = []
-    for key in ("edges", "transitions", "messages", "relations"):
+    for key in ("edges", "transitions", "messages"):
         for item in spec.get(key) or []:
             if item.get("label") and item["label"] not in seen:
                 seen.append(item["label"])

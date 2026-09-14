@@ -14,21 +14,58 @@ Every one of them observes the content limits: 5 states, 6 messages, tables show
 the columns the change touches. That is not incidental. d2 cannot compact a diagram after
 the fact, so these are what "small enough to render legibly" actually looks like.
 
-They all carry `note` callouts because they describe an MR — marking what it changed is the
-case notes exist for. A plain overview should have none; see skills/visualize/SKILL.md.
+They mark what an MR changed, because that is the case these annotations exist for, and they
+mark it BOTH ways on purpose — the two are not interchangeable and a corpus that only
+exercised one would not notice the other breaking:
+
+  * **`new` plus a `legend` entry**, where being added is the whole of what there is to say
+    AND colour is free to say it. The accent carries the eye and one row of words names it for
+    the drawing. `arch` and `er` have one each: the first paints roles that say what a box is,
+    the second paints every table the same. It costs no placement search, which is most of
+    what a figure with notes pays for.
+  * **a role `legend` and a `note`**, where the colours are already carrying a meaning of the
+    author's. `class` is that case and is the reason the rule exists: its four role colours
+    stand in for which side of the design each type belongs to, so a fifth colour meaning
+    "added" would compete with four the reader still has to be told. The colours take the
+    legend and the change takes words.
+
+    That figure is also the corpus's deliberate COUNTER-EXAMPLE, and the comment on it says
+    why at length: needing a legend is the rare case, not the normal one, and its colouring
+    is the weaker choice measured against the figure it could have been. It is kept because
+    the two annotations have to be shown not to collide somewhere.
+  * **a `note`**, where there is something specific to say — "now fans out presence", "gains
+    a revision column". Five in all, counting the ones on the figures above: every one of the
+    five figures carries exactly one, which is what keeps the anchor search covered end to
+    end however the accent is used elsewhere.
+
+`arch` and `er` carry one of each, which is the combination worth having in a fixture: the
+two annotations have to coexist on one drawing without the accent reading as a second
+callout or the legend band colliding with anything.
+
+`CLASS_PREFERRED` below is the counter-example's other half — the same five types drawn the
+way the guidance recommends — and `test_reference` renders the pair together and holds the
+difference to a test. It is deliberately not in `REFERENCE`; see the comment on it.
+
+A plain overview should have neither; see skills/visualize/SKILL.md.
+
+One wrinkle only a test will meet: a legend's words need a browser to measure, so a figure
+rendered through `render.render` alone — as every fast test in the suite does — ships its
+accent with nothing explaining it. Every real path goes through `figure.draw`, which primes
+those widths whether or not the placement pass runs, so `visualize --no-place` is unaffected.
 
 Every note DOES pin a `near`, and each one is the anchor `place.place` measures for it. That
 looks like it contradicts REFERENCE.md, which tells an author to leave `near` out, and it does
 not: an author's spec is always rendered through the placement pass, and these are also
 rendered WITHOUT it, by every fast test in the suite. The pin is the fallback for that path.
 
-It was removed from all seven and measured, because "a pin the pass overrides documents the
-wrong thing" is a good argument that turns out to be answering the wrong question. Unpinned,
-three of the five bury text at d2's `top-center` default — the architecture puts a callout
-across 59% of `presence deploy ×2` and 88% of `publish`, the class diagram across 165% of
-`implements`. Pinned to what the pass picks, all five are clean, and the number in
-`test_reference.MEASURED` becomes the geometry that actually ships instead of one no reader
-ever sees.
+It was removed from every one of them and measured, because "a pin the pass overrides
+documents the wrong thing" is a good argument that turns out to be answering the wrong
+question. Unpinned, three of the five buried text at d2's `top-center` default — the
+architecture put a callout across 59% of `presence deploy ×2` and 88% of `publish`, the class
+diagram across 165% of `implements`. Two of those three notes are now the accent instead, so
+that measurement is history rather than a live case; the reason for the rule is not. Pinned to
+what the pass picks, all five are clean, and the number in `test_reference.MEASURED` becomes
+the geometry that actually ships instead of one no reader ever sees.
 
 So the rule for this file is not "pin" or "do not pin", it is: **a pin here must be the
 anchor the pass measures, and the corpus must render cleanly with no pass at all.** The state
@@ -42,12 +79,14 @@ covers nothing for 49px of height, is what the pass measures now.
 
 **A pin here does not survive a layout change, and it does not survive a change to what the
 search measures. Re-derive it rather than assume it still holds:** `place.place` on the spec
-prints the answer, and three of these seven moved the last time it was asked.
+prints the answer, and three of the seven notes there were then moved the last time it was
+asked.
 """
 
 ARCHITECTURE = {
     "kind": "architecture",
     "title": "Presence gateway in context",
+    "legend": {"new": "added by this change"},
     "nodes": [
         {"id": "browser", "label": "Browser", "children": [
             {"id": "editor", "label": "Editor", "role": "client"},
@@ -58,8 +97,7 @@ ARCHITECTURE = {
                 {"id": "pod", "label": "GraphQL API", "role": "svc"},
             ]},
             {"id": "presence", "label": "presence deploy ×2", "children": [
-                {"id": "pod", "label": "Presence Gateway", "role": "svc",
-                 "note": "new service", "near": "bottom-left"},
+                {"id": "pod", "label": "Presence Gateway", "role": "svc", "new": True},
             ]},
             {"id": "redis", "label": "Redis", "role": "cache", "shape": "cylinder",
              "note": "now fans out presence", "near": "center-left"},
@@ -110,6 +148,7 @@ SEQUENCE = {
 
 ER = {
     "kind": "er",
+    "legend": {"new": "added by this change"},
     "title": "Presence sessions alongside the existing tables",
     "tables": [
         {"id": "users", "role": "store", "columns": [
@@ -124,8 +163,7 @@ ER = {
              {"name": "title", "type": "text"},
              {"name": "revision", "type": "bigint"},
          ]},
-        {"id": "presence_sessions", "role": "svc",
-         "note": "new table", "near": "top-left", "columns": [
+        {"id": "presence_sessions", "role": "store", "new": True, "columns": [
              {"name": "id", "type": "uuid", "key": "pk"},
              {"name": "document_id", "type": "uuid", "key": "fk"},
              {"name": "user_id", "type": "uuid", "key": "fk"},
@@ -148,6 +186,33 @@ ER = {
 
 CLASS = {
     "kind": "class",
+    # ---------------------------------------------------------------------------------------
+    # THE CORPUS'S COUNTER-EXAMPLE. Do not copy this figure's colouring.
+    #
+    # It is here because nothing else covers a drawing carrying BOTH annotations at once —
+    # colours that need a legend, and a callout — and the two have to be shown not to collide.
+    # As a piece of design it is the weaker choice, and measurably so: four colours over five
+    # types, two of them sharing one, so three of the four legend rows each point at a single
+    # box. A colour on one box groups nothing; it is decoration with a lookup attached.
+    # `spec.content_warnings` says so on this spec, deliberately, and `test_reference` pins
+    # that it keeps saying so.
+    #
+    # What a reader would actually want here is ONE role for all five types and no legend at
+    # all. Colour would then be carrying nothing, which is the condition for it to be free —
+    # so the interface this change added could wear the accent and lose its callout too, and
+    # the figure would spend no legend row and no anchor search whatever.
+    #
+    # Why it is still the shape it is: the roles ARE repurposed here, which is what earns a
+    # legend when a figure needs one — `svc` and `store` say what a box IS on an architecture
+    # drawing, where on a set of types they stand in for which side of the design each belongs
+    # to, something no reader derives from a colour. And because the colours are already
+    # carrying that, the added box takes a `note` rather than the accent: a second colour
+    # meaning would compete with four that already mean something, and the legend could
+    # explain only one of them. That is the rule this fixture exists to hold
+    # (`spec._check_the_accent`) — it is just not a figure to imitate.
+    # ---------------------------------------------------------------------------------------
+    "legend": {"svc": "owned by the gateway", "ext": "a contract it depends on",
+               "cache": "the Redis implementation", "store": "an event it emits"},
     "title": "How the gateway's types relate",
     "classes": [
         {"id": "PresenceGateway", "role": "svc", "members": [
@@ -205,6 +270,54 @@ STATE = {
 
 # Keyed by the name the prototype measured them under, so the numbers in
 # test_reference.py can be traced back to prototypes/diagram-stacks/.
+# The same five types, drawn the way the guidance actually recommends — and kept beside the
+# figure above so the pair can be rendered together and the difference held to a test.
+#
+# One role for every box, so colour carries nothing and needs no legend; the box the change
+# added then takes the accent, because colour being free is exactly the condition for that.
+# It spends no legend row and no anchor search, and there is nothing for a reader to look up.
+#
+# Deliberately NOT in `REFERENCE` below. That mapping is swept by `compare_figures`, by the
+# geometry pins in `test_reference.MEASURED` and by `measure_speed`'s corpus job, and a sixth
+# figure would silently move the last of those — the perf numbers are about one corpus, and a
+# variant added to demonstrate a point is not part of it. `test_reference` renders this one
+# alongside its counterpart instead, which is what needed covering.
+CLASS_PREFERRED = {
+    "kind": "class",
+    "title": "How the gateway's types relate",
+    "legend": {"new": "added by this change"},
+    "classes": [
+        {"id": "PresenceGateway", "role": "neutral", "members": [
+            {"name": "+ handleUpgrade()", "type": "Socket"},
+            {"name": "+ onMessage()", "type": "void"},
+            {"name": "- authenticate()", "type": "Session"},
+        ]},
+        {"id": "SessionRegistry", "role": "neutral", "members": [
+            {"name": "+ add()", "type": "void"},
+            {"name": "+ dropStale()", "type": "int"},
+            {"name": "+ forDocument()", "type": "Session[]"},
+        ]},
+        {"id": "Broadcaster", "role": "neutral", "stereotype": "interface", "new": True,
+         "members": [
+             {"name": "+ publish()", "type": "void"},
+             {"name": "+ subscribe()", "type": "void"},
+         ]},
+        {"id": "RedisFanout", "role": "neutral", "members": [
+            {"name": "+ publish()", "type": "void"},
+        ]},
+        {"id": "PresenceEvent", "role": "neutral", "members": [
+            {"name": "userId", "type": "uuid"},
+            {"name": "kind", "type": "join|move|leave"},
+        ]},
+    ],
+    "edges": [
+        {"from": "PresenceGateway", "to": "SessionRegistry", "label": "owns"},
+        {"from": "PresenceGateway", "to": "Broadcaster", "label": "uses", "dashed": True},
+        {"from": "RedisFanout", "to": "Broadcaster", "label": "implements", "dashed": True},
+        {"from": "SessionRegistry", "to": "PresenceEvent", "label": "emits"},
+    ],
+}
+
 REFERENCE = {
     "arch": ARCHITECTURE,
     "sequence": SEQUENCE,

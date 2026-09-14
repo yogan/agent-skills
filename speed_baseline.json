@@ -8,7 +8,7 @@
     "system": "Darwin",
     "workers": 12
   },
-  "recorded": "2026-09-11",
+  "recorded": "2026-09-14",
   "scenarios": {
     "clipping_gate": {
       "batches": 1,
@@ -19,39 +19,39 @@
       "seconds": 0.64
     },
     "corpus": {
-      "batches": 30,
-      "compiles": 106,
-      "core_usage": 0.299,
+      "batches": 28,
+      "compiles": 92,
+      "core_usage": 0.28,
       "launches": 5,
-      "pages": 106,
-      "seconds": 9.77
+      "pages": 92,
+      "seconds": 9.49
     },
     "launch_floor": {
-      "seconds": 0.734
+      "seconds": 0.731
     },
     "one_figure": {
-      "batches": 4,
-      "compiles": 17,
-      "core_usage": 0.121,
+      "batches": 3,
+      "compiles": 10,
+      "core_usage": 0.115,
       "launches": 1,
-      "pages": 17,
-      "seconds": 1.67
+      "pages": 10,
+      "seconds": 1.16
     },
     "page_cost": {
-      "seconds": 0.0313
+      "seconds": 0.0263
     },
     "pages_per_launch": {
-      "value": 23.5
+      "value": 27.8
     },
     "ten_drawings": {
       "batches": 14,
       "compiles": 68,
-      "core_usage": 0.219,
+      "core_usage": 0.218,
       "launches": 1,
       "pages": 14,
-      "seconds": 4.18
+      "seconds": 4.19
     }
   },
-  "summary": "d2 upgraded from 0.8.2 to 0.9.0. Two things in it could move a number. A callout's note is no longer measured in a browser at all, so a document whose diagrams carry notes but no legend starts no browser for annotation widths. And a sequence diagram's rows compact again: the new version's callout markup was being read as a message row, which made the pass bail out and left every annotated sequence at d2's own spacing. The machine also picked up a node patch release between the two baselines, which nobody here asked for and which any remaining second belongs to as much as to this change.",
-  "why": "The note's width now comes from d2's own measurement scaled by the type ratio \u2014 it measures the words in the font it embeds with the figure, and an advance width scales with the size \u2014 where it used to come from a browser laying the same words out in the page's font. Row compaction recognises a callout by the markdown block d2 wraps a note's words in, rather than by the element that block happened to be made of."
+  "summary": "A box that a change merely ADDED can now be marked with the accent and named once in the legend, instead of buying a callout to say so. It applies where colour is free to carry it: the architecture figure, whose role colours say what a box is, and the ER, where every table is a store. It does NOT apply to the class figure, whose four role colours stand in for a distinction of the author's \u2014 a fifth colour meaning would compete with four the reader still has to be told, so that one keeps its callout and gains the legend it was missing. So two of the reference corpus's seven notes are gone. Read the counts, not the seconds: the engine did not get faster at placing a callout, the corpus stopped asking it to place two of them, and a real document gets the same saving for the same reason.",
+  "why": "A box marked new may be explained by a legend entry rather than a note. The validator accepts either, refuses both being absent so the accent can never ship unexplained, and refuses the accent outright on a drawing whose legend already explains a role colour. A class diagram painting its types more than one colour with no legend is now advised on, since role names on a set of types never explain themselves."
 }

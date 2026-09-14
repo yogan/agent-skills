@@ -278,7 +278,7 @@ singling out:
 | the request | notes? |
 |---|---|
 | "show me the DB layout", "overview of the classes" | **none.** The diagram is the answer. |
-| "what changed in this MR" | yes — on the new or changed things, sparingly |
+| "what changed in this MR" | yes — on the changed things, sparingly. For a box that was simply ADDED, prefer `new` and a legend entry over a note; see below. |
 | "where is the flaw in this schema", "what looks wrong here" | yes — on the flaw |
 | "why is this slow" | yes — on the hot path or the missing index |
 
@@ -323,18 +323,54 @@ renderer draws as a swatch and its words under the drawing:
 "legend": {"store": "queryable today", "ext": "grant still pending"}
 ```
 
-Three rules, because a legend is easy to reach for and mostly wrong:
+Four rules, because a legend is easy to reach for and mostly wrong:
 
 - **No legend for the default meanings.** "store = a database" restates the shape. If someone
   reading the picture would guess the colour right, the legend is noise.
+- **A colour has to GROUP something.** One colour on one box groups nothing — it is decoration
+  with a lookup attached, and a legend row spends the reader's attention to tell them a fact
+  the box could have carried in words. If most of your colours would each sit on a single box,
+  the colouring is not earning its legend: use one role for every box and no legend at all.
+  Fewer colours is the normal answer and a legend is the exception; the renderer says so on a
+  spec that gets this wrong, and `lib/diagram/examples.py`'s `class` figure is kept as the
+  worked example of the mistake.
 - **A legend is not a substitute for words on the thing.** It explains a COLOUR that groups
   several boxes; a fact about one box is still a `note`.
 - **Say it in your summary too.** The legend makes the image stand on its own once it is
   pasted somewhere else, which the prose cannot do — but the reader in front of you is reading
   your message, so tell them there as well.
 
-Only roles the diagram actually paints may appear, at most four, or the spec is rejected: a
-colour in the legend that is not on the canvas sends a reader hunting for it.
+Only roles the diagram actually paints may appear — plus `new`, below — and at most four keys
+in all, or the spec is rejected: a colour in the legend that is not on the canvas sends a
+reader hunting for it.
+
+### The one legend entry that is not a role: `new`
+
+A box the change ADDED can be marked with `"new": true` — an accent border, or an accent fill
+on a table — and the accent named once for the whole drawing:
+
+```jsonc
+"legend": {"new": "added by this change"}
+```
+
+Reach for this rather than a note whenever being new is the whole of what there is to say. It
+reads better, because one row of words covers however many boxes are marked instead of the
+same word repeated around the picture; and it is much cheaper, because every callout is
+positioned by measuring eight anchors in a real browser and this is positioned not at all.
+
+**Only where colour is free, though.** The accent is one more colour meaning, so on a drawing
+that needed a role legend it lands beside meanings the reader is already holding — and the
+legend can explain only one of them. A class diagram shipped exactly that: four repurposed
+role colours, none explained, and the drawing's only legend row pointing at a fifth box. The
+question it left a reader with was not "what is the accent" but "then what do the others
+mean?". A spec that explains a role in its legend and also sets `new` is rejected for it.
+
+So: colours self-evident → accent and one legend row. Colours carrying a meaning of your own →
+give them the legend they need, and mark the change with a `note`.
+
+Keep the note for a box you have something specific to say about — "gains a revision column".
+Then the two do different jobs: the accent finds the box, the words say what happened to it.
+Putting both on one box, with a note that reads "new", says the same thing twice.
 
 ## Step 4 — Render
 

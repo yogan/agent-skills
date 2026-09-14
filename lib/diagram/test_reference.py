@@ -18,8 +18,9 @@ import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
-from lib.diagram import callout, compact, palette, render
-from lib.diagram.examples import REFERENCE
+from lib.diagram import callout, compact, figure, palette, place, render
+from lib.diagram import spec as spec_mod
+from lib.diagram.examples import CLASS_PREFERRED, REFERENCE
 from lib.diagram.gates import contrast, size, theming
 from lib.diagram.spec import content_warnings
 
@@ -118,6 +119,15 @@ MEASURED = {
     # an anchor that overhangs now costs page instead of being cut: this figure is 98px
     # wider than the same drawing with its notes removed. The pin moves by 11px, which is
     # all that is left once the anchor the pass already picked is paid for.
+    #
+    # 98px of this width is the callout, which hangs off the side where 0.9.0's canvas
+    # stretches to hold it: the same five types marked with the accent instead measure 411
+    # wide, and `examples.CLASS_PREFERRED` is that drawing, rendered beside this one by
+    # `TestTheSameTypesDrawnBothWays`. The 98px are spent deliberately — this figure paints
+    # its types four different colours, so a fifth meaning "added" would compete with four the
+    # reader still has to be told, and the legend could explain only one of them. The colours
+    # keep the legend here and the change takes words; `spec._check_the_accent` is the rule
+    # that refuses the other arrangement.
     "class": (509, 450),
     # dagre: 376x796, same 13.0px text. 205px shorter for nothing given up. 327 while this
     # pinned no anchor at all, which put its callout across 26% of `transport error`.
@@ -266,10 +276,41 @@ class TestReferenceCorpus(unittest.TestCase):
             result = theming.check(svg, name)
             self.assertTrue(result.ok, f"{name}: {result.problems}")
 
+    # The one figure held to a different standard, and named here so it cannot drift into
+    # looking like the shape to copy. See examples.py on what it is a fixture FOR.
+    COUNTER_EXAMPLE = "class"
+
     def test_no_reference_diagram_trips_a_content_warning(self):
-        """The corpus is also the worked example of the content limits, so it must obey them."""
+        """The corpus is also the worked example of the content limits, so it must obey them.
+
+        Every figure but the one counter-example, which is skipped by NAME rather than by
+        tolerating any figure that happens to warn — one is a fixture, two is a habit, and a
+        second one appearing has to fail here.
+        """
         for name, spec in REFERENCE.items():
+            if name == self.COUNTER_EXAMPLE:
+                continue
             self.assertEqual(content_warnings(spec), [], f"{name}")
+
+    def test_the_counter_example_still_says_it_is_one(self):
+        """`class` is kept as the fixture for a drawing carrying BOTH annotations — colours
+        that need a legend, and a callout — because nothing else in the corpus covers the two
+        together. It is not the shape an author should copy, and this is what says so.
+
+        What is wrong with it is measurable: four colours over five types, two of them sharing
+        one, so three legend rows each point at a single box. A colour that groups nothing is
+        decoration. The figure a reader would actually want here is one role for all five and
+        no legend at all — and then colour would be free, so the added interface could take the
+        accent instead of a callout.
+
+        So this test has two jobs. It stops anyone quietly "fixing" the figure and taking the
+        only both-annotations fixture with it, and it stops the advisory being weakened to make
+        the corpus look clean. If the advisory ever stops firing here, one of those two things
+        has happened.
+        """
+        said = content_warnings(REFERENCE[self.COUNTER_EXAMPLE])
+        self.assertTrue([w for w in said if "groups nothing" in w],
+                        f"the counter-example no longer reads as one: {said}")
 
     def test_intrinsic_size_is_pinned_so_the_browser_cannot_upscale(self):
         for name, svg in self.svgs.items():
@@ -292,15 +333,31 @@ class TestReferenceCorpus(unittest.TestCase):
             for ref in re.findall(r"url\(#([^)]*)\)", svg):
                 self.assertTrue(ref.startswith(prefix), f"{name}: dangling url(#{ref})")
 
+    # Which figures carry which annotation, derived from the specs rather than listed here —
+    # the corpus marks a change two ways on purpose (see examples.py) and a hardcoded list
+    # goes stale the moment one figure swaps from one to the other.
+    NOTED = [name for name, spec in REFERENCE.items() if place.note_sites(spec)]
+    ACCENTED = [name for name, spec in REFERENCE.items()
+                if any(item.get("new") for _where, item in spec_mod._items(spec))]
+
+    def test_the_corpus_marks_a_change_both_ways(self):
+        """Neither list may empty out. A corpus that lost its callouts would stop covering the
+        anchor search, and one that lost its accents would stop covering the cheaper path that
+        exists so most figures never run that search."""
+        self.assertTrue(self.NOTED, "no figure carries a note any more")
+        self.assertTrue(self.ACCENTED, "no figure marks an added box with the accent")
+        self.assertTrue(set(self.NOTED) & set(self.ACCENTED),
+                        "no figure carries both, so nothing checks they coexist")
+
     def test_callouts_are_retargeted_and_tagged(self):
         """d2 paints the callout plain white; untouched, it is invisible in dark mode."""
-        for name in ("arch", "sequence", "er", "class", "state"):
+        for name in self.NOTED:
             svg = self.svgs[name]
             self.assertIn("d2-callout", svg, f"{name} callout was not tagged")
             self.assertNotIn(render.CALLOUT_ATTRS, svg,
                              f"{name} still carries d2's own callout paint")
 
-    def test_every_annotated_diagram_has_a_visible_callout_not_just_a_title(self):
+    def test_every_noted_diagram_has_a_visible_callout_not_just_a_title(self):
         """`tooltip` alone is a hover-only <title>, and nothing on screen announces one; only
         `tooltip.near` draws a box a reader can see.
 
@@ -308,11 +365,93 @@ class TestReferenceCorpus(unittest.TestCase):
         element that is belongs to d2 and does change between versions, where a box drawn with
         nothing in it is the failure worth naming either way.
         """
-        for name in ("arch", "sequence", "er", "class", "state"):
+        for name in self.NOTED:
             drawn = callout.notes(self.svgs[name])
             self.assertTrue(drawn, f"{name} drew no callout at all")
             for text, _box in drawn:
                 self.assertTrue(text.strip(), f"{name} drew a callout with no words in it")
+
+    def test_a_box_the_change_added_wears_the_accent(self):
+        """The cheap marker, in the drawing. A table takes it as its fill, having no border of
+        its own to colour; every other kind takes it as a border twice the usual weight."""
+        for name in self.ACCENTED:
+            svg = self.svgs[name]
+            self.assertIn("var(--d-accent)", svg,
+                          f"{name} marks a box `new` but nothing is painted with the accent")
+            if REFERENCE[name]["kind"] not in ("er", "class"):
+                self.assertRegex(
+                    svg, r'stroke="var\(--d-accent\)"[^>]*stroke-width:4',
+                    f"{name}'s accent is not the heavier border a reader can pick out")
+
+
+@unittest.skipUnless(HAVE_D2, "d2 is not installed (brew install d2)")
+class TestTheSameTypesDrawnBothWays(unittest.TestCase):
+    """The corpus keeps one class figure in each shape, and renders both.
+
+    `REFERENCE["class"]` paints its types four colours, needs a legend for them, and therefore
+    has to mark what the change added with a callout. `CLASS_PREFERRED` is the same five types
+    with one role between them: colour carries nothing, so no legend explains anything and the
+    accent is free to mark the added box.
+
+    Both are rendered here because both PATHS have to keep working — an accent explained by a
+    legend, and a role legend beside a callout — and because the pair is the only thing that
+    shows the cost of the choice in numbers rather than in an opinion.
+
+    Which one an author should write is not a matter of taste and is asserted below: the
+    preferred shape is the one the renderer passes in silence, and the other only exists after
+    someone has spent several roles AND a legend to explain them, at which point the renderer
+    says it was the weaker choice.
+
+    That asymmetry — effort plus an advisory — IS the whole of what makes the weaker shape
+    "forced", and it was chosen over the two alternatives rather than left unfinished. A spec
+    key acknowledging the warning was considered and refused: it would be a key whose only job
+    is to silence a non-fatal message, which every author then has to learn about without
+    anything being made safer. Refusing the shape outright was refused too, because it would
+    take the corpus's only fixture for a legend beside a callout with it, and because "these
+    colours are not worth their legend" is a judgement the renderer cannot actually make — it
+    can only measure that three rows point at one box each and say so.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.forced = figure.draw({"class-forced": REFERENCE["class"]}, target="embed")[0]
+        cls.preferred = figure.draw({"class-preferred": CLASS_PREFERRED}, target="embed")[0]
+
+    def test_both_render_and_pass_every_gate(self):
+        for name, drawn in (("forced", self.forced), ("preferred", self.preferred)):
+            self.assertTrue(drawn.ok, f"{name}: {drawn.problems + drawn.blocked}")
+
+    def test_the_preferred_shape_is_the_one_nothing_is_said_about(self):
+        """Which is what "default" means here: write it and the renderer is quiet."""
+        self.assertEqual(content_warnings(CLASS_PREFERRED), [])
+        self.assertEqual(self.preferred.advice, [])
+
+    def test_the_other_shape_is_advised_against(self):
+        said = " ".join(self.forced.advice)
+        self.assertIn("groups nothing", said,
+                      f"the weaker shape must say so: {self.forced.advice}")
+
+    def test_the_preferred_shape_spends_no_callout(self):
+        """So no anchor search either, which is the most expensive thing a figure can ask."""
+        self.assertEqual(self.preferred.svg.count('class="positioned-tooltip"'), 0)
+        self.assertEqual(self.forced.svg.count('class="positioned-tooltip"'), 1)
+
+    def test_the_preferred_shape_paints_one_colour_plus_the_accent(self):
+        """The accent is the only colour distinction on it, which is why it needs no legend
+        beyond the one row naming that accent."""
+        painted = {item.get("role") for item in CLASS_PREFERRED["classes"]}
+        self.assertEqual(painted, {"neutral"}, "a second role would need explaining")
+        self.assertEqual([k for k in CLASS_PREFERRED["legend"]], ["new"])
+        self.assertIn("var(--d-accent)", self.preferred.svg)
+
+    def test_the_preferred_shape_is_the_smaller_drawing(self):
+        """Both directions, and neither is free: the forced one buys its legend rows and its
+        callout with page. Asserted as an inequality rather than a pin — the pinned geometry
+        lives in MEASURED above, and this is about the two being comparable at all."""
+        pw, ph = render.natural_size(self.preferred.svg)
+        fw, fh = render.natural_size(self.forced.svg)
+        self.assertLess(pw, fw, "the forced shape should be the wider one")
+        self.assertLessEqual(ph, fh, "and no shorter")
 
 
 @unittest.skipUnless(HAVE_D2, "d2 is not installed (brew install d2)")

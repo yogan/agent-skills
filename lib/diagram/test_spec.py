@@ -163,12 +163,37 @@ class TestNotes(unittest.TestCase):
 
 class TestNewFlag(unittest.TestCase):
     """`new` marks the one box a change added. Colour without words says "something here is
-    special" and never says what — there is no legend — so it may not travel alone."""
+    special" and never says what, so it may not travel alone — and there are two ways to give
+    it words, which is the whole point: a legend entry when being added is all there is to
+    say, a note when there is something specific to say about the box."""
 
-    def test_new_without_a_note_is_rejected(self):
+    def test_new_with_neither_a_legend_nor_a_note_is_rejected(self):
         spec = arch()
         spec["nodes"][1]["new"] = True
-        with self.assertRaisesRegex(SpecError, "without a `note`"):
+        with self.assertRaisesRegex(SpecError, "nothing to explain the accent"):
+            validate(spec)
+
+    def test_a_legend_entry_explains_it_for_the_whole_drawing(self):
+        """The cheap path, and the reason this exists: no callout, so no anchor search."""
+        spec = arch()
+        spec["nodes"][1]["new"] = True
+        spec["legend"] = {"new": "added by this change"}
+        validate(spec)
+
+    def test_one_legend_entry_covers_every_marked_box(self):
+        """Which is the saving: a drawing where three boxes are new pays for one row of
+        words, where three callouts would each have been placed by measuring eight anchors."""
+        spec = arch()
+        spec["nodes"][0]["children"][0]["new"] = True
+        spec["nodes"][1]["new"] = True
+        spec["legend"] = {"new": "added by this change"}
+        validate(spec)
+
+    def test_a_legend_entry_for_an_accent_nothing_wears_is_rejected(self):
+        """Same rule as a role colour that is not on the canvas: the reader goes looking."""
+        spec = arch()
+        spec["legend"] = {"new": "added by this change"}
+        with self.assertRaisesRegex(SpecError, "nothing in this diagram is marked"):
             validate(spec)
 
     def test_new_with_a_note_passes(self):
@@ -187,11 +212,114 @@ class TestNewFlag(unittest.TestCase):
             {"id": "t", "role": "store", "new": True, "note": "new",
              "columns": [{"name": "id", "type": "uuid"}]}]})
 
-    def test_a_table_marked_without_a_note_is_rejected(self):
-        with self.assertRaisesRegex(SpecError, "without a `note`"):
+    def test_a_table_marked_with_neither_is_rejected(self):
+        with self.assertRaisesRegex(SpecError, "nothing to explain the accent"):
             validate({"kind": "er", "tables": [
                 {"id": "t", "role": "store", "new": True,
                  "columns": [{"name": "id", "type": "uuid"}]}]})
+
+    def test_a_marked_table_may_be_explained_by_the_legend_too(self):
+        validate({"kind": "er", "legend": {"new": "added by this change"}, "tables": [
+            {"id": "t", "role": "store", "new": True,
+             "columns": [{"name": "id", "type": "uuid"}]}]})
+
+    def test_the_accent_is_refused_where_the_colours_already_mean_something(self):
+        """Two colour systems, one of them explained, is worse than either alone: the reader
+        stops asking what the accent is and starts asking what the others are. A class diagram
+        shipped exactly that — four repurposed role colours, none explained, and the only
+        legend row on the drawing pointing at a fifth box."""
+        spec = arch()
+        spec["nodes"][1]["new"] = True
+        spec["legend"] = {"store": "queryable today", "new": "added by this change"}
+        with self.assertRaisesRegex(SpecError, "already explains what its colours mean"):
+            validate(spec)
+
+    def test_the_remedy_it_names_is_a_note(self):
+        """And the remedy works: colours keep their legend, the change takes words."""
+        spec = arch()
+        spec["nodes"][1]["note"] = "gains a revision column"
+        spec["legend"] = {"store": "queryable today"}
+        validate(spec)
+
+
+class TestUnexplainedColoursOnTypes(unittest.TestCase):
+    """A `class` diagram painting its types several colours has repurposed the roles by
+    construction — a type is not a datastore — so nothing about the picture says what the
+    colours mean. Advisory, because only the author can say."""
+
+    def _class(self, **over):
+        spec = {"kind": "class", "classes": [
+            {"id": "A", "role": "svc", "members": [{"name": "+ go()", "type": "void"}]},
+            {"id": "B", "role": "cache", "members": [{"name": "+ hit()", "type": "bool"}]}],
+            "edges": [{"from": "A", "to": "B", "label": "uses"}]}
+        spec.update(over)
+        return spec
+
+    def test_several_unexplained_colours_are_advised_on(self):
+        self.assertTrue([w for w in content_warnings(self._class()) if "explains none" in w])
+
+    def test_a_legend_settles_it(self):
+        spec = self._class(legend={"svc": "owned here", "cache": "the Redis one"})
+        self.assertEqual([w for w in content_warnings(spec) if "explains none" in w], [])
+
+    def test_one_colour_draws_no_distinction_and_needs_no_legend(self):
+        spec = self._class()
+        spec["classes"][1]["role"] = "svc"
+        self.assertEqual([w for w in content_warnings(spec) if "explains none" in w], [])
+
+    def test_the_other_kinds_are_left_alone(self):
+        """Their roles say what the thing IS, and a state's set is read by convention."""
+        for spec in (arch(), {"kind": "state", "states": [
+                {"id": "a", "role": "working", "start": True}, {"id": "b", "role": "terminal"}],
+                "transitions": [{"from": "a", "to": "b", "label": "done"}]}):
+            self.assertEqual([w for w in content_warnings(spec) if "explains none" in w], [])
+
+
+class TestAColourHasToGroupSomething(unittest.TestCase):
+    """A legend row pointing at a single box spends a lookup to say what the box could have
+    said in words. Needing a legend at all is the exception; needing one whose rows are each
+    about one box means the colouring has not earned it."""
+
+    def _legended(self, roles, legend):
+        return {"kind": "er", "legend": legend,
+                "tables": [{"id": f"t{i}", "role": role,
+                            "columns": [{"name": "id", "type": "uuid"}]}
+                           for i, role in enumerate(roles)],
+                "edges": [{"from": "t0", "to": "t1", "label": "belongs to"}]}
+
+    def _said(self, spec):
+        return [w for w in content_warnings(spec) if "groups nothing" in w]
+
+    def test_mostly_singleton_colours_are_advised_on(self):
+        spec = self._legended(["store", "ext", "cache", "svc"],
+                              {"store": "a", "ext": "b", "cache": "c", "svc": "d"})
+        self.assertTrue(self._said(spec))
+
+    def test_a_colour_that_really_groups_is_left_alone(self):
+        """The shape the large ER has: two colours, several boxes each."""
+        spec = self._legended(["store", "store", "store", "ext", "ext"],
+                              {"store": "queryable today", "ext": "grant still pending"})
+        self.assertEqual(self._said(spec), [])
+
+    def test_one_singleton_among_several_real_groups_is_fine(self):
+        spec = self._legended(["store", "store", "ext", "ext", "cache"],
+                              {"store": "a", "ext": "b", "cache": "c"})
+        self.assertEqual(self._said(spec), [])
+
+    def test_the_accent_entry_is_not_counted_as_a_colour_to_group(self):
+        """It marks whatever the change touched, which may well be one box — that is its job,
+        and it is why `new` is the one legend key exempt from this."""
+        spec = self._legended(["store", "store"], {"new": "added by this change"})
+        spec["tables"][1]["new"] = True
+        self.assertEqual(self._said(spec), [])
+
+    def test_the_shape_the_guidance_recommends_instead_is_clean(self):
+        """One role for every box, no role legend, and the accent free to mark the change —
+        which is what the counter-example in the corpus should have been."""
+        spec = self._legended(["store", "store", "store"], {"new": "added by this change"})
+        spec["tables"][2]["new"] = True
+        validate(spec)
+        self.assertEqual(content_warnings(spec), [])
 
     def test_a_container_cannot_be_marked_because_it_would_be_ignored(self):
         spec = arch(nodes=[{"id": "g", "new": True, "note": "new area",

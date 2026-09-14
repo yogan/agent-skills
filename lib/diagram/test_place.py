@@ -19,7 +19,7 @@ import unittest
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
 from lib.diagram import arrows, place
-from lib.diagram.examples import ARCHITECTURE, CLASS, ER, SEQUENCE, STATE
+from lib.diagram.examples import ARCHITECTURE, ER, SEQUENCE, STATE
 from lib.diagram.spec import NEAR
 
 
@@ -44,12 +44,39 @@ def fake_measurement(callouts, svg_clip=None, fmin=13.0, landmarks=0):
             "svg": {"width": 100, "height": 100}, "overflow": {}, "offenders": []}
 
 
+def _descend(node):
+    """Every box under `node`, itself included, depth first — the order `note_sites` walks."""
+    yield node
+    for child in node.get("children") or []:
+        yield from _descend(child)
+
+
+# A drawing with TWO notes, for the sweep tests below. The reference ER used to supply that
+# and no longer does: the corpus now marks one of its two changes with the accent and a
+# legend row instead, which is the cheaper path and the point of having it. The cost model
+# being tested here — every anchor for the first note, one fewer for each note after, then a
+# pass confirming the ones that settled early — needs two notes and does not care whose.
+TWO_NOTES = {
+    "kind": "er",
+    "tables": [
+        {"id": "documents", "role": "store", "note": "gains a column",
+         "columns": [{"name": "id", "type": "uuid", "key": "pk"}]},
+        {"id": "sessions", "role": "store", "note": "new table",
+         "columns": [{"name": "id", "type": "uuid", "key": "pk"}]},
+    ],
+    "edges": [{"from": "documents", "to": "sessions", "label": "1 doc : n sessions"}],
+}
+
 class TestNoteSites(unittest.TestCase):
     def test_it_finds_notes_on_nested_architecture_nodes(self):
+        """Reached through two levels of container, which is the traversal worth pinning.
+        Counted against the spec rather than against a list written here: the corpus marks
+        what a change did two ways on purpose, and which boxes take which is its business."""
         sites = place.note_sites(ARCHITECTURE)
-        self.assertEqual(len(sites), 2)
-        self.assertEqual([s["note"] for s in sites],
-                         ["new service", "now fans out presence"])
+        nested = [n["note"] for group in ARCHITECTURE["nodes"]
+                  for n in _descend(group) if n.get("note")]
+        self.assertTrue(nested, "the architecture has no nested note left to find")
+        self.assertEqual([s["note"] for s in sites], nested)
 
     def test_it_finds_notes_on_participants(self):
         self.assertEqual([s["note"] for s in place.note_sites(SEQUENCE)],
@@ -57,7 +84,7 @@ class TestNoteSites(unittest.TestCase):
 
     def test_it_finds_notes_on_tables(self):
         self.assertEqual([s["note"] for s in place.note_sites(ER)],
-                         ["gains a revision column", "new table"])
+                         [t["note"] for t in ER["tables"] if t.get("note")])
 
     def test_it_finds_notes_on_states(self):
         self.assertEqual([s["note"] for s in place.note_sites(STATE)],
@@ -83,9 +110,9 @@ class TestNoteSites(unittest.TestCase):
 
 class TestApply(unittest.TestCase):
     def test_it_sets_near_by_index(self):
-        out = place._apply(ER, ("bottom-left", "bottom-center"))
-        self.assertEqual([s["near"] for s in place.note_sites(out)],
-                         ["bottom-left", "bottom-center"])
+        anchors = ("bottom-left", "bottom-center", "top-right")[:len(place.note_sites(ER))]
+        out = place._apply(ER, anchors)
+        self.assertEqual(tuple(s["near"] for s in place.note_sites(out)), anchors)
 
     def test_the_original_spec_is_not_mutated(self):
         before = ER["tables"][1].get("near")
@@ -311,7 +338,7 @@ class TestTheSweep(unittest.TestCase):
         """The combination it is already sitting on was measured when the first one settled,
         and every combination measured is kept. Skipping the re-measure is what makes sweeping
         affordable."""
-        _, report = place.place(ER, name="er")
+        _, report = place.place(TWO_NOTES, name="er")
         self.assertEqual([len(combos) for combos in self.calls],
                          [len(NEAR), len(NEAR) - 1, len(NEAR) - 1])
         self.assertEqual(report[0]["candidates"], 3 * len(NEAR) - 2)
@@ -320,7 +347,7 @@ class TestTheSweep(unittest.TestCase):
         """The whole point of sweeping. The first callout was settled against wherever the
         second still happened to be, so once the second has moved its answer was decided
         against a drawing that no longer exists."""
-        place.place(ER, name="er")
+        place.place(TWO_NOTES, name="er")
         self.assertEqual(len(self.calls), 3, "the first callout is offered its anchors again")
         # The re-offer holds the SECOND callout at what it settled on, and varies the first.
         self.assertTrue(all(combo[1] == "bottom-left" for combo in self.calls[2]))
@@ -368,7 +395,7 @@ class TestTheSweep(unittest.TestCase):
 
     def test_the_chosen_anchors_are_written_into_the_returned_spec(self):
         """And they are the cheapest offered — the spy prices every anchor but one at 100."""
-        out, report = place.place(ER, name="er")
+        out, report = place.place(TWO_NOTES, name="er")
         self.assertEqual([s["near"] for s in place.note_sites(out)],
                          ["bottom-left", "bottom-left"])
         self.assertEqual([e["near"] for e in report], ["bottom-left", "bottom-left"])
@@ -383,7 +410,7 @@ class TestTheSweep(unittest.TestCase):
         place._measure_candidates = (
             lambda spec, name, combos, *a, **k: [(anchors, fake_measurement([(0, 7)]))
                                                  for anchors in combos])
-        spec = copy.deepcopy(ER)
+        spec = copy.deepcopy(TWO_NOTES)
         for site in place.note_sites(spec):
             site["near"] = NEAR[-1]
         out, report = place.place(spec, name="er")
@@ -392,14 +419,14 @@ class TestTheSweep(unittest.TestCase):
         self.assertEqual(report[0]["sweeps"], 2)
 
     def test_the_report_records_the_candidate_count_and_the_passes(self):
-        _, report = place.place(ER, name="er")
+        _, report = place.place(TWO_NOTES, name="er")
         self.assertEqual(report[0]["candidates"], 3 * len(NEAR) - 2)
         self.assertEqual(report[0]["sweeps"], 2)
 
     def test_a_settled_diagram_costs_one_confirming_pass_and_no_more(self):
         """Every callout already on its best anchor: the first pass moves nothing, so there is
         no second one."""
-        spec = copy.deepcopy(ER)
+        spec = copy.deepcopy(TWO_NOTES)
         for site in place.note_sites(spec):
             site["near"] = "bottom-left"
         _, report = place.place(spec, name="er")
@@ -409,7 +436,7 @@ class TestTheSweep(unittest.TestCase):
     def test_every_report_entry_carries_the_FINAL_cost(self):
         """Not each round's own cost. Recording that made a finished, clip-free placement
         report the first round's clip, and unplaceable() cried wolf."""
-        _, report = place.place(ER, name="er")
+        _, report = place.place(TWO_NOTES, name="er")
         self.assertEqual({e["clip"] for e in report}, {0})
         self.assertEqual(len({e["overlap"] for e in report}), 1)
 
@@ -455,7 +482,7 @@ class TestThePlateauTheSweepCannotCross(unittest.TestCase):
 
     def setUp(self):
         self.calls = []
-        self.spec = copy.deepcopy(ER)
+        self.spec = copy.deepcopy(TWO_NOTES)
         for site, anchor in zip(place.note_sites(self.spec), self.START):
             site["near"] = anchor
         self.real = place._measure_candidates
@@ -555,13 +582,13 @@ class TestOneDrawingForTheWholeSearch(unittest.TestCase):
         return [(anchors, fake_measurement([(0, 100)])) for anchors in combos]
 
     def test_the_embedded_search_is_held_at_one_layout_and_one_spacing(self):
-        place.place(ER, name="er")
+        place.place(TWO_NOTES, name="er")
         self.assertTrue(self.seen)
         self.assertEqual(set(map(repr, self.seen)),
                          {repr({"standalone": False, "layout": ("down", None), "layers": 15})})
 
     def test_the_standalone_search_is_held_at_one_spacing_and_asks_for_no_layout(self):
-        place.place(ER, name="er", standalone=True)
+        place.place(TWO_NOTES, name="er", standalone=True)
         self.assertTrue(self.seen)
         self.assertEqual(set(map(repr, self.seen)),
                          {repr({"standalone": True, "layout": None, "layers": 30})})

@@ -158,20 +158,78 @@ def _list(spec, key, what):
 
 
 def _check_new(item, where):
-    """`new` marks the one thing a change added, and it may not speak alone.
-
-    Colour without words says "something here is special" and never says what. A `legend` is
-    no help here and is not an alternative: it explains ROLE colours, and the accent is not a
-    role — it is one box painted differently from its own kind. Pairing it with a `note` is
-    what makes it legible: the accent carries the eye, and two words say why.
-    """
+    """`new` is a flag. What it may not do — speak without anything explaining it — spans the
+    whole spec rather than one box, so it is `_check_changes_are_explained` below."""
     if "new" not in item:
         return
     _require(isinstance(item["new"], bool), f"{where}: `new` must be true or false")
-    _require(not item["new"] or item.get("note"),
-             f"{where} sets `new` without a `note`. The accent colour has no legend, so it "
-             "cannot say WHAT is new on its own — add a note of a word or two (\"new\", "
-             "\"added\", \"gains a revision column\").")
+
+
+def _check_the_accent(spec):
+    """Two rules about the accent that marks a box the change ADDED, both about one thing:
+    a colour is only legible when the reader can tell what it means.
+
+    **It may not speak alone.** Colour without words says "something here is special" and
+    never says what, so it needs explaining — and there are two ways, which is the whole
+    point of having both:
+
+      * a `legend` entry under `"new"`, naming the accent once for the drawing. The one to
+        reach for when being new is all there is to say about the box, and much the cheaper:
+        a legend row is laid out once, where every callout is positioned by measuring eight
+        anchors in a real browser.
+      * a `note` on the box, for when there is something specific to say. The accent then
+        carries the eye and the words say what changed.
+
+    A note reading only "new" is what that is steering away from: it repeats what the accent
+    already says, buys a placement search to do it, and leaves the reader no better off.
+
+    **And it may not compete.** A diagram whose legend explains its ROLE colours has told the
+    reader that colour carries meaning here — so a further colour, meaning something of a
+    different KIND, leaves them with two systems to hold and one of them explained. A class
+    diagram showed exactly that: four repurposed role colours, none of them explained, and a
+    fifth box accented with the only legend row on the drawing pointing at it. What the reader
+    asks is not "what is the accent" but "then what do the others mean?".
+
+    So where colours already mean something, a change is marked with a `note` instead. The
+    accent is for the drawing whose colours are self-evident — a store is a store — and needs
+    no legend of its own.
+    """
+    marked = [(where, item) for where, item in _items(spec) if item.get("new")]
+    if not marked:
+        return
+    roles_explained = sorted(key for key in (spec.get("legend") or {}) if key != "new")
+    _require(not roles_explained,
+             f"{marked[0][0]} sets `new`, but this diagram's legend already explains what its "
+             f"colours mean ({', '.join(repr(r) for r in roles_explained)}). A second colour "
+             "meaning would leave the reader two systems to hold, and the legend can only "
+             "explain one of them — so mark the change with a `note` on the box instead, and "
+             "keep the colours for what they already say.")
+    if "new" in (spec.get("legend") or {}):
+        return
+    for where, item in marked:
+        _require(item.get("note"),
+                 f"{where} sets `new` with nothing to explain the accent. Name it once for "
+                 "the whole drawing — `\"legend\": {\"new\": \"added in this change\"}` — or "
+                 "give this box a `note` saying what changed (\"gains a revision column\"). "
+                 "The legend is the cheaper of the two, and the right one when being new is "
+                 "all there is to say.")
+
+
+# What one of each list holds, for naming it in a message. Spelled out rather than derived by
+# trimming an "s": that gives "classe", which reads as a typo in the error and sends the author
+# looking for a key of that name.
+_ONE_OF = {"nodes": "node", "participants": "participant", "states": "state",
+           "tables": "table", "classes": "class"}
+
+
+def _items(spec):
+    """(where, item) for every box in the drawing, whatever the kind calls them."""
+    for key in ("nodes", "participants", "states"):
+        for iid, node in _walk(spec.get(key) or []):
+            yield f"{_ONE_OF[key]}: {iid}", node
+    for key in ("tables", "classes"):
+        for item in spec.get(key) or []:
+            yield f"{_ONE_OF[key]}: {item.get('id')}", item
 
 
 def _check_note(obj, where):
@@ -408,6 +466,9 @@ def validate(spec):
         _check_start(spec["states"])
         _check_edges(spec, ids, kind, key="transitions")
     _check_legend(spec, kind)
+    # After the legend, which both decides whether an accent is explained and whether it has
+    # anything to compete with.
+    _check_the_accent(spec)
     return spec
 
 
@@ -432,6 +493,11 @@ def _check_legend(spec, kind):
     Only roles the diagram actually uses may appear. A legend entry for a colour that is not
     on the canvas is worse than none: the reader looks for it, does not find it, and now
     doubts the rest of the legend too.
+
+    `"new"` is the one key that is not a role, and it is here because the accent is not one
+    either — it is a box painted differently from its own kind, so nothing about the picture
+    says what it means. Naming it here is what lets a drawing mark what a change added
+    without buying a callout per box to say so.
     """
     if "legend" not in spec:
         return
@@ -444,8 +510,16 @@ def _check_legend(spec, kind):
     roles = STATE_ROLES if kind == "state" else ROLES
     used = _roles_used(spec)
     for role, label in legend.items():
-        _one_of(role, roles, "legend: role")
         _str(label, f"legend: {role}")
+        # Before the `new` branch below, so the key is checked once for both and a misspelt
+        # one is told that `new` is legal here too.
+        _one_of(role, list(roles) + ["new"], "legend: role")
+        if role == "new":
+            _require(any(item.get("new") for _where, item in _items(spec)),
+                     "legend explains 'new', which nothing in this diagram is marked as. An "
+                     "entry for a colour that is not on the canvas sends the reader looking "
+                     "for it.")
+            continue
         _require(role in used,
                  f"legend explains {role!r}, which nothing in this diagram uses. A colour in "
                  "the legend that is not on the canvas sends the reader looking for it.")
@@ -830,5 +904,53 @@ def content_warnings(spec):
         check_labels(items, noun)
         check_notes(items, noun)
         check_labels(spec.get("edges") or [], "edge")
+
+    # A `class` diagram that paints its types more than one colour has repurposed the roles by
+    # construction: `svc`, `store` and `cache` say what a box IS on an architecture drawing,
+    # and a type is none of those — so the colour is standing in for a distinction of the
+    # author's, which is exactly the case a legend exists for. Every other kind is left alone
+    # here: their roles describe the thing itself, and a `state`'s own vocabulary is decoded by
+    # convention (see STATE_ROLES).
+    #
+    # Advisory rather than an error, because the author is the only one who can say what the
+    # colours mean, and a drawing with four unexplained colours is still worth having while
+    # they work that out. It is the defect that prompted it, though: a reader of exactly this
+    # figure asked what the colours meant, and nothing on the page answered.
+    if kind == "class" and not spec.get("legend"):
+        painted = {item.get("role", "neutral") for item in spec.get("classes") or []}
+        if len(painted) > 1:
+            out.append(
+                f"paints its types {len(painted)} different colours and explains none of them "
+                f"({', '.join(sorted(painted))}) — on a set of types those role names are "
+                "standing in for a distinction of yours, which no reader derives from a "
+                "colour. Add a `legend` saying what each one means here, or — better — use "
+                "one role for all of them and spend no colour at all.")
+
+    # And the other way out of that: a colour on ONE box groups nothing. It is decoration, and
+    # a legend row explaining it asks the reader to look something up to learn a fact the box
+    # could have said in words. Needing a legend at all should be rare; needing one whose rows
+    # each point at a single box means the colouring is not earning it.
+    #
+    # Scoped to a drawing that EXPLAINS its colours, because that is where the cost falls. An
+    # architecture figure has singleton roles too — one datastore, one identity provider — and
+    # wants no legend for them: `store` says what that box IS, not which group it is in.
+    # Measured across all three corpora, exactly one figure trips this and it is kept as the
+    # counter-example on purpose (see examples.py); every other legend has at least two boxes
+    # per colour.
+    role_legend = [key for key in (spec.get("legend") or {}) if key != "new"]
+    if len(role_legend) > 1:
+        per_role = {}
+        for _where, item in _items(spec):
+            if not item.get("children"):
+                role = item.get("role", "neutral")
+                per_role[role] = per_role.get(role, 0) + 1
+        alone = sorted(role for role in role_legend if per_role.get(role, 0) == 1)
+        if len(alone) * 2 > len(role_legend):
+            out.append(
+                f"explains {len(role_legend)} colours, and {len(alone)} of them "
+                f"({', '.join(alone)}) sit on a single box each — a colour that groups nothing "
+                "is decoration, and a legend row for it spends a lookup on a fact the box "
+                "could have carried in words. One role for every box, and no legend, usually "
+                "reads better; colour is then free to mark what the change added.")
 
     return out

@@ -119,12 +119,30 @@ rather than guessing.** The short version:
   `sequence` colours by "group" instead (which side of the wire a lane is on: `browser`/`server`,
   `cli`/`daemon`); a lane carrying both a "group" and a "role" is rejected. Reuse whichever set
   identically across every diagram in one document.
-- **Mark what the change touched with "note"** (2-4 words, e.g. "new service", "gains a
-  revision column"). It renders as a callout that is visible without hovering, positioned
-  automatically by measuring every candidate anchor in a headless browser. Leave "near" out and
-  let it be measured; hand-picked anchors have measurably lost to it.
-  Do NOT convey "this is new" with styling instead - there is no legend, so a colour or a
-  border says "something here is special" without ever saying what.
+- **Mark what the change touched. Two ways, and which one depends on whether colour is free.**
+  **A box the change ADDED, with nothing else to report: `"new": true`**, plus one row naming
+  the accent for the whole drawing - `"legend": {"new": "added by this change"}`. One row
+  however many boxes are marked, and nothing to position.
+  **A box you have something specific to say about: a "note" of 2-4 words** ("now fans out
+  presence", "gains a revision column"). It renders as a callout, visible without hovering,
+  positioned by measuring every candidate anchor in a headless browser - so leave "near" out
+  and let it be measured; hand-picked anchors have measurably lost to it. That measuring is
+  the most expensive thing a figure can ask for, which is the other reason to prefer the
+  accent when "it is new" is the whole message.
+  **The accent needs colour to be free, though**, and it usually is: a role says what a box
+  IS, so nothing needs explaining. Where you have instead repurposed the roles into a
+  distinction of your own - several colours on a set of types, say, to show which side of the
+  design each belongs to - those colours need a role "legend", and the accent must not be used
+  beside one: it would be a second colour system against an explained first, and the reader
+  stops asking what the accent is and starts asking what the others mean. Mark the change with
+  a "note" there. A spec that tries both is rejected.
+  **Before reaching for that, don't.** A colour on ONE box groups nothing, so a legend whose
+  rows each point at a single box is decoration with a lookup attached. Give every box the
+  same role instead: nothing needs a legend, and colour is free again for the accent. Fewer
+  colours is the normal answer and a legend is the exception.
+  Never do both on one box: a note reading "new" beside an accent that already says so is the
+  same fact twice, paid for twice. And never convey "this is new" with a role colour of your
+  own - unexplained styling says "something here is special" without ever saying what.
 - **A diagram here is embedded in a page, so width is a hard constraint.** The article gives it
   an 832px column and scales anything wider down, every glyph with it; past roughly 1080px of
   natural canvas the text drops under 10px and the size gate says TINY. Do not set "direction" (a spec carrying one is rejected)

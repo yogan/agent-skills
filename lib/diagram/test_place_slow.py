@@ -81,9 +81,11 @@ class TestPlacementAgainstRealDiagrams(unittest.TestCase):
         found = sum(row["overlap"] for row in report) / len(report)
         self.assertLess(found, 1, f"the search should cover nothing here, not {found:.0f}")
 
-        # Proof it had something to get wrong. `center-right` puts the new-table callout across
-        # both arrows leaving `presence_sessions`.
-        measured = place._measure_candidates(ER, "er", [("top-left", "center-right")], "light")
+        # Proof it had something to get wrong. `center-right` puts the one callout this
+        # diagram still has across the arrows leaving `documents` — measured at 2038 against
+        # the winner's nothing, and over a landmark as well. The other table's callout became
+        # the accent and a legend row (see examples.py), so the bad anchor is a one-tuple now.
+        measured = place._measure_candidates(ER, "er", [("center-right",)], "light")
         poor = measured[0][1]
         _, poor_clip, poor_overlap = place._score(poor)
         self.assertEqual(poor_clip, 0, "the point is that it covers, not that it clips")
