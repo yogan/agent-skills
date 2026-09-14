@@ -95,6 +95,11 @@ LEGEND_SWATCH = 1.05         # swatch side, in multiples of the font size
 LEGEND_TEXT_GAP = 0.45       # swatch -> its word
 LEGEND_ENTRY_GAP = 1.6       # word -> the next swatch
 LEGEND_ROW_GAP = 0.55        # one wrapped row of swatches -> the next
+# The drawing's lowest ink -> the first row of swatches. Its own gap rather than whatever
+# margin d2 left under the drawing, which is a few px and put the swatches hard against the
+# bottom box. Deliberately more than LEGEND_EDGE_GAP below, so the band reads as sitting on
+# the canvas edge rather than floating between the drawing and it.
+LEGEND_TOP_GAP = 1.5
 # Swatches -> the canvas edge below them. A multiple of the type, not the `--pad` d2 was run
 # with: measured on a standalone ER, d2 leaves 21px to the left of the boxes and 13px under
 # the lowest ink, so `pad` as a bottom margin came out at nearly double what the drawing
@@ -332,29 +337,51 @@ def add_legend(svg, entries, font, pad=D2_PAD):
             raise CompactError(f"the legend's {label!r} needs {lead + width:.0f}px and the "
                                f"whole drawing is only {vw:.0f}px wide")
 
-    # Greedy fill, one row at a time, each entry keeping the offset it will be drawn at.
-    rows, row, used = [], [], 0.0
-    for entry, width in zip(entries, widths):
-        gap = font * LEGEND_ENTRY_GAP if row else 0.0
-        if row and used + gap + lead + width > avail:
-            rows.append(row)
-            row, used, gap = [], 0.0, 0.0
-        used += gap
-        row.append((entry, width, used))
-        used += lead + width
-    rows.append(row)
+    # A GRID, not a greedy fill, and the difference is only visible once the legend wraps:
+    # packed left to right each row starts a new sequence of widths, so the second entry of
+    # row two lands wherever row two's first entry happened to end — a column of swatches that
+    # does not line up, which reads as a mistake rather than as a list. Sizing each column to
+    # its widest member costs the slack beside the shorter words and buys a legend a reader
+    # scans down as well as across.
+    #
+    # The most columns that fit wins, tried widest-first: a legend is an annotation and the
+    # rows it spends are page the drawing does not get.
+    def columns_of(count):
+        """What each of `count` columns has to be wide for every entry to fit in it, or None
+        if that many columns will not fit the drawing. A column is as wide as its widest
+        member, which is what makes the swatches below it line up."""
+        cells = [widths[i:i + count] for i in range(0, len(widths), count)]
+        widest = [max(lead + cell[c] for cell in cells if c < len(cell))
+                  for c in range(count)]
+        return (widest if sum(widest) + (count - 1) * font * LEGEND_ENTRY_GAP <= avail
+                else None)
 
-    # The gap ABOVE the legend is the one the drawing already has: the canvas carries its own
-    # bottom margin below the lowest ink, and the swatches start where that margin ends, so
-    # the legend sits the same distance from the drawing as the drawing sits from every other
-    # edge. Only the gap BELOW has to be added, and it is a multiple of the type rather than
-    # the `--pad` d2 was run with — that pad is not the margin the drawing ends up with, and
-    # using it put nearly twice as much space under the legend as beside it.
+    # One column always fits, because every entry was measured against `avail` above — so this
+    # cannot come back empty and does not need a fallback.
+    column_widths = next(w for w in (columns_of(n) for n in range(len(entries), 0, -1)) if w)
+    offsets, running = [], 0.0
+    for width in column_widths:
+        offsets.append(running)
+        running += width + font * LEGEND_ENTRY_GAP
+    columns = len(column_widths)
+    rows = [[(entry, width, offsets[column])
+             for column, (entry, width) in enumerate(zip(entries[at:at + columns],
+                                                         widths[at:at + columns]))]
+            for at in range(0, len(entries), columns)]
+
+    # The gap ABOVE the legend is its own, not the margin the drawing happens to end with.
+    # Leaving it to that margin was measured and is wrong: d2's bottom pad is a few px, so the
+    # swatches came up hard against the lowest box and the legend read as another row of the
+    # drawing. It is larger than the gap BELOW on purpose — that groups the band with the edge
+    # it sits on rather than floating it between the two — and both are multiples of the type
+    # rather than the `--pad` d2 was run with, which is not the margin the drawing ends up
+    # with and put nearly twice as much space under the legend as beside it.
     swatches = len(rows) * swatch + (len(rows) - 1) * font * LEGEND_ROW_GAP
-    band = swatches + font * LEGEND_EDGE_GAP
+    band = font * LEGEND_TOP_GAP + swatches + font * LEGEND_EDGE_GAP
     marks = []
     for index, row in enumerate(rows):
-        top = vy + vh + index * (swatch + font * LEGEND_ROW_GAP)
+        top = (vy + vh + font * LEGEND_TOP_GAP
+               + index * (swatch + font * LEGEND_ROW_GAP))
         for (label, fill, stroke), width, offset in row:
             x = vx + pad + offset
             marks.append(

@@ -305,21 +305,52 @@ class TestRoleLegend(unittest.TestCase):
                          compact.add_legend(self.svg(), self.ENTRIES, 14)).group(1)
         self.assertAlmostEqual(float(at14) / float(at13), 14 / 13, places=2)
 
-    def test_the_space_under_it_is_the_margin_the_drawing_keeps(self):
-        """The reported defect: the band added `pad` below the swatches, and `pad` is not the
-        margin the drawing ends up with — measured on a standalone ER, d2 leaves 21px beside
-        the boxes and 13px under the lowest ink, so the legend read as having nearly double
-        the space beneath it that it had beside it. The gap ABOVE needs nothing added: the
-        canvas already carries its own bottom margin, and the swatches start where it ends."""
+    def test_a_wrapped_legend_lines_its_columns_up(self):
+        """The reported defect, and it only shows once the legend wraps. Packed left to right
+        each row starts a new sequence of widths, so row two's second swatch landed wherever
+        row two's first entry happened to end — a column that does not line up reads as a
+        mistake rather than as a list. Four entries of DIFFERENT widths, because equal ones
+        would line up by accident and prove nothing.
+        """
+        entries = [(label, "#2c6b30", "#2c6b30") for label in
+                   ("owned here", "a contract it depends on", "the Redis one", "an event")]
+        for label, width in zip([e[0] for e in entries], (70.0, 150.0, 80.0, 60.0)):
+            self.callout._WIDTHS[label] = width
+        out = compact.add_legend(self.svg(width=420), entries, 14)
+        swatches = [(float(m.group(1)), float(m.group(2))) for m in
+                    re.finditer(r'<rect x="([\d.-]+)" y="([\d.-]+)"[^>]*fill="#2c6b30"', out)]
+        self.assertEqual(len(swatches), 4, "a swatch went missing")
+        rows = sorted({y for _x, y in swatches})
+        self.assertEqual(len(rows), 2, f"expected two rows, got {len(rows)}")
+        first = [x for x, y in swatches if y == rows[0]]
+        second = [x for x, y in swatches if y == rows[1]]
+        self.assertEqual(first, second,
+                         "the columns of a wrapped legend must start at the same x")
+
+    def test_it_keeps_its_own_space_above_and_below(self):
+        """Two reported defects, one on each side of the band.
+
+        BELOW: it added `pad`, and `pad` is not the margin the drawing ends up with —
+        measured on a standalone ER, d2 leaves 21px beside the boxes and 13px under the lowest
+        ink, so the legend read as having nearly double the space beneath it that it had
+        beside it.
+
+        ABOVE: it added nothing, on the reasoning that the canvas already carries a bottom
+        margin and the swatches could start where it ends. That margin is a few px, so the
+        swatches came up hard against the lowest box and the band read as another row of the
+        drawing. It has its own gap now, and a bigger one than below — which is what groups
+        it with the canvas edge instead of floating it between the two.
+        """
         out = compact.add_legend(self.svg(), self.ENTRIES, 14)
         before = compact._viewbox(compact._svg_tags(self.svg())[1])
         after = compact._viewbox(compact._svg_tags(out)[1])
         swatch = 14 * compact.LEGEND_SWATCH
         top = float(re.search(r'<rect x="[\d.]+" y="([\d.]+)"[^>]*fill="#', out).group(1))
-        self.assertAlmostEqual(top, before[1] + before[3], places=1,
-                               msg="the swatches start at the old canvas edge")
-        self.assertAlmostEqual(after[1] + after[3] - (top + swatch),
-                               14 * compact.LEGEND_EDGE_GAP, places=1)
+        above = top - (before[1] + before[3])
+        below = after[1] + after[3] - (top + swatch)
+        self.assertAlmostEqual(above, 14 * compact.LEGEND_TOP_GAP, places=1)
+        self.assertAlmostEqual(below, 14 * compact.LEGEND_EDGE_GAP, places=1)
+        self.assertGreater(above, below, "the band should sit on the edge, not between")
 
     def test_the_canvas_grows_to_hold_it(self):
         out = compact.add_legend(self.svg(), self.ENTRIES, 14)
