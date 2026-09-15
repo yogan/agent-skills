@@ -37,9 +37,17 @@
     },
     {
       "key": "reply-view",
+      "note": [
+        "The signature is the draft LABEL's prefix, not `**Draft reply:**`, because the",
+        "command has two renders: the full block for a topic's first reply, and",
+        "`--refine` for a reworded draft on a topic already on screen, which labels the",
+        "draft `**Draft reply — ◈ t4:**` and drops the code and thread. Pinning the",
+        "colon would leave the refine render ungated — the one the model is most likely",
+        "to drop, since it is the short one."
+      ],
       "cmd": "threads\\.py\\s+reply-view\\b",
-      "signature": ["**Draft reply:**", "Thread (to post on):", "**`c`** copy to clipboard"],
-      "reason": "You ran `threads.py reply-view` for this reply but your message did not include its output. Tool output is COLLAPSED — the user cannot see it. Re-send your message as the FULL reply-view block pasted verbatim: the topic header, the fenced code, the reviewer's blockquoted note + every reply, the **Draft reply:** block, the Thread (to post on): URL, and the final c/p/n prompt line. Do not summarise it to just the prompt."
+      "signature": ["**Draft reply", "Thread (to post on):", "**`c`** copy to clipboard"],
+      "reason": "You ran `threads.py reply-view` for this reply but your message did not include its output. Tool output is COLLAPSED — the user cannot see it. Re-send your message as the FULL reply-view block pasted verbatim: for a first reply that is the topic header, the fenced code, the reviewer's blockquoted note + every reply, the **Draft reply:** block, the Thread (to post on): URL and the final c/p/n prompt line; with `--refine` it is the draft, the URL and the prompt. Do not summarise it to just the prompt."
     },
     {
       "key": "change-preview",

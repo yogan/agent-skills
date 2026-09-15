@@ -45,7 +45,7 @@ meaning).
 
 - `threads.py` — fetch/reconcile threads, render tables & the reply block. Run
   `threads.py -h` for subcommands
-  (`sync·todo·present·bodies·plans·quote·url·reply·reply-view·set·merge·path·change-view·diff-view`).
+  (`sync·todo·present·bodies·plans·quote·url·reply·reply-view [--refine]·set·merge·path·change-view·diff-view`).
 - `quote <t>` — a topic in full: the code the reviewer's comment is anchored to (read
   from the exact blob the comment hangs on, so the line numbers are the reviewer's),
   then the whole thread. Shows the reviewer's own line range when they marked one —
@@ -59,7 +59,9 @@ meaning).
   guard (`t5`…) sits inside `reply`, so the post path cannot skip it.
 - `reply-view <t>` — the one-paste reply block (code + thread + draft + URL + prompt);
   the draft's prose is blockquoted, its fenced code left at line start so it keeps its
-  highlighting.
+  highlighting. `--refine` is the same block minus the context, for re-showing a reworded
+  draft on the topic the user is already looking at — the code and the thread have not
+  changed since they were pasted, and repeating them buries the draft.
 - `change-view <t>` — the one-paste trivial-topic change illustration (fenced code +
   `Agreed?`), read from stdin: piped rather than written to a file, since a heredoc into
   `~/.claude/` trips Claude Code's protected-path prompt on every topic. Content that

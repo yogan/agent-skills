@@ -7,6 +7,7 @@ These cover the rendering that has to survive a markdown renderer, which is wher
 were: a change illustration wrapped in a second fence lost its highlighting and spilled its
 tail as prose, and a code anchor read against the wrong version shows unrelated lines.
 """
+import json
 import os
 import subprocess
 import sys
@@ -18,6 +19,14 @@ sys.path.insert(0, HERE)
 
 import threads as T                                   # noqa: E402
 from lib import critical_manifest                     # noqa: E402
+
+
+def gate_signature(key):
+    """The marker strings the Stop hook looks for in a given gated command's output —
+    read from the shipped spec so a render and its gate cannot drift apart silently."""
+    with open(os.path.join(HERE, "paste-gates.json")) as fh:
+        gates = json.load(fh)["gates"]
+    return next(g["signature"] for g in gates if g["key"] == key)
 
 
 class TestLooksLikeDiff(unittest.TestCase):
@@ -126,11 +135,12 @@ class TestViews(unittest.TestCase):
         self.assertIn("```diff", out)
 
     def test_view_signatures_match_the_stop_hook_gates(self):
-        """The gate spec keys off these literals; renaming a header silently disables it."""
-        self.assertIn("**Change (", T.render_change_view("t1", "-a\n+b\n"))
-        diff = T.render_diff_view("t1", "-a\n+b\n")
-        self.assertIn("**Diff (", diff)
-        self.assertIn("```diff", diff)
+        """The gate spec keys off these literals; renaming a header silently disables it.
+        Read from the spec, not retyped, so the two cannot drift apart unnoticed."""
+        for key, out in (("change-preview", T.render_change_view("t1", "-a\n+b\n")),
+                         ("diff-view", T.render_diff_view("t1", "-a\n+b\n"))):
+            for sig in gate_signature(key):
+                self.assertIn(sig, out, key)
 
     def test_diff_view_signature_survives_a_widened_fence(self):
         """A diff of a markdown file widens the fence to ````diff — which still contains
@@ -477,9 +487,24 @@ class TestReplyDraft(unittest.TestCase):
             self.assertIn(part, out)
 
     def test_reply_view_signature_matches_the_stop_hook_gate(self):
-        out = T.render_reply_view(self.state("Gefixt.\n"), "t1", "Gefixt.\n")
-        for sig in ("**Draft reply:**", "Thread (to post on):", "**`c`** copy to clipboard"):
-            self.assertIn(sig, out)
+        """Read from the shipped spec rather than retyped here: a render whose label or
+        prompt drifts out of the gate's signature stops being enforced, and a gate that
+        never fires is invisible — nothing tells you the block went unpasted."""
+        for refine in (False, True):
+            out = T.render_reply_view(self.state("Gefixt.\n"), "t1", "Gefixt.\n", refine)
+            for sig in gate_signature("reply-view"):
+                self.assertIn(sig, out, f"--refine={refine}")
+
+    def test_refine_drops_the_context_and_keeps_the_ask(self):
+        """Re-showing a reworded draft repeats only what changed. The code and the thread
+        were pasted in full when the topic came up and have not changed since; pasting
+        them again buries the draft the user asked to see."""
+        out = T.render_reply_view(self.state("Kürzer.\n"), "t1", "Kürzer.\n", refine=True)
+        for gone in ("src/client.py:88", "unbounded retry", "> **Jan**"):
+            self.assertNotIn(gone, out)
+        for kept in ("◈ t1", "> Kürzer.", "Thread (to post on): http://gl/y/1",
+                     "**`c`** copy to clipboard"):
+            self.assertIn(kept, out)
 
 
 class TestCodeContext(unittest.TestCase):

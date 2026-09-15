@@ -75,10 +75,13 @@ the reply (step 10).
       and re-run if it errors. Postcondition: the message
       *is* that output (code → reviewer's blockquoted note → `**Draft reply:**` → prompt line);
       if any is missing you dropped it → re-run and paste. Don't replace it with a stub even across topics.
+      That is the topic's **first** reply view only. `reply-view <t> --refine` is the render for
+      every later one on the same topic (draft + thread URL + prompt, no code, no thread): the
+      context is already on screen and unchanged, and repeating it buries the reworded draft.
    c. Interpret the user's reply — **`c`** = copy, **`p`** = post, **`n`** = next topic (already
       replied/resolved: `set <t> --state waiting`, move on), **anything else** = discussion (no
       `d` command: engage with it, refine, store it again with `set <t> --reply -`, re-run
-      reply-view, paste again):
+      `reply-view <t> --refine`, paste that):
    ```bash
    # c — Copy (`reply` guards, and so does clip.sh):
    python3 $SD/threads.py reply <t> | $SD/clip.sh

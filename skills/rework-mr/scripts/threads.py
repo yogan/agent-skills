@@ -27,6 +27,8 @@ Subcommands:
               reply  (no fetch)
   url <t>     direct URL(s) to the topic's thread (to click & post)  (no fetch)
   reply-view <t>  code + thread + your drafted reply + URL, one paste  (no fetch)
+              `--refine` drops the code and thread — for re-showing a reworded draft
+              on a topic whose context is already on screen
   reply <t>   the drafted reply BODY only — the payload for clip.sh / glab
   set <t> --reply -   store a reply body from stdin (quoted heredoc; never a
               scratch file — see reply_body())
@@ -822,23 +824,31 @@ def _quote_draft(body, path=None):
     return "\n\n".join(blocks)
 
 
-def render_reply_view(state, tid, body):
+def render_reply_view(state, tid, body, refine=False):
     """The whole reply block, as ONE paste so none of its parts can be dropped:
     the code the comment is on, the full thread (original + every reply), then the drafted
     body as a `> ` blockquote (matches the thread's rendering), then the thread URL, then
-    the c/p/n prompt. `body` comes from `reply_body()`, which guards it."""
+    the c/p/n prompt. `body` comes from `reply_body()`, which guards it.
+
+    `refine=True` drops the context — the topic header, the code and the thread — and
+    keeps only the draft, the thread URL and the prompt. That is the render for a REWORDED
+    draft on a topic the user is already looking at: the context was pasted in full when
+    the topic came up, it has not changed since, and repeating it pushes the one thing that
+    did change (the draft) off the screen. The URL and the prompt stay because they are the
+    ask, not context. The topic handle moves into the draft label so the block still says
+    which topic it belongs to in a single line.
+    """
     t = topic_for(state, tid) or die(f"no topic {tid}")
     path = next((state["threads"].get(th, {}).get("file") for th in t["thread_ids"]
                  if state["threads"].get(th, {}).get("file")), None)
-    return "\n".join([
-        render_quote(state, tid),
-        "", "**Draft reply:**", "",
-        _quote_draft(body, path),
-        "", f"Thread (to post on): {render_url(state, tid)}",
-        "", "**`c`** copy to clipboard · **`p`** post on GitLab · "
-        "**`n`** next topic (already replied/resolved) · "
-        "or just type your thoughts to refine it.",
-    ])
+    out = [] if refine else [render_quote(state, tid), ""]
+    out += [f"**Draft reply — {tref(tid)}:**" if refine else "**Draft reply:**", "",
+            _quote_draft(body, path),
+            "", f"Thread (to post on): {render_url(state, tid)}",
+            "", "**`c`** copy to clipboard · **`p`** post on GitLab · "
+            "**`n`** next topic (already replied/resolved) · "
+            "or just type your thoughts to refine it."]
+    return "\n".join(out)
 
 
 def first_open(state):
@@ -962,6 +972,11 @@ def main():
     prv = sub.add_parser("reply-view")
     prv.add_argument("topic")
     prv.add_argument("--iid", type=int)
+    prv.add_argument("--refine", action="store_true",
+                     help="re-showing a reworded draft on the SAME topic: omit the "
+                          "topic header, the code and the thread (already on screen, "
+                          "unchanged) and print only the draft, its thread URL and the "
+                          "prompt. Never for a topic's first reply block.")
     pr = sub.add_parser("reply", help="the drafted reply BODY only — the paste/post payload")
     pr.add_argument("topic")
     pr.add_argument("--iid", type=int)
@@ -1006,7 +1021,8 @@ def main():
         print(render_url(state, args.topic))
     elif cmd == "reply-view":
         body = reply_body(state, args.topic, os.path.dirname(path))
-        print(render_reply_view(state, args.topic, body) + critical_manifest.manifest())
+        print(render_reply_view(state, args.topic, body, args.refine)
+              + critical_manifest.manifest())
     elif cmd == "reply":
         # body only — the payload for the clipboard or `glab api -F body=@-`
         print(reply_body(state, args.topic, os.path.dirname(path)), end="")

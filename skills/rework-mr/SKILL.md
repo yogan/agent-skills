@@ -18,7 +18,15 @@ message, the user sees nothing. So:
    re-type it, or wrap it in a code fence. Reproduce it exactly.
 2. **One topic at a time.** After presenting the current topic, **STOP and wait**. Never
    mention, preview, or recommend anything about other topics. On t24? Don't write "t25/t26…".
-3. **Grilling changes NO code — none, ever, not even a trivial one-liner.** You grill *every*
+3. **Never re-paste a topic's context while you sit on that topic.** Its header, the code the
+   comment is anchored to and the thread are pasted when the topic comes up (`present`, `quote`)
+   and again when its reply block first appears (`reply-view`) — and not once more after that.
+   While the user keeps you on it — a shorter draft, a different tone, another argument —
+   **re-show only what changed**: `reply-view <t> --refine` prints the reworded draft, its
+   thread URL and the action prompt, and leaves the context out. Code and a thread the user is
+   still looking at bury the one thing they asked to see. Rule 1 is unchanged: paste whatever
+   the command you ran printed, in full.
+4. **Grilling changes NO code — none, ever, not even a trivial one-liner.** You grill *every*
    open topic to an agreed plan first; only then (Phase 3) do you touch code. During grilling
    you agree on *what* to do and record it — you never apply it. **The phrase "OK to apply?"
    is banned here** — it invites a yes and you'd wrongly edit. Ask "Agreed?" and, on yes,
@@ -237,6 +245,10 @@ Per topic:
       If any is missing, you dropped it — re-run and paste. Never replace it with a short stub
       like "t7 — reply ready", even when moving fast across topics. (A `Stop` hook enforces this —
       end the turn without the block and it forces a redo — so just paste it.)
+      This full block is the topic's **first** reply view. Every later one on the same topic —
+      after the user asks for a shorter or differently-argued draft — is
+      `reply-view <t> --refine`, which prints the draft, the thread URL and the prompt and
+      nothing else (rule 3 at the top); same paste discipline, same `Stop` hook.
    c. **Wait for the user, then interpret their reply:**
       - **`c`** (or "copy") → copy to clipboard.
       - **`p`** (or "post") → post it (the one allowed write).
@@ -244,7 +256,10 @@ Per topic:
         resolved): mark it `set <t> --state waiting` and move straight to the next topic.
       - **anything else** → they're discussing. There is no `d` command: treat any non-`c`/`p`/`n`
         message as feedback — engage with it, refine the draft, store it again with
-        `set <t> --reply -`, re-run `reply-view`, paste the new block. Never post unprompted.
+        `set <t> --reply -`, re-run **`reply-view <t> --refine`**, paste that block. Never post
+        unprompted. `--refine` is what keeps an iteration from re-pasting the code and the
+        thread the user already has on screen: answer in a line or two if the feedback needs an
+        answer, then the block — nothing else.
       ```bash
       python3 $SD/threads.py reply <t> | $SD/clip.sh     # c — Copy
       # p — Post (the one allowed write; <discussion_id> = the topic's thread_ids[0]):
@@ -281,7 +296,7 @@ Per topic:
 
 `glab` authenticated; run on (or pass `--iid N` for) the MR branch. `python3`. (`clip.sh` copies to the clipboard via macOS `pbcopy`; where that is missing the
 copy is skipped — the draft is in the chat message and `p` posts through `glab` regardless.)
-`threads.py` subcommands: sync·todo·present·bodies·plans·quote·url·reply·reply-view·set·merge·path
+`threads.py` subcommands: sync·todo·present·bodies·plans·quote·url·reply·reply-view [--refine]·set·merge·path
 (plus `change-view`/`diff-view`, the bodies of the two .sh views below).
 `diff-url.py` (baseline·url), `clip.sh` (guards + copies), `guard-reply.sh` (topic-handle gate
 for the clipboard path),
