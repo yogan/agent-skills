@@ -117,7 +117,9 @@ class TestRefineRender(Throwaway, unittest.TestCase):
     the topic came up and has not changed since; pasting it again every time a wording is
     adjusted buries the draft, which is the one thing that did."""
 
-    def _drafted(self):
+    def _drafted(self, shown=True):
+        """A drafted topic whose context has already been rendered in full — which is what
+        `--refine` is allowed to leave out. `shown=False` for the case where it has not."""
         wt = self._throwaway_dir()
         with open(os.path.join(wt, "worker.py"), "w") as f:
             f.write("try:\n    run()\nexcept Exception:\n    pass\n")
@@ -127,10 +129,12 @@ class TestRefineRender(Throwaway, unittest.TestCase):
         state = new_state(slug="x")
         F.add_topic(state, summary="swallowed exception hides real failures",
                     file="worker.py", line=3, draft="Kürzer geht es nicht.")
+        if shown:
+            F.render_quote(state, "t1")      # records the digest, as every full view does
         return state
 
     def test_refine_drops_the_code_and_keeps_the_draft(self):
-        state = self._drafted()
+        state = self._drafted(shown=False)
         full = F.render_quote(state, "t1")
         self.assertIn("except Exception:", full)          # the context, shown once
         out = F.render_quote(state, "t1", refine=True)
@@ -155,7 +159,7 @@ class TestRefineRender(Throwaway, unittest.TestCase):
         with self.assertRaises(SystemExit):
             F.render_quote(state, "t1", refine=True)
 
-    def _posted_with_follow_up(self):
+    def _posted_with_follow_up(self, shown=True):
         state = new_state(threads={"d1": {
             "author": "Jane", "body": "Warum nicht einfach retry?", "file": "src/client.py",
             "line": 88, "url": "http://gl/1", "note_count": 2, "last_author": "Jane",
@@ -163,12 +167,14 @@ class TestRefineRender(Throwaway, unittest.TestCase):
         t = add_linked_topic(state, "d1", summary="unbounded retry loop",
                              file="src/client.py", line=88)
         t["draft"] = "Der TODO reicht nicht — ohne Obergrenze läuft das ewig."
+        if shown:
+            F.render_quote(state, "t1")      # records the digest, as every full view does
         return state
 
     def test_a_follow_up_draft_on_a_posted_topic_is_shown(self):
         """It used to be stored and copyable while no view rendered it: the user was asked
         to approve a comment the skill never displayed."""
-        out = F.render_quote(self._posted_with_follow_up(), "t1")
+        out = F.render_quote(self._posted_with_follow_up(shown=False), "t1")
         self.assertIn("Draft of follow-up reply to post (de)", out)
         self.assertIn("> Der TODO reicht nicht", out)
         self.assertIn("Habe einen TODO ergänzt", out)      # the thread, shown once
@@ -184,6 +190,52 @@ class TestRefineRender(Throwaway, unittest.TestCase):
             self.assertIn(kept, out)
         for sig in gate_signature("quote"):
             self.assertIn(sig, out)
+
+    def test_refine_falls_back_when_the_context_was_never_shown(self):
+        """The short render must not be a topic's FIRST show — the user would be asked
+        about a comment they have not seen. Nothing recorded, nothing to leave out."""
+        out = F.render_quote(self._drafted(shown=False), "t1", refine=True)
+        self.assertIn("has not been shown yet", out)
+        self.assertIn("except Exception:", out)            # the code, in full
+
+    def test_refine_falls_back_when_the_code_moved(self):
+        """An anchor fix (`set --file/--line`) moves the code out from under the draft, so
+        the lines the user saw are not the lines the comment is about any more."""
+        state = self._drafted()
+        F.topic_for(state, "t1")["line"] = 1
+        out = F.render_quote(state, "t1", refine=True)
+        self.assertIn("changed since this was last shown", out)
+        self.assertIn("Code currently in MR", out)
+
+    def test_refine_falls_back_when_the_author_added_a_note(self):
+        """A `sync` mid-topic can bring an author reply. Leaving the thread out then would
+        ask about a follow-up to a conversation that has moved on."""
+        state = self._posted_with_follow_up()
+        state["threads"]["d1"].update(note_count=3, last_author="Jane",
+                                      last_body="Doch nicht, ich baue es ein.")
+        out = F.render_quote(state, "t1", refine=True)
+        self.assertIn("changed since this was last shown", out)
+        self.assertIn("Doch nicht, ich baue es ein.", out)
+
+    def test_rewording_the_draft_does_not_count_as_a_changed_context(self):
+        """The whole point: the draft is not context, so iterating on it keeps the short
+        render however many times it takes."""
+        state = self._drafted()
+        for body in ("Zweite Fassung.", "Dritte Fassung."):
+            F.topic_for(state, "t1")["draft"] = body
+            out = F.render_quote(state, "t1", refine=True)
+            self.assertNotIn("in full", out)
+            self.assertNotIn("except Exception:", out)
+            self.assertIn(body, out)
+
+    def test_the_comparison_leaves_no_critical_lines_behind(self):
+        """The digest re-renders the context and throws it away. Its code lines must not
+        reach the manifest — the Stop hook would demand lines that are nowhere in the
+        message and block a correct reply."""
+        state = self._drafted(shown=False)
+        critical_manifest.reset()
+        F.context_digest(state, "t1")
+        self.assertEqual(critical_manifest.current(), [])
 
     def test_a_seeded_note_is_not_mistaken_for_a_follow_up(self):
         """`note` is review-branch's seed text for the comment that OPENED the thread —

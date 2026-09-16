@@ -63,8 +63,10 @@ the UI never reached the table.
 - **A rewording re-shows the draft, not the context.** Add `--refine` (to `quote <t>`, or to
   the `set <t> --draft` echo) for the second and every later draft of the same topic: the
   context was pasted when the topic came up, the user is still looking at it, and repeating it
-  buries the wording they asked you to change. It refuses a topic with no draft at all, since
-  everything such a topic renders is context.
+  buries the wording they asked you to change. It checks that rather than trusting it: a
+  context that moved since it was shown (an anchor fix, an author note a `sync` brought) or was
+  never shown at all comes back in full, with a line saying why. It refuses a topic with no
+  draft at all, since everything such a topic renders is context.
 - **A follow-up reply into a posted thread is a draft like any other.** `set <t> --draft` on a
   linked topic stores it, `quote <t>` shows it under the thread's notes (labelled as a reply
   into that thread, with its URL above), `draft <t>` is still the paste payload, and `--refine`

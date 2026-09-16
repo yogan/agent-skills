@@ -61,7 +61,9 @@ meaning).
   the draft's prose is blockquoted, its fenced code left at line start so it keeps its
   highlighting. `--refine` is the same block minus the context, for re-showing a reworded
   draft on the topic the user is already looking at — the code and the thread have not
-  changed since they were pasted, and repeating them buries the draft.
+  changed since they were pasted, and repeating them buries the draft. It verifies that
+  rather than assuming it: each full render records a digest of the context it showed, and a
+  `--refine` whose digest no longer matches (or has none) renders in full and says so.
 - `change-view <t>` — the one-paste trivial-topic change illustration (fenced code +
   `Agreed?`), read from stdin: piped rather than written to a file, since a heredoc into
   `~/.claude/` trips Claude Code's protected-path prompt on every topic. Content that

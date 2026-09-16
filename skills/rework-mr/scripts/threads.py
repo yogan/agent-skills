@@ -28,7 +28,7 @@ Subcommands:
   url <t>     direct URL(s) to the topic's thread (to click & post)  (no fetch)
   reply-view <t>  code + thread + your drafted reply + URL, one paste  (no fetch)
               `--refine` drops the code and thread — for re-showing a reworded draft
-              on a topic whose context is already on screen
+              on a topic whose context is already on screen, and unchanged since
   reply <t>   the drafted reply BODY only — the payload for clip.sh / glab
   set <t> --reply -   store a reply body from stdin (quoted heredoc; never a
               scratch file — see reply_body())
@@ -41,6 +41,7 @@ Subcommands:
   check-handles   internal — used by guard-reply.sh, no MR context needed
 """
 import argparse
+import hashlib
 import os
 import re
 import sys
@@ -712,7 +713,19 @@ def render_diff_view(tid, diff):
                       fence(diff, "diff"), "", "ACK to fix up and push?"])
 
 
-def render_quote(state, tid):
+def _digest(text):
+    return hashlib.sha256(text.encode()).hexdigest()[:16]
+
+
+def render_quote(state, tid, remember=True):
+    """A topic in full: the code the comment is anchored to, then the whole thread. All of
+    it is the topic's context, which is why `--refine` drops this render entirely.
+
+    `remember` records a digest of what this returned on the topic, so `reply-view
+    --refine` can tell whether the context it is about to leave out is still the one the
+    user is looking at. Off for the comparison itself (see `context_digest`), which must
+    not overwrite the thing it compares against.
+    """
     t = topic_for(state, tid) or die(f"no topic {tid}")
     summ = t.get("summary") or ""
     out = []
@@ -748,7 +761,26 @@ def render_quote(state, tid):
                     out += ["", f"_… {skipped} more …_"]
                 out += ["", _note_md(x.get("last_author"), x.get("last_body"), f, ln)]
         out.append("")
-    return "\n".join(out).strip()
+    text = "\n".join(out).strip()
+    if remember:
+        t["shown"] = _digest(text)
+    return text
+
+
+
+def context_digest(state, tid):
+    """A fingerprint of the topic's context as it renders RIGHT NOW.
+
+    Hashing the rendered text, not a list of the fields that feed it: a field list rots —
+    `sync`'s own allowlist did, silently, for every field added to the fetch after it —
+    while whatever `render_quote` puts on screen is by definition what the user saw.
+
+    Marking is suspended because this render is thrown away. Its code lines would
+    otherwise land in the critical-lines manifest and the Stop hook would demand lines
+    that appear nowhere in the message.
+    """
+    with critical_manifest.suspended():
+        return _digest(render_quote(state, tid, remember=False))
 
 
 def render_url(state, tid):
@@ -837,11 +869,24 @@ def render_reply_view(state, tid, body, refine=False):
     did change (the draft) off the screen. The URL and the prompt stay because they are the
     ask, not context. The topic handle moves into the draft label so the block still says
     which topic it belongs to in a single line.
+
+    It is **checked, not trusted**: a `sync` can bring a reviewer note and a reviewer can
+    re-anchor their comment, and leaving out a context that has moved would answer a
+    comment the user is not looking at. When the digest of the context does not match what
+    was last shown — or nothing was ever shown — this renders in full anyway and says why.
+    So `refine` is always safe to pass when re-showing; it gives itself up when it must.
     """
     t = topic_for(state, tid) or die(f"no topic {tid}")
     path = next((state["threads"].get(th, {}).get("file") for th in t["thread_ids"]
                  if state["threads"].get(th, {}).get("file")), None)
-    out = [] if refine else [render_quote(state, tid), ""]
+    out = []
+    if refine and t.get("shown") != context_digest(state, tid):
+        out.append("_(the code or the thread changed since this was last shown — in full "
+                   "again)_" if t.get("shown") else
+                   "_(this topic's context has not been shown yet — in full)_")
+        refine = False
+    if not refine:
+        out += [render_quote(state, tid), ""]
     out += [f"**Draft reply — {tref(tid)}:**" if refine else "**Draft reply:**", "",
             _quote_draft(body, path),
             "", f"Thread (to post on): {render_url(state, tid)}",
@@ -976,8 +1021,9 @@ def main():
                      help="re-showing a reworded draft on the SAME topic: omit the "
                           "topic's context — its header, the code and the thread, all "
                           "on screen already and unchanged — and print only the draft, "
-                          "its thread URL and the prompt. Never for a topic's first "
-                          "reply block.")
+                          "its thread URL and the prompt. Safe whenever you are "
+                          "re-showing: a context that moved since, or was never shown, "
+                          "comes back in full anyway.")
     pr = sub.add_parser("reply", help="the drafted reply BODY only — the paste/post payload")
     pr.add_argument("topic")
     pr.add_argument("--iid", type=int)
@@ -1018,17 +1064,23 @@ def main():
         print(path)
     elif cmd == "quote":
         print(render_quote(state, args.topic) + critical_manifest.manifest())
+        # `render_quote` recorded what it showed; persist it so a later `--refine` can
+        # tell whether the context still matches. Every command that renders a topic in
+        # full does this — it is the only reason these read-only views write at all.
+        save(path, state)
     elif cmd == "url":
         print(render_url(state, args.topic))
     elif cmd == "reply-view":
         body = reply_body(state, args.topic, os.path.dirname(path))
         print(render_reply_view(state, args.topic, body, args.refine)
               + critical_manifest.manifest())
+        save(path, state)
     elif cmd == "reply":
         # body only — the payload for the clipboard or `glab api -F body=@-`
         print(reply_body(state, args.topic, os.path.dirname(path)), end="")
     elif cmd == "present":
         print(render_present(state) + critical_manifest.manifest())
+        save(path, state)
     elif cmd == "bodies":
         print(render_bodies(state))
     elif cmd == "plans":

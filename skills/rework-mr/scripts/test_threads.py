@@ -495,16 +495,69 @@ class TestReplyDraft(unittest.TestCase):
             for sig in gate_signature("reply-view"):
                 self.assertIn(sig, out, f"--refine={refine}")
 
+    def _shown(self, reply):
+        """A state whose topic has already had its context rendered in full — which is
+        what `--refine` is allowed to leave out."""
+        state = self.state(reply)
+        T.render_quote(state, "t1")          # records the digest, as every full view does
+        return state
+
     def test_refine_drops_the_context_and_keeps_the_ask(self):
         """Re-showing a reworded draft repeats only what changed. The code and the thread
         were pasted in full when the topic came up and have not changed since; pasting
         them again buries the draft the user asked to see."""
-        out = T.render_reply_view(self.state("Kürzer.\n"), "t1", "Kürzer.\n", refine=True)
+        out = T.render_reply_view(self._shown("Kürzer.\n"), "t1", "Kürzer.\n", refine=True)
         for gone in ("src/client.py:88", "unbounded retry", "> **Jan**"):
             self.assertNotIn(gone, out)
         for kept in ("◈ t1", "> Kürzer.", "Thread (to post on): http://gl/y/1",
                      "**`c`** copy to clipboard"):
             self.assertIn(kept, out)
+
+    def test_refine_falls_back_when_the_context_was_never_shown(self):
+        """The short render must not be a topic's first reply view — the user would be
+        asked about a comment they have not seen. Nothing recorded, nothing to leave out."""
+        out = T.render_reply_view(self.state("Gefixt.\n"), "t1", "Gefixt.\n", refine=True)
+        self.assertIn("has not been shown yet", out)
+        self.assertIn("unbounded retry", out)                 # the thread, in full
+        self.assertIn("**`c`** copy to clipboard", out)       # still the same ask
+
+    def test_refine_falls_back_when_a_new_note_arrived(self):
+        """A `sync` mid-topic can bring a reviewer note. Leaving the thread out then would
+        answer a comment the user is not looking at."""
+        state = self._shown("Gefixt.\n")
+        thread = state["threads"]["d1"]
+        thread["notes"].append({"author": "Jan", "body": "Und was ist mit dem Timeout?"})
+        thread["note_count"] = 2
+        out = T.render_reply_view(state, "t1", "Gefixt.\n", refine=True)
+        self.assertIn("changed since this was last shown", out)
+        self.assertIn("Und was ist mit dem Timeout?", out)
+
+    def test_refine_falls_back_when_the_comment_was_re_anchored(self):
+        """The reviewer can move their comment; the lines under it are then different
+        code from the ones the draft was written against."""
+        state = self._shown("Gefixt.\n")
+        state["threads"]["d1"]["line"] = 120
+        out = T.render_reply_view(state, "t1", "Gefixt.\n", refine=True)
+        self.assertIn("changed since this was last shown", out)
+        self.assertIn("src/client.py:120", out)
+
+    def test_rewording_the_draft_does_not_count_as_a_changed_context(self):
+        """The whole point: the draft is not context, so iterating on it keeps the short
+        render however many times it takes."""
+        state = self._shown("Erste Fassung.\n")
+        for body in ("Zweite Fassung.\n", "Dritte Fassung.\n"):
+            out = T.render_reply_view(state, "t1", body, refine=True)
+            self.assertNotIn("in full", out)
+            self.assertNotIn("unbounded retry", out)
+
+    def test_the_comparison_leaves_no_critical_lines_behind(self):
+        """The digest re-renders the topic and throws it away. Its code lines must not
+        reach the manifest — the Stop hook would demand lines that are nowhere in the
+        message and block a correct reply."""
+        critical_manifest.reset()
+        state = self.state("Gefixt.\n")
+        T.context_digest(state, "t1")
+        self.assertEqual(critical_manifest.current(), [])
 
 
 class TestCodeContext(unittest.TestCase):

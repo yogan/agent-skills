@@ -51,8 +51,10 @@ Your chat message is their *only* window. So:
    it — a shorter comment, a different tone, another argument — **re-show only what
    changed**: `--refine` (on `quote <t>`, and on the `set <t> --draft` echo) prints the
    header, the draft and its label, without the context. What the user is still looking at
-   buries the one thing they asked to see. Rule 1 is unchanged: paste whatever the command
-   you ran printed, in full.
+   buries the one thing they asked to see. **`--refine` is safe to pass whenever you are
+   re-showing** — if the code moved (an anchor fix) or the author added a note since, or the
+   topic was never shown in full, it renders in full anyway and says why. Rule 1 is unchanged:
+   paste whatever the command you ran printed, in full.
 4. **The skill never writes to GitLab.** No comments, no resolves, no approvals — *you*
    do all of that in the UI, so the tone and the sign-off stay yours. It only *reads*
    (discussions, branch tip, pushes) and *drafts* text for you to copy. No

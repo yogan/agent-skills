@@ -67,6 +67,7 @@ Subcommands (all read-only against GitLab):
 """
 import argparse
 import datetime
+import hashlib
 import json
 import os
 import re
@@ -809,6 +810,56 @@ def _draft_block(state, t, body, follow_up=False):
             f" — {where}:_", "", render_draft(body, lang, t.get("line"))]
 
 
+def _code_context(state, t):
+    """What `--refine` leaves out for an unposted topic: the code the draft is about.
+
+    The code block carries the location, so there is no separate "open a thread at …,
+    then paste" line: it sat directly above the SOURCE snippet and read as if that were
+    the paste payload.
+    """
+    out = []
+    snip = code_snippet(state, t)
+    if snip:
+        out += ["", f"_Code currently in MR — `{_loc(state, t, full=True)}`:_", "", snip]
+    warn = anchor_warning(state, t)
+    if warn:
+        out += ["", warn]
+    return out
+
+
+def _thread_context(state, x):
+    """What `--refine` leaves out for a posted topic: the thread a follow-up replies
+    into — first note, last note, and the count of what sits between them."""
+    out = ["", _note_md(x.get("author"), x.get("body"))]
+    if x.get("note_count", 1) > 1:
+        skipped = x["note_count"] - 2
+        if skipped > 0:
+            out += ["", f"_… {skipped} more …_"]
+        out += ["", _note_md(x.get("last_author"), x.get("last_body"))]
+    return out
+
+
+def _digest(lines):
+    return hashlib.sha256("\n".join(lines).encode()).hexdigest()[:16]
+
+
+def context_digest(state, tid):
+    """A fingerprint of the topic's context as it renders RIGHT NOW — exactly the lines
+    `--refine` would leave out, so the two cannot drift apart: both come from the same
+    two builders above.
+
+    Marking is suspended because this render is thrown away. Its code lines would
+    otherwise land in the critical-lines manifest and the Stop hook would demand lines
+    that appear nowhere in the message.
+    """
+    t = topic_for(state, tid) or die(f"no topic {tid}")
+    with critical_manifest.suspended():
+        if not t["thread_ids"]:
+            return _digest(_code_context(state, t))
+        return _digest([ln for th in t["thread_ids"]
+                        for ln in _thread_context(state, state["threads"].get(th, {}))])
+
+
 def render_quote(state, tid, refine=False):
     """A topic as the user reads it. `refine=True` is the render for re-showing a REWORDED
     draft on the topic they are already looking at: it drops the topic's context — the code
@@ -821,6 +872,12 @@ def render_quote(state, tid, refine=False):
     and whether it is posted yet; the label stays because it carries the draft language
     and where the comment goes. A topic with no draft at all has nothing but context, so
     `refine` is refused there rather than rendering an empty answer.
+
+    It is **checked, not trusted**: an anchor fix moves the code out from under a draft and
+    a `sync` brings author notes, and leaving out a context that has moved would ask the
+    user about a comment they are not looking at. When the digest of the context does not
+    match what was last shown — or nothing was ever shown — this renders in full anyway
+    and says why. So `refine` is always safe to pass when re-showing.
     """
     t = topic_for(state, tid) or die(f"no topic {tid}")
     if refine and not (t.get("draft") or t.get("note")):
@@ -828,6 +885,11 @@ def render_quote(state, tid, refine=False):
             f"renders is context. Use plain `quote {tid}`")
     summ = short_summary(state, t)
     out = []
+    if refine and t.get("shown") != context_digest(state, tid):
+        out.append("_(the code or the thread changed since this was last shown — in full "
+                   "again)_" if t.get("shown") else
+                   "_(this topic's context has not been shown yet — in full)_")
+        refine = False
     if not t["thread_ids"]:                       # a draft — show its draft text
         title = f"**{tref(t['id'])}" + (f" — {summ}**" if summ else "**")
         # Meta lines (title + where to open the thread) are for the user's eyes
@@ -837,19 +899,13 @@ def render_quote(state, tid, refine=False):
         warn = summary_language_warning(state, [t])
         if warn:
             out.append(warn)
-        # The code block carries the location, so there is no separate "open a thread
-        # at …, then paste" line: it sat directly above the SOURCE snippet and read as if
-        # that were the paste payload.
         if not refine:
-            snip = code_snippet(state, t)
-            if snip:
-                out += ["", f"_Code currently in MR — "
-                        f"`{_loc(state, t, full=True)}`:_", "", snip]
-            warn = anchor_warning(state, t)
-            if warn:
-                out += ["", warn]
+            ctx = _code_context(state, t)
+            t["shown"] = _digest(ctx)
+            out += ctx
         out += _draft_block(state, t, t.get("draft") or t.get("note"))
         return "\n".join(out).strip()
+    shown = []                            # the notes, as rendered — see `context_digest`
     for i, th in enumerate(t["thread_ids"]):
         x = state["threads"].get(th, {})
         # An MR-level thread carries no diff position at all, so there is no path to
@@ -871,13 +927,12 @@ def render_quote(state, tid, refine=False):
             out.append(f"_(GitLab thread resolved by {who} — that's their toggle; "
                        "your ack is what closes this topic here)_")
         if not refine:
-            out += ["", _note_md(x.get("author"), x.get("body"))]
-            if x.get("note_count", 1) > 1:
-                skipped = x["note_count"] - 2
-                if skipped > 0:
-                    out += ["", f"_… {skipped} more …_"]
-                out += ["", _note_md(x.get("last_author"), x.get("last_body"))]
+            ctx = _thread_context(state, x)
+            shown += ctx
+            out += ctx
         out.append("")
+    if not refine:
+        t["shown"] = _digest(shown)
     while out and not out[-1]:            # the loop's trailing spacer, before the label
         out.pop()
     # A follow-up reply drafted for a thread that is already posted — the author pushed
@@ -1425,7 +1480,8 @@ def main():
     REFINE_HELP = ("re-showing a REWORDED draft on a topic already on screen: leave the "
                    "topic's context out — the code, or the notes of the thread a "
                    "follow-up replies into — and print the title, the draft and its "
-                   "label. Never for a topic's first show.")
+                   "label. Safe whenever you are re-showing: a context that moved since, "
+                   "or was never shown, comes back in full anyway.")
     pq.add_argument("--refine", action="store_true", help=REFINE_HELP)
 
     pdr = sub.add_parser("draft")
@@ -1535,6 +1591,10 @@ def main():
         sync(state, fetch_threads(ctx, iid, me, author), ctx, iid)
         save(path, state)
         print(render_present(state) + critical_manifest.manifest())
+        # Again, after the render: `render_quote` records the context it just showed, and
+        # `--refine` compares against that. Every command that renders a topic in full
+        # saves for this reason, and it is the only reason a view writes at all.
+        save(path, state)
     elif cmd == "bodies":
         print(render_bodies(state))
     elif cmd == "candidates":
@@ -1543,6 +1603,7 @@ def main():
         print(render_candidates(state, me))
     elif cmd == "quote":
         print(render_quote(state, args.topic, args.refine) + critical_manifest.manifest())
+        save(path, state)                 # the context digest it just recorded
     elif cmd == "draft":
         print(draft_body(state, args.topic))
     elif cmd == "diff":
@@ -1567,6 +1628,7 @@ def main():
         u = render_updates(state, ctx, iid)
         p = render_present(state)
         print(f"{u}\n\n---\n\n{p}{critical_manifest.manifest()}")
+        save(path, state)                 # the context digest present recorded
     elif cmd == "head":
         print(head_report(state, ctx, iid))
     elif cmd == "base":
@@ -1638,6 +1700,7 @@ def main():
             # Printing it here means the correct block is already in front of it.
             print(render_quote(state, args.topic, args.refine)
                   + critical_manifest.manifest())
+            save(path, state)             # the context digest it just recorded
     elif cmd == "drop":
         t = topic_for(state, args.topic)
         if t and t["thread_ids"]:                 # keep dropped inbound threads dropped

@@ -78,6 +78,8 @@ the reply (step 10).
       That is the topic's **first** reply view only. `reply-view <t> --refine` is the render for
       every later one on the same topic (draft + thread URL + prompt, no code, no thread): the
       context is already on screen and unchanged, and repeating it buries the reworded draft.
+      It checks rather than trusts that — a context that moved since (a new reviewer note, a
+      re-anchored comment) or was never shown comes back in full, with a line saying why.
    c. Interpret the user's reply — **`c`** = copy, **`p`** = post, **`n`** = next topic (already
       replied/resolved: `set <t> --state waiting`, move on), **anything else** = discussion (no
       `d` command: engage with it, refine, store it again with `set <t> --reply -`, re-run

@@ -24,8 +24,10 @@ message, the user sees nothing. So:
    While the user keeps you on it — a shorter draft, a different tone, another argument —
    **re-show only what changed**: `reply-view <t> --refine` prints the reworded draft, its
    thread URL and the action prompt, and leaves the context out. Code and a thread the user is
-   still looking at bury the one thing they asked to see. Rule 1 is unchanged: paste whatever
-   the command you ran printed, in full.
+   still looking at bury the one thing they asked to see. **`--refine` is safe to pass whenever
+   you are re-showing** — if the thread or the code moved since (a reviewer note a `sync` picked
+   up, a re-anchored comment), or the topic was never shown in full, it renders in full anyway
+   and says why. Rule 1 is unchanged: paste whatever the command you ran printed, in full.
 4. **Grilling changes NO code — none, ever, not even a trivial one-liner.** You grill *every*
    open topic to an agreed plan first; only then (Phase 3) do you touch code. During grilling
    you agree on *what* to do and record it — you never apply it. **The phrase "OK to apply?"
@@ -248,7 +250,9 @@ Per topic:
       This full block is the topic's **first** reply view. Every later one on the same topic —
       after the user asks for a shorter or differently-argued draft — is
       `reply-view <t> --refine`, which prints the draft, the thread URL and the prompt and
-      nothing else (rule 3 at the top); same paste discipline, same `Stop` hook.
+      nothing else (rule 3 at the top); same paste discipline, same `Stop` hook. If it comes
+      back with the whole block plus a line saying the context changed, that is it telling you
+      the thread or the code moved — paste that, it is what the user needs to see.
    c. **Wait for the user, then interpret their reply:**
       - **`c`** (or "copy") → copy to clipboard.
       - **`p`** (or "post") → post it (the one allowed write).

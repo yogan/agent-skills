@@ -10,9 +10,27 @@ Shared here (not duplicated per skill) because it is pure and has no coupling to
 skill's state shape — the two implementations were byte-identical modulo a comment
 before this move.
 """
+import contextlib
 import json
 
 _critical = []
+
+
+@contextlib.contextmanager
+def suspended():
+    """Marks made inside the block are discarded.
+
+    For a render produced to be COMPARED rather than shown: both skills re-render a
+    topic's context to see whether it still matches what the user was shown, and a
+    throwaway render's code lines must not end up in the manifest — the hook would then
+    demand lines that are nowhere in the message and block a correct reply.
+    """
+    global _critical
+    outer, _critical = _critical, []
+    try:
+        yield
+    finally:
+        _critical = outer
 
 
 def mark(line):

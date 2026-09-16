@@ -42,6 +42,23 @@ class TestCriticalManifest(unittest.TestCase):
         self.assertEqual(cm.current(), [])
         self.assertEqual(cm.manifest(), "")
 
+    def test_suspended_discards_what_is_marked_inside_it(self):
+        """A render produced to be COMPARED, not shown: its code lines must not reach the
+        manifest, or the hook demands lines that are nowhere in the message."""
+        cm.mark("shown")
+        with cm.suspended():
+            cm.mark("compared only")
+            self.assertEqual(cm.current(), ["compared only"])
+        self.assertEqual(cm.current(), ["shown"])
+
+    def test_suspended_restores_even_when_the_block_raises(self):
+        cm.mark("shown")
+        with self.assertRaises(ValueError):
+            with cm.suspended():
+                cm.mark("compared only")
+                raise ValueError("a render that died mid-way")
+        self.assertEqual(cm.current(), ["shown"])
+
     def test_current_is_a_snapshot_not_a_live_reference(self):
         cm.mark("a")
         snap = cm.current()
