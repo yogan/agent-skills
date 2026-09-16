@@ -29,10 +29,19 @@
     },
     {
       "key": "quote",
-      "note": "`set <t> --draft` echoes the refreshed render_quote output, so it produces the same kind of block. Same key on purpose: only the NEWEST such block has to be pasted (the engine reduces per key), and after a draft edit that is set's echo, not the now-stale earlier `quote`.",
+      "note": [
+        "`set <t> --draft` echoes the refreshed render_quote output, so it produces the",
+        "same kind of block. Same key on purpose: only the NEWEST such block has to be",
+        "pasted (the engine reduces per key), and after a draft edit that is set's echo,",
+        "not the now-stale earlier `quote`.",
+        "Both commands also take `--refine`, which prints the same block without the",
+        "topic's context — the code, or the notes of the thread a follow-up replies",
+        "into — for re-showing a reworded draft on a topic already on screen. It keeps",
+        "the topic header, so the `◈` signature covers that render too."
+      ],
       "cmd": "findings\\.py\\s+quote\\b|findings\\.py\\s+set\\b[^\\n]*--draft",
       "signature": ["◈"],
-      "reason": "You ran `findings.py quote` but your message did not include its output. Re-send your message starting with the FULL quote block pasted verbatim: the topic header with its `file:line`, the code in question, and the draft or thread notes. Do not lead with your own verdict — the user cannot tell which finding you mean or see the code you are asserting things about."
+      "reason": "You ran `findings.py quote` but your message did not include its output. Re-send your message starting with the FULL quote block pasted verbatim: the topic header with its `file:line`, the code in question, and the draft or thread notes (with `--refine`, the header and the draft — that render carries no context by design). Do not lead with your own verdict — the user cannot tell which finding you mean or see the code you are asserting things about."
     },
     {
       "key": "updates",

@@ -45,11 +45,19 @@ Your chat message is their *only* window. So:
    row that surprises you is usually a rule you have not read, not a bug.
 2. **One topic at a time.** Present the current topic, then **STOP and wait**. Never
    mention, preview, or recommend anything about other topics.
-3. **The skill never writes to GitLab.** No comments, no resolves, no approvals — *you*
+3. **Never re-paste a topic's context while you sit on that topic.** The code the draft
+   comment is about — or, for a follow-up, the notes of the thread it replies into — is
+   pasted when the topic comes up, and not again after that. While the user keeps you on
+   it — a shorter comment, a different tone, another argument — **re-show only what
+   changed**: `--refine` (on `quote <t>`, and on the `set <t> --draft` echo) prints the
+   header, the draft and its label, without the context. What the user is still looking at
+   buries the one thing they asked to see. Rule 1 is unchanged: paste whatever the command
+   you ran printed, in full.
+4. **The skill never writes to GitLab.** No comments, no resolves, no approvals — *you*
    do all of that in the UI, so the tone and the sign-off stay yours. It only *reads*
    (discussions, branch tip, pushes) and *drafts* text for you to copy. No
    `glab … -X POST`, ever.
-4. **No code changes, ever.** You review; you don't fix. (The author fixes.)
+5. **No code changes, ever.** You review; you don't fix. (The author fixes.)
 
 A reply with no pasted table, that touches more than one topic, or that writes anything
 to GitLab is wrong — redo it.
@@ -243,9 +251,14 @@ which also gives **where to open the thread** — `file:line` — and the surrou
 the line marked), and offer the clipboard:
 
 ```bash
-python3 $SD/findings.py set <t> --draft "…"     # store the accepted draft
+python3 $SD/findings.py set <t> --draft "…"              # store the accepted draft (echoes the view)
+python3 $SD/findings.py set <t> --draft "…" --refine     # a REWORDING of a draft already on screen
 $SD/clip.sh <(python3 $SD/findings.py draft <t>)   # copy the comment BODY only, for pasting
 ```
+
+`--refine` is rule 3 at the top: the second and every later draft for the same topic comes
+back without the code, since the user is still looking at it and only the wording changed.
+`quote <t> --refine` is the same render when you re-show without storing anything.
 
 ⚠️ Copy with **`draft <t>`**, never `quote <t>` — `quote` includes the meta header (topic
 title + location) for *your* display; that must not land in the posted comment. `draft <t>`

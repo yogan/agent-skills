@@ -60,6 +60,16 @@ the UI never reached the table.
   thread — `file:line`), and offer the clipboard with `clip.sh <(… draft <t>)`. Copy with
   **`draft <t>`** (body only), never `quote <t>` (its meta header must not reach the posted
   comment). **Never post it yourself.**
+- **A rewording re-shows the draft, not the context.** Add `--refine` (to `quote <t>`, or to
+  the `set <t> --draft` echo) for the second and every later draft of the same topic: the
+  context was pasted when the topic came up, the user is still looking at it, and repeating it
+  buries the wording they asked you to change. It refuses a topic with no draft at all, since
+  everything such a topic renders is context.
+- **A follow-up reply into a posted thread is a draft like any other.** `set <t> --draft` on a
+  linked topic stores it, `quote <t>` shows it under the thread's notes (labelled as a reply
+  into that thread, with its URL above), `draft <t>` is still the paste payload, and `--refine`
+  re-shows it with the notes left out. The thread plays the part the code plays for an unposted
+  topic: context, shown once.
 
 ## Reconciling the user's hand-posted comments
 
@@ -160,7 +170,9 @@ A review spans days; the state file persists across sessions. Each check:
    python3 $SD/findings.py set <t> --state wontfix --ticket ABC-1  # ⊘ agreed not to fix / deferred
    python3 $SD/findings.py set <t> --state reset                 # clear an overlay (re-open)
    ```
-   Not satisfied → draft a follow-up reply (draft rules above); the topic stays `○`/`◐`.
+   Not satisfied → draft a follow-up reply (draft rules above) with `set <t> --draft`, whose
+   echo shows it under the thread's notes; the topic stays `○`/`◐`. A rewording of it re-shows
+   with `--refine`, same as any other draft.
 
 4. **Advance the baseline** once you've reviewed the current push, so the next check's diffs
    and re-review start from here:

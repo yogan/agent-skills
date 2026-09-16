@@ -4,6 +4,7 @@ table, topic status derivation, and thread reconciliation.
 
 Run: `python3 skills/review-mr/scripts/test_findings.py` (stdlib only).
 """
+import json
 import os
 import shutil
 import sys
@@ -16,6 +17,15 @@ sys.path.insert(0, HERE)
 
 import findings as F                                  # noqa: E402
 from lib import critical_manifest                      # noqa: E402
+
+
+def gate_signature(key):
+    """The marker strings the Stop hook looks for in a given gated command's output —
+    read from the shipped spec so a render and its gate cannot drift apart silently.
+    (rework-mr's test_threads.py has the same helper against its own spec.)"""
+    with open(os.path.join(HERE, "paste-gates.json")) as fh:
+        gates = json.load(fh)["gates"]
+    return next(g["signature"] for g in gates if g["key"] == key)
 
 
 def new_state(**overrides):
@@ -100,6 +110,89 @@ class TestCodeSnippet(Throwaway, unittest.TestCase):
         self._worktree_with("local.env", "A=1\nB=2\nC=3\n")
         out = F.code_snippet(new_state(slug="x"), {"file": "local.env", "line": 2})
         self.assertTrue(out.startswith("```bash\n"))
+
+
+class TestRefineRender(Throwaway, unittest.TestCase):
+    """Re-showing a reworded draft repeats only what changed. The code was pasted when
+    the topic came up and has not changed since; pasting it again every time a wording is
+    adjusted buries the draft, which is the one thing that did."""
+
+    def _drafted(self):
+        wt = self._throwaway_dir()
+        with open(os.path.join(wt, "worker.py"), "w") as f:
+            f.write("try:\n    run()\nexcept Exception:\n    pass\n")
+        original = F.get_worktree
+        F.get_worktree = lambda slug, iid: wt
+        self.addCleanup(setattr, F, "get_worktree", original)
+        state = new_state(slug="x")
+        F.add_topic(state, summary="swallowed exception hides real failures",
+                    file="worker.py", line=3, draft="Kürzer geht es nicht.")
+        return state
+
+    def test_refine_drops_the_code_and_keeps_the_draft(self):
+        state = self._drafted()
+        full = F.render_quote(state, "t1")
+        self.assertIn("except Exception:", full)          # the context, shown once
+        out = F.render_quote(state, "t1", refine=True)
+        self.assertNotIn("except Exception:", out)
+        self.assertNotIn("Code currently in MR", out)
+        for kept in ("◈ t1", "draft — not yet on GitLab", "Draft of comment to post",
+                     "worker.py:3", "Kürzer geht es nicht."):
+            self.assertIn(kept, out)
+
+    def test_refine_keeps_the_gate_signature(self):
+        """Read from the shipped spec, not retyped: a render that drifts out of its gate's
+        signature stops being enforced, and a gate that never fires is invisible."""
+        out = F.render_quote(self._drafted(), "t1", refine=True)
+        for sig in gate_signature("quote"):
+            self.assertIn(sig, out)
+
+    def test_refine_is_refused_when_there_is_no_draft(self):
+        """Everything such a topic renders IS context, so the short render would answer
+        with a header and nothing else. Refusing says which command to run instead."""
+        state = new_state(threads={"d1": {"body": "b", "author": "A"}})
+        add_linked_topic(state, "d1", summary="an English title")
+        with self.assertRaises(SystemExit):
+            F.render_quote(state, "t1", refine=True)
+
+    def _posted_with_follow_up(self):
+        state = new_state(threads={"d1": {
+            "author": "Jane", "body": "Warum nicht einfach retry?", "file": "src/client.py",
+            "line": 88, "url": "http://gl/1", "note_count": 2, "last_author": "Jane",
+            "last_body": "Habe einen TODO ergänzt, reicht das?", "awaiting": "you"}})
+        t = add_linked_topic(state, "d1", summary="unbounded retry loop",
+                             file="src/client.py", line=88)
+        t["draft"] = "Der TODO reicht nicht — ohne Obergrenze läuft das ewig."
+        return state
+
+    def test_a_follow_up_draft_on_a_posted_topic_is_shown(self):
+        """It used to be stored and copyable while no view rendered it: the user was asked
+        to approve a comment the skill never displayed."""
+        out = F.render_quote(self._posted_with_follow_up(), "t1")
+        self.assertIn("Draft of follow-up reply to post (de)", out)
+        self.assertIn("> Der TODO reicht nicht", out)
+        self.assertIn("Habe einen TODO ergänzt", out)      # the thread, shown once
+
+    def test_refine_on_a_posted_topic_drops_the_notes_and_keeps_the_follow_up(self):
+        """Same rule as an unposted topic, with the thread in the role the code plays
+        there: it is what the user is already looking at."""
+        out = F.render_quote(self._posted_with_follow_up(), "t1", refine=True)
+        for gone in ("Warum nicht einfach retry?", "Habe einen TODO ergänzt"):
+            self.assertNotIn(gone, out)
+        for kept in ("◈ t1", "http://gl/1", "Draft of follow-up reply to post (de)",
+                     "> Der TODO reicht nicht"):
+            self.assertIn(kept, out)
+        for sig in gate_signature("quote"):
+            self.assertIn(sig, out)
+
+    def test_a_seeded_note_is_not_mistaken_for_a_follow_up(self):
+        """`note` is review-branch's seed text for the comment that OPENED the thread —
+        long since posted. Only an explicit draft is a pending follow-up."""
+        state = self._posted_with_follow_up()
+        t = F.topic_for(state, "t1")
+        del t["draft"]
+        t["note"] = "unbounded retry loop — no MAX_RETRIES"
+        self.assertNotIn("follow-up", F.render_quote(state, "t1"))
 
 
 class TestCriticalManifest(Throwaway, unittest.TestCase):

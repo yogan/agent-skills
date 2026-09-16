@@ -58,8 +58,8 @@ python3 $SD/threads.py set <t> --state waiting     # only for a truly-addressed 
 
 **Now research the first open topic — silently, before `present`.** `bodies` already gave you
 its reviewer comment, so you can read the code and work out the trade-off now. Do this first
-so that when you run `present` it is the **last** thing in your context, right before you type
-your reply — this is what stops the table getting dropped.
+so that when you run `present` it is the **last** thing you read before you type your reply —
+this is what stops the table getting dropped.
 
 Then, as your **final** action before replying, run `present`:
 
@@ -257,8 +257,8 @@ Per topic:
       - **anything else** → they're discussing. There is no `d` command: treat any non-`c`/`p`/`n`
         message as feedback — engage with it, refine the draft, store it again with
         `set <t> --reply -`, re-run **`reply-view <t> --refine`**, paste that block. Never post
-        unprompted. `--refine` is what keeps an iteration from re-pasting the code and the
-        thread the user already has on screen: answer in a line or two if the feedback needs an
+        unprompted. `--refine` is what keeps an iteration from re-pasting the topic's context,
+        which the user already has on screen: answer in a line or two if the feedback needs an
         answer, then the block — nothing else.
       ```bash
       python3 $SD/threads.py reply <t> | $SD/clip.sh     # c — Copy

@@ -42,7 +42,10 @@ Subcommands (all read-only against GitLab):
   updates        pushes since your baseline: compare URLs + diffstats + topics touched
   bodies         first + last note of each posted thread (to judge status)
   quote <t>      render a topic's thread notes verbatim (for a draft: display
-                 with meta header + where to open the thread)
+                 with meta header + where to open the thread). `--refine` leaves the
+                 topic's context out — the code, or the notes of the thread a follow-up
+                 replies into — for re-showing a reworded draft on a topic already on
+                 screen; `set <t> --draft` takes it too, for its echo
   draft <t>      the draft's comment body ONLY — the paste/post payload (no meta)
   diff <t>       the author's change for one topic: compare URL + inline git command
   import <file>  bulk-add findings from a JSON array (review-branch seed)
@@ -774,8 +777,55 @@ def summary_language_warning(state, topics):
             f"`set <t> --summary \"<short English line>\"`, then re-render.")
 
 
-def render_quote(state, tid):
+def _draft_block(state, t, body, follow_up=False):
+    """The drafted comment as the user reads it before posting: a label, then the body.
+
+    Both kinds of draft go through here — the comment that opens a thread, and a
+    follow-up reply into a thread already posted — because both are the thing the user is
+    being asked to approve, and both must be SHOWN, not just stored. A follow-up used to
+    be stored and copyable while no view rendered it: the user was asked to approve text
+    the skill never displayed, and the agent's only way to show it was to write it out
+    itself, which loses the suggestion re-fencing `render_draft` exists for.
+
+    The draft language rides on the label. It has to stay somewhere in the drafting view —
+    it is what keeps the agent from falling back to the documented default language — and
+    next to the draft is where it belongs.
+    """
+    if not body:
+        return []
+    lang = FENCE_BY_EXT.get(os.path.splitext(t.get("file") or "")[1], "")
+    loc = _loc(state, t, full=True)
+    # A topic with no file:line is posted on the MR itself, so "thread on …" would name
+    # nothing — say where it goes instead.
+    if follow_up:
+        where = (f"as a reply in the thread on `{loc}`" if loc
+                 else f"as a reply in the {MR_LEVEL} thread")
+        kind = "follow-up reply"
+    else:
+        where = (f"thread on `{loc}`" if loc
+                 else f"{MR_LEVEL}: post it on the MR, not on a diff line")
+        kind = "comment"
+    return ["", f"_Draft of {kind} to post ({state.get('lang') or DEFAULT_LANG})"
+            f" — {where}:_", "", render_draft(body, lang, t.get("line"))]
+
+
+def render_quote(state, tid, refine=False):
+    """A topic as the user reads it. `refine=True` is the render for re-showing a REWORDED
+    draft on the topic they are already looking at: it drops the topic's context — the code
+    the comment is about, or the notes of the thread it replies into — and keeps the title,
+    the draft and its label.
+
+    The context was pasted when the topic came up and has not changed since; repeating it
+    every time a wording is adjusted buries the draft, which is the one thing that did
+    change. The title line stays because it is a single line and says which topic this is
+    and whether it is posted yet; the label stays because it carries the draft language
+    and where the comment goes. A topic with no draft at all has nothing but context, so
+    `refine` is refused there rather than rendering an empty answer.
+    """
     t = topic_for(state, tid) or die(f"no topic {tid}")
+    if refine and not (t.get("draft") or t.get("note")):
+        die(f"--refine re-shows a reworded DRAFT and {tref(tid)} has none — everything it "
+            f"renders is context. Use plain `quote {tid}`")
     summ = short_summary(state, t)
     out = []
     if not t["thread_ids"]:                       # a draft — show its draft text
@@ -790,26 +840,15 @@ def render_quote(state, tid):
         # The code block carries the location, so there is no separate "open a thread
         # at …, then paste" line: it sat directly above the SOURCE snippet and read as if
         # that were the paste payload.
-        snip = code_snippet(state, t)
-        loc = _loc(state, t, full=True)
-        if snip:
-            out += ["", f"_Code currently in MR — `{loc}`:_", "", snip]
-        warn = anchor_warning(state, t)
-        if warn:
-            out += ["", warn]
-        body = t.get("draft") or t.get("note")
-        if body:
-            lang = FENCE_BY_EXT.get(os.path.splitext(t.get("file") or "")[1], "")
-            # A topic with no file:line is posted on the MR itself, so "thread on …"
-            # would name nothing — say where it goes instead.
-            where = (f"thread on `{loc}`" if loc
-                     else f"{MR_LEVEL}: post it on the MR, not on a diff line")
-            # The draft language rides on THIS label. It has to stay somewhere in the
-            # drafting view — it is what keeps the agent from falling back to the
-            # documented default language — and next to the draft is where it belongs.
-            out += ["", f"_Draft of comment to post ({state.get('lang') or DEFAULT_LANG})"
-                    f" — {where}:_", "",
-                    render_draft(body, lang, t.get("line"))]
+        if not refine:
+            snip = code_snippet(state, t)
+            if snip:
+                out += ["", f"_Code currently in MR — "
+                        f"`{_loc(state, t, full=True)}`:_", "", snip]
+            warn = anchor_warning(state, t)
+            if warn:
+                out += ["", warn]
+        out += _draft_block(state, t, t.get("draft") or t.get("note"))
         return "\n".join(out).strip()
     for i, th in enumerate(t["thread_ids"]):
         x = state["threads"].get(th, {})
@@ -831,13 +870,22 @@ def render_quote(state, tid):
             who = first_name(x.get("resolved_by")) or "someone"
             out.append(f"_(GitLab thread resolved by {who} — that's their toggle; "
                        "your ack is what closes this topic here)_")
-        out += ["", _note_md(x.get("author"), x.get("body"))]
-        if x.get("note_count", 1) > 1:
-            skipped = x["note_count"] - 2
-            if skipped > 0:
-                out += ["", f"_… {skipped} more …_"]
-            out += ["", _note_md(x.get("last_author"), x.get("last_body"))]
+        if not refine:
+            out += ["", _note_md(x.get("author"), x.get("body"))]
+            if x.get("note_count", 1) > 1:
+                skipped = x["note_count"] - 2
+                if skipped > 0:
+                    out += ["", f"_… {skipped} more …_"]
+                out += ["", _note_md(x.get("last_author"), x.get("last_body"))]
         out.append("")
+    while out and not out[-1]:            # the loop's trailing spacer, before the label
+        out.pop()
+    # A follow-up reply drafted for a thread that is already posted — the author pushed
+    # back, or answered without changing anything, and the reworked point needs to reach
+    # them. It is the thing being decided, so it goes last, exactly as an unposted
+    # topic's draft does. `note` is NOT a fallback here: that is review-branch's seed
+    # text for the original comment, long since posted.
+    out += _draft_block(state, t, t.get("draft"), follow_up=True)
     return "\n".join(out).strip()
 
 
@@ -1374,6 +1422,11 @@ def main():
     pq = sub.add_parser("quote")
     pq.add_argument("topic")
     pq.add_argument("--iid", type=int)
+    REFINE_HELP = ("re-showing a REWORDED draft on a topic already on screen: leave the "
+                   "topic's context out — the code, or the notes of the thread a "
+                   "follow-up replies into — and print the title, the draft and its "
+                   "label. Never for a topic's first show.")
+    pq.add_argument("--refine", action="store_true", help=REFINE_HELP)
 
     pdr = sub.add_parser("draft")
     pdr.add_argument("topic")
@@ -1407,6 +1460,9 @@ def main():
     ps.add_argument("--state", choices=("acked", "wontfix", "reset"))
     for f in ("summary", "file", "line", "draft", "note", "ticket", "start-sha"):
         ps.add_argument(f"--{f}")
+    # `set --draft` echoes the refreshed view, so it needs the same switch as `quote`:
+    # storing a reworded draft IS the iteration step, and that echo is what the user sees.
+    ps.add_argument("--refine", action="store_true", help=REFINE_HELP)
 
     pd = sub.add_parser("drop")
     pd.add_argument("topic")
@@ -1486,7 +1542,7 @@ def main():
         save(path, state)
         print(render_candidates(state, me))
     elif cmd == "quote":
-        print(render_quote(state, args.topic) + critical_manifest.manifest())
+        print(render_quote(state, args.topic, args.refine) + critical_manifest.manifest())
     elif cmd == "draft":
         print(draft_body(state, args.topic))
     elif cmd == "diff":
@@ -1580,7 +1636,8 @@ def main():
             # and reconstructing the block by hand reintroduces the raw ```suggestion
             # fence (unhighlighted) that render_quote deliberately re-fences for display.
             # Printing it here means the correct block is already in front of it.
-            print(render_quote(state, args.topic) + critical_manifest.manifest())
+            print(render_quote(state, args.topic, args.refine)
+                  + critical_manifest.manifest())
     elif cmd == "drop":
         t = topic_for(state, args.topic)
         if t and t["thread_ids"]:                 # keep dropped inbound threads dropped

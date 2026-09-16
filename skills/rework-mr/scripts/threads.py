@@ -974,9 +974,10 @@ def main():
     prv.add_argument("--iid", type=int)
     prv.add_argument("--refine", action="store_true",
                      help="re-showing a reworded draft on the SAME topic: omit the "
-                          "topic header, the code and the thread (already on screen, "
-                          "unchanged) and print only the draft, its thread URL and the "
-                          "prompt. Never for a topic's first reply block.")
+                          "topic's context — its header, the code and the thread, all "
+                          "on screen already and unchanged — and print only the draft, "
+                          "its thread URL and the prompt. Never for a topic's first "
+                          "reply block.")
     pr = sub.add_parser("reply", help="the drafted reply BODY only — the paste/post payload")
     pr.add_argument("topic")
     pr.add_argument("--iid", type=int)
