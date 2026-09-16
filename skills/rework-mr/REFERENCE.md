@@ -24,17 +24,35 @@ the reply (step 10).
    pre-existing-code changes into MR commits; flag such splits to the user. Do this *before*
    showing the diff — blaming *after* is the bug (see below).
 5. Only THEN, as your **final** action before replying, run `diff-view.sh <t>` and **paste its
-   ENTIRE output verbatim as the rest of your message, then STOP**: state the fixup target(s) —
-   one per commit, `→ fixup into <sha> ("<subject>")` — in 1–2 lines, followed by the diff-view
-   block (the diff + the "ACK to fix up and push?" question). Iterate until the user explicitly
-   **ACKs**. Nothing gets committed before that. **Postcondition:** the diff-view block (fenced
-   diff + the ACK question) must be pasted verbatim; if you summarised or described the diff
-   instead of showing it, you dropped it — redo it. (The repeated bug was showing the diff, then
+   ENTIRE output verbatim as the rest of your message, then STOP**: first a short summary —
+   what the reviewer asked for, by name, and what you did about it ("Robin asked for X; rewrote
+   `Foo.bar()` to … and added two tests") — then the fixup target(s), one per commit,
+   `→ fixup into <sha> ("<subject>")`, in 1–2 lines, followed by the diff-view
+   block (what changed + the script's own closing ACK question, whose exact wording names the
+   answers other than an ACK — paste it, never retype it). The summary is prose about
+   the reasoning, not a retelling of the diffstat the block already prints, and it scales with
+   the change: one line ("Applied exactly as suggested.") where the fix is short and literally
+   what was asked, nothing at all on a reply-only topic. Iterate until the user
+   explicitly **ACKs**. Nothing gets committed before that. The diff itself goes to a diff
+   viewer in its own tmux window, named in the block; `diff-view.sh` falls back to an inline
+   fenced diff by itself when there is no viewer, so you never choose between the two shapes.
+   Up to 3 short notes can be anchored in that window with `--note FILE:LINE:TEXT`, only where
+   the change deviates from the agreed plan, does more than was asked, or is not obvious from
+   the diff. **Postcondition:** the diff-view block must be pasted verbatim; if you summarised
+   or described it instead of showing it, you dropped it — redo it. (The repeated bug was
+   showing the diff, then
    blaming/naming targets afterward — the `git blame` call in between pushed the diff out of mind
    by the time the message was written. A `Stop` hook enforces the diff-view block actually
    reaching the user, the same way it does for `present`/`quote`/`reply-view`/`change-preview` —
    and it blocks an ACK request that has no `diff-view.sh` run behind it at all.)
-6. On ACK, **fixup — not a new commit** (the target(s) were already determined in step 4). A
+6. On ACK, **read the viewer's notes first**: `python3 $SD/threads.py hunk-notes`. The user
+   may answer on the diff's own lines rather than in chat, and any output at all means do not
+   push — answer each note and go back to step 5. No output means go ahead. Run it whatever
+   they typed, so there is nothing for them to remember. Reading a note **removes it from
+   the window**, so that output is your only copy — address every line of it in this turn.
+   Your own notes are cleared each time a diff goes up, so the window never shows an
+   annotation belonging to a diff that has been replaced.
+   Then **fixup — not a new commit** (the target(s) were already determined in step 4). A
    `fix(...)`/`refactor(...)` commit for code this MR branch introduced is almost always wrong
    (keep history clean for merge):
    ```bash
@@ -49,7 +67,13 @@ the reply (step 10).
    always run the complete check suite before any push), then:
    ```bash
    git push --force-with-lease --force-if-includes
+   python3 $SD/threads.py hunk-close
    ```
+   The rebase left the working tree clean, so the viewer would otherwise sit there showing a
+   diff that no longer exists while the conversation moves to the next topic. `hunk-close` is
+   silent when it closes the window and when there was none; it speaks only if a note arrived
+   after the last read, and then it leaves the window alone — that note is a further change on
+   this topic, to be read with `hunk-notes` and worked from step 1.
 9. Build the topic's diff URL (spans every push for this topic via the stored baseline):
    ```bash
    python3 $SD/diff-url.py url --start-sha <stored-start-sha>
@@ -81,7 +105,9 @@ the reply (step 10).
       It checks rather than trusts that — a context that moved since (a new reviewer note, a
       re-anchored comment) or was never shown comes back in full, with a line saying why.
    c. Interpret the user's reply — **`c`** = copy, **`p`** = post, **`n`** = next topic (already
-      replied/resolved: `set <t> --state waiting`, move on), **anything else** = discussion (no
+      replied/resolved: `set <t> --state waiting`, then **open the next one with
+      `quote <next-t>` pasted as the whole message, and stop** — `n` names the next comment to
+      SHOW, not the next fix to start), **anything else** = discussion (no
       `d` command: engage with it, refine, store it again with `set <t> --reply -`, re-run
       `reply-view <t> --refine`, paste that):
    ```bash

@@ -58,6 +58,17 @@ def web_base(web_url):
     return None
 
 
+def project_slug():
+    """The name this project's state directory is keyed by — from the git remote alone.
+
+    Split out of `context()` because that one also builds `web`, which asks glab for the
+    host's API scheme: a subprocess and a config read, on a helper with no timeout. Callers
+    that only need to find the state directory — naming a viewer window, say — must not pay
+    a glab round-trip per render for it, nor hang when glab does.
+    """
+    return parse_remote(remote_url())[1].replace("/", "-").replace(".", "-")
+
+
 def context():
     host, path = parse_remote(remote_url())
     return {

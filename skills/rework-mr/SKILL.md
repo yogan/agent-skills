@@ -157,8 +157,15 @@ python3 $SD/threads.py quote <next-t>      # run LAST — paste its output verba
 ```
 
 **Postcondition:** the reply must open with the `quote` block — the topic header, the fenced
-code the comment is anchored to, then the reviewer's note — not your research prose. If it opens
-with prose, you dropped the comment — redo it. (A `Stop` hook enforces this too.)
+code the comment is anchored to, then the reviewer's note and every reply on it — not your
+research prose. If it opens with prose, you dropped the comment — redo it. (A `Stop` hook
+enforces this too.)
+
+**And it must contain nothing beyond that block and a short recommendation**: no code change,
+no diff, no fixup target, no ACK request. Opening a topic and fixing it in one turn — which is
+what "move to the next topic" invites after a `n` — hands the user a change to approve for a
+comment they have not read yet. Implementation starts only once they have seen the comment and
+agreed a plan (step 1).
 
 `quote` renders the code from the exact blob the comment hangs on, so your research can cite what
 the user is actually looking at. It follows the reviewer's own selection: a multi-line comment
@@ -220,16 +227,47 @@ Per topic:
    for a fix/refactor to code the branch did *not* add (blame older than the branch point), as
    a separate real commit *before* the fixups; call that out explicitly. Only THEN, as your
    **final** action before replying, run `diff-view.sh <t>` and **paste its ENTIRE output
-   verbatim as the rest of your message, then STOP**: state the fixup target(s) in 1–2 lines,
-   followed by the diff-view block (the diff + the "ACK to fix up and push?" question). Never
-   just "commit" (that reads as a new commit). (The repeated bug here was showing the diff, then
+   verbatim as the rest of your message, then STOP**: first a short summary — **what the
+   reviewer asked for, by name, and what you did about it** ("Robin asked for X; rewrote
+   `Foo.bar()` to … and added two tests") — then the fixup target(s) in 1–2 lines, then the
+   diff-view block (what changed + the script's own closing ACK question, whose exact
+   wording names the answers other than an ACK — paste it, never retype it). Never
+   just "commit" (that reads as a new commit).
+   The summary is prose about the *reasoning*, never a retelling of the diffstat — the block
+   below it already says which files and how many lines. Keep it to the size of the change:
+   where the fix is short and exactly what was asked, one line saying so ("Applied exactly as
+   suggested.") is the whole summary, and for a reply-only topic there is nothing to summarise.
+   **The diff itself goes to a diff viewer in its own tmux window**, and the block names the
+   window; the user reads it there. It falls back to an inline fenced diff on its own when
+   there is no viewer to use — you do not choose between them and do not mention the
+   mechanism, you just paste what the command printed.
+   You may anchor **at most 3** short notes in that window with
+   `--note FILE:LINE:TEXT` — and only where the change **deviates from the agreed plan, does
+   more than was asked, or is not obvious from the diff.** Default to none: a note per hunk
+   buries the diff it is annotating. The fixup target goes in your prose, not in a note.
+   (The repeated bug here was showing the diff, then
    blaming/naming targets afterward — the `git blame` call in between pushed the diff out of
    mind by the time the message was written. A `Stop` hook enforces the diff-view block actually
    reaching the user, the same way it does for `present`/`quote`/`reply-view`/`change-preview` —
    and it blocks an ACK request that has no `diff-view.sh` run behind it at all.)
-3. On ACK: capture the pre-push baseline (`diff-url.py baseline` → `set <t> --start-sha`),
-   then `git commit --fixup=<sha>` for each named target.
+3. On ACK — **first, always, before anything else: `python3 $SD/threads.py hunk-notes`.**
+   The user reviews the diff in the viewer window and may answer by leaving notes on the
+   lines themselves instead of typing them at you. **Any output at all means do NOT push:**
+   answer each note, change what needs changing, and go back to step 2. No output is the
+   common case and means go ahead. Run it whatever the user typed — "ack", "check the
+   notes", anything — so there is nothing for them to remember.
+   **Reading a note takes it out of the window** — it has now been asked and answered, and
+   leaving it there would both re-report it forever (blocking every later push) and strand
+   it on a line the fix has since moved. So **that output is your only copy**: address every
+   line of it in this turn. The window is likewise cleared of *your* notes each time a diff
+   goes up, so what is anchored in it always belongs to the diff currently loaded.
+   Then capture the pre-push baseline (`diff-url.py baseline` → `set <t> --start-sha`),
+   and `git commit --fixup=<sha>` for each named target.
 4. `git rebase --autosquash`, **full QA** (hard gate), `git push --force-with-lease --force-if-includes`.
+   Then `python3 $SD/threads.py hunk-close` — the rebase left the tree clean, so the viewer
+   window is now showing a diff that no longer exists while the conversation moves on. It
+   closes itself silently; the only time it says anything is when a note arrived in the
+   meantime, and then the window stays open and that note is the next thing to deal with.
 5. Topic diff URL: `diff-url.py url --start-sha <stored>` (never a commit URL — force-push
    rots it) → `set <t> --diff-url`.
 6. Reply — **one topic at a time; the `c`/`p`/`n` prompt is a hard STOP.** Do all
@@ -273,7 +311,11 @@ Per topic:
       - **`c`** (or "copy") → copy to clipboard.
       - **`p`** (or "post") → post it (the one allowed write).
       - **`n`** (or "next") → the topic is already handled (they replied by hand, or it's
-        resolved): mark it `set <t> --state waiting` and move straight to the next topic.
+        resolved): mark it `set <t> --state waiting`, then open the next topic **the way
+        every topic is opened — `quote <next-t>`, pasted as your whole message, then STOP**
+        (see "Next topics"). "Next" names the next *comment to show*, never the next fix to
+        start: a topic whose comment the user has not been shown cannot be discussed, let
+        alone agreed, and a diff arriving before it is a change they never asked for.
       - **anything else** → they're discussing. There is no `d` command: treat any non-`c`/`p`/`n`
         message as feedback — engage with it, refine the draft, store it again with
         `set <t> --reply -`, re-run **`reply-view <t> --refine`**, paste that block. Never post
@@ -293,7 +335,7 @@ Per topic:
    Only **Post** (or the user confirming they pasted it) counts as addressed — then mark it:
    `set <t> --state waiting` (now genuinely waiting on the reviewer; a later reviewer note
    auto-clears it back to `open`).
-7. Only now, the next topic.
+7. Only now, the next topic — and it starts at `quote`, never at code (see "Next topics").
 
 ## Reply draft rules
 
@@ -320,8 +362,13 @@ Per topic:
 
 `glab` authenticated; run on (or pass `--iid N` for) the MR branch. `python3`. (`clip.sh` copies to the clipboard via macOS `pbcopy`; where that is missing the
 copy is skipped — the draft is in the chat message and `p` posts through `glab` regardless.)
-`threads.py` subcommands: sync·todo·present·bodies·plans·quote·url·reply·reply-view [--refine]·set·merge·path
+`threads.py` subcommands: sync·todo·present·bodies·plans·quote·url·reply·reply-view [--refine]·set·merge·path·hunk-notes·hunk-close
 (plus `change-view`/`diff-view`, the bodies of the two .sh views below).
+**Optional: `hunk` (a terminal diff viewer) inside `tmux`.** With both, a topic's working
+diff opens in a tmux window of its own — placed directly right of the one you are talking
+in — instead of filling the chat; `hunk-notes` reads back what the user wrote on the lines
+there, and `hunk-close` closes the window once the push lands. Without either, `diff-view.sh`
+prints the diff inline exactly as before — nothing to configure, and nothing else changes.
 `diff-url.py` (baseline·url), `clip.sh` (guards + copies), `guard-reply.sh` (topic-handle gate
 for the clipboard path),
 `change-view` (trivial-topic change illustration piped in, one paste — write the change with

@@ -6,6 +6,7 @@ Run: `python3 skills/review-mr/scripts/test_findings.py` (stdlib only).
 """
 import json
 import os
+import re
 import shutil
 import sys
 import tempfile
@@ -26,6 +27,28 @@ def gate_signature(key):
     with open(os.path.join(HERE, "paste-gates.json")) as fh:
         gates = json.load(fh)["gates"]
     return next(g["signature"] for g in gates if g["key"] == key)
+
+
+# Mirrors hooks/paste-gate.py's `_FLAGS`, and the helper below mirrors
+# skills/rework-mr/scripts/test_threads.py's `forbidden_rules`. Duplicated rather than
+# shared because the point is that each test pins its OWN skill's shipped spec — the same
+# arrangement `gate_signature` above already uses for the gate side.
+_FLAGS = {"m": re.M, "i": re.I, "s": re.S}
+
+
+def forbidden_rules():
+    """{key: compiled pattern} the Stop hook refuses to let reach the user, from the same
+    spec — compiled WITH each rule's declared flags, as the hook compiles them.
+
+    Matching the raw pattern string with a flagless `assertRegex` silently diverges from
+    the hook the moment a rule is line-anchored with `"flags": "m"`: the hook goes on
+    matching a warning that sits on its own line, this test stops, and the failure reads
+    as "the producer stopped emitting the warning" when the producer never changed.
+    """
+    with open(os.path.join(HERE, "paste-gates.json")) as fh:
+        rules = json.load(fh)["forbidden"]
+    return {r["key"]: re.compile(r["text"], sum(_FLAGS[c] for c in r.get("flags", "")))
+            for r in rules}
 
 
 def new_state(**overrides):
@@ -488,6 +511,24 @@ class TestNeedsTitle(unittest.TestCase):
         state = new_state(threads={"d1": {"body": "irrelevant"}})
         add_linked_topic(state, "d1", summary="a real English title")
         self.assertNotIn("needs an English summary", F.render_quote(state, "t1"))
+
+    def test_both_warnings_match_the_stop_hook_rules(self):
+        """The gate spec keys off these literals; rewording one silently disables it.
+        Mirrors rework-mr's test of the same name — review-mr pinned only its gate
+        SIGNATURES, so its two forbidden patterns had nothing holding them to the
+        renders they describe, and a line anchor added to either went unverified."""
+        rules = forbidden_rules()
+        adopted = new_state(threads={"d1": {"body": "Sollten wir hier nicht X machen?",
+                                            "file": "a.py", "line": 3}})
+        F.adopt_inbound(adopted, None, None)
+        self.assertRegex(F.render_table(adopted),
+                         rules["unresolved-needs-title-table"])
+        self.assertRegex(F.render_quote(adopted, "t1"),
+                         rules["unresolved-needs-title-quote"])
+
+        foreign = new_state(threads={"d1": {"body": "irrelevant"}})
+        add_linked_topic(foreign, "d1", summary="Das wird hier nicht gesetzt")
+        self.assertRegex(F.render_table(foreign), rules["summary-in-draft-language"])
 
     def test_a_closed_topic_needs_no_title(self):
         """Nothing acts on an acked topic any more, and the gate would otherwise block

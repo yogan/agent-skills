@@ -1036,6 +1036,9 @@ def _gl_compare(ctx, frm, to):
     diffs = _compare(ctx, frm, to)
     if diffs is None:
         return None
+    # Mirrors skills/rework-mr/scripts/threads.py's `diff_stat`. Kept separate: these
+    # payloads are already split per file, so a `+++`/`---` here is always noise, while
+    # there it can be a header or content depending on position.
     add = dele = 0
     paths = []
     for d in diffs:

@@ -68,10 +68,14 @@ Detection: a turn qualifies when a gated Bash invocation's OWN paired tool resul
 (matched by tool_use id) carries that command's output signature — success, not an
 error. Requiring the literal subcommand/script name in the command text (not just a bare
 keyword anywhere) and then the actual, run-specific output text to reappear verbatim in
-the model's message is what keeps this from false-firing when a skill's own *source* is
-merely read or grepped (SKILL.md, REFERENCE.md, this file and the specs all mention these
-command names and phrases too) — and from false-passing on a message that only talks
+the model's message is what keeps this from false-passing on a message that only talks
 about the markers without actually pasting the block.
+
+Reading a skill's own source must not trip any of that, and the signature check alone is
+not enough to guarantee it: SKILL.md, REFERENCE.md, this file and the specs all quote
+these command names and phrases, and a spec DEFINES its signatures, so `paste-gates.json`
+contains every one of its own by construction. `_invocation_text` is the part that
+actually separates the two — a command segment that merely reads a file cannot gate.
 
 The pasted block itself is meant to stay clean (no marker the user would see) — but the
 producer's OWN trailing manifest (see `_split_manifest`) is a deliberate exception: each
@@ -303,6 +307,48 @@ def _load(path):
         return None
 
 
+# A gated command is an INVOCATION; one that merely READS a gated script's source is not.
+# `cat …/diff-view.sh`, `head …/threads.py`, `grep -n "findings.py resume" SKILL.md` all put
+# a gated name in the command text while printing source, never a rendered block. The
+# signature check cannot tell those apart on its own, because a source read can carry the
+# signature phrases too — and for one file it always does: a skill's gate spec DEFINES its
+# signatures, so `paste-gates.json` contains every one of them by construction (SKILL.md and
+# this file quote them as well). Reading a gated script beside its own spec in a single call
+# therefore looked exactly like a successful render, and the hook answered by demanding the
+# model paste a shell script and a JSON file into chat, verbatim, to end its turn.
+#
+# So match only the pipeline segments that are not themselves file readers: split on the
+# shell's list/pipe separators and drop a segment whose own LEADING word is a reader. Only
+# the leading word, so a real invocation piped INTO one (`… | head -40`) stays matched.
+_READERS = frozenset(
+    "cat bat head tail less more nl od xxd strings wc file stat open "
+    "grep rg egrep fgrep sed awk".split())
+_SEGMENTS_RE = re.compile(r"\|\||&&|[|;&\n]")
+_LEAD_WORD_RE = re.compile(r"^\s*(?:\w+=\S*\s+)*(?:sudo\s+|command\s+|time\s+)*([^\s;|&]+)")
+_QUOTES_RE = re.compile(r"[\"']")
+
+
+def _invocation_text(cmd):
+    """`cmd` with its file-reading segments removed — see the note above. A command that
+    only reads reduces to the empty string and can match no gate.
+
+    Shell quotes are dropped from what remains. Every gate pattern joins the script to its
+    subcommand across plain whitespace (`threads\\.py\\s+quote`), so quoting the path —
+    `python3 "$SD/threads.py" quote t7`, the defensive habit for paths with spaces — parks
+    a closing quote in the middle and the gate silently cannot fire. That direction is the
+    dangerous one: a gate that never fires is invisible, unlike a false block, which
+    announces itself. Splitting happens BEFORE this, on the still-quoted text, so removing
+    them cannot hand a quoted separator the power to start a new segment.
+    """
+    kept = []
+    for seg in _SEGMENTS_RE.split(cmd):
+        lead = _LEAD_WORD_RE.match(seg)
+        if lead and lead.group(1).strip("'\"").rsplit("/", 1)[-1] in _READERS:
+            continue
+        kept.append(seg)
+    return _QUOTES_RE.sub("", "\n".join(kept))
+
+
 def _scan_turn(rows, gates):
     """(matched, result_by_id, shown) for the current turn.
 
@@ -345,7 +391,7 @@ def _scan_turn(rows, gates):
                 continue
             t = b.get("type")
             if t == "tool_use" and b.get("name") == "Bash":
-                cmd = (b.get("input") or {}).get("command", "") or ""
+                cmd = _invocation_text((b.get("input") or {}).get("command", "") or "")
                 for gate in gates:
                     if gate["cmd_re"].search(cmd):
                         matched[b.get("id")] = gate

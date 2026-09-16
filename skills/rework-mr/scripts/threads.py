@@ -38,9 +38,12 @@ Subcommands:
   change-view <t> [file]  render a change illustration — reads the change from stdin
               (the documented path: no file, so no protected-path prompt) or from FILE
   diff-view <t>   render a working diff read from stdin (diff-view.sh's body)
+  hunk-notes  print the notes the USER left on the diff, and take them out of the viewer
+  hunk-close  close the viewer window once the push has landed
   check-handles   internal — used by guard-reply.sh, no MR context needed
 """
 import argparse
+import glob
 import hashlib
 import os
 import re
@@ -54,10 +57,11 @@ _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(
 if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
 
-from lib import critical_manifest                               # noqa: E402
-from lib.gitlab import api, context, current_user, die, mr_view, run, web_base  # noqa: E402
-from lib.mr_common import (DEFAULT_LANG, MR_LEVEL, first_name, load,  # noqa: E402
-                           loc_md, num, reads_as, save, short_summary,
+from lib import critical_manifest, hunk                         # noqa: E402
+from lib.gitlab import (api, context, current_user, die, mr_view,  # noqa: E402
+                        project_slug, run, web_base)
+from lib.mr_common import (DEFAULT_LANG, MR_LEVEL, TOPIC_ICON, first_name,  # noqa: E402
+                           load, loc_md, num, reads_as, save, short_summary,
                            state_file, topic_for, tref)
 from lib.snippet import MAX_BACKTRACK, open_construct            # noqa: E402
 
@@ -757,15 +761,297 @@ def render_change_view(tid, text, path=None):
                       render_change(text, path), "", "Agreed?"])
 
 
-def render_diff_view(tid, diff):
+# The closing line of both diff-view shapes, and the paste gate's signature for them — the
+# `fixup-ack` rule additionally requires it to be the LAST line of the message, so the
+# alternatives to an ACK have to ride on this one line rather than follow it.
+#
+# They are spelled out because the ask alone reads as a yes/no: a user who has annotated the
+# diff in the viewer window has no way of knowing from "ACK to fix up and push?" that saying
+# so is a supported answer rather than an interruption.
+ACK_ASK = "ACK to fix up and push? — or say what to change"
+
+
+def _notice(text):
+    """A one-line warning to sit just above the ACK question, or nothing.
+
+    Marked critical, because it is the line that stops the user trusting an absence:
+    the prose above the block says the agent flagged something on the diff, and this is
+    the only thing that says it is not actually in the window.
+    """
+    if not text:
+        return []
+    critical_manifest.mark(text)
+    return ["", text]
+
+
+def render_diff_view(tid, diff, notice=""):
     """The whole `diff-view.sh` block: header, the working diff, the ACK question.
 
     Also stateless. The fence widens itself when the diff touches a file that contains
     fences (a markdown file, this repo's own docs) — otherwise those ``` lines would close
     the block and the ACK question would render inside the diff.
+
+    This is the fallback shape, used whenever the diff could not be put in a viewer — see
+    `render_diff_pointer`, which replaces it when it could. Its closing line offers one
+    fewer answer than the pointer's: with no viewer window there is nothing to annotate.
     """
     return "\n".join([f"**Diff ({tref(tid)}):**", "",
-                      fence(diff, "diff"), "", "ACK to fix up and push?"])
+                      fence(diff, "diff")] + _notice(notice) + ["", ACK_ASK + "."])
+
+
+def _header_path(rest):
+    """The file a `diff --git` line is about, given everything after that prefix.
+
+    Always consulted, but only load-bearing for a file whose diff has no `+++`/`---`
+    headers to override it — a BINARY file, which would otherwise appear in the summary
+    with no name at all. The line carries both paths, so the prefixed form is split on its
+    ` b/`, and the prefix-less form (`diff.noprefix`) on the fact that its two halves are
+    the same path twice.
+    """
+    if rest.startswith("a/") and " b/" in rest:
+        return rest.split(" b/", 1)[1]
+    half = len(rest) // 2
+    if rest[:half].strip() == rest[half:].strip():
+        return rest[:half].strip()
+    return rest.rsplit(" ", 1)[-1]
+
+
+# Mirrors skills/review-mr/scripts/findings.py's `_gl_compare` churn count, and stays
+# separate on purpose: that one walks GitLab's already-per-file diff payloads, so it never
+# has to find a file boundary and treats every `+++`/`---` as noise. This one parses one raw
+# stream from `git diff`, where those same lines are sometimes a header and sometimes
+# content. Same arithmetic, different problem — a change to either is worth checking against
+# the other.
+def diff_stat(diff):
+    """[(path, added, removed)] for a unified diff, in the order it lists the files.
+
+    Parsed from the text that was piped in, never re-derived with a second `git` call: the
+    summary the user reads and the diff handed to the viewer then cannot describe two
+    different states of a tree that is still being edited.
+
+    The name is taken from the `+++`/`---` headers wherever they exist, and only from the
+    `diff --git` line when they do not: that line carries BOTH paths, so reading it means
+    guessing where one ends and the other begins (see `_header_path`), while the headers
+    each carry exactly one. `---` arrives first and `+++` overrides it, so a rename lands
+    under its new name and a deletion — whose `+++` is `/dev/null` — keeps its old one.
+    """
+    files, in_body = [], False
+    for line in diff.splitlines():
+        if line.startswith("diff --git "):
+            files.append([_header_path(line[11:].strip()), 0, 0])
+            in_body = False
+        elif line.startswith("diff --cc ") or line.startswith("diff --combined "):
+            # A COMBINED diff — what `git diff` emits for an unmerged path, which
+            # `rebase --autosquash` produces the moment a fixup conflicts, squarely inside
+            # this skill's own flow. Without this the stanza is not a file boundary at all:
+            # it vanishes from the summary and its `---`/`+++` headers are charged to the
+            # previous file as a removal and an addition. Its body uses two prefix columns,
+            # so the +/- counts below are approximate — but a named file with rough counts
+            # beats a missing one, and the viewer's own count will disagree and force the
+            # inline shape anyway.
+            files.append([line.split(" ", 2)[2].strip(), 0, 0])
+            in_body = False
+        elif not files:
+            continue
+        elif line.startswith("@@"):
+            # Headers only exist before the first hunk. Past it every `+++`/`---` is
+            # CONTENT: a diffed file whose own line starts with `++` or `--` — a patch
+            # fixture, this repo's own docs — arrives here looking exactly like a header,
+            # and would otherwise rename the file to whatever that line said.
+            in_body = True
+        elif not in_body and (line.startswith("+++ ") or line.startswith("--- ")):
+            path = line[4:].strip()
+            # `---` arrives first and sets the name; `+++` then overrides it, so a rename
+            # is reported under its new path. A deletion's `+++` is /dev/null, skipped,
+            # which is what leaves the `---` name standing.
+            if path != "/dev/null":
+                files[-1][0] = path[2:] if path[:2] in ("a/", "b/") else path
+        elif line.startswith("+"):
+            files[-1][1] += 1
+        elif line.startswith("-"):
+            files[-1][2] += 1
+    return [(p or "?", a, r) for p, a, r in files]
+
+
+def render_diff_pointer(tid, stat, where, notice=""):
+    """The `diff-view.sh` block when the diff went to a viewer: what changed and how big,
+    where to look at it, and the same ACK question.
+
+    The per-file counts are the point of keeping anything in the message at all. They are
+    what lets a small change be approved without switching windows, and they say how much
+    there is to read before the user decides to — neither of which a bare "see window 9"
+    can do. The fixup target and the summary of what changed are deliberately NOT here: the
+    skill has the model state those in its own prose above this block, because only the
+    model knows them.
+
+    The rows are `path: +a −r`, fenced as YAML, because a pasted block's only available
+    colour is whatever the reader's markdown renderer gives the fence language — the block
+    travels through a model message, so terminal escapes cannot survive it. Read as YAML
+    each row is a key and a value, which tints the path apart from its counts; the trailing
+    colon is the whole cost of that, and it replaces a column separator that cost as much.
+    """
+    files, adds, dels = len(stat), sum(a for _, a, _ in stat), sum(r for _, _, r in stat)
+    # Padded to the longest path, capped so one deeply nested file cannot push every count
+    # off the far side of a terminal; a path past the cap simply loses its alignment.
+    width = min(max((len(p) for p, _, _ in stat), default=0), 60)
+    # Not marked critical here — `fence` marks every line it wraps, and marking twice puts
+    # each row in the manifest twice.
+    rows = [f"{p + ':':<{width + 2}} +{a} −{r}" for p, a, r in stat]
+    head = (f"**Diff ({tref(tid)})** — {files} file{'' if files == 1 else 's'}, "
+            f"+{adds} −{dels} · {where}")
+    # Marked critical explicitly, unlike the rows, which `fence` marks for us. This is the
+    # ONLY line naming where the diff is, so under the hook's one-dropped-line tolerance it
+    # was the one line a message could lose and still pass — leaving a list of filenames, a
+    # closing question mentioning "that window", and no window named anywhere.
+    critical_manifest.mark(head)
+    return "\n".join([head, "", fence("\n".join(rows), "yaml")] + _notice(notice)
+                     + ["", ACK_ASK + ", here or as notes on the diff in that window."])
+
+
+def _state_mtime(state_dir):
+    """When this MR's rework was last touched: its `topics.json`, falling back to the
+    directory only where the file is missing (a half-created state directory)."""
+    try:
+        return os.path.getmtime(os.path.join(state_dir, "topics.json"))
+    except OSError:
+        try:
+            return os.path.getmtime(state_dir)
+        except OSError:
+            return 0
+
+
+def window_label(default="diff"):
+    """The name to give this agent's viewer window: the MR number where it can be had
+    locally, the branch otherwise.
+
+    Read off the state directory's own naming rather than by asking GitLab, and via
+    `project_slug()` rather than `context()`, which would shell out to glab for the host's
+    API scheme. `diff-view` is deliberately independent of glab and the network (see
+    `main`), and a window's NAME is cosmetic enough that it must not be the thing that
+    reintroduces a round-trip — or a hang, since that helper takes no timeout — per topic.
+
+    Ranked by each state FILE's mtime, never the directory's. A directory's mtime only
+    moves when an entry is added or removed, and `save()` rewrites `topics.json` in place,
+    so every reworked MR keeps the directory mtime it was created with: measured on a real
+    store, the MR being worked on today ranked BELOW one last touched days earlier, and the
+    wrong MR number went onto the very block a force-push is approved from.
+    """
+    try:
+        # Checked before the slug is derived rather than caught after: with no origin
+        # remote `remote_url()` calls `die()`, which prints to stderr on the way out.
+        # Catching the SystemExit would still leave that stray line in the terminal, on a
+        # path where nothing is actually wrong.
+        if (_git("remote", "get-url", "origin") or "").strip():
+            dirs = glob.glob(os.path.join(STATE_ROOT, f"{project_slug()}--mr*"))
+            if dirs:
+                # basename first: splitting the full path would read any `--mr` that
+                # happens to sit in a directory name above it.
+                newest = os.path.basename(max(dirs, key=_state_mtime))
+                return TOPIC_ICON + "!" + newest.rsplit("--mr", 1)[1]
+    except (Exception, SystemExit):         # noqa: BLE001 — no remote/state → use branch
+        pass
+    branch = (_git("rev-parse", "--abbrev-ref", "HEAD") or "").strip()
+    return f"{TOPIC_ICON} {branch or default}"
+
+
+def diff_view_block(tid, diff, plain=False, notes=()):
+    """`diff-view.sh`'s whole output: the pointer block when the working diff could be put
+    in a viewer window, the inline diff when it could not.
+
+    Falling back is a normal outcome, not an error, and it is silent on purpose — no tmux,
+    no viewer installed, a window the user closed, a viewer that came back holding a
+    different set of files. What the user is asked to approve is the same either way; only
+    the shape of the block changes, and an inline diff is a worse read, not a wrong one.
+
+    `plain` forces it, and `diff-view.sh` passes it whenever the caller narrowed the diff
+    with its own git arguments: the viewer is reloaded from the working tree rather than
+    from the text piped in here, so a narrowed diff and the window would be showing two
+    different things.
+
+    `notes` are applied only once the viewer actually holds the diff, because the viewer
+    validates each one against the loaded files and would reject it otherwise. They are
+    dropped without comment when the diff went inline instead — there is nowhere to anchor
+    a note in a fenced block, and the rationale belongs in the prose around it there.
+    """
+    stat = diff_stat(diff)
+    # An empty diff is refused rather than rendered. Both shapes would otherwise ask for a
+    # fixup+force-push ACK over a block showing nothing — and the gate cannot catch it,
+    # because an empty fence marks no critical lines and the signature strings are still
+    # there. It happens for real: the edits were staged (`git diff` is unstaged-only), or
+    # the tree was already cleaned by a fixup and rebase, or the whole change is a new
+    # untracked file.
+    if not stat and not diff.strip():
+        die("`git diff` is empty — nothing to show and nothing to approve. The change is "
+            "probably staged (`git diff` reads unstaged only: pass `-- --cached`), already "
+            "committed, or entirely in untracked files. Never ask for the fixup ACK over an "
+            "empty diff.")
+    root = (_git("rev-parse", "--show-toplevel") or "").strip()
+    if plain or not stat or not root:
+        return render_diff_view(tid, diff)
+    # Whether the notes actually landed is reported, never assumed. The batch is
+    # all-or-nothing in the viewer, so one bad anchor drops all of them — and the prose
+    # above this block has already told the user the agent flagged something.
+    dropped = ("The notes could not be anchored on the diff — read the points in the prose "
+               "above instead." if notes else "")
+    shown = hunk.show_working_diff(root, window_label(), stat)
+    if not shown:
+        return render_diff_view(tid, diff, dropped)
+    if notes:
+        try:
+            landed = hunk.add_notes(shown[0], notes)
+        except ValueError as exc:
+            die(str(exc))
+        if landed:
+            dropped = ""
+    return render_diff_pointer(tid, stat, f"tmux window {shown[1]}", dropped)
+
+
+def hunk_note_lines(notes):
+    """`hunk-notes`' report for what `hunk.user_notes` handed back.
+
+    The side is named only for a note on a REMOVED line, where it changes what the number
+    means: that line is gone from the file the model is about to edit, so the number alone
+    would send it to whatever the change left in its place.
+    """
+    out = []
+    for path, side, line, text, _nid in notes:
+        where = f"{path}:{line}" if line else path
+        out.append(f"{where}{' (on a removed line)' if side == 'old' else ''}: {text}")
+    return out
+
+
+def hunk_close_decision(notes):
+    """(what to say, whether to close) for `hunk-close`, given `hunk.user_notes`' answer.
+
+    Three outcomes, and only one of them closes the window. The dangerous pair is the other
+    two: "no notes" and "could not ask" must never collapse together, because closing on
+    the second destroys an unread request and the diff it was anchored to.
+    """
+    if notes is None:
+        return ("Could not read the viewer's notes, so the window is left open rather than "
+                "closed over something unread. Harmless — close it yourself, or it goes on "
+                "the next push.", False)
+    if notes:
+        return ("Notes were left in the viewer since the last read — the window is still "
+                "open. Run `threads.py hunk-notes` and answer them; they are a new change "
+                "on this topic, on top of the one just pushed.", False)
+    return (None, True)
+
+
+def parse_note(text):
+    """`FILE:LINE:TEXT` as the note payload the viewer wants, or None if it is malformed.
+
+    Split from the left exactly twice, so a colon in the note's own prose is kept and only
+    a colon in the FILE part (which git paths effectively never contain) could confuse it.
+    """
+    parts = (text or "").split(":", 2)
+    if len(parts) != 3 or not parts[0].strip() or not parts[2].strip():
+        return None
+    try:
+        line = int(parts[1])
+    except ValueError:
+        return None
+    return {"filePath": parts[0].strip(), "newLine": line, "summary": parts[2].strip()}
 
 
 def _digest(text):
@@ -1065,6 +1351,19 @@ def main():
     pdv = sub.add_parser("diff-view", help="render a working diff (used by "
                          "diff-view.sh; reads the diff from stdin)")
     pdv.add_argument("topic")
+    pdv.add_argument("--plain", action="store_true",
+                     help="always render the diff inline, never in a viewer window "
+                          "(diff-view.sh passes this when it narrowed the diff itself)")
+    pdv.add_argument("--note", action="append", default=[], metavar="FILE:LINE:TEXT",
+                     help=f"anchor one short note in the viewer, at most "
+                          f"{hunk.MAX_NOTES} per topic; only where the change deviates "
+                          f"from the agreed plan, does more than was asked, or is not "
+                          f"obvious from the diff (repeatable)")
+    sub.add_parser("hunk-notes", help="print the notes the USER left in the viewer, and "
+                   "take them out of it (nothing if there are none — read this before "
+                   "acting on an ACK, and answer everything it prints)")
+    sub.add_parser("hunk-close", help="close this topic's diff viewer window once the "
+                   "push has landed; refuses while unread notes are in it")
     sub.choices["sync"].add_argument("--all", action="store_true",
                                      help="include resolved topics")
     pq = sub.add_parser("quote")
@@ -1114,7 +1413,70 @@ def main():
         print(render_change_view(args.topic, text, args.for_path) + critical_manifest.manifest())
         return
     if cmd == "diff-view":
-        print(render_diff_view(args.topic, sys.stdin.read()) + critical_manifest.manifest())
+        notes = []
+        for raw in args.note:
+            n = parse_note(raw)
+            if n is None:
+                die(f"--note must be FILE:LINE:TEXT, got {raw!r}")
+            notes.append(n)
+        # Both checks BEFORE anything is shown or touched. The cap used to be enforced deep
+        # inside, after the viewer had been spawned, stripped of last round's notes and
+        # reloaded — so a fourth note aborted the command with the window already rebuilt
+        # and no block printed at all. And `--plain` with notes is a contradiction the
+        # caller has to hear about: the diff is not going to a viewer, so there is nothing
+        # to anchor them to, and staying quiet let the model report notes it never left.
+        if len(notes) > hunk.MAX_NOTES:
+            die(f"{len(notes)} notes for one topic, at most {hunk.MAX_NOTES} are allowed. "
+                "A note belongs only where the change deviates from the agreed plan, does "
+                "more than was asked, or is not obvious from the diff; everything else is "
+                "already visible in the diff itself.")
+        if notes and args.plain:
+            die("--note cannot be used with git arguments: narrowing the diff forces the "
+                "inline shape, and an inline diff has no lines to anchor a note to. Put "
+                "the point in your prose instead, or show the whole diff.")
+        print(diff_view_block(args.topic, sys.stdin.read(), args.plain, notes)
+              + critical_manifest.manifest())
+        return
+    if cmd == "hunk-notes":
+        # Stateless like the views above, and deliberately silent when there is nothing:
+        # "no output" is the common answer and the one that means "go ahead and push".
+        # Which is exactly why every OTHER outcome has to say something — see below.
+        root = (_git("rev-parse", "--show-toplevel") or "").strip()
+        sid = (root and hunk.installed()
+               and hunk.find_session(root, hunk.owner_id()))
+        if not sid:
+            return
+        notes = hunk.user_notes(sid)
+        if notes is None:
+            die("could not read the viewer's notes — the daemon did not answer. This is "
+                "NOT the same as there being none: do not push. Retry, and if it keeps "
+                "failing ask the user whether they left anything on the diff.")
+        for line in hunk_note_lines(notes):
+            print(line)
+        # Printed first, dropped second: the note is the user's only copy of the request
+        # until this output reaches the model, and a delete that ran before the print
+        # would lose it for good on any failure in between.
+        for _p, _s, _ln, _t, nid in notes:
+            hunk.drop_note(sid, nid)
+        return
+
+    if cmd == "hunk-close":
+        # Silent like `hunk-notes`, and for the same reason: the common outcome — the
+        # window closed, or there was never one — is nothing the user needs telling about.
+        root = (_git("rev-parse", "--show-toplevel") or "").strip()
+        owner = hunk.owner_id()
+        sid = root and hunk.installed() and hunk.find_session(root, owner)
+        if not sid:
+            return
+        # Read WITHOUT deleting. A note that appeared since the last read is a request the
+        # user made and nobody has answered, and closing the window would take both the
+        # note and the diff it is anchored to. `hunk-notes` is the one door notes leave by,
+        # so this only refuses and says so.
+        say, close = hunk_close_decision(hunk.user_notes(sid))
+        if say:
+            print(say)
+        if close:
+            hunk.close_session(sid, owner)
         return
 
     ctx, iid, path, state = resolve_state(args)

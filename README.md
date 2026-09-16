@@ -210,7 +210,7 @@ Just enough to find your way around; the working rules for changing any of it ar
 |---|---|
 | `skills/<name>/` | one skill each — `SKILL.md`, sometimes a `REFERENCE.md`, and its Python in `scripts/` |
 | `lib/diagram/` | the diagram engine: a description in, a checked diagram out. Entry point, rules and change loop in [`lib/diagram/README.md`](lib/diagram/README.md) |
-| `lib/` | Python shared repo-wide — GitLab access, per-MR state, code snippets |
+| `lib/` | Python shared repo-wide — GitLab access, per-MR state, code snippets, and the diff viewer window (`hunk.py`, used by `rework-mr` today and intended for `review-mr`'s re-review loop next) |
 | `hooks/` | the paste-enforcement `Stop` hook — [`hooks/README.md`](hooks/README.md) |
 | `e2e/` | a local GitLab rig for exercising `review-mr` / `rework-mr` — [`e2e/README.md`](e2e/README.md) |
 | `docs/` | the diagram at the top of this page, and the spec it is drawn from |

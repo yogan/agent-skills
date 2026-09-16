@@ -31,9 +31,17 @@
     },
     {
       "key": "diff-view",
+      "note": [
+        "Two render shapes, and the signature has to cover BOTH: the diff normally goes to",
+        "a viewer window, leaving a per-file summary plus a pointer to it, and falls back",
+        "to an inline fenced diff whenever it cannot (no tmux, no viewer, a window the user",
+        "closed, a reload holding a different set of files). Pinning the old ```diff marker",
+        "would have left the pointer shape — now the common one — completely ungated.",
+        "These two strings are in both renders and in neither an errored run."
+      ],
       "cmd": "diff-view\\.sh\\b",
-      "signature": ["**Diff (", "```diff"],
-      "reason": "You ran `diff-view.sh` to show this topic's working diff but your message did not include its output. Re-send your message with the FULL diff-view block pasted verbatim — the fenced diff and the final 'ACK to fix up and push?' — before asking for that ACK any other way. Never commit, push, or ask for the ACK without the diff actually shown."
+      "signature": ["**Diff (", "ACK to fix up and push"],
+      "reason": "You ran `diff-view.sh` to show this topic's working diff but your message did not include its output. Re-send your message with the FULL diff-view block pasted verbatim — the per-file summary and where to find the diff (or the fenced diff itself, when it was rendered inline) and the final 'ACK to fix up and push?' — before asking for that ACK any other way. Copy the per-file rows EXACTLY — the column padding and the \u2212 minus sign are part of the line, and a retyped ASCII hyphen or a collapsed run of spaces reads as a corrupted paste. Never commit, push, or ask for the ACK without the diff actually shown."
     },
     {
       "key": "reply-view",
@@ -74,8 +82,9 @@
     },
     {
       "key": "unsummarised-topic-in-a-quote",
-      "note": "Same gap as above, but for `quote`'s / `present`'s topic heading (render_quote's needs_summary_warning) rather than a table row. Mirrors review-mr's unresolved-needs-title-quote.",
-      "text": "⚠️ \\*\\*needs an English summary\\*\\*",
+      "note": "Same gap as above, but for `quote`'s / `present`'s topic heading (render_quote's needs_summary_warning) rather than a table row. Mirrors review-mr's unresolved-needs-title-quote. Line-anchored like that sibling: render_quote appends the warning as its own line, so the anchor frees only a prose mention of it.",
+      "text": "^[\\s>*_`]*⚠️ \\*\\*needs an English summary\\*\\*",
+      "flags": "m",
       "reason": "Your message pastes a topic whose heading warns it has no authored `summary` — the heading is the bare topic handle, which tells the user nothing about which point this is. Read the thread and run `threads.py set <t> --summary \"<short English line>\"`, then re-run `quote <t>` (or `present`) and send that. (Both MR skills emit this warning and the hook may hand you the other one's wording: the command is `findings.py` in review-mr and `threads.py` in rework-mr — use the one this session's skill ships.)"
     },
     {
@@ -85,9 +94,13 @@
         "topic heading whenever an authored summary reads as German. The check is",
         "conservative (function words only, code spans stripped, two distinct hits), so a",
         "message carrying the warning really does have a summary to reword.",
-        "Mirrors review-mr's summary-in-draft-language."
+        "Mirrors review-mr's summary-in-draft-language, anchoring included: the warning is",
+        "appended as its own line in both the table footer and a topic heading, so the line",
+        "start costs no detection and stops the rule firing on prose that quotes the warning",
+        "exactly as it renders."
       ],
-      "text": "⚠️ \\*\\*summaries must be English\\*\\*",
+      "text": "^[\\s>*_`]*⚠️ \\*\\*summaries must be English\\*\\*",
+      "flags": "m",
       "reason": "Your message pastes a view whose warning says one or more summaries are written in the thread's language. A summary is the one-line title the user reads in the table and in every topic heading, and it is English; the thread's language governs one thing only, the body of a reply you post into it. Reword each named topic (`threads.py set <t> --summary \"<short English line>\"`), re-render, and send that instead. (Both MR skills emit this warning and the hook may hand you the other one's wording: the command is `findings.py` in review-mr and `threads.py` in rework-mr — use the one this session's skill ships.)"
     }
   ],
@@ -105,6 +118,19 @@
         "Anchored to a line start (with markdown/blockquote prefixes allowed) so that merely",
         "TALKING about the phrase mid-sentence — editing this skill, quoting SKILL.md — is not",
         "a hit; only presenting it as the ask is.",
+        "It was briefly ALSO anchored to the end of the message, to stop an illustration of the",
+        "format tripping it while working on this skill. That was measured to disarm the rule",
+        "outright: one sentence after the ask ('I'll run the suite after the rebase') escapes it,",
+        "and so does a bullet, a rule, a fence or an emoji — and an improvising model, the only",
+        "kind this rule ever sees, is exactly the one that appends a closing line. Worse, the",
+        "hook joins every assistant block of a turn into one string, so an ask followed by any",
+        "further tool call and a sign-off was ungated too: the exact shape SKILL.md documents as",
+        "the recurring production bug. It did not even close the false positive it was added for,",
+        "since an illustration that ends the message still blocked.",
+        "So it is line-start only, and quoting this line at a line start while working on the",
+        "skill does block — deliberately, per hooks/README.md: any exemption loose enough to",
+        "cover 'I was only illustrating' covers the real failure too, and the loop guard makes",
+        "the false block cost exactly one retry.",
         "There is deliberately NO equivalent rule for change-preview's 'Agreed?': the",
         "non-trivial branch ends with a plain discussion question, which can legitimately be",
         "phrased that way, so it would block correct turns."
@@ -112,7 +138,7 @@
       "gate": "diff-view",
       "text": "^[\\s>*_`]*ACK to fix up and push",
       "flags": "m",
-      "reason": "You asked for the fixup+push ACK without running `diff-view.sh`, so the user is being asked to approve a fixup and force-push they cannot see. Run `$SD/diff-view.sh <t>` and re-send your message with its FULL output pasted verbatim — the fenced diff and the script's own closing ACK line — as the last thing in the message. Never commit, push, or ask for the ACK without the diff actually shown."
+      "reason": "You asked for the fixup+push ACK without running `diff-view.sh`, so the user is being asked to approve a fixup and force-push they cannot see. Run `$SD/diff-view.sh <t>` and re-send your message with its FULL output pasted verbatim — the per-file summary and where to find the diff (or the fenced diff itself, when it was rendered inline) and the script's own closing ACK line — as the last thing in the message. Never commit, push, or ask for the ACK without the diff actually shown. (If you were only illustrating this line while working on the skill itself, that is this rule firing as designed — say so and move on rather than reshaping the message around it.)"
     }
   ]
 }

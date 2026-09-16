@@ -25,7 +25,7 @@ GitLab boot is 3-5 min.
 | 3 | terminal · **!1** | click the explainer link → **overview table, 5 topics** → curate 2 → post a comment of your own in the UI, then `sync` → draft one → paste and post |
 | 4 | terminal · **!2** | `sync` → `updates` (2 compare URLs) → `diff t1` → ack t1 → t2 the author's question → t3 claimed-but-not-done |
 | 5 | slide 3 · `/rework-mr` | hat switch; five rows |
-| 6 | terminal · **!3** | `sync` → t1 trivial → t2 the cache bug → fix → fixup + force-push → `reply-view` → paste one reply, let it post the other |
+| 6 | terminal · **!3** | `sync` → t1 trivial → t2 the cache bug → fix, **diff opens in its own window** → annotate a line there → fixup + force-push → `reply-view` → paste one reply, let it post the other |
 | 7 | slide 4 · outro | don't oversell it; questions |
 
 !1 and !2 have a worktree each, so the two segments are independent — run them in any order,
@@ -49,6 +49,12 @@ block it has to paste whole.
   That is the moment to say why the skill is read-only.
 - **On !2, `diff t1`** — the author said "reworked it"; the skill shows the actual change instead
   of making you trust the reply.
+- **On !3, the fix opens in a window of its own** — a diff viewer beside the chat, not a wall
+  of diff in the transcript. It appears once the agent has made the change, which is after the
+  topics have been agreed, not per topic. Switch to it, then **answer on a line of the diff
+  itself** ("why not the list key too?"): the note goes back to the agent, which has to address
+  it before it is allowed to push. The window closes itself once the push lands. This is the
+  part no other tool does — show it rather than describing it.
 - **On !3, t2 is a real cache bug** — `discussionKeys.all` is `['discussions']` while detail
   queries are `['discussion', id]`. No shared prefix, so invalidating `all` never refreshes the
   detail query the mutation just updated.

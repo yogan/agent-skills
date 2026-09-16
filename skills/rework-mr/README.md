@@ -11,6 +11,11 @@ reply per topic. See [SKILL.md](SKILL.md) for the full flow and
 - `python3`.
 - Optional: macOS `pbcopy`, which `clip.sh` uses to put a draft on the clipboard. Without it
   the copy step is skipped; the draft is shown in chat and posting is unaffected.
+- Optional: [`hunk`](https://github.com/hunk-dev/hunk) (a terminal diff viewer) running
+  inside `tmux`. With both, each topic's working diff opens in a tmux window beside the one
+  you are talking in, instead of filling the chat, and you can answer on the diff's own lines
+  instead of typing — see `diff-view.sh` below. With neither, the diff is printed inline
+  exactly as before; nothing else in the skill changes and there is nothing to configure.
 
 ## Required setup — the paste-enforcement Stop hook
 
@@ -45,7 +50,8 @@ meaning).
 
 - `threads.py` — fetch/reconcile threads, render tables & the reply block. Run
   `threads.py -h` for subcommands
-  (`sync·todo·present·bodies·plans·quote·url·reply·reply-view [--refine]·set·merge·path·change-view·diff-view`).
+  (`sync·todo·present·bodies·plans·quote·url·reply·reply-view [--refine]·set·merge·path·
+  change-view·diff-view·hunk-notes·hunk-close`).
 - `quote <t>` — a topic in full: the code the reviewer's comment is anchored to (read
   from the exact blob the comment hangs on, so the line numbers are the reviewer's),
   then the whole thread. Shows the reviewer's own line range when they marked one —
@@ -70,8 +76,9 @@ meaning).
   already carries its own ```diff block is passed through rather than wrapped again, so it
   stays syntax-highlighted. `change-preview.sh <t> <file> [--for <path>]` renders the same
   block from a file.
-- `diff-view.sh <t> [-- git-diff-args...]` — the one-paste working diff shown
-  before the fixup+push ACK (fenced diff + `ACK to fix up and push?`).
+- `diff-view.sh <t> [--note FILE:LINE:TEXT]... [-- git-diff-args...]` — the one-paste working diff shown
+  before the fixup+push ACK — a per-file summary pointing at the viewer window holding the
+  diff (or the fenced diff itself, with no viewer), then the closing ACK question.
 - `diff-url.py` — stable per-topic diff URL across force-pushes.
 - `clip.sh` — copy a reply body to the clipboard (guards topic handles first).
 - `guard-reply.sh` — the topic-handle gate for the clipboard path, reused by `clip.sh`.

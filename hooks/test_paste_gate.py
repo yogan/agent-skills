@@ -93,7 +93,22 @@ DIFF_VIEW_OUT = """**Diff (t3):**
 +    for _ in range(MAX_RETRIES):
 ```
 
-ACK to fix up and push?
+ACK to fix up and push? — or say what to change.
+"""
+
+# The shape the command actually prints whenever a viewer is available, which is the common
+# case: a per-file summary plus the line saying where the diff is. Kept beside the inline
+# fixture above rather than replacing it, because the gate has to cover both and the
+# critical lines differ — here the HEAD line is critical too, since it is the only one
+# naming the window.
+DIFF_VIEW_POINTER_OUT = """**Diff (t3)** — 2 files, +3 −1 · tmux window 9 (!123)
+
+```yaml
+src/client.py:  +2 −1
+src/retry.py:   +1 −0
+```
+
+ACK to fix up and push? — or say what to change, here or as notes on the diff in that window.
 """
 
 
@@ -294,6 +309,24 @@ class TestGates(HookCase):
             assistant_text("The spec gates six commands."),
         ])
 
+    def test_reading_a_gated_script_beside_its_own_spec_allows(self):
+        """Observed for real, while editing this very skill: one `cat` of a gated script
+        AND its gate spec. The command text names the script, so `cmd_re` matches — and a
+        spec's own source contains every signature string it DEFINES, by construction, so
+        the signature check (the only thing standing between a source read and a false
+        block) passes on text no producer ever rendered. The hook then demanded the model
+        paste a shell script and a JSON file into chat, verbatim, to end its turn."""
+        with open(REWORK_SPEC) as fh:
+            spec_src = fh.read()
+        self.assertAllowed([
+            user_prompt(),
+            bash_call("u1", "cat skills/rework-mr/scripts/diff-view.sh; "
+                            'echo "=== GATES ==="; '
+                            "cat skills/rework-mr/scripts/paste-gates.json"),
+            tool_result("u1", "#!/usr/bin/env bash\nset -euo pipefail\n" + spec_src),
+            assistant_text("The `diff-view` gate pins two signature strings."),
+        ])
+
     def test_stale_rerender_superseded(self):
         """quote, then a fix, then `set --draft` re-renders: only the NEWEST block has to be
         pasted. Demanding every one blocked correct messages."""
@@ -357,6 +390,22 @@ class TestForbidden(HookCase):
                 "an English summary before it's presented, via `set <t> --summary`."),
         ])
 
+    def test_quoting_a_rendered_warning_in_prose_allows(self):
+        """Explaining these rules to the user — or editing the skill — means naming the
+        warning EXACTLY as it renders, not the sanitised paraphrase the sibling test
+        above uses. Both producers append it as its OWN line (`out += ["", warn]` in the
+        table footer, `out.append(w)` in a topic heading), so a line-start anchor keeps
+        every real detection while letting the phrase be discussed. That is the same
+        trade `unresolved-needs-title-table` and the `fixup-ack` required-rule already
+        make on purpose; these two were simply left unanchored."""
+        self.assertAllowed([
+            user_prompt(),
+            assistant_text(
+                "The footer carries ⚠️ **summaries must be English** when a summary "
+                "reads as German, and a topic heading carries ⚠️ **needs an English "
+                "summary** when nobody authored one."),
+        ])
+
     def test_authored_summary_row_allows(self):
         """A resolved topic's table row must not false-positive just for containing
         an em dash or the word "summary" near the ✍️/⚠️ glyphs used elsewhere."""
@@ -377,12 +426,88 @@ class TestRequired(HookCase):
             assistant_text("Fixup target: commit 2 (`feat: add client`).\n\n" + DIFF_VIEW_OUT),
         ])
 
+    def test_ack_with_the_pasted_pointer_block_allows(self):
+        """The shape with a viewer — the common one — and the one the gate was nearly left
+        blind to, since pinning the old ```diff marker would have covered only the
+        fallback."""
+        self.assertAllowed([
+            user_prompt(),
+            bash_call("u1", "$SD/diff-view.sh t3"),
+            tool_result("u1", with_manifest(
+                DIFF_VIEW_POINTER_OUT,
+                ["**Diff (t3)** — 2 files, +3 −1 · tmux window 9 (!123)",
+                 "src/client.py:  +2 −1", "src/retry.py:   +1 −0"])),
+            assistant_text("Robin asked for the retry to be bounded; it is, with a test.\n\n"
+                           "→ fixup into abc1234 (\"feat: add client\").\n\n"
+                           + DIFF_VIEW_POINTER_OUT),
+        ])
+
+    def test_dropping_the_line_that_names_the_window_blocks(self):
+        """The head line is the only one saying where the diff is. Before it was declared
+        critical, losing exactly that line passed under the one-dropped-line tolerance and
+        left the user approving a force-push against a window nothing named."""
+        pasted = "\n".join(DIFF_VIEW_POINTER_OUT.splitlines()[1:])
+        self.assertBlocked([
+            user_prompt(),
+            bash_call("u1", "$SD/diff-view.sh t3"),
+            tool_result("u1", with_manifest(
+                DIFF_VIEW_POINTER_OUT,
+                ["**Diff (t3)** — 2 files, +3 −1 · tmux window 9 (!123)",
+                 "src/client.py:  +2 −1", "src/retry.py:   +1 −0"])),
+            assistant_text("Bounded the retry.\n\n" + pasted),
+        ])
+
     def test_mid_sentence_mention_allows(self):
         """Editing the skill and quoting its own wording must not block."""
         self.assertAllowed([
             user_prompt(),
             assistant_text("SKILL.md says never to ask 'ACK to fix up and push?' without "
                            "the diff shown — that is now enforced."),
+        ])
+
+
+class TestRequiredIllustration(HookCase):
+    """Reproducing the block at a line start blocks, even when only illustrating it, and
+    that is the accepted cost of the rule working at all.
+
+    It was briefly exempted by also anchoring the phrase to the END of the message, on the
+    theory that a real ask is always the last line. The two tests below are why that had to
+    go: the exemption let every improvised ask through — and an improvising model is the
+    only kind this rule ever sees — while still blocking an illustration that happened to
+    end the message. It bought nothing and disarmed the rule. Per hooks/README.md, the
+    answer to a false block here is to say what happened and move on; the loop guard makes
+    it cost exactly one retry.
+    """
+
+    def test_an_improvised_ask_with_a_closing_line_still_blocks(self):
+        """The shape the end-anchor let through. Verified against this hook: identical
+        input was ALLOWED while that anchor was in place."""
+        self.assertBlocked([
+            user_prompt(),
+            assistant_text("Fixed t3 by bounding the loop.\n\n"
+                           "ACK to fix up and push?\n\n"
+                           "I'll run the full suite right after the rebase."),
+        ], "fixup+push ACK")
+
+    def test_an_ask_in_an_earlier_block_of_the_turn_still_blocks(self):
+        """The hook joins every assistant block of a turn into one string, so an ask
+        followed by another tool call and a sign-off escaped the end-anchor too — which is
+        the exact sequence SKILL.md documents as the recurring production bug."""
+        self.assertBlocked([
+            user_prompt(),
+            assistant_text("Fixed t3.\n\nACK to fix up and push?"),
+            bash_call("u1", "git blame -L 10,20 src/a.ts"),
+            tool_result("u1", "abc1234 (Ada 2026-01-01 10) const x = 1\n"),
+            assistant_text("Blame says commit 2."),
+        ], "fixup+push ACK")
+
+    def test_a_mid_sentence_mention_still_allows(self):
+        """The one exemption that survives, because it needs no heuristic: the phrase not
+        at a line start is prose about the rule, not the rule being invoked."""
+        self.assertAllowed([
+            user_prompt(),
+            assistant_text("The block ends by asking 'ACK to fix up and push?' — which is "
+                           "what the rule keys on."),
         ])
 
 

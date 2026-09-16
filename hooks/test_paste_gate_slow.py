@@ -32,6 +32,31 @@ from test_paste_gate import (DIFF_VIEW_OUT, HOOK, QUOTE_OUT, RESUME_CRITICAL,  #
 
 
 class TestGates(HookCase):
+    def test_a_reader_in_a_pipe_after_a_real_invocation_still_gates(self):
+        """The guard for `_invocation_text`: dropping a command's file-READING segments
+        must not drop the invocation they are piped onto. `… | head -40` is still a real
+        render, and has to be pasted. (Its allow-side twin — reading a gated script beside
+        its own spec — is in the fast file.)"""
+        self.assertBlocked([
+            user_prompt(),
+            bash_call("u1", "python3 $SD/findings.py resume --iid 123 | head -40"),
+            tool_result("u1", RESUME_OUT),
+            assistant_text("Resumed — t1 is still open."),
+        ], contains="findings.py resume")
+
+    def test_a_quoted_script_path_still_gates(self):
+        """Quoting the path — the defensive habit for paths with spaces — parked a closing
+        quote between the script and its subcommand, so `threads\\.py\\s+quote` could not
+        match and that gate silently never fired. Found by an adversarial sweep rather than
+        in production, which is the point: a false block announces itself, a gate that
+        never fires is invisible."""
+        self.assertBlocked([
+            user_prompt(),
+            bash_call("u1", 'python3 "$SD/threads.py" quote t7'),
+            tool_result("u1", REWORK_QUOTE_OUT),
+            assistant_text("t7 is about the config being loaded twice."),
+        ], contains="threads.py quote")
+
     def test_leaked_manifest_marker_blocks(self):
         """The producer's trailing critical-lines manifest exists purely for this hook to
         read — it must never reach the user, whatever else is true about the rest of the
@@ -114,7 +139,7 @@ class TestGates(HookCase):
                   "**MR !123** — Add rate limiting\n\n"
                   "| State | Topic | Location |\n"
                   "|---|---|---|\n"
-                  "| open | duplicate router registration | backend/idp/main.py:44 |\n\n"
+                  "| open | duplicate router registration | backend/acme/main.py:44 |\n\n"
                   "```python\n"
                   "app.include_router(health.router)\n"
                   "app.include_router(config.router)\n"
@@ -124,7 +149,7 @@ class TestGates(HookCase):
             "app.include_router(config.router)\napp.include_router(config.router)",
             "app.include_router(config.router)")
         manifest = with_manifest(dup_out, [
-            "| open | duplicate router registration | backend/idp/main.py:44 |",
+            "| open | duplicate router registration | backend/acme/main.py:44 |",
             "app.include_router(health.router)",
             "app.include_router(config.router)",
         ])
@@ -193,6 +218,18 @@ class TestGates(HookCase):
 
 
 class TestForbidden(HookCase):
+    def test_a_rendered_warning_on_its_own_line_still_blocks(self):
+        """The guard for line-anchoring the two summary warnings: the anchor frees prose
+        that merely QUOTES a warning (fast file), but a pasted view whose heading really
+        carries one is the failure these rules exist for — blockquoted and indented
+        included, which is what the `[\\s>*_`]*` prefix covers."""
+        self.assertBlocked([
+            user_prompt(),
+            assistant_text(
+                "**MR !123** — Add rate limiting\n\n"
+                "> ⚠️ **needs an English summary** — `t4` has no authored `summary`.\n"),
+        ], contains="summary")
+
     def test_raw_suggestion_fence_blocks(self):
         self.assertBlocked([
             user_prompt(),

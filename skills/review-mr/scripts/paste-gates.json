@@ -93,15 +93,23 @@
         "language. Summaries, headings and table cells are English; only a draft comment",
         "body uses the draft language. The check is conservative (function words only,",
         "code spans stripped, two distinct hits), so a message carrying the warning has a",
-        "summary that really does need rewording."
+        "summary that really does need rewording.",
+        "Anchored to a line start, like unresolved-needs-title-table and rework-mr's",
+        "fixup-ack: every site appends this warning as its OWN line (the table footer's",
+        "`out += [\"\", warn]`, render_quote's `out.append(warn)`, and `set`'s bare",
+        "`print(warn)`), so the anchor costs no real detection, while an unanchored pattern",
+        "also fired on prose that merely QUOTES the warning as rendered — explaining the",
+        "rule, or editing this skill."
       ],
-      "text": "⚠️ \\*\\*summaries must be English\\*\\*",
+      "text": "^[\\s>*_`]*⚠️ \\*\\*summaries must be English\\*\\*",
+      "flags": "m",
       "reason": "Your message pastes a view whose warning says one or more summaries are written in the draft language. A summary is the one-line title the user reads in the table and in every topic heading, and it is always English — the draft language governs only the comment BODY you are about to hand them for posting. Reword each named topic (`findings.py set <t> --summary \"<short English line>\"`), re-render (`sync`/`present`/`todo`/`quote <t>`), and send that instead. (Both MR skills emit this warning and the hook may hand you the other one's wording: the command is `findings.py` in review-mr and `threads.py` in rework-mr — use the one this session's skill ships.)"
     },
     {
       "key": "unresolved-needs-title-quote",
-      "note": "Same `needs_title` gap as unresolved-needs-title-table, but for `quote <t>`'s header warning (render_quote's `needs_title_warning`) instead of a table row.",
-      "text": "⚠️ \\*\\*needs an English summary\\*\\*",
+      "note": "Same `needs_title` gap as unresolved-needs-title-table, but for `quote <t>`'s header warning (render_quote's `needs_title_warning`) instead of a table row. Line-anchored for the same reason as summary-in-draft-language — render_quote appends it as its own line, so only a prose mention is freed.",
+      "text": "^[\\s>*_`]*⚠️ \\*\\*needs an English summary\\*\\*",
+      "flags": "m",
       "reason": "Your message pastes a topic flagged `needs_title` — `quote <t>` is warning that it has no authored `summary` yet, only the raw thread quote. Author an English one-liner (`findings.py set <t> --summary \"...\"`), or `drop`/`merge` the topic, then re-run `quote <t>` before showing it to the user. (Both MR skills emit this warning and the hook may hand you the other one's wording: the command is `findings.py` in review-mr and `threads.py` in rework-mr — use the one this session's skill ships.)"
     }
   ]

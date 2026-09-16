@@ -9,10 +9,12 @@ tail as prose, and a code anchor read against the wrong version shows unrelated 
 """
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
@@ -32,9 +34,30 @@ def gate_signature(key):
     return next(g["signature"] for g in _spec()["gates"] if g["key"] == key)
 
 
+# Mirrors hooks/paste-gate.py's `_FLAGS`, and the helper below mirrors
+# skills/review-mr/scripts/test_findings.py's `forbidden_rules`. The hook compiles each
+# rule with its own declared flags, so a test that pins the shipped patterns has to
+# compile them the same way; each side stays bound to its OWN skill's spec.
+_FLAGS = {"m": re.M, "i": re.I, "s": re.S}
+
+
 def forbidden_rules():
-    """The patterns the Stop hook refuses to let reach the user, from the same spec."""
-    return _spec()["forbidden"]
+    """{key: compiled pattern} the Stop hook refuses to let reach the user, from the same
+    spec — compiled WITH each rule's declared flags, as the hook compiles them.
+
+    Matching the raw pattern string with a flagless `assertRegex` silently diverges from
+    the hook the moment a rule is line-anchored with `"flags": "m"`: the hook goes on
+    matching a warning that sits on its own line, this test stops, and the failure reads
+    as "the producer stopped emitting the warning" when the producer never changed.
+    """
+    return {r["key"]: re.compile(r["text"], sum(_FLAGS[c] for c in r.get("flags", "")))
+            for r in _spec()["forbidden"]}
+
+
+def required_rule(key):
+    """One of the spec's `required` rules, compiled as the hook compiles it."""
+    r = next(x for x in _spec()["required"] if x["key"] == key)
+    return re.compile(r["text"], sum(_FLAGS[c] for c in r.get("flags", "")))
 
 
 class TestLooksLikeDiff(unittest.TestCase):
@@ -139,8 +162,42 @@ class TestViews(unittest.TestCase):
     def test_diff_view_shape(self):
         out = T.render_diff_view("t3", "diff --git a/x b/x\n@@ -1 +1 @@\n-a\n+b\n")
         self.assertTrue(out.startswith("**Diff (◈ t3):**"))
-        self.assertTrue(out.rstrip().endswith("ACK to fix up and push?"))
+        self.assertTrue(out.rstrip().endswith("ACK to fix up and push? — or say what "
+                                              "to change."))
         self.assertIn("```diff", out)
+
+    def test_the_ack_ask_stays_one_line_and_last(self):
+        """Both shapes name the alternatives to an ACK, and both keep them on the closing
+        line: the `fixup-ack` gate matches that phrase only at the END of the message, so
+        anything printed after it would stop the gate recognising a legitimate ask."""
+        with mock.patch.object(T, "_git", lambda *a: ""):
+            pointer = T.render_diff_pointer("t1", [("a.ts", 1, 0)], "tmux window 9")
+        for out, extra in ((pointer, "notes on the diff"),
+                           (T.render_diff_view("t1", "-a\n+b\n"), "say what to change")):
+            last = out.rstrip().splitlines()[-1]
+            self.assertTrue(last.startswith("ACK to fix up and push?"), last)
+            self.assertIn(extra, last)
+
+    def test_a_real_ask_is_recognised_as_one(self):
+        """The `fixup-ack` rule is what catches an ACK asked with no diff behind it."""
+        rule = required_rule("fixup-ack")
+        with mock.patch.object(T, "_git", lambda *a: ""):
+            pointer = T.render_diff_pointer("t1", [("a.py", 1, 0)], "tmux window 9")
+        for name, block in (("pointer", pointer),
+                            ("inline", T.render_diff_view("t1", "-a\n+b\n"))):
+            self.assertTrue(rule.search("Summary of the change.\n\n" + block), name)
+
+    def test_the_ack_rule_is_not_escaped_by_anything_after_it(self):
+        """It was briefly anchored to the end of the message as well, which disarmed it:
+        one closing sentence — and an improvising model, the only kind this rule sees, is
+        exactly the one that adds a closing sentence — walked straight through. Every case
+        here was verified against the real hook to pass while that anchor was in place."""
+        rule = required_rule("fixup-ack")
+        for tail in ("\n\nI'll run the full suite right after the rebase.",
+                     "\n\n- tests pass\n- lint clean", "\n\n---", "\n\n✅", "\n\n```\nx\n```",
+                     "\n\n(then I'll push)", "\n"):
+            self.assertTrue(rule.search("Fixed t3.\n\nACK to fix up and push?" + tail),
+                            repr(tail))
 
     def test_view_signatures_match_the_stop_hook_gates(self):
         """The gate spec keys off these literals; renaming a header silently disables it.
@@ -156,6 +213,273 @@ class TestViews(unittest.TestCase):
         out = T.render_diff_view("t1", "-```bash\n+```sh\n echo hi\n ```\n")
         self.assertIn("````diff", out)
         self.assertIn("```diff", out)
+
+
+SAMPLE_DIFF = """diff --git a/src/a.ts b/src/a.ts
+--- a/src/a.ts
++++ b/src/a.ts
+@@ -1,2 +1,3 @@
+ keep
+-old
++new
++extra
+diff --git a/old/n.ts b/new/n.ts
+rename from old/n.ts
+rename to new/n.ts
+--- a/old/n.ts
++++ b/new/n.ts
+@@ -1 +1 @@
+-x
++y
+diff --git a/gone.ts b/gone.ts
+deleted file mode 100644
+--- a/gone.ts
++++ /dev/null
+@@ -1,2 +0,0 @@
+-one
+-two
+"""
+
+
+class TestDiffStat(unittest.TestCase):
+    """The per-file counts are what lets a small change be approved without leaving the
+    chat, so they have to be right for the shapes git actually emits."""
+
+    def test_counts_per_file_ignoring_the_headers(self):
+        self.assertEqual(T.diff_stat(SAMPLE_DIFF)[0], ("src/a.ts", 2, 1))
+
+    def test_a_rename_is_reported_under_its_new_path(self):
+        self.assertEqual(T.diff_stat(SAMPLE_DIFF)[1], ("new/n.ts", 1, 1))
+
+    def test_a_conflicted_path_is_still_counted_as_a_file(self):
+        """`git diff` emits `diff --cc` for an unmerged path, which this skill produces
+        itself the moment a `rebase --autosquash` fixup conflicts. Unrecognised, the stanza
+        was not a file boundary: it disappeared from the summary and its own headers were
+        charged to the previous file — '1 file, +3 −3' over a two-file change."""
+        d = ("diff --git a/ok.ts b/ok.ts\n--- a/ok.ts\n+++ b/ok.ts\n@@ -1 +1 @@\n-a\n+b\n"
+             "diff --cc conf.ts\n--- a/conf.ts\n+++ b/conf.ts\n@@@ -1,1 -1,1 +1,1 @@@\n")
+        self.assertEqual([p for p, _, _ in T.diff_stat(d)], ["ok.ts", "conf.ts"])
+        self.assertEqual(T.diff_stat(d)[0], ("ok.ts", 1, 1))
+
+    def test_a_deletion_keeps_the_old_path(self):
+        """Its `+++` side is /dev/null, so the `---` name is all there is."""
+        self.assertEqual(T.diff_stat(SAMPLE_DIFF)[2], ("gone.ts", 0, 2))
+
+    def test_a_repo_with_noprefix_configured(self):
+        """`diff.noprefix` drops the a//b/ prefixes; the path is still the header's."""
+        d = "diff --git x.ts x.ts\n--- x.ts\n+++ x.ts\n@@ -1 +1 @@\n-a\n+b\n"
+        self.assertEqual(T.diff_stat(d), [("x.ts", 1, 1)])
+
+    def test_a_binary_file_counts_no_lines(self):
+        d = ("diff --git a/i.png b/i.png\n"
+             "Binary files a/i.png and b/i.png differ\n")
+        self.assertEqual(T.diff_stat(d), [("i.png", 0, 0)])
+
+    def test_an_empty_diff_has_no_files(self):
+        self.assertEqual(T.diff_stat(""), [])
+
+    def test_content_that_looks_like_a_header_is_counted_not_obeyed(self):
+        """Diffing a file that itself contains a patch — a fixture, this repo's own docs —
+        produces body lines beginning `+++ ` and `--- `. They are CONTENT: they must count
+        toward the totals and must not rename the file. Headers only exist before `@@`."""
+        d = ("diff --git a/doc.md b/doc.md\n"
+             "--- a/doc.md\n"
+             "+++ b/doc.md\n"
+             "@@ -1,2 +1,3 @@\n"
+             " intro\n"
+             "+--- a/not-a-header.py\n"
+             "+++ b/not-a-header.py\n")
+        self.assertEqual(T.diff_stat(d), [("doc.md", 2, 0)])
+
+
+class TestDiffViewRouting(unittest.TestCase):
+    """Which of the two shapes `diff-view.sh` prints. The fallback is the case that
+    matters: pointing at a window that does not hold the diff would have the user approve
+    a force-push against something they never saw."""
+
+    def setUp(self):
+        critical_manifest.reset()
+        self._git = mock.patch.object(T, "_git", lambda *a: {
+            ("rev-parse", "--show-toplevel"): "/repo\n",
+            ("remote", "get-url", "origin"): "",
+            ("rev-parse", "--abbrev-ref", "HEAD"): "feat/x\n",
+        }.get(a, ""))
+        self._git.start()
+        self.addCleanup(self._git.stop)
+
+    def test_pointer_when_the_viewer_took_the_diff(self):
+        with mock.patch.object(T.hunk, "show_working_diff",
+                               return_value=("sid", "9 (◈!123)")):
+            out = T.diff_view_block("t3", SAMPLE_DIFF)
+        self.assertIn("3 files, +3 −4", out)
+        self.assertIn("tmux window 9 (◈!123)", out)
+        self.assertNotIn("```diff", out)
+        self.assertTrue(out.rstrip().endswith("notes on the diff in that window."))
+
+    def test_the_rows_are_key_and_value_under_a_yaml_fence(self):
+        """The fence language is the only colour a pasted block can carry, and YAML is what
+        tints a path apart from its counts. Pinned because dropping the language, or the
+        colon that makes each row a key, silently turns the whole block grey again."""
+        with mock.patch.object(T.hunk, "show_working_diff",
+                               return_value=("sid", "9 (◈!123)")):
+            out = T.diff_view_block("t3", SAMPLE_DIFF)
+        self.assertIn("```yaml", out)
+        self.assertIn("src/a.ts:  +2 −1", out)
+        self.assertIn("gone.ts:   +0 −2", out)
+        self.assertNotIn("|", out)
+
+    def test_the_line_naming_the_window_cannot_be_dropped(self):
+        """`fence` marks the rows, so the head line — the only one saying WHERE the diff
+        is — was the one line the hook's one-dropped-line tolerance allowed a message to
+        lose, leaving filenames, a question about "that window", and no window named."""
+        critical_manifest.reset()
+        with mock.patch.object(T.hunk, "show_working_diff",
+                               return_value=("sid", "9 (◈!123)")):
+            out = T.diff_view_block("t3", SAMPLE_DIFF)
+        head = out.splitlines()[0]
+        self.assertIn("tmux window", head)
+        self.assertIn(head, critical_manifest.current())
+
+    def test_an_empty_diff_is_refused_not_rendered(self):
+        """Both shapes would otherwise ask for a fixup+force-push ACK over a block showing
+        nothing, and the gate cannot catch that: an empty fence marks no critical lines and
+        both signature strings are still present. Reachable whenever the edits are staged
+        (`git diff` is unstaged-only) or a fixup already cleaned the tree."""
+        with self.assertRaises(SystemExit):
+            T.diff_view_block("t3", "")
+
+    def test_notes_that_never_reached_the_viewer_are_reported(self):
+        """The batch is all-or-nothing, so one bad anchor drops all three — and the prose
+        above the block has already told the user the agent flagged something. Silence
+        there sends them to a window with nothing in it, and then they ACK."""
+        note = [{"filePath": "src/a.ts", "newLine": 1, "summary": "x"}]
+        with mock.patch.object(T.hunk, "show_working_diff",
+                               return_value=("sid", "9 (x)")), \
+             mock.patch.object(T.hunk, "add_notes", return_value=0):
+            out = T.diff_view_block("t3", SAMPLE_DIFF, notes=note)
+        self.assertIn("could not be anchored", out)
+        self.assertTrue(out.rstrip().endswith("in that window."))
+
+    def test_notes_that_landed_are_not_reported(self):
+        note = [{"filePath": "src/a.ts", "newLine": 1, "summary": "x"}]
+        with mock.patch.object(T.hunk, "show_working_diff",
+                               return_value=("sid", "9 (x)")), \
+             mock.patch.object(T.hunk, "add_notes", return_value=1):
+            out = T.diff_view_block("t3", SAMPLE_DIFF, notes=note)
+        self.assertNotIn("could not be anchored", out)
+
+    def test_notes_are_reported_when_the_diff_went_inline(self):
+        """No viewer means nowhere to anchor them, which is a normal outcome — but the
+        user still has to learn the points are only in the prose."""
+        note = [{"filePath": "src/a.ts", "newLine": 1, "summary": "x"}]
+        with mock.patch.object(T.hunk, "show_working_diff", return_value=None):
+            out = T.diff_view_block("t3", SAMPLE_DIFF, notes=note)
+        self.assertIn("could not be anchored", out)
+
+    def test_inline_when_there_is_no_viewer(self):
+        with mock.patch.object(T.hunk, "show_working_diff", return_value=None):
+            out = T.diff_view_block("t3", SAMPLE_DIFF)
+        self.assertIn("```diff", out)
+        self.assertIn("rename to new/n.ts", out)
+
+    def test_plain_never_reaches_the_viewer(self):
+        """`diff-view.sh` passes --plain when it narrowed the diff with git arguments: the
+        viewer reloads from the working tree, so it would be showing something else."""
+        with mock.patch.object(T.hunk, "show_working_diff") as show:
+            out = T.diff_view_block("t3", SAMPLE_DIFF, plain=True)
+        show.assert_not_called()
+        self.assertIn("```diff", out)
+
+    def test_the_stat_handed_to_the_viewer_is_the_diffs_own(self):
+        """That comparison is the whole verification: the viewer reads the working tree
+        itself, so a window holding different files — or the same files at different line
+        counts — is not this diff. It is handed the parsed stat, not a bare count."""
+        with mock.patch.object(T.hunk, "show_working_diff",
+                               return_value=("sid", "9 (x)")) as show:
+            T.diff_view_block("t3", SAMPLE_DIFF)
+        self.assertEqual(show.call_args[0][2],
+                         [("src/a.ts", 2, 1), ("new/n.ts", 1, 1), ("gone.ts", 0, 2)])
+
+    def test_the_window_names_the_mr_worked_on_most_recently(self):
+        """Ranked by each state FILE's mtime, not its directory's. A directory's mtime only
+        moves when an entry is added or removed, and the state is rewritten in place — so
+        on a real store the MR being reworked today ranked below one created later and
+        untouched since, and its number went onto the block a force-push is approved from.
+        """
+        with tempfile.TemporaryDirectory() as root:
+            for name, dir_age, file_age in (("acme-api--mr123", 100, 1),
+                                            ("acme-api--mr456", 1, 100)):
+                d = os.path.join(root, name)
+                os.makedirs(d)
+                f = os.path.join(d, "topics.json")
+                with open(f, "w") as fh:
+                    fh.write("{}")
+                os.utime(f, (0, 10_000 - file_age))
+                os.utime(d, (0, 10_000 - dir_age))
+            with mock.patch.object(T, "STATE_ROOT", root), \
+                 mock.patch.object(T, "project_slug", lambda: "acme-api"), \
+                 mock.patch.object(T, "_git", lambda *a: "git@host:acme/api.git\n"):
+                self.assertEqual(T.window_label(), T.TOPIC_ICON + "!123")
+
+    def test_naming_the_window_never_calls_glab(self):
+        """`diff-view` is independent of glab and the network by design, and this label is
+        cosmetic — it must not put a subprocess, or a hang, on every diff shown."""
+        with mock.patch.object(T, "context") as ctx, mock.patch.object(T, "run") as run:
+            with mock.patch.object(T, "_git", lambda *a: ""):
+                T.window_label()
+            ctx.assert_not_called()
+            run.assert_not_called()
+
+    def test_window_label_falls_back_to_the_branch(self):
+        self.assertEqual(T.window_label(), "◈ feat/x")
+
+    def test_both_shapes_satisfy_the_stop_hook_gate(self):
+        """The gate has one signature and two renders to cover; pinning it to the old
+        ```diff marker would have left the pointer shape — the common one — ungated."""
+        with mock.patch.object(T.hunk, "show_working_diff",
+                               return_value=("sid", "9 (◈!123)")):
+            pointer = T.diff_view_block("t3", SAMPLE_DIFF)
+        with mock.patch.object(T.hunk, "show_working_diff", return_value=None):
+            inline = T.diff_view_block("t3", SAMPLE_DIFF)
+        for sig in gate_signature("diff-view"):
+            self.assertIn(sig, pointer, "pointer render")
+            self.assertIn(sig, inline, "inline render")
+
+
+class TestHunkNoteHandover(unittest.TestCase):
+    """The two commands that decide whether a force-push may proceed. Both read "nothing
+    there" as permission, so the case worth testing is the one where nothing came back
+    because nothing could be ASKED."""
+
+    def test_a_note_is_reported_with_its_file_and_line(self):
+        self.assertEqual(
+            T.hunk_note_lines([("a.py", "new", 42, "why not keep the map?", "n1")]),
+            ["a.py:42: why not keep the map?"])
+
+    def test_a_note_on_a_removed_line_says_so(self):
+        """Without it the number reads as a line in the file the model is about to edit,
+        where the deletion has since put something unrelated."""
+        self.assertEqual(T.hunk_note_lines([("b.py", "old", 7, "why drop this?", "n2")]),
+                         ["b.py:7 (on a removed line): why drop this?"])
+
+    def test_an_mr_level_note_has_no_line_to_print(self):
+        self.assertEqual(T.hunk_note_lines([("c.py", "new", None, "general point", "n3")]),
+                         ["c.py: general point"])
+
+    def test_a_clean_window_closes(self):
+        self.assertEqual(T.hunk_close_decision([]), (None, True))
+
+    def test_a_note_left_since_the_last_read_keeps_the_window(self):
+        say, close = T.hunk_close_decision([("a.py", "new", 1, "hold on", "n1")])
+        self.assertFalse(close)
+        self.assertIn("hunk-notes", say)
+
+    def test_a_viewer_that_could_not_be_asked_keeps_the_window(self):
+        """The window must not be killed over a note nobody has read. A daemon that did
+        not answer is not an empty window, and closing takes the diff with it."""
+        say, close = T.hunk_close_decision(None)
+        self.assertFalse(close)
+        self.assertIn("Could not read", say)
 
 
 class TestCriticalManifest(unittest.TestCase):
@@ -258,9 +582,9 @@ class TestSummaryIsAuthored(unittest.TestCase):
         return {"iid": 1, "title": "x", "topics": [
             {"id": "t1", "thread_ids": ["d1"], "summary": summary, "state": state_,
              "decision": None, "plan": None, "diff_url": diff_url}],
-            "threads": {"d1": {"resolved": False, "awaiting": "you", "author": "Jan",
+            "threads": {"d1": {"resolved": False, "awaiting": "you", "author": "Robin",
                                "body": body, "file": "src/a.py", "line": 7,
-                               "notes": [{"author": "Jan", "body": body}]}}}
+                               "notes": [{"author": "Robin", "body": body}]}}}
 
     def _row(self, state):
         return next(ln for ln in T.render_table(state, show_done=True).splitlines()
@@ -301,7 +625,7 @@ class TestSummaryIsAuthored(unittest.TestCase):
 
     def test_both_warnings_match_the_stop_hook_rules(self):
         """The gate spec keys off these literals; rewording one silently disables it."""
-        rules = {r["key"]: r["text"] for r in forbidden_rules()}
+        rules = forbidden_rules()
         state = self._state()
         self.assertRegex(self._row(state), rules["unsummarised-topic-in-a-table"])
         self.assertRegex(T.render_quote(state, "t1"),
@@ -328,24 +652,24 @@ class TestNoteRendering(unittest.TestCase):
             "    }\n")
 
     def test_suggestion_is_lifted_and_re_fenced(self):
-        out = T._note_md("Jan", self.NOTE, "src/x.test.ts", 184)
+        out = T._note_md("Robin", self.NOTE, "src/x.test.ts", 184)
         self.assertIn("\n```ts\n  it('lists multiple changed leaves", out)
         self.assertNotIn("> ```", out)            # never left inside the quote
         self.assertNotIn("suggestion:-0+0", out)  # replaced by a caption
 
     def test_suggestion_caption_names_the_lines_it_replaces(self):
         self.assertIn("_suggested replacement for line 184:_",
-                      T._note_md("Jan", self.NOTE, "src/x.test.ts", 184))
+                      T._note_md("Robin", self.NOTE, "src/x.test.ts", 184))
         self.assertIn("_suggested replacement for lines 182–187:_",
-                      T._note_md("Jan", "```suggestion:-2+3\nx\n```\n", "src/x.ts", 184))
+                      T._note_md("Robin", "```suggestion:-2+3\nx\n```\n", "src/x.ts", 184))
 
     def test_suggestion_without_an_anchor_still_gets_a_caption(self):
         self.assertIn("_suggested replacement:_",
-                      T._note_md("Jan", "```suggestion\nx\n```\n", "src/x.ts", None))
+                      T._note_md("Robin", "```suggestion\nx\n```\n", "src/x.ts", None))
 
     def test_a_tab_indented_snippet_is_code_too(self):
         """Markdown counts a tab as four spaces; a space-only check missed it."""
-        out = T._note_md("Jan", "So:\n\n\tconst a = 1\n\tconst b = 2\n", "src/x.ts", 5)
+        out = T._note_md("Robin", "So:\n\n\tconst a = 1\n\tconst b = 2\n", "src/x.ts", 5)
         self.assertIn("```ts\nconst a = 1\nconst b = 2\n```", out)
 
     def test_caption_clamps_at_the_top_of_the_file(self):
@@ -354,49 +678,49 @@ class TestNoteRendering(unittest.TestCase):
 
     def test_an_empty_suggestion_block_is_skipped(self):
         """No block, and no caption promising one."""
-        self.assertEqual(T._note_md("Jan", "```suggestion\n```", "src/x.ts", 3),
-                         "> **Jan**")
+        self.assertEqual(T._note_md("Robin", "```suggestion\n```", "src/x.ts", 3),
+                         "> **Robin**")
 
     def test_indented_snippet_becomes_a_fenced_block(self):
-        out = T._note_md("Jan", self.NOTE, "src/x.test.ts", 184)
+        out = T._note_md("Robin", self.NOTE, "src/x.test.ts", 184)
         self.assertIn("```ts\nconst original: ExtractedData = {", out)   # and dedented
         self.assertNotIn(">     const original", out)
 
     def test_prose_stays_quoted_and_keeps_the_author(self):
-        out = T._note_md("Jan", self.NOTE, "src/x.test.ts", 184)
-        self.assertTrue(out.startswith("> **Jan**\n>\n> Minor:"))
+        out = T._note_md("Robin", self.NOTE, "src/x.test.ts", 184)
+        self.assertTrue(out.startswith("> **Robin**\n>\n> Minor:"))
         self.assertIn("> Oder `ExtractedData` umdrehen?", out)
 
     def test_no_empty_quote_line_after_a_lifted_fence(self):
         """A `>` directly after a fence renders as a stray empty quote bar."""
-        out = T._note_md("Jan", self.NOTE, "src/x.test.ts", 184)
+        out = T._note_md("Robin", self.NOTE, "src/x.test.ts", 184)
         self.assertNotIn("```\n>\n", out)
 
     def test_list_continuation_is_not_code(self):
         """Indentation under a bullet is list continuation — fencing it would break the
         list and misrepresent prose as code."""
         note = "Zwei Punkte:\n\n- erstens\n    weiter im Listenpunkt\n- zweitens\n"
-        out = T._note_md("Jan", note, "src/x.ts", 10)
+        out = T._note_md("Robin", note, "src/x.ts", 10)
         self.assertNotIn("```", out)
         self.assertIn(">     weiter im Listenpunkt", out)
 
     def test_an_explicit_language_is_preserved(self):
-        out = T._note_md("Jan", "So:\n\n```bash\nnpm test\n```\n", "src/x.ts", 5)
+        out = T._note_md("Robin", "So:\n\n```bash\nnpm test\n```\n", "src/x.ts", 5)
         self.assertIn("```bash\nnpm test", out)
 
     def test_a_diff_in_a_note_is_fenced_as_a_diff(self):
-        out = T._note_md("Jan", "```\n-  a\n+  b\n```\n", "src/x.ts", 5)
+        out = T._note_md("Robin", "```\n-  a\n+  b\n```\n", "src/x.ts", 5)
         self.assertIn("```diff\n", out)
 
     def test_plain_prose_is_unchanged(self):
-        self.assertEqual(T._note_md("Jan", "Sieht gut aus.\n"),
-                         "> **Jan**\n>\n> Sieht gut aus.")
+        self.assertEqual(T._note_md("Robin", "Sieht gut aus.\n"),
+                         "> **Robin**\n>\n> Sieht gut aus.")
 
     def test_quote_passes_the_file_and_anchor_through(self):
         state = {"iid": 1, "threads": {"d1": {
-            "author": "Jan", "file": "src/x.test.ts", "line": 184, "body": self.NOTE,
+            "author": "Robin", "file": "src/x.test.ts", "line": 184, "body": self.NOTE,
             "resolved": False, "note_count": 1, "url": "http://gl/1",
-            "notes": [{"author": "Jan", "body": self.NOTE}]}},
+            "notes": [{"author": "Robin", "body": self.NOTE}]}},
             "topics": [{"id": "t2", "summary": "order test", "thread_ids": ["d1"],
                         "state": None}]}
         out = T.render_quote(state, "t2")
@@ -419,7 +743,7 @@ class TestSyncRefreshesThreads(unittest.TestCase):
                                "end": {"new_line": 22, "old_line": None}}}
 
     def live(self, position=None, body="Unit test?"):
-        note = {"resolvable": True, "id": 7361603, "author": {"name": "Jan"},
+        note = {"resolvable": True, "id": 7361603, "author": {"name": "Robin"},
                 "body": body, "resolved": False,
                 "position": self.POSITION if position is None else position}
         orig = T.api
@@ -432,9 +756,9 @@ class TestSyncRefreshesThreads(unittest.TestCase):
     def old_shaped_state(self):
         """A thread as it was stored before side/head_sha/line_range existed."""
         return {"iid": 575, "title": "T", "threads": {"d1": {
-            "author": "Jan", "file": "src/x.ts", "line": 22, "body": "Unit test?",
+            "author": "Robin", "file": "src/x.ts", "line": 22, "body": "Unit test?",
             "resolved": False, "url": "http://gl/1", "note_count": 1,
-            "last_author": "Jan", "awaiting": "you"}},
+            "last_author": "Robin", "awaiting": "you"}},
             "topics": [{"id": "t3", "summary": "s", "thread_ids": ["d1"], "state": None}]}
 
     def test_new_fields_reach_an_existing_thread(self):
@@ -507,9 +831,9 @@ class TestReplyDraft(unittest.TestCase):
         if reply is not None:
             t["reply"] = reply
         return {"iid": 7, "title": "x", "topics": [t], "threads": {"d1": {
-            "author": "Jan", "file": "src/client.py", "line": 88, "body": "unbounded retry",
+            "author": "Robin", "file": "src/client.py", "line": 88, "body": "unbounded retry",
             "resolved": False, "note_count": 1, "url": "http://gl/y/1",
-            "notes": [{"author": "Jan", "body": "unbounded retry"}]}}}
+            "notes": [{"author": "Robin", "body": "unbounded retry"}]}}}
 
     def test_body_round_trips_shell_hazards(self):
         """A quoted heredoc into stdin is why this text survives at all: as a double-quoted
@@ -578,7 +902,7 @@ class TestReplyDraft(unittest.TestCase):
         were pasted in full when the topic came up and have not changed since; pasting
         them again buries the draft the user asked to see."""
         out = T.render_reply_view(self._shown("Kürzer.\n"), "t1", "Kürzer.\n", refine=True)
-        for gone in ("src/client.py:88", "unbounded retry", "> **Jan**"):
+        for gone in ("src/client.py:88", "unbounded retry", "> **Robin**"):
             self.assertNotIn(gone, out)
         for kept in ("◈ t1", "> Kürzer.", "Thread (to post on): http://gl/y/1",
                      "**`c`** copy to clipboard"):
@@ -597,7 +921,7 @@ class TestReplyDraft(unittest.TestCase):
         answer a comment the user is not looking at."""
         state = self._shown("Gefixt.\n")
         thread = state["threads"]["d1"]
-        thread["notes"].append({"author": "Jan", "body": "Und was ist mit dem Timeout?"})
+        thread["notes"].append({"author": "Robin", "body": "Und was ist mit dem Timeout?"})
         thread["note_count"] = 2
         out = T.render_reply_view(state, "t1", "Gefixt.\n", refine=True)
         self.assertIn("changed since this was last shown", out)
@@ -792,7 +1116,7 @@ class TestCodeContext(unittest.TestCase):
     def test_fetch_to_sync_to_quote_renders_the_span(self):
         """The whole chain, because the parts were each right while the seam was not: a
         GitLab position with a line_range, through fetch and sync, into `quote`."""
-        note = {"resolvable": True, "id": 1, "author": {"name": "Jan"}, "resolved": False,
+        note = {"resolvable": True, "id": 1, "author": {"name": "Robin"}, "resolved": False,
                 "body": "Ganze Funktion — Test?", "position": {
                     "new_path": self.file, "old_path": self.file, "new_line": 14,
                     "head_sha": self.sha, "start_sha": self.sha,
@@ -814,9 +1138,9 @@ class TestCodeContext(unittest.TestCase):
 
     def test_quote_puts_the_code_above_the_note(self):
         state = {"iid": 1, "title": "x", "threads": {"d1": dict(
-            self.thread(), author="Jan", body="ist äquivalent?", resolved=False,
+            self.thread(), author="Robin", body="ist äquivalent?", resolved=False,
             note_count=1, url="http://gl/x#note_1",
-            notes=[{"author": "Jan", "body": "ist äquivalent?"}])},
+            notes=[{"author": "Robin", "body": "ist äquivalent?"}])},
             "topics": [{"id": "t1", "summary": "dupe test", "thread_ids": ["d1"],
                         "state": None}]}
         out = T.render_quote(state, "t1")
