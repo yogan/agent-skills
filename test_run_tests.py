@@ -1,15 +1,19 @@
 #!/usr/bin/env python3
 """The test runner picks which tests run, so its selection logic needs testing itself.
 
-Everything here is about ONE failure mode: under-selection. A `--changed` run that misses
-the test which would have caught your bug is worse than no `--changed` at all, because it
-reports success. Over-selection only costs seconds.
+Everything here is about ONE failure mode: the suite that should have run and didn't. Most
+of it is under-SELECTION — a `--changed` run that misses the test which would have caught
+your bug is worse than no `--changed` at all, because it reports success. `TestFingerprint`
+is the same failure one level up: the whole run skipped as "nothing has changed" when
+something had. Over-selection only costs seconds.
 
 Run: `python3 test_run_tests.py`
 """
 import importlib.util
 import os
+import subprocess
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -153,6 +157,75 @@ class TestDiscovery(unittest.TestCase):
         self.assertTrue(picked)
         self.assertTrue(all("test_" in n for n in picked))
         self.assertNotIn("test_gitlab.py", picked)
+
+
+class TestFingerprint(unittest.TestCase):
+    """A passing full run is cached against `_fingerprint`, so anything the fingerprint
+    cannot see is a change that reports as "already tested today" — the skip fires exactly
+    where the working agreement says a commit must not be created with a failing test.
+
+    Runs against a throwaway repo rather than this one: the fingerprint is a claim about a
+    git working tree, and the only way to test it is to change one.
+    """
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.repo = Path(tmp.name)
+        self._git("init", "-q", ".")
+        self._git("config", "user.email", "t@example.com")
+        self._git("config", "user.name", "T")
+        (self.repo / "src.py").write_text("x = 1\n")
+        self._git("add", "src.py")
+        self._git("commit", "-q", "-m", "first")
+        original = rt.REPO_ROOT
+        rt.REPO_ROOT = self.repo
+        self.addCleanup(setattr, rt, "REPO_ROOT", original)
+
+    def _git(self, *args):
+        subprocess.run(["git", *args], cwd=self.repo, check=True,
+                       capture_output=True, text=True)
+
+    def _fp(self):
+        fp = rt._fingerprint("fast")
+        self.assertIsNotNone(fp, "git could not answer in the throwaway repo")
+        return fp
+
+    def test_an_unchanged_tree_fingerprints_the_same(self):
+        """The whole point of the cache: the same suite twice in one sitting runs once."""
+        self.assertEqual(self._fp(), self._fp())
+
+    def test_an_unstaged_edit_changes_it(self):
+        """The bug this class exists for. `ls-files -s` names INDEX blobs, so an edit that
+        has not been staged — the normal state of an edit loop — left the fingerprint
+        identical and a real run was skipped with eight modified files in the tree."""
+        before = self._fp()
+        (self.repo / "src.py").write_text("x = 2\n")
+        self.assertNotEqual(before, self._fp())
+
+    def test_a_staged_edit_changes_it(self):
+        before = self._fp()
+        (self.repo / "src.py").write_text("x = 3\n")
+        self._git("add", "src.py")
+        self.assertNotEqual(before, self._fp())
+
+    def test_an_untracked_file_changes_it(self):
+        before = self._fp()
+        (self.repo / "new.py").write_text("y = 1\n")
+        self.assertNotEqual(before, self._fp())
+
+    def test_a_deleted_tracked_file_changes_it_and_still_caches(self):
+        """Deleting a tracked file must not disable the cache until the deletion is
+        committed — an unreadable path is digested as the fact that it is gone."""
+        before = self._fp()
+        (self.repo / "src.py").unlink()
+        after = rt._fingerprint("fast")
+        self.assertIsNotNone(after, "a pending deletion disabled caching altogether")
+        self.assertNotEqual(before, after)
+
+    def test_the_mode_is_part_of_it(self):
+        """A `--slow` pass is not a fast pass: the two must not share a cache entry."""
+        self.assertNotEqual(rt._fingerprint("fast"), rt._fingerprint("slow"))
 
 
 if __name__ == "__main__":

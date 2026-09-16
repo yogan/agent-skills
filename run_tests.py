@@ -114,21 +114,36 @@ def _fingerprint(mode):
 
     Returns None when git cannot answer, and a None fingerprint is never cached and never
     honoured: not knowing what changed is not the same as knowing nothing did.
+
+    Three lists, because no single one of them sees the whole working tree. `ls-files -s`
+    names the INDEX blob of every tracked file, so it covers anything committed or staged
+    and is blind to an edit that has not been staged — which is the normal state of an edit
+    loop, and is how a whole suite once got skipped as "nothing has changed" with eight
+    modified files in the tree. `diff --name-only` is exactly that missing set, hashed by
+    content like the untracked files are.
     """
     listed = []
     for cmd in (["git", "ls-files", "-s"],
-                ["git", "ls-files", "--others", "--exclude-standard"]):
+                ["git", "ls-files", "--others", "--exclude-standard"],
+                ["git", "diff", "--name-only"]):
         proc = subprocess.run(cmd, capture_output=True, text=True, cwd=REPO_ROOT)
         if proc.returncode != 0:
             return None
         listed.append(proc.stdout)
     digest = hashlib.sha256(listed[0].encode())
-    # Untracked files have no blob in the index, so they are hashed by content here.
-    for rel in sorted(line for line in listed[1].split("\n") if line.strip()):
+    # Untracked files have no blob in the index, and an unstaged edit's index blob is the
+    # stale one, so both are hashed by content here.
+    for rel in sorted(line for group in listed[1:]
+                      for line in group.split("\n") if line.strip()):
         path = REPO_ROOT / rel
         digest.update(rel.encode())
         try:
             digest.update(path.read_bytes())
+        except FileNotFoundError:
+            # A tracked file deleted but not yet committed. Digesting the fact keeps the
+            # cache working across a normal deletion; returning None here would instead
+            # disable it for the whole repo until the deletion was committed.
+            digest.update(b"<deleted>")
         except OSError:
             return None
     for tool in (["d2", "--version"], ["node", "--version"]):
