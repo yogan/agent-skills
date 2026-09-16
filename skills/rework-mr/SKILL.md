@@ -44,9 +44,19 @@ Do the prep silently (it prints nothing the user needs):
 ```bash
 python3 $SD/threads.py sync                        # fetch + reconcile
 python3 $SD/threads.py bodies                      # first + last note of each open thread
-python3 $SD/threads.py set <t> --summary "…"       # one concise line per open topic (user's language)
+python3 $SD/threads.py set <t> --summary "…"       # one short ENGLISH line per unfinished topic
 python3 $SD/threads.py merge <into> <other...>     # only if two threads raise the SAME point
 ```
+
+**Every topic that is not `done` needs a summary, and it is yours to write.** It is the
+one-line title the user reads in the table and in every topic heading, so it has to say
+*what the point is* — not the first 70 characters of the reviewer's comment, which is what
+they get when you skip this (and which, for a comment that opens with a ```suggestion
+block, is unreadable). `bodies` gives you every open thread's text in one call; summarise
+from that. **In English, always** — the reviewer's language governs one thing only, the body
+of a reply you post into their thread. A topic with no summary is marked `✍️ needs summary`
+in the table and a summary that reads as German is called out under it; the `Stop` hook
+refuses to let either reach the user, so this is not optional.
 
 **Classify status semantically — don't trust who spoke last.** A thread defaults to `open`
 (work for you). Mark it `waiting` **only if, reading the notes, YOU already fully addressed
@@ -177,6 +187,12 @@ like `present`/`quote`/`reply-view`/`change-preview`/`diff-view`; `sync`'s here 
 also runs silently in the opener's prep, so gating it there would false-block on that unrelated,
 intentionally-unshown call. Prefer `todo` for a status-only reply when either works.
 
+A table is also where a missing summary shows up. If rows come back marked
+`✍️ needs summary` — a thread that arrived since your last sync, or a session that never
+wrote them — author those first (`bodies`, then `set <t> --summary "…"`), re-run, and paste
+that. The hook blocks the table otherwise, and rightly: a status answer whose Summary column
+is somebody else's truncated sentence tells the user nothing.
+
 ## Phase 3 — Implement, strictly ONE topic at a time
 
 As disciplined as the grilling loop. Full mechanics in [REFERENCE.md](REFERENCE.md).
@@ -281,9 +297,13 @@ Per topic:
 
 ## Reply draft rules
 
-- **Language = the thread's language** (often German even in an English session). The
-  scaffolding *around* the draft (labels, the thread-URL line, the action prompt) stays in the
-  **session language** — only the comment body uses the thread's language.
+- **Language: the thread's, for the reply BODY only** (often German even in an English
+  session). **Everything else is English, always** — every `--summary`, so the table and every
+  topic heading, the scaffolding around the draft (labels, the thread-URL line, the action
+  prompt) and your own prose. The one other non-English text is a *quoted* note, which the
+  scripts reproduce verbatim: never translate a reviewer's words while showing them back.
+  `threads.py` says so itself when a summary reads as German, and the paste gate will not let
+  that view reach the user. (review-mr states the same rule the same way.)
 - **NEVER put this skill's internal topic handles (`t5`, `t6`, `t10`, …) in a draft** — they
   are the skill's own bookkeeping ids and mean nothing to a GitLab reader. To reference another
   discussion, link its thread URL (`threads.py url <other-t>`) or describe it in plain words

@@ -77,4 +77,7 @@ meaning).
 - `guard-reply.sh` — the topic-handle gate for the clipboard path, reused by `clip.sh`.
   (`reply` enforces the same rule inside the script, so the post path needs no shell
   guard at all.)
-- `paste-gates.json` — what the shared Stop hook enforces for this skill.
+- `paste-gates.json` — what the shared Stop hook enforces for this skill: the six pasted
+  views above, the fixup-ACK rule, and three refusals — a table row or topic heading whose
+  summary nobody authored (it would hold the reviewer's own truncated sentence), and a
+  summary written in the thread's language instead of English.

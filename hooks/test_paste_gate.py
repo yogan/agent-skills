@@ -509,6 +509,7 @@ class TestShippedSpecs(unittest.TestCase):
                           "rework-mr:diff-view", "rework-mr:reply-view",
                           "rework-mr:change-preview"])
         self.assertEqual(len(rework["required"]), 1)
+        self.assertEqual(len(rework["forbidden"]), 3)
 
     def test_required_rules_name_a_real_gate(self):
         for spec in self.mod.load_specs([REVIEW_SPEC, REWORK_SPEC]):

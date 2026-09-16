@@ -86,8 +86,9 @@ if _REPO_ROOT not in sys.path:
 from lib import critical_manifest                               # noqa: E402
 from lib.gitlab import (api, context, current_user, die, mr_base, mr_head,  # noqa: E402
                         mr_object, mr_view, versions, web_base)
-from lib.mr_common import (MR_LEVEL, first_name, load, loc_md, num,  # noqa: E402
-                           save, short_summary, state_file, topic_for, tref)
+from lib.mr_common import (DEFAULT_LANG, MR_LEVEL, first_name, load,  # noqa: E402
+                           loc_md, num, reads_as, save, short_summary,
+                           state_file, topic_for, tref)
 from lib.snippet import MAX_BACKTRACK, open_construct            # noqa: E402
 
 STATE_ROOT = os.path.expanduser("~/.claude/review-mr")
@@ -477,7 +478,7 @@ def render_table(state, scope="all"):
             tid = t["id"]
             s = st[tid]
             summ = short_summary(state, t).replace("|", "\\|")
-            if t.get("needs_title"):
+            if needs_title(state, t):
                 summ = f"✍️ _needs summary:_ {summ}"    # raw quote, not an authored title
             if t.get("source") in INBOUND and t.get("by"):
                 summ = f"_{t['by']}:_ {summ}"           # who raised this thread
@@ -688,13 +689,23 @@ def anchor_warning(state, t, context_lines=4):
             f"verify before posting — `set {t['id']} --line {best}` if that is the right spot.")
 
 
-def needs_title_warning(t):
+def needs_title(state, t):
+    """Whether this topic still has to be given an English one-liner.
+
+    A closed topic (`acked`/`wontfix`) is exempt: nothing acts on it any more, and
+    demanding a title for finished work is a chore with no reader — rework-mr's
+    `needs_summary` draws the same line at its own terminal status.
+    """
+    return bool(t.get("needs_title")) and topic_status(state, t) not in ("acked", "wontfix")
+
+
+def needs_title_warning(state, t):
     """A topic `adopt_inbound` surfaced from a live thread carries no authored
     `summary` — only the raw thread quote (via `short_summary`'s fallback), in
     whatever language/wording the commenter used. Surface that gap explicitly
     wherever the topic is rendered as a heading, so it never passes as a finished,
     English one-liner."""
-    if not t.get("needs_title"):
+    if not needs_title(state, t):
         return None
     return (f"⚠️ **needs an English summary** — `{t['id']}` has no authored "
             f"`summary` yet; the title above is the raw thread quote (as posted, "
@@ -702,61 +713,17 @@ def needs_title_warning(t):
             f"English title>\"` before presenting this topic further.")
 
 
-# Words that give a language away: function words, plus the inflections of a handful
-# of everyday verbs and adjectives, which is what a summary is actually made of. An
-# English summary legitimately names a foreign identifier, path or string literal, so
-# code spans are stripped and two DISTINCT words have to hit before anything is said.
-# A language with no list here is simply never checked — see summary_language_warning.
-#
-# Two rules keep this from firing on English prose: nothing shorter than three letters
-# (`an`, `am`, `in`, `so`, `da` are all English too), and nothing that is also an
-# English word (`also`, `war`, `falls`, `man`, `will`, `mine`, `hier` are the ones that
-# had to be left out).
-LANG_GIVEAWAYS = {
-    "de": {"aber", "alle", "allem", "allen", "aller", "auch", "auf", "aus", "beide",
-           "beiden", "beim", "bereits", "bleibt", "brauchen", "braucht", "dabei",
-           "damit", "dann", "dass", "dazu", "dem", "den", "denen", "denn", "der",
-           "deren", "des", "dessen", "die", "diese", "diesem", "diesen", "dieser",
-           "doch", "dort", "durch", "eher", "eigene", "eigenen", "eigener", "ein",
-           "eine", "einem", "einen", "einer", "eines", "etwa", "fehlen", "fehlend",
-           "fehlende", "fehlenden", "fehlt", "für", "ganz", "geben", "gegen",
-           "geändert", "geaendert", "gehört", "gemacht", "gibt", "gleiche",
-           "gleichen", "haben", "hart", "hat", "hatte", "hatten", "hinter", "ihre",
-           "ihren", "immer", "innerhalb", "ist", "jede", "jeden", "jeder", "jedes",
-           "jedoch", "jeweils", "kann", "kein", "keine", "keinem", "keinen",
-           "keiner", "komplett", "können", "könnte", "laufen", "liegt", "lässt",
-           "läuft", "machen", "macht", "mehr", "mit", "muss", "müssen", "müsste",
-           "nach", "neue", "neuem", "neuen", "neuer", "neues", "nicht", "noch",
-           "nur", "obwohl", "oder", "ohne", "sagen", "sagt", "schon", "sehr",
-           "sein", "seine", "seinen", "seiner", "selbst", "sind", "soll", "sollen",
-           "sollte", "sollten", "sonst", "sowie", "statt", "steht", "trotz", "über",
-           "und", "unter", "viele", "vom", "von", "vor", "waren", "wegen", "weil",
-           "weiter", "welche", "welcher", "wenn", "werden", "wieder", "wird",
-           "wurde", "wurden", "zwar", "zwischen"},
-}
-CODE_SPAN = re.compile(r"`[^`]*`")
-WORDS = re.compile(r"[^\W\d_]{3,}")
-
-
 def in_draft_language(state, t):
     """Whether this topic's authored summary reads as the draft language.
 
-    Conservative by construction: it only knows languages `LANG_GIVEAWAYS` has a word
-    list for, it ignores anything in backticks, and it needs two distinct function
-    words — a single "die" or "von" in an English line is not evidence. A
-    `needs_title` topic is skipped: it has no authored summary at all, only a raw
-    thread quote, which is in the commenter's language by design.
+    A `needs_title` topic is skipped: it has no authored summary at all, only a raw
+    thread quote, which is in the commenter's language by design. The detection itself
+    (and why it is deliberately hard to trip) is `lib.mr_common.reads_as`, shared with
+    rework-mr, which runs the same check against the thread language.
     """
-    words = LANG_GIVEAWAYS.get((state.get("lang") or DEFAULT_LANG).lower())
-    if not words or t.get("needs_title") or not t.get("summary"):
+    if t.get("needs_title") or not t.get("summary"):
         return False
-    prose = CODE_SPAN.sub(" ", t["summary"])
-    # An acronym is never a function word, and several lowercase straight into the
-    # list: MIT, DES, AUS, DEM. A German word at the start of a sentence is only
-    # title-case, so dropping the all-caps tokens costs nothing.
-    hits = {w.lower() for w in WORDS.findall(prose)
-            if not w.isupper() and w.lower() in words}
-    return len(hits) >= 2
+    return reads_as(t["summary"], state.get("lang") or DEFAULT_LANG)
 
 
 def summary_language_warning(state, topics):
@@ -914,7 +881,7 @@ def render_quote(state, tid, refine=False):
         if i == 0:
             title = f"**{tref(t['id'])}" + (f" — {summ}**" if summ else "**")
             out.append(f"{title} · {loc_md(path)} · {lang_hint(state)}")
-            for warn in (needs_title_warning(t),
+            for warn in (needs_title_warning(state, t),
                          summary_language_warning(state, [t])):
                 if warn:
                     out.append(warn)
@@ -1369,9 +1336,6 @@ def prune_worktrees(ctx, skip_iid=None):
 
 
 # ---------------------------------------------------------------- draft language
-
-DEFAULT_LANG = "de"
-
 
 def lang_path(slug):
     return os.path.join(state_dir(slug), "lang")

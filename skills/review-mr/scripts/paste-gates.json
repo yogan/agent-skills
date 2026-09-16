@@ -83,7 +83,7 @@
       ],
       "text": "^\\|.*✍️ _needs summary:_",
       "flags": "m",
-      "reason": "Your message pastes a topic whose title is still the unresolved `needs_title` placeholder (`✍️ needs summary:` — a raw, un-authored thread quote). Resolve it first: author an English one-liner (`findings.py set <t> --summary \"...\"`), or `drop`/`merge` the topic if it doesn't need one, then re-render (`sync`/`present`/`todo`) before showing it to the user."
+      "reason": "Your message pastes a topic whose title is still the unresolved `needs_title` placeholder (`✍️ needs summary:` — a raw, un-authored thread quote). Resolve it first: author an English one-liner (`findings.py set <t> --summary \"...\"`), or `drop`/`merge` the topic if it doesn't need one, then re-render (`sync`/`present`/`todo`) before showing it to the user. (Both MR skills emit this warning and the hook may hand you the other one's wording: the command is `findings.py` in review-mr and `threads.py` in rework-mr — use the one this session's skill ships.)"
     },
     {
       "key": "summary-in-draft-language",
@@ -96,13 +96,13 @@
         "summary that really does need rewording."
       ],
       "text": "⚠️ \\*\\*summaries must be English\\*\\*",
-      "reason": "Your message pastes a view whose warning says one or more summaries are written in the draft language. A summary is the one-line title the user reads in the table and in every topic heading, and it is always English — the draft language governs only the comment BODY you are about to hand them for posting. Reword each named topic (`findings.py set <t> --summary \"<short English line>\"`), re-render (`sync`/`present`/`todo`/`quote <t>`), and send that instead."
+      "reason": "Your message pastes a view whose warning says one or more summaries are written in the draft language. A summary is the one-line title the user reads in the table and in every topic heading, and it is always English — the draft language governs only the comment BODY you are about to hand them for posting. Reword each named topic (`findings.py set <t> --summary \"<short English line>\"`), re-render (`sync`/`present`/`todo`/`quote <t>`), and send that instead. (Both MR skills emit this warning and the hook may hand you the other one's wording: the command is `findings.py` in review-mr and `threads.py` in rework-mr — use the one this session's skill ships.)"
     },
     {
       "key": "unresolved-needs-title-quote",
       "note": "Same `needs_title` gap as unresolved-needs-title-table, but for `quote <t>`'s header warning (render_quote's `needs_title_warning`) instead of a table row.",
       "text": "⚠️ \\*\\*needs an English summary\\*\\*",
-      "reason": "Your message pastes a topic flagged `needs_title` — `quote <t>` is warning that it has no authored `summary` yet, only the raw thread quote. Author an English one-liner (`findings.py set <t> --summary \"...\"`), or `drop`/`merge` the topic, then re-run `quote <t>` before showing it to the user."
+      "reason": "Your message pastes a topic flagged `needs_title` — `quote <t>` is warning that it has no authored `summary` yet, only the raw thread quote. Author an English one-liner (`findings.py set <t> --summary \"...\"`), or `drop`/`merge` the topic, then re-run `quote <t>` before showing it to the user. (Both MR skills emit this warning and the hook may hand you the other one's wording: the command is `findings.py` in review-mr and `threads.py` in rework-mr — use the one this session's skill ships.)"
     }
   ]
 }

@@ -74,9 +74,15 @@ own. They are mirrors of each other, and these words mean the same thing on both
 | say this | not this | what it means |
 |---|---|---|
 | **topic** | finding, item, comment | One point being worked through — `t1`, `t2`. The unit both skills work in: raised, agreed and closed one at a time, never several at once. Two threads making the same point are merged into one topic. |
+| **summary** | title, headline, the comment | A topic's one-line name, in the tables and every topic heading. **Written by the skill, in English, in both of them** — never the reviewer's own first sentence, which is what the column falls back to while nobody has authored one, and which both skills flag and refuse to show. |
 | **thread** | discussion | The exchange on the merge request that a topic corresponds to. Whether it exists and whether it is resolved is GitLab's answer, never the skill's — both skills only read. GitLab calls the individual comments inside one "notes"; we do not, because a note is a thing on a diagram. |
 | **MR-level** | no location, missing file, global | A topic or thread that belongs to the merge request itself — its title, its description, a test nobody's diff adds — so there is no diff line to hang it on. Normal, not missing data: it is posted on the merge request instead of on a file. It is also what the tables print where a `file:line` would go. |
 | **a topic's context** | the boilerplate, the surroundings, the repeat | Everything in a topic's rendered view except the thing being decided: the topic's own header line, the code a comment is anchored to, the thread. Shown when the topic comes up, and not again while you stay on that topic — both skills take `--refine` for the render that leaves it out, so a reworded draft comes back on its own. Say the part's name when you mean one part (a *header line*, a draft's *meta header*, the *thread*); this word is for all of it together. |
+
+**English everywhere, with two exceptions.** A **draft** — the comment or reply about to be
+posted on the merge request — is in the thread's language, and a **quoted note** is reproduced
+verbatim, never translated. Everything else a person reads here is English: summaries, headings,
+tables, prose.
 
 **The two skills use different status words, and that is deliberate.** Reviewing, a topic is
 *draft, open, needs-ack, acked* or *wontfix*; reworking, it is *reply-pending, open, waiting* or

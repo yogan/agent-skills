@@ -21,12 +21,20 @@ import threads as T                                   # noqa: E402
 from lib import critical_manifest                     # noqa: E402
 
 
+def _spec():
+    with open(os.path.join(HERE, "paste-gates.json")) as fh:
+        return json.load(fh)
+
+
 def gate_signature(key):
     """The marker strings the Stop hook looks for in a given gated command's output —
     read from the shipped spec so a render and its gate cannot drift apart silently."""
-    with open(os.path.join(HERE, "paste-gates.json")) as fh:
-        gates = json.load(fh)["gates"]
-    return next(g["signature"] for g in gates if g["key"] == key)
+    return next(g["signature"] for g in _spec()["gates"] if g["key"] == key)
+
+
+def forbidden_rules():
+    """The patterns the Stop hook refuses to let reach the user, from the same spec."""
+    return _spec()["forbidden"]
 
 
 class TestLooksLikeDiff(unittest.TestCase):
@@ -237,6 +245,69 @@ class TestLocationlessThread(unittest.TestCase):
                                          author="Someone", notes=[]), "t1")
         self.assertIn("MR-level", out)
         self.assertNotIn("None:", out)
+
+
+class TestSummaryIsAuthored(unittest.TestCase):
+    """A topic's Summary column is how the user tells one of fifty topics from another.
+    Without this it held the reviewer's own sentence, truncated at 72 characters — three
+    rows of one real MR opened with a ```suggestion fence. Mirrors review-mr's
+    TestNeedsTitle, with the flag derived rather than stored (see `needs_summary`)."""
+
+    def _state(self, summary=None, body="Hier passt eine Generator Function.",
+               state_=None, diff_url=None):
+        return {"iid": 1, "title": "x", "topics": [
+            {"id": "t1", "thread_ids": ["d1"], "summary": summary, "state": state_,
+             "decision": None, "plan": None, "diff_url": diff_url}],
+            "threads": {"d1": {"resolved": False, "awaiting": "you", "author": "Jan",
+                               "body": body, "file": "src/a.py", "line": 7,
+                               "notes": [{"author": "Jan", "body": body}]}}}
+
+    def _row(self, state):
+        return next(ln for ln in T.render_table(state, show_done=True).splitlines()
+                    if ln.startswith("|") and "t1" in ln)
+
+    def test_an_unsummarised_topic_is_flagged_in_the_table(self):
+        self.assertIn("✍️ _needs summary:_", self._row(self._state()))
+
+    def test_an_authored_summary_is_not_flagged(self):
+        self.assertNotIn("needs summary", self._row(self._state(summary="retry is unbounded")))
+
+    def test_the_raw_fallback_carries_no_markup(self):
+        """The reported case: a comment opening with a fence put ``` into the cell."""
+        row = self._row(self._state(body="```suggestion:-6+0\nREQUIRED = {1}\n```"))
+        self.assertNotIn("```", row)
+        self.assertIn("(no prose — code only)", row)
+
+    def test_a_done_topic_is_exempt(self):
+        """It is closed, nothing acts on it, and its row only shows with `sync --all`."""
+        state = self._state()
+        state["threads"]["d1"]["resolved"] = True
+        self.assertNotIn("needs summary", self._row(state))
+
+    def test_the_quote_heading_says_it_too(self):
+        out = T.render_quote(self._state(), "t1")
+        self.assertIn("needs an English summary", out)
+
+    def test_a_german_summary_is_named_in_the_table(self):
+        """The summary sits next to a German thread the whole time, which is the pull
+        that produced a whole review with every summary in the wrong language."""
+        out = T.render_table(self._state(summary="Das Feld wird nicht mehr gesetzt"))
+        self.assertIn("summaries must be English", out)
+        self.assertIn("◈ t1", out)
+
+    def test_an_english_summary_is_left_alone(self):
+        out = T.render_table(self._state(summary="the field is no longer set"))
+        self.assertNotIn("summaries must be English", out)
+
+    def test_both_warnings_match_the_stop_hook_rules(self):
+        """The gate spec keys off these literals; rewording one silently disables it."""
+        rules = {r["key"]: r["text"] for r in forbidden_rules()}
+        state = self._state()
+        self.assertRegex(self._row(state), rules["unsummarised-topic-in-a-table"])
+        self.assertRegex(T.render_quote(state, "t1"),
+                         rules["unsummarised-topic-in-a-quote"])
+        self.assertRegex(T.render_table(self._state(summary="Das wird nicht gesetzt")),
+                         rules["summary-in-the-threads-language"])
 
 
 class TestNoteRendering(unittest.TestCase):

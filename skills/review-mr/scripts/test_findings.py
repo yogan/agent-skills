@@ -489,6 +489,22 @@ class TestNeedsTitle(unittest.TestCase):
         add_linked_topic(state, "d1", summary="a real English title")
         self.assertNotIn("needs an English summary", F.render_quote(state, "t1"))
 
+    def test_a_closed_topic_needs_no_title(self):
+        """Nothing acts on an acked topic any more, and the gate would otherwise block
+        every table on a finished review until somebody titled closed work. rework-mr's
+        `needs_summary` draws the same line at `done`."""
+        state = new_state(threads={"d1": {"body": "Sollten wir hier nicht X machen?",
+                                           "file": "a.py", "line": 3, "mine": False,
+                                           "awaiting": "you",
+                                           "last_at": "2026-01-01T00:00:00Z"}})
+        F.adopt_inbound(state, None, None)
+        t = F.topic_for(state, "t1")
+        self.assertIn("needs summary", F.render_table(state))
+        t["state"] = "acked"                       # what `set --state acked` does,
+        t["acked_at"] = "2026-01-02T00:00:00Z"     # stamp included
+        self.assertNotIn("needs summary", F.render_table(state))
+        self.assertNotIn("needs an English summary", F.render_quote(state, "t1"))
+
     def test_setting_a_summary_clears_the_flag(self):
         state = new_state(threads={"d1": {"body": "Sollten wir hier nicht X machen?",
                                            "file": "a.py", "line": 3}})

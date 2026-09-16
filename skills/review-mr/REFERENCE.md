@@ -32,7 +32,9 @@ the UI never reached the table.
   `· drafts <lang> · rest en` (just `· drafts en` when the two coincide). That is the
   instruction, and it governs exactly one thing: the text you hand the user to post.
   **Everything else is English, always** — every `--summary`, so the table and every topic
-  heading, and your own prose in the reply. A review whose ten summaries all came out in the
+  heading, and your own prose in the reply. The one other non-English text is a *quoted* note,
+  which the scripts reproduce verbatim: never translate an author's words while showing them
+  back. A review whose ten summaries all came out in the
   draft language had read the marker as "this review is in `<lang>`"; it never means that.
   `findings.py` says so itself when a summary reads as the draft language, and the paste gate
   will not let that view reach the user.

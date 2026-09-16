@@ -56,8 +56,9 @@ if _REPO_ROOT not in sys.path:
 
 from lib import critical_manifest                               # noqa: E402
 from lib.gitlab import api, context, current_user, die, mr_view, run, web_base  # noqa: E402
-from lib.mr_common import (MR_LEVEL, first_name, load, loc_md, num,  # noqa: E402
-                           save, short_summary, state_file, topic_for, tref)
+from lib.mr_common import (DEFAULT_LANG, MR_LEVEL, first_name, load,  # noqa: E402
+                           loc_md, num, reads_as, save, short_summary,
+                           state_file, topic_for, tref)
 from lib.snippet import MAX_BACKTRACK, open_construct            # noqa: E402
 
 # internal topic handles (t5, t6, t10 …) — must never reach a GitLab comment.
@@ -291,6 +292,55 @@ def _loc_cell(state, t):
     return loc_md(_loc(state, t)) + (f" (+{n - 1})" if n > 1 else "")
 
 
+def needs_summary(state, t):
+    """Whether nobody has written this topic a one-line title yet.
+
+    Derived rather than stored: every topic here starts life as a reviewer's thread, so
+    an absent `summary` can only mean none was authored. (review-mr keeps a `needs_title`
+    flag because it also creates topics itself, and has to tell those two apart.)
+
+    A `done` topic is exempt. It is closed, nothing acts on it, and its row only appears
+    with `sync --all` — demanding a title for work that is over would make the opener of
+    a long-running rework a chore with no reader.
+    """
+    return not t.get("summary") and topic_status(state, t) != "done"
+
+
+def needs_summary_warning(state, t):
+    """Said wherever a topic is rendered as a heading, so a missing title cannot pass as
+    a finished one. The heading shows the handle alone in that case — better than the raw
+    comment, and still nothing the user can recognise the topic by."""
+    if not needs_summary(state, t):
+        return None
+    return (f"⚠️ **needs an English summary** — `{t['id']}` has no authored `summary` "
+            f"yet. Read the thread and run `set {t['id']} --summary \"<short English "
+            f"line>\"` before working this topic.")
+
+
+def summary_language_warning(state, topics):
+    """Name the topics whose summary was written in the thread's language.
+
+    Mirrors review-mr's function of the same name — same rule, and the detection is
+    shared (`reads_as`) — but the sentence differs, because what the other language
+    governs differs: there it is the comment a reviewer is about to post, here it is the
+    reply into a thread. Stays duplicated for that reason; see CLAUDE.md's "Sharing vs.
+    duplication".
+
+    It is checked rather than only documented because the summary sits right next to a
+    German thread the whole time, which is exactly the pull that produced a review with
+    all ten summaries in the wrong language.
+    """
+    ids = [t["id"] for t in topics if t.get("summary")
+           and reads_as(t["summary"], DEFAULT_LANG)]
+    if not ids:
+        return None
+    return (f"⚠️ **summaries must be English** — {', '.join(tref(x) for x in ids)} "
+            f"read as {DEFAULT_LANG}. The thread's own language governs one thing, the "
+            f"body of a reply you post into it; the table and every topic heading are "
+            f"English. Reword each with `set <t> --summary \"<short English line>\"`, "
+            f"then re-render.")
+
+
 def render_table(state, scope="all", show_done=False):
     st, counts, shown = _rows(state, scope, show_done)
     out = [f"**MR !{state['iid']}** — {state.get('title') or ''}", ""]
@@ -300,11 +350,16 @@ def render_table(state, scope="all", show_done=False):
             tid = t["id"]
             s = st[tid]
             summ = short_summary(state, t, width=72).replace("|", "\\|")
+            if needs_summary(state, t):
+                summ = f"✍️ _needs summary:_ {summ}"   # raw quote, not an authored title
             out.append(critical_manifest.mark(f"| {GLYPH[s]} {WORD[s]} | {tref(f'**{tid}**')} "
                              f"| {_loc_cell(state, t)} | {summ} |"))
     else:
         out.append("_✓ nothing needs you — open threads are waiting on the reviewer_"
                    if scope == "mine" else "_✓ no open threads_")
+    warn = summary_language_warning(state, shown)
+    if warn:
+        out += ["", warn]
     footer = [f"{counts['done']} of {len(state['topics'])} topics done"]
     if counts["reply_pending"]:
         footer.append(f"{counts['reply_pending']} pushed, reply pending")
@@ -737,6 +792,10 @@ def render_quote(state, tid, remember=True):
         if i == 0:
             title = f"**{tref(t['id'])}" + (f" — {summ}**" if summ else "**")
             out.append(f"{title} · {loc_md(path)}")
+            for w in (needs_summary_warning(state, t),
+                      summary_language_warning(state, [t])):
+                if w:
+                    out.append(w)
         else:
             out.append(loc_md(path))
         if x.get("url"):

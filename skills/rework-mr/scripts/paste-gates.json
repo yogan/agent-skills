@@ -56,6 +56,41 @@
       "reason": "You ran `change-view` / `change-preview.sh` to illustrate a trivial topic's fix but your message did not include its output. Re-send your message with the FULL change-preview block pasted verbatim — the fenced illustration and the final 'Agreed?' — not a description of the change."
     }
   ],
+  "forbidden": [
+    {
+      "key": "unsummarised-topic-in-a-table",
+      "note": [
+        "`needs_summary` is derived — a topic here always comes from a reviewer's",
+        "thread, so no authored summary means nobody wrote one — and render_table marks",
+        "such a row with this exact glyph+label. The row then carries the raw comment,",
+        "truncated, which is what the table looked like before this rule: 28 rows of",
+        "somebody else's sentence starts, three of them opening with a code fence.",
+        "Anchored to a table row (`^\\|`) so prose mentioning the phrase cannot trip it.",
+        "Mirrors review-mr's unresolved-needs-title-table."
+      ],
+      "text": "^\\|.*✍️ _needs summary:_",
+      "flags": "m",
+      "reason": "Your message pastes an overview table whose Summary column still holds a raw reviewer comment (`✍️ needs summary:`) instead of a title somebody wrote. That column is how the user tells one topic from another, and a truncated German sentence — or a ```suggestion fence — is unreadable there. Read the open threads (`threads.py bodies`) and give each flagged topic a short English line with `threads.py set <t> --summary \"…\"`, then re-render (`sync`/`todo`/`present`) and send that. (Both MR skills emit this warning and the hook may hand you the other one's wording: the command is `findings.py` in review-mr and `threads.py` in rework-mr — use the one this session's skill ships.)"
+    },
+    {
+      "key": "unsummarised-topic-in-a-quote",
+      "note": "Same gap as above, but for `quote`'s / `present`'s topic heading (render_quote's needs_summary_warning) rather than a table row. Mirrors review-mr's unresolved-needs-title-quote.",
+      "text": "⚠️ \\*\\*needs an English summary\\*\\*",
+      "reason": "Your message pastes a topic whose heading warns it has no authored `summary` — the heading is the bare topic handle, which tells the user nothing about which point this is. Read the thread and run `threads.py set <t> --summary \"<short English line>\"`, then re-run `quote <t>` (or `present`) and send that. (Both MR skills emit this warning and the hook may hand you the other one's wording: the command is `findings.py` in review-mr and `threads.py` in rework-mr — use the one this session's skill ships.)"
+    },
+    {
+      "key": "summary-in-the-threads-language",
+      "note": [
+        "`summary_language_warning` emits this exact phrase in the table footer and in a",
+        "topic heading whenever an authored summary reads as German. The check is",
+        "conservative (function words only, code spans stripped, two distinct hits), so a",
+        "message carrying the warning really does have a summary to reword.",
+        "Mirrors review-mr's summary-in-draft-language."
+      ],
+      "text": "⚠️ \\*\\*summaries must be English\\*\\*",
+      "reason": "Your message pastes a view whose warning says one or more summaries are written in the thread's language. A summary is the one-line title the user reads in the table and in every topic heading, and it is English; the thread's language governs one thing only, the body of a reply you post into it. Reword each named topic (`threads.py set <t> --summary \"<short English line>\"`), re-render, and send that instead. (Both MR skills emit this warning and the hook may hand you the other one's wording: the command is `findings.py` in review-mr and `threads.py` in rework-mr — use the one this session's skill ships.)"
+    }
+  ],
   "required": [
     {
       "key": "fixup-ack",
