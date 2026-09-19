@@ -1,0 +1,42 @@
+[
+  {
+    "kind": "issue",
+    "severity": "critical",
+    "source": "llm",
+    "file": "mock-server.ts",
+    "line": 15,
+    "summary": "CORS origin '*' plus credentials:true is rejected by browsers now that api-client sets withCredentials"
+  },
+  {
+    "kind": "issue",
+    "severity": "high",
+    "source": "llm",
+    "file": "src/testing/mocks/db.ts",
+    "line": 59,
+    "summary": "loadDb returns null on a read error, and both callers dereference it unconditionally"
+  },
+  {
+    "kind": "issue",
+    "severity": "high",
+    "source": "llm",
+    "file": "src/testing/mocks/handlers/comments.ts",
+    "line": 100,
+    "summary": "the one persistDb call left un-awaited after the async conversion"
+  },
+  {
+    "kind": "issue",
+    "severity": "medium",
+    "source": "llm",
+    "file": "src/testing/mocks/handlers/auth.ts",
+    "line": 156,
+    "summary": "/auth/me is the only handler still returning 200 null instead of 401, and its catch block is now dead"
+  },
+  {
+    "kind": "issue",
+    "severity": "low",
+    "source": "llm",
+    "file": "src/testing/mocks/handlers/index.ts",
+    "line": 19,
+    "summary": "the /healthcheck handler has no caller and adds a random networkDelay to a health probe"
+  }
+]

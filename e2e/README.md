@@ -14,9 +14,10 @@ Talk-day checklist and run of show: [RUNBOOK.md](RUNBOOK.md).
 | `fixture.py` | resettable: branches, the three MRs, seeded threads, skill state |
 | `tmux-demo.sh` | talk day: verify the rig, reset it only if needed, build the demo tmux session |
 | `patches/` | the frozen MR diffs (`mr1-flaws.patch`, `mr2/`, `mr3/`) |
+| `artifacts/` | MR !1's frozen explainer and review-branch seed — tracked, so the live first pass generates neither |
 | `.env.local` | generated token/host values (gitignored) |
 | `.cache/` | bare upstream mirror + throwaway build tree (gitignored) |
-| `backup/` | fallback explainer + cached seed for talk day (gitignored, so machine-local) |
+| `backup/` | superseded by `artifacts/` — still gitignored so an old local copy stays invisible |
 
 ## One-time setup
 
@@ -59,13 +60,39 @@ Display names use the enterprise `Last, First - ID` shape on purpose — `lib/mr
 ## Reset before every run
 
 ```sh
-python3 fixture.py          # ~28 s, idempotent, offline
+python3 fixture.py          # ~22 s, idempotent, offline
 ```
 
 Deletes and recreates the *project* (that is what restarts MR IIDs at 1), re-pushes branches,
 recreates the MRs, seeds threads and the local review state, re-clones the working copy at
-`~/src/agent-skills-demo` (plus a review worktree beside it), and wipes skill state under
-`~/.claude/review-mr/` and `~/.claude/rework-mr/`.
+`~/src/agent-skills-demo` (plus `-review-mr1` and `-review-mr2` beside it — one review
+worktree per reviewed MR, as the skill records them), wipes skill state under
+`~/.claude/review-mr/` and `~/.claude/rework-mr/`, and finally registers MR !1's two prepared
+inputs (below).
+
+### MR !1 generates nothing live
+
+Its first pass used to spend minutes on two generative steps — `explain-branch` in a subagent
+and a `review-branch` seed — and neither came out the same way twice. Both are frozen in
+`artifacts/` and tracked, and the last fixture stage registers them with the skill:
+
+```sh
+python3 fixture.py --only prepared     # re-register after editing an artifact
+```
+
+`/review-mr` asks for a prepared explainer and a prepared seed before generating anything, so
+the live run looks them up instead: it pastes a clickable `file://` link to the explainer and
+imports five findings, straight into the overview table. Registration records MR !1's tip
+alongside each path, and a recorded input whose tip has moved is refused rather than reused —
+`tmux-demo.sh` asserts both still resolve, so that failure lands in the pre-flight check and
+never on stage.
+
+This deliberately leaves **no** `findings.json`: MR !1 still opens as a *fresh* review, the
+import happens live, and only the inputs are prepared.
+
+To re-cut the seed (five findings, one per file, spanning all four severities) or replace the
+explainer, edit `artifacts/` and re-run the stage above. Both are plain files —
+`seed-mr1.json` is exactly what `findings.py import` eats.
 
 On talk day use `./tmux-demo.sh` instead — it runs this only if the state does not verify.
 
@@ -73,7 +100,7 @@ On talk day use `./tmux-demo.sh` instead — it runs this only if the state does
 
 | MR | Author | Contents | Used by |
 |---|---|---|---|
-| `!1` | `author-bot` | upstream **PR #175** (standalone mock server), 2 real commits, 20 files, with 2 planted flaws alongside 2 genuine upstream ones. Targets `release/2024-06`, not `main` | `/review-mr`, live first pass |
+| `!1` | `author-bot` | upstream **PR #175** (standalone mock server), 2 real commits, 20 files, with 2 planted flaws alongside 2 genuine upstream ones. Targets `release/2024-06`, not `main`. Explainer and seed prepared, so nothing is generated live | `/review-mr`, live first pass |
 | `!2` | `author-bot` | route-level prefetch, plus a seeded conversation: fixed-by-push, author-asks-a-question, promised-but-not-done, untouched, and one peer thread | `/review-mr`, re-review |
 | `!3` | **you** | query-key factories in 2 commits, with 3 reviewer threads (trivial / hard / small) | `/rework-mr` |
 
@@ -86,7 +113,7 @@ fails loudly. That is what makes this an E2E harness and not just a demo prop.
 ### Verify a reset
 
 ```sh
-cd ~/src/agent-skills-demo-review
+cd ~/src/agent-skills-demo-review-mr2
 python3 ~/.claude/skills/review-mr/scripts/findings.py sync --iid 2
 #   "drafts en", t1/t2/t3 ◐ needs-ack, t4 ○ open, t5 💬 peer, 2 pushes since baseline
 

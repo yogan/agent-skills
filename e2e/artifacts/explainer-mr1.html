@@ -1,0 +1,934 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Running the mock API as a standalone server</title>
+<style>
+  :root { 
+    --bg: #fafaf8; --fg: #1a1a1a; --accent: #b5541f; --muted: #6b6b6b;
+    --code-bg: #f6f8fa; --code-fg: #24292f; --callout-bg: #fff4e8; --border: #e0ddd6;
+    --surface: #ffffff; --surface-hover: #f5f2ec; --th-bg: #f0ede6;
+    --inline-code-bg: #eee; --quiz-bg: #e8effc;
+    --feedback-correct-bg: #ecfdf3; --feedback-correct-fg: #166534;
+    --feedback-incorrect-bg: #fef2f2; --feedback-incorrect-fg: #991b1b;
+    --badge-new-bg: #dcfce7; --badge-new-fg: #166534;
+    --tok-keyword: #d73a49; --tok-string: #032f62; --tok-comment: #6a737d; --tok-number: #005cc5;
+    --tok-literal: #005cc5; --tok-builtin: #6f42c1; --tok-function: #6f42c1;
+    --tok-property: #005cc5; --tok-variable: #e36209;
+    --diff-add-bg: #e6ffec; --diff-add-fg: #1a7f37;
+    --diff-del-bg: #ffebe9; --diff-del-fg: #cf222e;
+ }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) { 
+    --bg: #16181d; --fg: #e8e6e1; --accent: #e0895a; --muted: #9a9a9a;
+    --code-bg: #1a1d23; --code-fg: #d8dee9; --callout-bg: #2a2114; --border: #3a3d44;
+    --surface: #1f2229; --surface-hover: #262a32; --th-bg: #262a32;
+    --inline-code-bg: #2a2d34; --quiz-bg: #232e4a;
+    --feedback-correct-bg: #123822; --feedback-correct-fg: #4ade80;
+    --feedback-incorrect-bg: #3a1414; --feedback-incorrect-fg: #f87171;
+    --badge-new-bg: #123822; --badge-new-fg: #4ade80;
+    --tok-keyword: #c678dd; --tok-string: #98c379; --tok-comment: #7f848e; --tok-number: #d19a66;
+    --tok-literal: #56b6c2; --tok-builtin: #e5c07b; --tok-function: #61afef;
+    --tok-property: #e06c75; --tok-variable: #e5c07b;
+    --diff-add-bg: rgba(46, 160, 67, .15); --diff-add-fg: #3fb950;
+    --diff-del-bg: rgba(248, 81, 73, .15); --diff-del-fg: #f85149;
+ }
+  }
+  [data-theme="dark"] { 
+    --bg: #16181d; --fg: #e8e6e1; --accent: #e0895a; --muted: #9a9a9a;
+    --code-bg: #1a1d23; --code-fg: #d8dee9; --callout-bg: #2a2114; --border: #3a3d44;
+    --surface: #1f2229; --surface-hover: #262a32; --th-bg: #262a32;
+    --inline-code-bg: #2a2d34; --quiz-bg: #232e4a;
+    --feedback-correct-bg: #123822; --feedback-correct-fg: #4ade80;
+    --feedback-incorrect-bg: #3a1414; --feedback-incorrect-fg: #f87171;
+    --badge-new-bg: #123822; --badge-new-fg: #4ade80;
+    --tok-keyword: #c678dd; --tok-string: #98c379; --tok-comment: #7f848e; --tok-number: #d19a66;
+    --tok-literal: #56b6c2; --tok-builtin: #e5c07b; --tok-function: #61afef;
+    --tok-property: #e06c75; --tok-variable: #e5c07b;
+    --diff-add-bg: rgba(46, 160, 67, .15); --diff-add-fg: #3fb950;
+    --diff-del-bg: rgba(248, 81, 73, .15); --diff-del-fg: #f85149;
+ }
+  html { font-size: 19px; }
+
+  body { font-family: Georgia, 'Times New Roman', serif; background: var(--bg); color: var(--fg);
+    max-width: 880px; margin: 0 auto; padding: 2rem 1.5rem 6rem; line-height: 1.65;
+    transition: background-color .15s ease, color .15s ease; }
+  h1 { font-size: 1.9rem; border-bottom: 3px solid var(--accent); padding-bottom: .5rem; }
+  h2 { font-size: 1.4rem; margin-top: 3rem; color: var(--accent); }
+  h3 { font-size: 1.1rem; margin-top: 1.8rem; }
+  a { color: var(--accent); }
+  a:visited { color: var(--accent); }
+  a:hover { text-decoration: none; }
+  code { font-family: 'SF Mono', Consolas, monospace; background: var(--inline-code-bg); color: inherit;
+    padding: .1rem .3rem; border-radius: 3px; font-size: .92em; }
+  pre { background: var(--code-bg); color: var(--code-fg); padding: 1rem 1.2rem; border-radius: 8px;
+    overflow-x: auto; white-space: pre; font-family: 'SF Mono', Consolas, monospace; font-size: .88rem; line-height: 1.5;
+    scrollbar-width: thin; scrollbar-color: var(--border) transparent; }
+  /* inline-block shrink-wraps this box to its widest line, so every .diff-line below can be
+     width: 100% of it (see that rule) instead of sizing itself off its own content - lines of
+     different lengths otherwise gave their add/del backgrounds different right edges. */
+  pre code { background: none; padding: 0; color: inherit; display: inline-block; min-width: 100%; }
+  /* Long code lines scroll horizontally (white-space: pre above) instead of wrapping - a thin
+     themed scrollbar makes that affordance visible without the heavy default OS bar. */
+  pre::-webkit-scrollbar { height: 8px; }
+  pre::-webkit-scrollbar-track { background: transparent; }
+  pre::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+  pre::-webkit-scrollbar-thumb:hover { background: var(--muted); }
+  .tok-keyword { color: var(--tok-keyword); }
+  .tok-string { color: var(--tok-string); }
+  .tok-comment { color: var(--tok-comment); font-style: italic; }
+  .tok-number { color: var(--tok-number); }
+  .tok-literal { color: var(--tok-literal); }
+  .tok-builtin { color: var(--tok-builtin); }
+  .tok-function { color: var(--tok-function); }
+  .tok-property { color: var(--tok-property); }
+  .tok-variable { color: var(--tok-variable); }
+  pre.pre-diff { padding: .4rem 0; }
+  /* box-sizing: border-box - the padding that sized `pre code` above is already inside the 100%
+     it's shrink-wrapped to. Left at the default (content-box), each line added that same padding
+     again on top of its own width: 100%, leaving dead space past the widest line when scrolled. */
+  .diff-line { display: block; width: 100%; padding: 0 1.2rem; box-sizing: border-box; }
+  .diff-add { background: var(--diff-add-bg); }
+  .diff-del { background: var(--diff-del-bg); }
+  .diff-hunk, .diff-meta { color: var(--muted); }
+  .diff-marker { display: inline-block; width: 1ch; margin-right: .6em; font-weight: bold; }
+  .diff-add .diff-marker { color: var(--diff-add-fg); }
+  .diff-del .diff-marker { color: var(--diff-del-fg); }
+  .callout { display: block; background: var(--callout-bg); border-left: 4px solid var(--accent); padding: .9rem 1.2rem;
+    border-radius: 0 6px 6px 0; margin: 1.2rem 0; }
+  .toc { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 1rem 1.5rem; margin: 1.5rem 0; }
+  .toc a { color: var(--accent); text-decoration: none; }
+  .toc ul { margin: .3rem 0; }
+  .diagram { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 1.2rem;
+    margin: 1.2rem 0; }
+  /* Diagrams are real SVGs laid out by D2 (see render_diagram()) - they scale to fit
+     their container exactly, no clipping/wrapping possible the way ad-hoc flexbox boxes could. */
+  .diagram-embed { position: relative; cursor: zoom-in; }
+  /* max-width: 100% (not width: 100%) - a small diagram renders at its natural point size
+     instead of being stretched up to fill the container (which was inflating its font past
+     the surrounding prose); a wide diagram still shrinks to fit. Needs the <svg>'s own
+     intrinsic width/height (see render_diagram()) - without one, max-width alone has nothing
+     to cap and the element defaults to stretching anyway. */
+  .diagram-embed svg { display: block; max-width: 100%; height: auto; margin: 0 auto; }
+  .diagram-lightbox { position: fixed; inset: 0; background: rgba(0,0,0,.78); z-index: 200;
+    display: flex; align-items: center; justify-content: center; padding: 3rem; cursor: zoom-out; }
+  .diagram-lightbox[hidden] { display: none; }
+  /* A fixed-size frame (not sized to the diagram) that fills most of the viewport regardless of
+     its size - a small px cap (e.g. 900px) looks fine on a laptop but wastes most of a large
+     monitor. The svg below then "contains" itself within this frame, growing to whichever of
+     width/height binds first while keeping its own aspect ratio - same idea as object-fit:
+     contain on an <img>, just via max-width/max-height + auto sizing since it's a bare <svg>. */
+  /* cursor: zoom-out (not default) - clicking the enlarged diagram itself also closes the
+     lightbox, same as clicking the dark backdrop; there's no separate close button. */
+  .diagram-lightbox-content { width: 90vw; height: 90vh; background: var(--surface);
+    border: 1px solid var(--border); border-radius: 12px; padding: 2rem; cursor: zoom-out;
+    box-sizing: border-box; display: flex; align-items: center; justify-content: center; }
+  /* width/height: 100% + object-fit: contain (not max-width/height + auto) - auto sizing only
+     ever shrinks a replaced element down to fit, it never enlarges past the svg's own natural
+     size, which left the diagram tiny in the middle of an otherwise-huge frame. object-fit lets
+     it grow to fill the frame on whichever axis binds first, still preserving aspect ratio. */
+  .diagram-lightbox-content svg { display: block; width: 100%; height: 100%; object-fit: contain; }
+  /* A D2 diagram's own colours are var(--d-*) references, so it follows this page's light/dark
+     toggle with no redraw. The rest of what lib/diagram appends below is not styling but a
+     requirement: a figure's legend goes in as HTML with no paragraph reset, so without one the
+     browser default margin pushes the words out of their box and only the tops of the glyphs
+     show. See lib/diagram/render.py's HOST_CSS. */
+  table { border-collapse: collapse; width: 100%; margin: 1rem 0; font-size: .92rem; }
+  th, td { border: 1px solid var(--border); padding: .5rem .7rem; text-align: left; }
+  th { background: var(--th-bg); }
+  .quiz-q { position: relative; overflow: hidden; background: var(--quiz-bg); border: 1px solid var(--border);
+    border-radius: 10px; padding: 1.2rem 1.5rem; margin: 1.2rem 0; }
+  /* Big enough that it's a background motif, not a corner badge - overflow: hidden on .quiz-q
+     clips it to the card shape. Kept faint (opacity) since it now shows through the
+     semi-transparent option/code backgrounds below, not just the bare card background. */
+  .quiz-q::before { content: "?"; position: absolute; z-index: 0; top: -1rem; right: 1.2rem; font-size: 16rem;
+    font-weight: bold; color: var(--accent); opacity: .07; line-height: 1; pointer-events: none; }
+  .quiz-q > * { position: relative; z-index: 1; }
+  /* Semi-transparent (not opaque like a plain surface) so the "?" motif reads through the
+     option rows instead of being fully hidden behind them - color-mix keeps each option's
+     own theme color, just lets some of the card (and the glyph) bleed through. */
+  /* Zero the question <p>'s default top margin and the last option's bottom margin -
+     otherwise they stack on top of .quiz-q's own padding and make the box look
+     top-heavy (nothing balances them on the bottom side). */
+  .quiz-q > p:first-child { margin-top: 0; }
+  .quiz-opt { display: block; width: 100%; text-align: left; padding: .6rem 1rem; margin: .4rem 0;
+    border: 1px solid var(--border); border-radius: 6px;
+    background: color-mix(in srgb, var(--surface) 82%, transparent); color: var(--fg);
+    cursor: pointer; font-family: inherit; font-size: .95rem; }
+  .quiz-opt:last-child { margin-bottom: 0; }
+  .quiz-opt:hover { background: color-mix(in srgb, var(--surface-hover) 88%, transparent); }
+  .quiz-opt code, .quiz-q code {
+    font-size: .88em; background: color-mix(in srgb, var(--inline-code-bg) 65%, transparent); }
+  .feedback { display: none; margin-top: .6rem; padding: .6rem 1rem; border-radius: 6px; font-size: .9rem; }
+  .feedback.correct { background: var(--feedback-correct-bg); color: var(--feedback-correct-fg); border-left: 3px solid #16a34a; }
+  .feedback.incorrect { background: var(--feedback-incorrect-bg); color: var(--feedback-incorrect-fg); border-left: 3px solid #dc2626; }
+  .badge { display: inline-block; font-size: .75rem; padding: .15rem .5rem; border-radius: 10px; font-family: sans-serif; }
+  .badge.new { background: var(--badge-new-bg); color: var(--badge-new-fg); }
+  #theme-toggle { position: fixed; top: 1rem; right: 1rem; z-index: 10; width: 2.4rem; height: 2.4rem;
+    border: 1px solid var(--border); background: var(--surface); color: var(--fg); border-radius: 999px;
+    font-size: 1.1rem; cursor: pointer; display: flex; align-items: center; justify-content: center;
+    box-shadow: 0 1px 4px rgba(0,0,0,.15); }
+  @media (max-width: 600px) { body { padding: 1rem; } #theme-toggle { top: .5rem; right: .5rem; } }
+
+  :root { --d-canvas:#ffffff;--d-fg:#1a1a1a;--d-muted:#6b6b6b;--d-accent:#b5541f;--d-grp-bg:#faf8f4;--d-grp-br:#d9d4c8;--d-client-bg:#e8effc;--d-client-br:#3b6fd4;--d-svc-bg:#ece4f7;--d-svc-br:#7c4dbd;--d-store-bg:#e3f5e3;--d-store-br:#3f9142;--d-cache-bg:#fdf0d5;--d-cache-br:#d99a2b;--d-ext-bg:#fdecec;--d-ext-br:#c0392b;--d-client-tx:#27548f;--d-svc-tx:#6a3fa8;--d-store-tx:#2c6b30;--d-cache-tx:#7a5410;--d-ext-tx:#a32b1f;--d-neutral-tx:#5a5a5a;--d-link:#2b5fd0;--d-surface:#ffffff;--d-tbl-bg:#ffffff;--d-tbl-title:#ffffff;--d-callout-bg:#fff4e8;--d-callout-br:#b5541f; }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) { --d-canvas:#16181d;--d-fg:#e8e6e1;--d-muted:#9a9a9a;--d-accent:#e0895a;--d-grp-bg:#262b34;--d-grp-br:#3a3d44;--d-client-bg:#1e2a44;--d-client-br:#7ba4ec;--d-svc-bg:#2b2340;--d-svc-br:#b39ae6;--d-store-bg:#16301c;--d-store-br:#6cc478;--d-cache-bg:#3a2f14;--d-cache-br:#e5bb6b;--d-ext-bg:#3a1414;--d-ext-br:#f0796b;--d-client-tx:#8fb8f0;--d-svc-tx:#c4aef0;--d-store-tx:#7fd08b;--d-cache-tx:#e8c98a;--d-ext-tx:#f79b8f;--d-neutral-tx:#b0b0b0;--d-link:#8ab4f8;--d-surface:#1f2229;--d-tbl-bg:#1f2229;--d-tbl-title:#16181d;--d-callout-bg:#2a2114;--d-callout-br:#e0895a; }
+  }
+  [data-theme="dark"] { --d-canvas:#16181d;--d-fg:#e8e6e1;--d-muted:#9a9a9a;--d-accent:#e0895a;--d-grp-bg:#262b34;--d-grp-br:#3a3d44;--d-client-bg:#1e2a44;--d-client-br:#7ba4ec;--d-svc-bg:#2b2340;--d-svc-br:#b39ae6;--d-store-bg:#16301c;--d-store-br:#6cc478;--d-cache-bg:#3a2f14;--d-cache-br:#e5bb6b;--d-ext-bg:#3a1414;--d-ext-br:#f0796b;--d-client-tx:#8fb8f0;--d-svc-tx:#c4aef0;--d-store-tx:#7fd08b;--d-cache-tx:#e8c98a;--d-ext-tx:#f79b8f;--d-neutral-tx:#b0b0b0;--d-link:#8ab4f8;--d-surface:#1f2229;--d-tbl-bg:#1f2229;--d-tbl-title:#16181d;--d-callout-bg:#2a2114;--d-callout-br:#e0895a; }
+/* A legend's words go in as <foreignObject><div class="md"><p>…</p></div> with no paragraph
+   reset (see compact.add_legend). The browser default `p{margin:1em 0}` then pushes the
+   text out of the box it was given and only the top sliver of the glyphs shows — which reads
+   as a colour or contrast problem and is actually a clip. The missing font-family is the
+   second half of the same bug: the div otherwise inherits the page's body font, whose metrics
+   differ from the ones the row was laid out with, so the words re-wrap. */
+.diagram foreignObject{overflow:visible}
+.diagram foreignObject .md{display:flex;align-items:center;height:100%;
+  font-family:system-ui,-apple-system,'Segoe UI',sans-serif}
+.diagram foreignObject .md p{margin:0;line-height:1.2;
+  font-size:13px;white-space:nowrap}
+/* A callout is an annotation ABOUT the drawing, so it should read as sitting above it.
+   Depth does that; a dashed outline does not — d2 welds a solid pointer triangle onto the
+   box and a dashed edge fights it at the junction. Keep fill-opacity >= 0.94: the contrast
+   gate measures the solid colour, so heavier transparency drifts away from what it
+   verified. A plain shadow vanishes on a dark page, hence the accent glow in dark mode. */
+.diagram .d2-callout{fill-opacity:.95;filter:drop-shadow(0 2px 5px rgba(0,0,0,.28))}
+/* The shadow paints outside the viewBox and the <svg> clips it by default, so a callout
+   flush with the edge lost its glow. Diagram geometry is kept inside the viewBox by the
+   placement pass; this only frees the shadow into the container's padding. */
+.diagram svg{overflow:visible}
+.diagram svg{max-width:100%;height:auto}
+/* A legend's words go in as <foreignObject><div class="md"><p>…</p></div> with no paragraph
+   reset (see compact.add_legend). The browser default `p{margin:1em 0}` then pushes the
+   text out of the box it was given and only the top sliver of the glyphs shows — which reads
+   as a colour or contrast problem and is actually a clip. The missing font-family is the
+   second half of the same bug: the div otherwise inherits the page's body font, whose metrics
+   differ from the ones the row was laid out with, so the words re-wrap. */
+.diagram-lightbox-content foreignObject{overflow:visible}
+.diagram-lightbox-content foreignObject .md{display:flex;align-items:center;height:100%;
+  font-family:system-ui,-apple-system,'Segoe UI',sans-serif}
+.diagram-lightbox-content foreignObject .md p{margin:0;line-height:1.2;
+  font-size:13px;white-space:nowrap}
+/* A callout is an annotation ABOUT the drawing, so it should read as sitting above it.
+   Depth does that; a dashed outline does not — d2 welds a solid pointer triangle onto the
+   box and a dashed edge fights it at the junction. Keep fill-opacity >= 0.94: the contrast
+   gate measures the solid colour, so heavier transparency drifts away from what it
+   verified. A plain shadow vanishes on a dark page, hence the accent glow in dark mode. */
+.diagram-lightbox-content .d2-callout{fill-opacity:.95;filter:drop-shadow(0 2px 5px rgba(0,0,0,.28))}
+/* The shadow paints outside the viewBox and the <svg> clips it by default, so a callout
+   flush with the edge lost its glow. Diagram geometry is kept inside the viewBox by the
+   placement pass; this only frees the shadow into the container's padding. */
+.diagram-lightbox-content svg{overflow:visible}
+[data-theme="dark"] .diagram .d2-callout{fill-opacity:.94;
+  filter:drop-shadow(0 0 5px rgba(224,137,90,.40)) drop-shadow(0 2px 4px rgba(0,0,0,.55))}
+[data-theme="dark"] .diagram-lightbox-content .d2-callout{fill-opacity:.94;
+  filter:drop-shadow(0 0 5px rgba(224,137,90,.40)) drop-shadow(0 2px 4px rgba(0,0,0,.55))}
+  @media (prefers-color-scheme: dark) {
+:root:not([data-theme="light"]) .diagram .d2-callout{fill-opacity:.94;
+  filter:drop-shadow(0 0 5px rgba(224,137,90,.40)) drop-shadow(0 2px 4px rgba(0,0,0,.55))}
+:root:not([data-theme="light"]) .diagram-lightbox-content .d2-callout{fill-opacity:.94;
+  filter:drop-shadow(0 0 5px rgba(224,137,90,.40)) drop-shadow(0 2px 4px rgba(0,0,0,.55))}
+  }
+</style>
+<script>
+(function() {
+  var saved = localStorage.getItem('explain-diff-theme');
+  if (saved === 'light' || saved === 'dark') {
+    document.documentElement.setAttribute('data-theme', saved);
+  }
+})();
+</script>
+</head>
+<body>
+
+<button id="theme-toggle" aria-label="Toggle dark mode" title="Toggle dark mode"></button>
+
+<div id="diagram-lightbox" class="diagram-lightbox" aria-label="Enlarged diagram - click anywhere to close" hidden>
+<div class="diagram-lightbox-content"></div>
+</div>
+
+<h1>Running the mock API as a standalone server</h1>
+<p style="color:var(--muted); margin-top:-.5rem;"><a href="http://gitlab.test/demo/bulletproof-react/-/merge_requests/1" target="_blank" rel="noopener noreferrer">MR !1: Run the mock API as a standalone server</a><br><code>feat/standalone-mock-server</code> · 20 files <span style="color:var(--diff-add-fg)">+968</span> <span style="color:var(--diff-del-fg)">−87</span></p>
+
+<div class="toc">
+<strong>Contents</strong>
+<ul>
+  <li><a href="#intro">Why move the mocks out of the browser</a></li>
+  <li><a href="#chapter-1">Chapter 1: A mock API you can actually connect to</a></li>
+  <li><a href="#chapter-2">Chapter 2: Pointing the end-to-end suite at it</a></li>
+  <li><a href="#summary">Where that leaves things</a></li>
+</ul>
+</div>
+
+<h2 id="intro">Why move the mocks out of the browser</h2>
+<p>This repository ships a fully working demo app with no backend behind it. Everything the app talks to — registration, login, users, teams, discussions, comments — is served by <strong>Mock Service Worker</strong> (MSW), a library that installs a service worker into the page and answers <code>fetch</code> calls before they ever reach the network. The handlers live in <code>src/testing/mocks/handlers/</code>, the data lives in an in-memory <code>@mswjs/data</code> factory in <code>src/testing/mocks/db.ts</code>, and the whole thing is switched on at boot:</p>
+<pre><code class="language-typescript">// src/main.tsx
+enableMocking().then(() =&gt; {
+  createRoot(root).render(&lt;App /&gt;);
+});
+
+// src/testing/mocks/index.ts
+export const enableMocking = async () =&gt; {
+  if (env.ENABLE_API_MOCKING) {
+    const { worker } = await import('./browser');
+    const { initializeDb } = await import('./db');
+    initializeDb();
+    return worker.start();
+  }
+};</code></pre>
+<p>That design has one very attractive property — clone, <code>yarn dev</code>, and you have a working app — and one awkward consequence: <em>the API does not exist</em>. There is no process listening on a port, no HTTP request crossing a wire, no <code>Set-Cookie</code> header travelling anywhere. The mock DB is a JavaScript object rehydrated from <code>localStorage</code> on every page load, so it belongs to one browser profile in one tab.</p>
+<div class="callout"><p>That is exactly why <code>docs/testing.md</code> carried this disclaimer: <em>“In the sample app, the tests are ran against the mocked API server, so they are technically not fully e2e.”</em> The Playwright suite drove a real browser, but the browser was talking to itself.</p></div>
+<p>Here is the shape of the old arrangement, and the shape this branch replaces it with. Everything in the first picture lives inside the page:</p>
+<div class="diagram diagram-embed" role="button" tabindex="0" aria-label="Enlarge diagram"><svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" data-d2-version="v0.9.0" preserveAspectRatio="xMidYMid meet" viewBox="0 0 779 199" width="779" height="199"><svg class="d2-1137768497 d2-svg" width="779" height="199" viewBox="3 3 779 199"><rect x="3" y="3" width="779" height="199" rx="0" fill="transparent" stroke-width="0" /><style type="text/css"><![CDATA[
+.d2-1137768497 .text {
+	font-family: "d2-1137768497-font-regular";
+}
+@font-face {
+	font-family: d2-1137768497-font-regular;
+	src: url("data:application/font-woff;base64,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");
+}
+.d2-1137768497 .text-italic {
+	font-family: "d2-1137768497-font-italic";
+}
+@font-face {
+	font-family: d2-1137768497-font-italic;
+	src: url("data:application/font-woff;base64,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");
+}]]></style><style type="text/css"><![CDATA[.shape {
+  shape-rendering: geometricPrecision;
+  stroke-linejoin: round;
+}
+.connection {
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.blend {
+  mix-blend-mode: multiply;
+  opacity: 0.5;
+}
+
+		.d2-1137768497 .stroke-B2{stroke:var(--d-fg);}.appendix text.text{fill:var(--d-fg)}.md{--color-fg-default:var(--d-fg);--color-fg-muted:var(--d-muted);--color-fg-subtle:var(--d-muted);--color-canvas-default:var(--d-surface);--color-canvas-subtle:var(--d-grp-bg);--color-border-default:var(--d-fg);--color-border-muted:var(--d-fg);--color-neutral-muted:var(--d-grp-bg);--color-accent-fg:var(--d-fg);--color-accent-emphasis:var(--d-fg);--color-attention-subtle:var(--d-muted);--color-danger-fg:red;}.light-code{display: block}.dark-code{display: none}]]></style><g class="YnJvd3Nlcg== grp"><g class="shape" ><rect x="12" y="12" width="761" height="181" stroke="var(--d-grp-br)" fill="var(--d-grp-bg)" style="stroke-width:2;" /></g><text x="83" y="30" fill="var(--d-fg)" class="text" style="text-anchor:middle;font-size:13px">Browser · localhost:3000</text></g><g class="YnJvd3Nlci5hcHA= client"><g class="shape" ><rect x="22" y="82" width="133" height="75" stroke="var(--d-client-br)" fill="var(--d-client-bg)" style="stroke-width:2;" /></g><text x="88.5" y="117.5" fill="var(--d-fg)" class="text" style="text-anchor:middle;font-size:13px"><tspan x="88.5" dy="0">React app</tspan><tspan class="d2-detail" fill="var(--d-muted)" style="font-size:11px" x="88.5" dy="13.000000">axios api-client</tspan></text></g><g class="YnJvd3Nlci5tb2NrYXBp svc"><g class="shape" ><rect x="363" y="82" width="162" height="75" stroke="var(--d-svc-br)" fill="var(--d-svc-bg)" style="stroke-width:2;" /></g><text x="444" y="117.5" fill="var(--d-fg)" class="text" style="text-anchor:middle;font-size:13px"><tspan x="444" dy="0">MSW service worker</tspan><tspan class="d2-detail" fill="var(--d-muted)" style="font-size:11px" x="444" dy="13.000000">handlers/*</tspan></text></g><g class="YnJvd3Nlci5zdG9yZQ== store"><g class="shape" ><path d="M 645 80 C 645 56 698 56 704 56 C 710 56 763 56 763 80 V 159 C 763 183 710 183 704 183 C 698 183 645 183 645 159 V 80 Z" stroke="var(--d-store-br)" fill="var(--d-store-bg)" style="stroke-width:2;" /><path d="M 645 80 C 645 104 698 104 704 104 C 710 104 763 104 763 80" stroke="var(--d-store-br)" fill="var(--d-store-bg)" style="stroke-width:2;" /></g><text x="704" y="129.5" fill="var(--d-fg)" class="text" style="text-anchor:middle;font-size:13px"><tspan x="704" dy="0">localStorage</tspan><tspan class="d2-detail" fill="var(--d-muted)" style="font-size:11px" x="704" dy="13.000000">msw-db key</tspan></text></g><g class="YnJvd3Nlci4oYXBwIC0mZ3Q7IG1vY2thcGkpWzBd"><marker id="mocks-before-mk-d2-1137768497-3202659688" markerWidth="10" markerHeight="12" refX="7" refY="6" viewBox="0 0 10 12" orient="auto" markerUnits="userSpaceOnUse"> <polygon points="0,0 10,6 0,12" fill="var(--d-muted)" class="connection" stroke-width="2" /> </marker><path d="M 157 119.5 L 359 119.5" stroke="var(--d-muted)" fill="none" class="connection" style="stroke-width:2;" marker-end="url(#mocks-before-mk-d2-1137768497-3202659688)" mask="url(#mocks-before-d2-1137768497)" /><text x="259" y="124" fill="var(--d-muted)" class="text-italic" style="text-anchor:middle;font-size:13px">request intercepted in-page</text></g><g class="YnJvd3Nlci4obW9ja2FwaSAmbHQ7LSZndDsgc3RvcmUpWzBd"><marker id="mocks-before-mk-d2-1137768497-1431276691" markerWidth="10" markerHeight="12" refX="3" refY="6" viewBox="0 0 10 12" orient="auto" markerUnits="userSpaceOnUse"> <polygon points="10,0 0,6 10,12" fill="var(--d-muted)" class="connection" stroke-width="2" /> </marker><path d="M 528.999965 119.483333 L 641.000035 119.016667" stroke="var(--d-muted)" fill="none" class="connection" style="stroke-width:2;" marker-start="url(#mocks-before-mk-d2-1137768497-1431276691)" marker-end="url(#mocks-before-mk-d2-1137768497-3202659688)" mask="url(#mocks-before-d2-1137768497)" /><text x="585" y="124" fill="var(--d-muted)" class="text-italic" style="text-anchor:middle;font-size:13px">read · write</text></g><mask id="mocks-before-d2-1137768497" maskUnits="userSpaceOnUse" x="3" y="3" width="779" height="199">
+<rect x="3" y="3" width="779" height="199" fill="white"></rect>
+<rect x="183" y="111" width="152" height="17" fill="black"></rect>
+<rect x="553" y="111" width="64" height="17" fill="black"></rect>
+<rect x="17.000000" y="17.000000" width="132.000000" height="17.000000" fill="black" data-gap="title"></rect>
+</mask></svg></svg>
+</div>
+<p>After the branch, the same handlers run in a separate Node process that the browser reaches over HTTP:</p>
+<div class="diagram diagram-embed" role="button" tabindex="0" aria-label="Enlarge diagram"><svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" data-d2-version="v0.9.0" preserveAspectRatio="xMidYMid meet" viewBox="0 0 804 201.85" width="804" height="202"><svg class="d2-2455497400 d2-svg" width="804" height="201.85" viewBox="3 3 804 201.85" x="0" y="0"><rect x="3.000000" y="3.000000" width="804.000000" height="201.850000" rx="0" fill="transparent" stroke-width="0" /><style type="text/css"><![CDATA[
+.d2-2455497400 .text {
+	font-family: "d2-2455497400-font-regular";
+}
+@font-face {
+	font-family: d2-2455497400-font-regular;
+	src: url("data:application/font-woff;base64,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");
+}
+.d2-2455497400 .text-italic {
+	font-family: "d2-2455497400-font-italic";
+}
+@font-face {
+	font-family: d2-2455497400-font-italic;
+	src: url("data:application/font-woff;base64,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");
+}]]></style><style type="text/css"><![CDATA[.shape {
+  shape-rendering: geometricPrecision;
+  stroke-linejoin: round;
+}
+.connection {
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.blend {
+  mix-blend-mode: multiply;
+  opacity: 0.5;
+}
+
+		.d2-2455497400 .stroke-B2{stroke:var(--d-fg);}.appendix text.text{fill:var(--d-fg)}.md{--color-fg-default:var(--d-fg);--color-fg-muted:var(--d-muted);--color-fg-subtle:var(--d-muted);--color-canvas-default:var(--d-surface);--color-canvas-subtle:var(--d-grp-bg);--color-border-default:var(--d-fg);--color-border-muted:var(--d-fg);--color-neutral-muted:var(--d-grp-bg);--color-accent-fg:var(--d-fg);--color-accent-emphasis:var(--d-fg);--color-attention-subtle:var(--d-muted);--color-danger-fg:red;}.light-code{display: block}.dark-code{display: none}]]></style><g class="YnJvd3Nlcg== grp"><g class="shape" ><rect x="12" y="12" width="194" height="129" stroke="var(--d-grp-br)" fill="var(--d-grp-bg)" style="stroke-width:2;" /></g><text x="83" y="30" fill="var(--d-fg)" class="text" style="text-anchor:middle;font-size:13px">Browser · localhost:3000</text></g><g class="bW9ja2FwaQ== svc new"><g class="shape" ><rect x="385" y="56" width="154" height="75" stroke="var(--d-accent)" fill="var(--d-svc-bg)" style="stroke-width:4;" /></g><text x="462" y="91.5" fill="var(--d-fg)" class="text" style="text-anchor:middle;font-size:13px"><tspan x="462" dy="0">Mock API server</tspan><tspan class="d2-detail" fill="var(--d-muted)" style="font-size:11px" x="462" dy="13.000000">express · port 8080</tspan></text></g><g class="c3RvcmU= store new"><g class="shape" ><path d="M 659 60 C 659 36 721 36 728 36 C 735 36 797 36 797 60 V 126 C 797 150 735 150 728 150 C 721 150 659 150 659 126 V 60 Z" stroke="var(--d-accent)" fill="var(--d-store-bg)" style="stroke-width:4;" /><path d="M 659 60 C 659 84 721 84 728 84 C 735 84 797 84 797 60" stroke="var(--d-accent)" fill="var(--d-store-bg)" style="stroke-width:4;" /></g><text x="728" y="109.5" fill="var(--d-fg)" class="text" style="text-anchor:middle;font-size:13px">mocked-db.json</text></g><g class="YnJvd3Nlci5hcHA= client"><g class="shape" ><rect x="22" y="56" width="174" height="75" stroke="var(--d-client-br)" fill="var(--d-client-bg)" style="stroke-width:2;" /></g><text x="109" y="91.5" fill="var(--d-fg)" class="text" style="text-anchor:middle;font-size:13px"><tspan x="109" dy="0">React app</tspan><tspan class="d2-detail" fill="var(--d-muted)" style="font-size:11px" x="109" dy="13.000000">axios, withCredentials</tspan></text></g><g class="KGJyb3dzZXIuYXBwIC0mZ3Q7IG1vY2thcGkpWzBd"><marker id="mocks-after-mk-d2-2455497400-3202659688" markerWidth="10" markerHeight="12" refX="7" refY="6" viewBox="0 0 10 12" orient="auto" markerUnits="userSpaceOnUse"> <polygon points="0,0 10,6 0,12" fill="var(--d-muted)" class="connection" stroke-width="2" /> </marker><path d="M 198 93.5 L 380 93.5" stroke="var(--d-muted)" fill="none" class="connection" style="stroke-width:2;" marker-end="url(#mocks-after-mk-d2-2455497400-3202659688)" mask="url(#mocks-after-d2-2455497400)" /><text x="291" y="98" fill="var(--d-muted)" class="text-italic" style="text-anchor:middle;font-size:13px">HTTP · CORS · cookies</text></g><g class="KG1vY2thcGkgJmx0Oy0mZ3Q7IHN0b3JlKVswXQ=="><marker id="mocks-after-mk-d2-2455497400-1431276691" markerWidth="10" markerHeight="12" refX="3" refY="6" viewBox="0 0 10 12" orient="auto" markerUnits="userSpaceOnUse"> <polygon points="10,0 0,6 10,12" fill="var(--d-muted)" class="connection" stroke-width="2" /> </marker><path d="M 543.999957 93.479167 L 654.000043 93.020833" stroke="var(--d-muted)" fill="none" class="connection" style="stroke-width:2;" marker-start="url(#mocks-after-mk-d2-2455497400-1431276691)" marker-end="url(#mocks-after-mk-d2-2455497400-3202659688)" mask="url(#mocks-after-d2-2455497400)" /><text x="599" y="98" fill="var(--d-muted)" class="text-italic" style="text-anchor:middle;font-size:13px">read · write</text></g><mask id="mocks-after-d2-2455497400" maskUnits="userSpaceOnUse" x="3" y="3" width="804" height="157">
+<rect x="3" y="3" width="804" height="157" fill="white"></rect>
+<rect x="232" y="85" width="118" height="17" fill="black"></rect>
+<rect x="567" y="85" width="64" height="17" fill="black"></rect>
+<rect x="17.000000" y="17.000000" width="132.000000" height="17.000000" fill="black" data-gap="title"></rect>
+</mask><rect x="11.0" y="179.5" width="13.7" height="13.7" rx="2.6" fill="var(--d-grp-bg)" stroke="var(--d-accent)" stroke-width="1"/><foreignObject x="30.5" y="179.5" width="130.2" height="13.7"><div xmlns="http://www.w3.org/1999/xhtml" class="md"><p style="color:var(--d-fg);font-size:13px">added by this change</p></div></foreignObject></svg></svg>
+</div>
+<p>Read the difference off the two figures: the service worker is gone from the page, an <code>express</code> process has appeared beside it, and the store has moved from <code>localStorage</code> — private to one browser profile — to a JSON file on disk that any process can open. What the app does not notice is that it is still the <em>same handler code</em> in both pictures. That is the whole trick, and getting it to be true is most of the work.</p>
+<p>The branch gets there in two steps. <strong>First</strong> it makes the mock API runnable as a standalone HTTP server: a new <code>mock-server.ts</code> entrypoint, plus the surgery on the handler code needed to let it run outside a browser at all — no <code>window</code>, no <code>localStorage</code>, real cookies, real status codes. <strong>Then</strong> it points the end-to-end suite at that server, so the Playwright tests finally deserve the name.</p>
+
+<h2 id="chapter-1">Chapter 1: A mock API you can actually connect to</h2>
+<p style="color:var(--muted); margin-top:-.5rem; font-size:.85em;">commit <code>18987b65</code> — <a href="http://gitlab.test/demo/bulletproof-react/-/commit/18987b65f415063aca7a88465ef50647b979d28c" target="_blank" rel="noopener noreferrer">add standalone mock server</a> · 16 files <span style="color:var(--diff-add-fg)">+396</span> <span style="color:var(--diff-del-fg)">−61</span></p>
+<p>The headline of this commit is twenty-six lines long. <code>@mswjs/http-middleware</code> takes the very same array of MSW handlers and turns it into an Express middleware, so the entire server is glue:</p>
+<pre><code class="language-typescript">// mock-server.ts
+import { createMiddleware } from '@mswjs/http-middleware';
+import cors from 'cors';
+import express from 'express';
+import logger from 'pino-http';
+
+import { env } from './src/config/env';
+import { handlers } from './src/testing/mocks/handlers';
+
+const app = express();
+
+app.use(cors({ origin: env.APP_URL, credentials: true }));
+app.use(express.json());
+app.use(logger());
+app.use(createMiddleware(...handlers));
+
+app.listen(env.APP_MOCK_API_PORT, () =&gt; {
+  console.log(`Mock API server started at http://localhost:${env.APP_MOCK_API_PORT}`);
+});</code></pre>
+<p>It is started with <code>"run-mock-server": "vite-node mock-server.ts | pino-pretty -c"</code>. <code>vite-node</code> matters more than it looks: the handlers are TypeScript, they import through the <code>@/</code> alias, and — crucially — <code>src/config/env.ts</code> reads <code>import.meta.env</code>, which only Vite provides. Running this file under plain <code>node</code> or <code>ts-node</code> would fail on all three counts. Two new variables join that env schema, both optional so the browser build is unaffected:</p>
+<pre><code class="language-diff-typescript">     ENABLE_API_MOCKING: z
+       .string()
+       .refine((s) =&gt; s === 'true' || s === 'false')
+       .transform((s) =&gt; s === 'true')
+       .optional(),
++    APP_URL: z.string().optional().default('http://localhost:3000'),
++    APP_MOCK_API_PORT: z.string().optional().default('8080'),</code></pre>
+<h3>Teaching the handlers to live outside a browser</h3>
+<p>Now the interesting part. The handler code was written on the assumption that a browser is present, and that assumption is scattered across three separate places. Each one had to be made <em>isomorphic</em> — able to run in either environment without the caller knowing which.</p>
+<p><strong>1. Where the data lives.</strong> <code>db.ts</code> grows a Node branch. In the browser nothing changes; in Node, the same data round-trips through a <code>mocked-db.json</code> file (added to <code>.gitignore</code> in this commit), created empty on first read:</p>
+<pre><code class="language-diff-typescript">-export const loadDb = () =&gt;
+-  Object.assign(JSON.parse(window.localStorage.getItem('msw-db') || '{}'));
++export const loadDb = async () =&gt; {
++  // If we are running in a Node.js environment
++  if (typeof window === 'undefined') {
++    const { readFile, writeFile } = await import('fs/promises');
++    try {
++      const data = await readFile(dbFilePath, 'utf8');
++      return JSON.parse(data);
++    } catch (error: any) {
++      if (error?.code === 'ENOENT') {
++        const emptyDB = {};
++        await writeFile(dbFilePath, JSON.stringify(emptyDB, null, 2));
++        return emptyDB;
++      }
++      console.error('Error loading mocked DB:', error);
++      return null;
++    }
++  }
++  // If we are running in a browser environment
++  return Object.assign(JSON.parse(window.localStorage.getItem('msw-db') || '{}'));
++};</code></pre>
+<div class="callout"><p>Note the <code>await import('fs/promises')</code>. A static <code>import</code> of a Node built-in at the top of <code>db.ts</code> would be bundled into the browser build and break it. A dynamic import inside the <code>typeof window === 'undefined'</code> branch is never evaluated in the browser, so the bundler leaves it alone.</p></div>
+<p>Touching disk is asynchronous, and that colour spreads: <code>loadDb</code>, <code>storeDb</code>, <code>persistDb</code> and <code>initializeDb</code> all become <code>async</code>, and every <code>persistDb('user')</code> call across the four handler files picks up an <code>await</code>. <code>enableMocking</code> gains one too.</p>
+<p><strong>2. Base64.</strong> The auth token is a base64-encoded user object, encoded with <code>window.btoa</code>. In Node there is no <code>window</code>, so <code>utils.ts</code> picks its implementation at call time:</p>
+<pre><code class="language-diff-typescript">-export const encode = (obj: any) =&gt; window.btoa(JSON.stringify(obj));
++export const encode = (obj: any) =&gt; {
++  const btoa =
++    typeof window === 'undefined'
++      ? (str: string) =&gt; Buffer.from(str, 'binary').toString('base64')
++      : window.btoa;
++  return btoa(JSON.stringify(obj));
++};</code></pre>
+<p><strong>3. Cookies.</strong> This is the subtlest of the three. In-page, MSW could not see a real <code>Cookie</code> header — there was no request on the wire — so <code>requireAuth</code> read the cookie out of the document with <code>js-cookie</code>, behind a <code>todo</code> comment admitting the workaround. Over real HTTP the header is genuinely there, in the <code>cookies</code> argument MSW hands every handler. The fix prefers it and keeps the old path as a fallback:</p>
+<pre><code class="language-diff-typescript">-    // todo: fix once tests in Github Actions are fixed
+-    // const encodedToken = cookies[AUTH_COOKIE];
+-    const encodedToken = Cookies.get(AUTH_COOKIE);
++    const encodedToken = cookies[AUTH_COOKIE] || Cookies.get(AUTH_COOKIE);</code></pre>
+<h3>From thrown errors to real status codes</h3>
+<p>The same commit rewrites <code>requireAuth</code>'s contract. It used to either return a user, return <code>null</code>, or throw — selected by a <code>shouldThrow</code> boolean parameter, which is the classic sign of a function being asked two questions at once. Now it always returns a result object:</p>
+<pre><code class="language-diff-typescript">-export function requireAuth(cookies: Record&lt;string, string&gt;, shouldThrow = true) {
++export function requireAuth(cookies: Record&lt;string, string&gt;) {
+   try {
+     const encodedToken = cookies[AUTH_COOKIE] || Cookies.get(AUTH_COOKIE);
+     if (!encodedToken) {
+-      if (shouldThrow) {
+-        throw new Error('No authorization token provided!');
+-      }
+-      return null;
++      return { error: 'Unauthorized', user: null };
+     }
+     ...
+-    return sanitizeUser(user);
++    return { user: sanitizeUser(user) };
+   } catch (err: any) {
+-    throw new Error(err);
++    return { error: 'Unauthorized', user: null };
+   }
+ }</code></pre>
+<p>And every protected handler gains the same three-line gate, so an unauthenticated request now produces a genuine <code>401</code> rather than falling into the handler's <code>catch</code> and coming back as a generic <code>500</code>:</p>
+<pre><code class="language-diff-typescript">-      const user = requireAuth(cookies);
++      const { user, error } = requireAuth(cookies);
++      if (error) {
++        return HttpResponse.json({ message: error }, { status: 401 });
++      }</code></pre>
+<p>That repeats across <code>comments.ts</code>, <code>discussions.ts</code> and <code>users.ts</code> — the bulk of this commit's line count is this one pattern applied nine times. It only becomes worth distinguishing once there is a real HTTP client on the other end that can act on the status code, which is precisely what the client side picks up next.</p>
+<h3>The client side of a real origin</h3>
+<p>Once the API lives on <code>localhost:8080</code> and the app on <code>localhost:3000</code>, every request is cross-origin. Browsers do not attach cookies to cross-origin XHR unless asked, so <code>api-client.ts</code> asks — and, now that <code>401</code> is a real answer, reacts to it:</p>
+<pre><code class="language-diff-typescript"> function authRequestInterceptor(config: InternalAxiosRequestConfig) {
+   if (config.headers) {
+     config.headers.Accept = 'application/json';
+   }
++
++  config.withCredentials = true;
+   return config;
+ }
+@@ response interceptor @@
++    if (error.response?.status === 401) {
++      const searchParams = new URLSearchParams();
++      const redirectTo = searchParams.get('redirectTo');
++      window.location.href = `/auth/login?redirectTo=${redirectTo}`;
++    }</code></pre>
+<p>The server half of that handshake is the <code>cors({ origin: env.APP_URL, credentials: true })</code> line in <code>mock-server.ts</code>. Two more small pieces round the commit out: a <code>GET ${env.API_URL}/healthcheck</code> handler, which gives anything waiting on the server a cheap endpoint to poll, and a <code>testMatch: /.*\.spec\.ts/</code> on the Playwright <code>chromium</code> project so that the <code>.setup.ts</code> file is not also picked up as a test.</p>
+
+<h3>Check your understanding</h3>
+
+<div class="quiz-q">
+<p><strong>Why does <code>requireAuth</code> now return <code>{ user, error }</code> instead of throwing?</strong></p>
+<button class="quiz-opt" data-correct="false">Because the cookie is now read asynchronously from the header.</button>
+<button class="quiz-opt" data-correct="true">So a handler can return a real 401 rather than a generic 500.</button>
+<button class="quiz-opt" data-correct="false">Because a <code>throw</code> cannot cross the Express middleware boundary.</button>
+<button class="quiz-opt" data-correct="false">Because MSW handlers are forbidden from throwing in Node.</button>
+</div>
+
+<div class="quiz-q">
+<p><strong>What lets <code>loadDb</code> work both in the browser and in the mock server process?</strong></p>
+<button class="quiz-opt" data-correct="true">It branches on <code>typeof window</code> and falls back to <code>fs/promises</code>.</button>
+<button class="quiz-opt" data-correct="false">The browser build maps <code>fs</code> calls onto <code>window.localStorage</code>.</button>
+<button class="quiz-opt" data-correct="false"><code>vite-node</code> polyfills <code>localStorage</code> for the server process.</button>
+<button class="quiz-opt" data-correct="false">Vite replaces <code>fs/promises</code> with a <code>localStorage</code> shim at build time.</button>
+</div>
+
+<div class="quiz-q">
+<p><strong>Why did <code>api-client</code> start setting <code>config.withCredentials = true</code>?</strong></p>
+<button class="quiz-opt" data-correct="true">The mock API is a separate origin, and the cookie needs it.</button>
+<button class="quiz-opt" data-correct="false"><code>@mswjs/http-middleware</code> needs it to parse the JSON body.</button>
+<button class="quiz-opt" data-correct="false">The service worker could not read the auth cookie without it.</button>
+<button class="quiz-opt" data-correct="false">Axios omits the <code>Accept</code> header unless credentials are on.</button>
+</div>
+
+<h2 id="chapter-2">Chapter 2: Pointing the end-to-end suite at it</h2>
+<p style="color:var(--muted); margin-top:-.5rem; font-size:.85em;">commit <code>4b562a81</code> — <a href="http://gitlab.test/demo/bulletproof-react/-/commit/4b562a812ee03e5ff3f62893a6bdc80893022dea" target="_blank" rel="noopener noreferrer">run standalone mock server in e2e tests</a> · 10 files <span style="color:var(--diff-add-fg)">+589</span> <span style="color:var(--diff-del-fg)">−43</span></p>
+<p>Chapter 1 left the standalone server working but optional — the way to use it was a block of commented-out lines in <code>.env.example</code>. This commit makes it the way the e2e suite runs, and in doing so it has to answer a question the first commit could duck: <em>who starts the server, and what is in the database when it does?</em></p>
+<h3>Two environments, two files</h3>
+<p>The commented-out block is the first thing to go. <code>.env.example</code> is reverted to pointing at the real API, and the mock-server configuration moves into a file of its own:</p>
+<pre><code class="language-bash"># .env.example              # .env.example-e2e
+VITE_APP_API_URL=\          VITE_APP_API_URL=http://localhost:8080/api
+  https://api.bulletproofapp.com
+VITE_APP_ENABLE_API_MOCKING=true
+                            VITE_APP_ENABLE_API_MOCKING=false
+                            VITE_APP_MOCK_API_PORT=8080
+                            VITE_APP_URL=http://localhost:3000</code></pre>
+<p>The important line is <code>VITE_APP_ENABLE_API_MOCKING=false</code>. Under e2e, <code>enableMocking()</code> returns immediately, no service worker is installed, and <code>axios</code> is left to make real requests to <code>http://localhost:8080/api</code>. That is the moment the first diagram in the intro turns into the second one.</p>
+<h3>Who starts what</h3>
+<p>Playwright already knows how to start the app — <code>playwright.config.ts</code> has a <code>webServer</code> entry running <code>yarn dev --port 3000</code>. It does not know about a second process, so the mock server is started ahead of it by the npm script:</p>
+<pre><code class="language-diff-json">     "test": "vitest",
++    "test-e2e": "pm2 start \"yarn run-mock-server\" --name server &amp;&amp; yarn playwright test",</code></pre>
+<p><code>pm2</code> is a process manager: <code>pm2 start</code> daemonises the mock server and returns, rather than blocking the shell the way <code>yarn run-mock-server</code> would, so the <code>&amp;&amp;</code> can hand over to Playwright. The full ordering of a run now looks like this:</p>
+<div class="diagram diagram-embed" role="button" tabindex="0" aria-label="Enlarge diagram"><svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" data-d2-version="v0.9.0" preserveAspectRatio="xMidYMid meet" viewBox="0 0 545 434" width="545" height="434"><svg class="d2-1161995206 d2-svg" width="545" height="434" viewBox="3 43 545 434"><rect x="3" y="43" width="545" height="434" rx="0" fill="transparent" stroke-width="0" /><style type="text/css"><![CDATA[
+.d2-1161995206 .text {
+	font-family: "d2-1161995206-font-regular";
+}
+@font-face {
+	font-family: d2-1161995206-font-regular;
+	src: url("data:application/font-woff;base64,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");
+}
+.d2-1161995206 .text-italic {
+	font-family: "d2-1161995206-font-italic";
+}
+@font-face {
+	font-family: d2-1161995206-font-italic;
+	src: url("data:application/font-woff;base64,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");
+}]]></style><style type="text/css"><![CDATA[.shape {
+  shape-rendering: geometricPrecision;
+  stroke-linejoin: round;
+}
+.connection {
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.blend {
+  mix-blend-mode: multiply;
+  opacity: 0.5;
+}
+
+		.d2-1161995206 .stroke-B2{stroke:var(--d-fg);}.appendix text.text{fill:var(--d-fg)}.md{--color-fg-default:var(--d-fg);--color-fg-muted:var(--d-muted);--color-fg-subtle:var(--d-muted);--color-canvas-default:var(--d-surface);--color-canvas-subtle:var(--d-grp-bg);--color-border-default:var(--d-fg);--color-border-muted:var(--d-fg);--color-neutral-muted:var(--d-grp-bg);--color-accent-fg:var(--d-fg);--color-accent-emphasis:var(--d-fg);--color-attention-subtle:var(--d-muted);--color-danger-fg:red;}.light-code{display: block}.dark-code{display: none}]]></style><g class="cnVubmVy client"><g class="shape" ><rect x="12" y="52" width="132" height="48" stroke="var(--d-client-br)" fill="var(--d-client-bg)" style="stroke-width:2;" /></g><text x="78" y="74" fill="var(--d-fg)" class="text" style="text-anchor:middle;font-size:13px"><tspan x="78" dy="0">yarn test-e2e</tspan><tspan class="d2-detail" fill="var(--d-muted)" style="font-size:11px" x="78" dy="13.000000">pm2 · Playwright</tspan></text></g><g class="bW9ja2FwaQ== svc"><g class="shape" ><rect x="225" y="52" width="113" height="48" stroke="var(--d-svc-br)" fill="var(--d-svc-bg)" style="stroke-width:2;" /></g><text x="281.5" y="74" fill="var(--d-fg)" class="text" style="text-anchor:middle;font-size:13px"><tspan x="281.5" dy="0">Mock API</tspan><tspan class="d2-detail" fill="var(--d-muted)" style="font-size:11px" x="281.5" dy="13.000000">express :8080</tspan></text></g><g class="YnJvd3Nlcg== store"><g class="shape" ><rect x="430" y="52" width="109" height="48" stroke="var(--d-store-br)" fill="var(--d-store-bg)" style="stroke-width:2;" /></g><text x="484.5" y="74" fill="var(--d-fg)" class="text" style="text-anchor:middle;font-size:13px"><tspan x="484.5" dy="0">Browser</tspan><tspan class="d2-detail" fill="var(--d-muted)" style="font-size:11px" x="484.5" dy="13.000000">app on :3000</tspan></text></g><g class="KHJ1bm5lciAtLSApWzBd"><path d="M 78.000000 102.000000 L 78.000000 467.000000" stroke="var(--d-client-br)" fill="none" class="connection" style="stroke-width:2;stroke-dasharray:8.000000,7.869565;" mask="url(#suite-run-order-d2-1161995206)" /></g><g class="KG1vY2thcGkgLS0gKVswXQ=="><path d="M 281.500000 102.000000 L 281.500000 467.000000" stroke="var(--d-svc-br)" fill="none" class="connection" style="stroke-width:2;stroke-dasharray:8.000000,7.869565;" mask="url(#suite-run-order-d2-1161995206)" /></g><g class="KGJyb3dzZXIgLS0gKVswXQ=="><path d="M 484.500000 102.000000 L 484.500000 467.000000" stroke="var(--d-store-br)" fill="none" class="connection" style="stroke-width:2;stroke-dasharray:8.000000,7.869565;" mask="url(#suite-run-order-d2-1161995206)" /></g><g class="KHJ1bm5lciAtJmd0OyBtb2NrYXBpKVswXQ=="><marker id="suite-run-order-mk-d2-1161995206-3202659688" markerWidth="10" markerHeight="12" refX="7" refY="6" viewBox="0 0 10 12" orient="auto" markerUnits="userSpaceOnUse"> <polygon points="0,0 10,6 0,12" fill="var(--d-muted)" class="connection" stroke-width="2" /> </marker><path d="M 80 150.000000 L 277.5 150.000000" stroke="var(--d-muted)" fill="none" class="connection" style="stroke-width:2;" marker-end="url(#suite-run-order-mk-d2-1161995206-3202659688)" mask="url(#suite-run-order-d2-1161995206)" /><text x="179.5" y="155.000000" fill="var(--d-muted)" class="text-italic" style="text-anchor:middle;font-size:13px">pm2 start run-mock-server</text></g><g class="KG1vY2thcGkgLSZndDsgbW9ja2FwaSlbMF0="><path d="M 283.5 200.000000 L 351.5 200.000000 S 361.5 200.000000 361.5 210.000000 L 361.5 235.000000 S 361.5 245.000000 351.5 245.000000 L 285.5 245.000000" stroke="var(--d-muted)" fill="none" class="connection" style="stroke-width:2;" marker-end="url(#suite-run-order-mk-d2-1161995206-3202659688)" mask="url(#suite-run-order-d2-1161995206)" /><text x="361.5" y="227.000000" fill="var(--d-muted)" class="text-italic" style="text-anchor:middle;font-size:13px">initializeDb(), then listen</text></g><g class="KHJ1bm5lciAtJmd0OyBicm93c2VyKVswXQ=="><path d="M 80 295.000000 L 480.5 295.000000" stroke="var(--d-muted)" fill="none" class="connection" style="stroke-width:2;" marker-end="url(#suite-run-order-mk-d2-1161995206-3202659688)" mask="url(#suite-run-order-d2-1161995206)" /><text x="281.5" y="300.000000" fill="var(--d-muted)" class="text-italic" style="text-anchor:middle;font-size:13px">run auth.setup.ts</text></g><g class="KGJyb3dzZXIgLSZndDsgbW9ja2FwaSlbMF0="><path d="M 482.5 345.000000 L 285.5 345.000000" stroke="var(--d-muted)" fill="none" class="connection" style="stroke-width:2;" marker-end="url(#suite-run-order-mk-d2-1161995206-3202659688)" mask="url(#suite-run-order-d2-1161995206)" /><text x="383" y="350.000000" fill="var(--d-muted)" class="text-italic" style="text-anchor:middle;font-size:13px">POST /api/auth/register</text></g><g class="KG1vY2thcGkgLSZndDsgYnJvd3NlcilbMF0="><marker id="suite-run-order-mk-d2-1161995206-346389696" markerWidth="10" markerHeight="12" refX="7" refY="6" viewBox="0 0 10 12" orient="auto" markerUnits="userSpaceOnUse"> <polygon points="0,0 10,6 0,12" fill="var(--d-store-tx)" class="connection" stroke-width="2" /> </marker><path d="M 283.5 395.000000 L 480.5 395.000000" stroke="var(--d-store-tx)" fill="none" class="connection" style="stroke-width:2;" marker-end="url(#suite-run-order-mk-d2-1161995206-346389696)" mask="url(#suite-run-order-d2-1161995206)" /><text x="383.5" y="400.000000" fill="var(--d-store-tx)" class="text-italic" style="text-anchor:middle;font-size:13px">Set-Cookie + CORS headers</text></g><g class="KHJ1bm5lciAtJmd0OyBicm93c2VyKVsxXQ=="><path d="M 80 445.000000 L 480.5 445.000000" stroke="var(--d-muted)" fill="none" class="connection" style="stroke-width:2;" marker-end="url(#suite-run-order-mk-d2-1161995206-3202659688)" mask="url(#suite-run-order-d2-1161995206)" /><text x="281.5" y="450.000000" fill="var(--d-muted)" class="text-italic" style="text-anchor:middle;font-size:13px">run *.spec.ts with saved state</text></g><mask id="suite-run-order-d2-1161995206" maskUnits="userSpaceOnUse" x="3" y="43" width="545" height="434">
+<rect x="3" y="43" width="545" height="434" fill="white"></rect>
+<rect x="106" y="142" width="147" height="17" fill="black"></rect>
+<rect x="295" y="214" width="133" height="17" fill="black"></rect>
+<rect x="234" y="287" width="95" height="17" fill="black"></rect>
+<rect x="317" y="337" width="132" height="17" fill="black"></rect>
+<rect x="310" y="387" width="147" height="17" fill="black"></rect>
+<rect x="202" y="437" width="159" height="17" fill="black"></rect>
+</mask></svg></svg>
+</div>
+<p>CI follows the same script, copies the new env file into place, and — because the mock database is now a file — uploads it alongside the HTML report, which makes a failed run inspectable after the fact:</p>
+<pre><code class="language-diff-yaml">       - name: Set environment variables
+-        run: mv .env.example .env
++        run: mv .env.example-e2e .env
+@@
+       - name: Run Playwright tests
+-        run: yarn playwright test
++        run: yarn test-e2e
+@@
+           name: playwright-report
+-          path: playwright-report/
++          path: |
++            playwright-report/
++            mocked-db.json</code></pre>
+<h3>Hydrating before listening</h3>
+<p>Now the question of what is in the database. Recall that <code>db</code> is an in-memory <code>@mswjs/data</code> factory, and <code>initializeDb()</code> is what replays the persisted records back into it. In the browser that call sits in <code>enableMocking()</code>, which runs before React mounts. The standalone server had no equivalent — it called <code>app.listen</code> straight away, so a request arriving before anything had written to the factory would find it empty even though <code>mocked-db.json</code> was full. The fix is to make hydration a precondition of listening:</p>
+<pre><code class="language-diff-typescript">-app.listen(env.APP_MOCK_API_PORT, () =&gt; {
+-  console.log(
+-    `Mock API server started at http://localhost:${env.APP_MOCK_API_PORT}`,
+-  );
++initializeDb().then(() =&gt; {
++  console.log('Mock DB initialized');
++  app.listen(env.APP_MOCK_API_PORT, () =&gt; {
++    console.log(
++      `Mock API server started at http://localhost:${env.APP_MOCK_API_PORT}`,
++    );
++  });
+ });</code></pre>
+<p>This is what makes the Playwright <code>setup</code> project work. <code>auth.setup.ts</code> registers a user through the UI and saves the resulting cookie to <code>e2e/.auth/user.json</code>; the <code>chromium</code> project then loads that <code>storageState</code> into every spec. The cookie is only useful if the server still knows the user it names — and the server's memory of that user is exactly the row <code>persistDb('user')</code> wrote into <code>mocked-db.json</code>.</p>
+<h3>The remaining adjustments</h3>
+<p>Three smaller changes fall out of running it for real. The CORS origin is widened from the configured app URL to a wildcard, with the reason written into the code — <code>// allow the app on whichever port vite picked</code>. <code>vite.config.ts</code> gains a <code>preview: { port: 3000 }</code> block so a preview server lands on the same port the dev server uses, keeping <code>VITE_APP_URL</code> honest either way. And <code>storeDb</code> loses the <code>key</code> parameter it never used — the Node branch writes a fixed path and the browser branch writes a fixed <code>localStorage</code> key, so the argument had no reader:</p>
+<pre><code class="language-diff-typescript">-export const storeDb = async (key: string, data: string) =&gt; {
++export const storeDb = async (data: string) =&gt; {
+@@
+-  await storeDb('msw-db', JSON.stringify(data));
++  await storeDb(JSON.stringify(data));</code></pre>
+<p>Finally, <code>docs/testing.md</code> drops the disclaimer quoted in the intro. The tests still do not hit a production backend, but they now cross a real network boundary to a separate process, which is a meaningfully different claim from “the browser is talking to itself”.</p>
+
+<h3>Check your understanding</h3>
+
+<div class="quiz-q">
+<p><strong>What does <code>yarn test-e2e</code> add on top of <code>yarn playwright test</code>?</strong></p>
+<button class="quiz-opt" data-correct="true">It starts the mock API under <code>pm2</code>, then runs Playwright.</button>
+<button class="quiz-opt" data-correct="false">It re-enables in-browser mocking for the Playwright run.</button>
+<button class="quiz-opt" data-correct="false">It wipes <code>mocked-db.json</code> before the suite runs.</button>
+<button class="quiz-opt" data-correct="false">It boots the Vite dev server, which Playwright cannot start.</button>
+</div>
+
+<div class="quiz-q">
+<p><strong>Why does <code>mock-server.ts</code> now call <code>initializeDb()</code> before <code>app.listen()</code>?</strong></p>
+<button class="quiz-opt" data-correct="false">Express cannot bind a port while async middleware is pending.</button>
+<button class="quiz-opt" data-correct="false"><code>pm2</code> restarts the process if the file does not yet exist.</button>
+<button class="quiz-opt" data-correct="false">The CORS middleware reads allowed origins from that file.</button>
+<button class="quiz-opt" data-correct="true">The in-memory factory must be filled before requests arrive.</button>
+</div>
+
+<div class="quiz-q">
+<p><strong>What is the effect of <code>VITE_APP_ENABLE_API_MOCKING=false</code> in <code>.env.example-e2e</code>?</strong></p>
+<button class="quiz-opt" data-correct="false">Playwright stops stubbing routes and lets the browser resolve them.</button>
+<button class="quiz-opt" data-correct="true">No service worker is installed, so axios really reaches port 8080.</button>
+<button class="quiz-opt" data-correct="false">The handlers stop persisting, so each run starts empty.</button>
+<button class="quiz-opt" data-correct="false">The mock server proxies to the real API instead of mocking.</button>
+</div>
+
+<h2 id="summary">Where that leaves things</h2>
+<p>Put the two commits together and the story is a single move with a long tail. The move: take the array of MSW handlers that used to be mounted into a service worker, and mount it into an Express app instead. The tail is everything that was implicitly relying on “there is a browser here and there is no network here” — <code>localStorage</code>, <code>window.btoa</code>, reading cookies out of <code>document</code>, throwing instead of returning a status code, and a client that never had to think about origins or credentials.</p>
+<p>What the repository gains is a mock backend that behaves like a backend. It listens on a port, it logs requests through <code>pino-http</code>, it answers <code>401</code> when you are not logged in, it sets cookies that a browser stores and returns, and its data outlives the tab because it is a file. Several processes can now share one database — which is what turns the Playwright suite from a browser talking to itself into two processes talking over HTTP.</p>
+<p>A few properties are worth carrying away, because they are consequences of the design rather than oversights:</p>
+<ul>
+<li><strong><code>mocked-db.json</code> persists between runs.</strong> Nothing truncates it; <code>loadDb</code> only creates it when it is missing. Each e2e run registers a fresh user via <code>auth.setup.ts</code> and adds to the file, which is why CI uploads it as a build artifact.</li>
+<li><strong><code>resetDb</code> is still browser-only.</strong> It calls <code>window.localStorage.clear()</code> and has no Node branch, unlike its neighbours in <code>db.ts</code>.</li>
+<li><strong>In-browser mocking has not gone away.</strong> <code>.env.example</code> still ships <code>VITE_APP_ENABLE_API_MOCKING=true</code>, so a plain <code>yarn dev</code> clone-and-run keeps working exactly as before. The standalone server is the second mode, selected by <code>.env.example-e2e</code>, not a replacement for the first.</li>
+<li><strong>The handler code is now the shared contract between both modes.</strong> Anything added to <code>src/testing/mocks/handlers/</code> has to stay isomorphic — no bare <code>window</code>, and a <code>persistDb</code> call that is awaited — or it will work in one mode and fail in the other.</li>
+</ul>
+
+
+
+<script>
+(function() {
+  function escHtml(s) {
+    return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  }
+  function escapeRe(s) {
+    return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  }
+  function words(str) {
+    return new Set((str || '').split(/\s+/).filter(Boolean));
+  }
+
+  var LANGS = {};
+  function def(names, o) {
+    names.split(' ').forEach(function(n) { LANGS[n] = o; });
+  }
+
+  def('javascript js jsx mjs cjs', {
+    kw: words('break case catch class const continue debugger default delete do else export extends finally for function if import in instanceof new return super switch this throw try typeof var void while with yield let async await static'),
+    lit: words('true false null undefined NaN Infinity'),
+    bi: words('console Math JSON Object Array String Number Boolean Symbol Promise Map Set WeakMap WeakSet Date RegExp Error globalThis window document require module exports process'),
+    lc: '//', bc: ['/*', '*/'], str: ['`', '"', "'"],
+  });
+  def('typescript ts tsx', {
+    kw: words('break case catch class const continue debugger default delete do else export extends finally for function if import in instanceof new return super switch this throw try typeof var void while with yield let async await static interface type enum implements namespace declare readonly public private protected abstract satisfies keyof infer'),
+    lit: LANGS.javascript.lit,
+    bi: LANGS.javascript.bi,
+    lc: '//', bc: ['/*', '*/'], str: ['`', '"', "'"],
+  });
+  def('python py', {
+    kw: words('and as assert async await break class continue def del elif else except finally for from global if import in is lambda nonlocal not or pass raise return try while with yield match case'),
+    lit: words('True False None'),
+    bi: words('print len range str int float dict list set tuple type isinstance super self cls object Exception'),
+    lc: '#', bc: null, str: ['"""', "'''", '"', "'"],
+  });
+  def('bash sh shell zsh', {
+    kw: words('if then else elif fi for while until do done case esac function in return exit break continue local export readonly declare select'),
+    lit: words('true false'),
+    bi: words('echo printf cd ls grep sed awk curl wget git cat rm mv cp mkdir chmod chown source set exec eval'),
+    lc: '#', bc: null, str: ['"', "'"],
+    varRe: '\\$\\{[^}]*\\}|\\$[A-Za-z_][A-Za-z0-9_]*|\\$[0-9@*#?$!-]',
+  });
+  def('go golang', {
+    kw: words('break case chan const continue default defer else fallthrough for func go goto if import interface map package range return select struct switch type var'),
+    lit: words('true false nil iota'),
+    bi: words('len cap make new append copy delete panic recover print println error string int int8 int16 int32 int64 uint uint8 uint16 uint32 uint64 float32 float64 bool byte rune'),
+    lc: '//', bc: ['/*', '*/'], str: ['`', '"'],
+  });
+  def('rust rs', {
+    kw: words('as break const continue crate dyn else enum extern false fn for if impl in let loop match mod move mut pub ref return self Self static struct super trait true type unsafe use where while async await'),
+    lit: words('true false None Some Ok Err'),
+    bi: words('println print vec String Vec Option Result Box Rc Arc HashMap HashSet'),
+    lc: '//', bc: ['/*', '*/'], str: ['"'],
+  });
+  def('java kotlin kt', {
+    kw: words('abstract assert boolean break byte case catch char class const continue default do double else enum extends final finally float for goto if implements import instanceof int interface long native new package private protected public return short static strictfp super switch synchronized this throw throws transient try void volatile while var record sealed permits yield fun val'),
+    lit: words('true false null'),
+    bi: words('System String Object List Map Set ArrayList HashMap Integer Double Boolean Optional Stream'),
+    lc: '//', bc: ['/*', '*/'], str: ['"'],
+  });
+  def('csharp cs', {
+    kw: words('abstract break case catch class const continue default do double else enum extends final finally float for goto if implements import instanceof int interface long new package private protected public return short static super switch this throw throws try void while var using namespace foreach async await readonly internal sealed override record'),
+    lit: words('true false null'),
+    bi: words('Console String Object List Dictionary Task Enumerable'),
+    lc: '//', bc: ['/*', '*/'], str: ['"'],
+  });
+  def('c h', {
+    kw: words('auto break case char const continue default do double else enum extern float for goto if inline int long register restrict return short signed sizeof static struct switch typedef union unsigned void volatile while'),
+    lit: words('true false NULL'),
+    bi: words('printf scanf malloc free memcpy strlen strcpy sizeof'),
+    lc: '//', bc: ['/*', '*/'], str: ['"', "'"],
+  });
+  def('cpp c++ hpp cc cxx', {
+    kw: words('auto break case char const continue default do double else enum extern float for goto if inline int long register restrict return short signed sizeof static struct switch typedef union unsigned void volatile while class namespace template typename public private protected virtual override new delete this try catch throw using friend operator explicit constexpr nullptr'),
+    lit: words('true false NULL nullptr'),
+    bi: words('std cout cin endl printf scanf malloc free memcpy strlen strcpy sizeof vector string map set'),
+    lc: '//', bc: ['/*', '*/'], str: ['"', "'"],
+  });
+  def('php', {
+    kw: words('abstract and array as break callable case catch class clone const continue declare default die do echo else elseif empty enddeclare endfor endforeach endif endswitch endwhile enum extends final finally fn for foreach function global goto if implements include include_once instanceof insteadof interface isset list match namespace new or print private protected public readonly require require_once return static switch throw trait try unset use var while xor yield'),
+    lit: words('true false null'),
+    bi: words('echo print_r var_dump strlen array_map array_filter implode explode isset empty'),
+    lc: '//', bc: ['/*', '*/'], str: ['"', "'"],
+    varRe: '\\$[A-Za-z_][A-Za-z0-9_]*',
+  });
+  def('ruby rb', {
+    kw: words('begin break case class def defined do else elsif end ensure false for if in module next nil not or redo rescue retry return self super then true undef unless until when while yield attr_accessor attr_reader attr_writer require require_relative'),
+    lit: words('true false nil'),
+    bi: words('puts print p raise loop lambda proc'),
+    lc: '#', bc: null, str: ['"', "'"],
+    varRe: '@{1,2}[A-Za-z_][A-Za-z0-9_]*|\\$[A-Za-z_][A-Za-z0-9_]*',
+  });
+  def('sql', {
+    kw: words('select from where and or not null is in like between join left right inner outer on group by order having limit offset insert into values update set delete create table alter drop index view as distinct union all case when then else end exists primary key foreign references default constraint'),
+    lit: words('true false null'),
+    bi: words('count sum avg min max coalesce'),
+    lc: '--', bc: ['/*', '*/'], str: ["'"], ci: true,
+  });
+  def('yaml yml', {
+    kw: words(''), lit: words('true false null yes no'), bi: words(''),
+    lc: '#', bc: null, str: ['"', "'"],
+  });
+  def('json', {
+    kw: words(''), lit: words('true false null'), bi: words(''),
+    lc: null, bc: null, str: ['"'],
+  });
+
+  function buildRegex(d) {
+    var parts = [];
+    if (d.bc) parts.push(escapeRe(d.bc[0]) + '[\\s\\S]*?(?:' + escapeRe(d.bc[1]) + '|$)');
+    if (d.lc) parts.push(escapeRe(d.lc) + '.*');
+    var strDelims = (d.str || []).slice().sort(function(a, b) { return b.length - a.length; });
+    strDelims.forEach(function(s) {
+      var e = escapeRe(s);
+      if (s.length >= 3) {
+        parts.push(e + '[\\s\\S]*?(?:' + e + '|$)');
+      } else {
+        parts.push(e + '(?:\\\\[\\s\\S]|[^' + e + '\\\\\\n])*(?:' + e + '|$)');
+      }
+    });
+    if (d.varRe) parts.push(d.varRe);
+    parts.push('\\b0[xX][0-9a-fA-F]+\\b');
+    parts.push('\\b\\d+(?:\\.\\d+)?(?:[eE][+-]?\\d+)?\\b');
+    parts.push('[A-Za-z_$][A-Za-z0-9_$]*');
+    return new RegExp(parts.join('|'), 'g');
+  }
+
+  var regexCache = new Map();
+  function span(cls, text) {
+    return '<span class="tok-' + cls + '">' + escHtml(text) + '</span>';
+  }
+
+  function highlightGeneric(code, d) {
+    var re = regexCache.get(d);
+    if (!re) { re = buildRegex(d); regexCache.set(d, re); }
+    re.lastIndex = 0;
+    var last = 0, out = '', m;
+    while ((m = re.exec(code))) {
+      if (m.index > last) out += escHtml(code.slice(last, m.index));
+      var tok = m[0];
+      var c0 = tok[0];
+      if (d.lc && tok.indexOf(d.lc) === 0) {
+        out += span('comment', tok);
+      } else if (d.bc && tok.indexOf(d.bc[0]) === 0) {
+        out += span('comment', tok);
+      } else if (c0 === '"' || c0 === "'" || c0 === '`') {
+        out += span('string', tok);
+      } else if ((c0 === '$' || c0 === '@') && d.varRe) {
+        out += span('variable', tok);
+      } else if (/^[0-9]/.test(tok)) {
+        out += span('number', tok);
+      } else {
+        var key = d.ci ? tok.toLowerCase() : tok;
+        var inSet = function(set) {
+          if (!d.ci) return set.has(tok);
+          var found = false;
+          set.forEach(function(w) { if (w.toLowerCase() === key) found = true; });
+          return found;
+        };
+        if (inSet(d.lit)) out += span('literal', tok);
+        else if (inSet(d.kw)) out += span('keyword', tok);
+        else if (inSet(d.bi)) out += span('builtin', tok);
+        else {
+          var after = code.slice(re.lastIndex, re.lastIndex + 20).match(/^\s*\(/);
+          var before = code.slice(0, m.index).match(/\.\s*$/);
+          if (after) out += span('function', tok);
+          else if (before) out += span('property', tok);
+          else out += escHtml(tok);
+        }
+      }
+      last = re.lastIndex;
+      if (re.lastIndex === m.index) re.lastIndex++;
+    }
+    out += escHtml(code.slice(last));
+    return out;
+  }
+
+  function highlightCode(code, lang) {
+    var d = LANGS[lang];
+    if (!d) return escHtml(code);
+    return highlightGeneric(code, d);
+  }
+
+  function highlightDiffLine(line, lang) {
+    if (/^(diff --git|index |new file mode|deleted file mode|--- |\+\+\+ |old mode|new mode|similarity index|rename (from|to))/.test(line)) {
+      return { cls: 'diff-meta', html: escHtml(line) };
+    }
+    if (/^@@.*@@/.test(line)) {
+      return { cls: 'diff-hunk', html: escHtml(line) };
+    }
+    if (line[0] === '+') {
+      var rest = line.slice(1);
+      return { cls: 'diff-add', marker: '+', html: lang ? highlightCode(rest, lang) : escHtml(rest) };
+    }
+    if (line[0] === '-') {
+      var rest2 = line.slice(1);
+      return { cls: 'diff-del', marker: '-', html: lang ? highlightCode(rest2, lang) : escHtml(rest2) };
+    }
+    var rest3 = line[0] === ' ' ? line.slice(1) : line;
+    return { cls: 'diff-ctx', marker: ' ', html: lang ? highlightCode(rest3, lang) : escHtml(rest3) };
+  }
+
+  function highlightDiff(code, lang) {
+    var trimmed = code.charAt(code.length - 1) === '\n' ? code.slice(0, -1) : code;
+    return trimmed.split('\n').map(function(line) {
+      var r = highlightDiffLine(line, lang);
+      var marker = r.marker !== undefined ? '<span class="diff-marker">' + r.marker + '</span>' : '';
+      return '<span class="diff-line ' + r.cls + '">' + marker + r.html + '</span>';
+    }).join('');
+  }
+
+  document.querySelectorAll('pre code[class*="language-"]').forEach(function(el) {
+    var cls = Array.prototype.find.call(el.classList, function(c) { return c.indexOf('language-') === 0; });
+    if (!cls) return;
+    var name = cls.slice('language-'.length);
+    var code = el.textContent;
+    var pre = el.closest('pre');
+    var out;
+    if (name === 'diff') {
+      out = highlightDiff(code, null);
+      if (pre) pre.classList.add('pre-diff');
+    } else if (name.indexOf('diff-') === 0) {
+      out = highlightDiff(code, name.slice('diff-'.length));
+      if (pre) pre.classList.add('pre-diff');
+    } else {
+      out = highlightCode(code, name);
+    }
+    el.innerHTML = out;
+  });
+})();
+</script>
+<script>
+(function() {
+  var lightbox = document.getElementById('diagram-lightbox');
+  if (!lightbox) return;
+  var content = lightbox.querySelector('.diagram-lightbox-content');
+  // Hidden while zoomed - it's the only other interactive control on the page, and it sits
+  // near where the enlarged diagram renders; hiding it avoids an unrelated click target
+  // competing with "click anywhere closes this".
+  var themeToggle = document.getElementById('theme-toggle');
+  function open(svg) {
+    content.innerHTML = '';
+    content.appendChild(svg.cloneNode(true));
+    lightbox.hidden = false;
+    if (themeToggle) themeToggle.hidden = true;
+  }
+  function close() {
+    lightbox.hidden = true;
+    content.innerHTML = '';
+    if (themeToggle) themeToggle.hidden = false;
+  }
+  document.querySelectorAll('.diagram-embed').forEach(function(el) {
+    var svg = el.querySelector('svg');
+    if (!svg) return;
+    el.addEventListener('click', function() { open(svg); });
+    el.addEventListener('keydown', function(e) {
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open(svg); }
+    });
+  });
+  // No dedicated close button - any click anywhere in the lightbox (backdrop or the enlarged
+  // diagram itself) dismisses it, so this listens on the lightbox itself rather than checking
+  // e.target against a specific element.
+  lightbox.addEventListener('click', close);
+  document.addEventListener('keydown', function(e) { if (e.key === 'Escape' && !lightbox.hidden) close(); });
+})();
+</script>
+<script>
+document.querySelectorAll('.quiz-q').forEach(q => {
+  q.querySelectorAll('.quiz-opt').forEach(opt => {
+    opt.addEventListener('click', () => {
+      const correct = opt.dataset.correct === 'true';
+      let fb = opt.nextElementSibling;
+      if (!fb || !fb.classList.contains('feedback')) {
+        fb = document.createElement('div');
+        fb.className = 'feedback';
+        opt.insertAdjacentElement('afterend', fb);
+      }
+      fb.textContent = correct ? '\u2705 Correct.' : '\u274c Not quite \u2014 reread the section above.';
+      fb.className = 'feedback ' + (correct ? 'correct' : 'incorrect');
+      fb.style.display = 'block';
+    });
+  });
+});
+
+(function() {
+  var btn = document.getElementById('theme-toggle');
+  function currentTheme() {
+    var explicit = document.documentElement.getAttribute('data-theme');
+    if (explicit) return explicit;
+    return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+  }
+  function updateIcon() {
+    btn.textContent = currentTheme() === 'dark' ? '\u2600\ufe0f' : '\ud83c\udf19';
+  }
+  btn.addEventListener('click', function() {
+    var next = currentTheme() === 'dark' ? 'light' : 'dark';
+    document.documentElement.setAttribute('data-theme', next);
+    localStorage.setItem('explain-diff-theme', next);
+    updateIcon();
+  });
+  updateIcon();
+})();
+</script>
+
+</body>
+</html>

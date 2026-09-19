@@ -14,6 +14,10 @@ never rot.
 
 Upstream code comes from a bare mirror in .cache/ (created on first run), so a reset
 never needs the network.
+
+The last stage (`prepared`) registers `artifacts/` — a frozen explainer and a frozen
+review-branch seed for MR !1 — with the review-mr skill, so the two slow generative
+steps of the live first pass become lookups. See `register_mr1_inputs`.
 """
 import argparse
 import json
@@ -437,6 +441,12 @@ MR2_PEER_THREAD = {
     "body": """Nit from my side: this import couples the route table to a concrete client
 instance. If we ever render two independent apps in one page (we do in Storybook), the
 route table pulls in a client nobody asked for.""",
+    # A thread somebody else opened arrives with no title — the skill will not invent one
+    # from a stranger's wording, so it flags the topic and REFUSES to render the table
+    # until a reviewer authors one. Correct, and a stumble at the worst possible moment:
+    # the opener is the first thing on screen. The reviewer would have written this during
+    # the session the demo pretends already happened, so the fixture writes it too.
+    "summary": "route table imports a concrete query client, coupling it to one app instance",
 }
 
 
@@ -590,13 +600,24 @@ def build_mr2():
     return create_mr("author-bot", MR2_BRANCH, MR2_TITLE, MR2_DESC, expect_iid=2)
 
 
-def review_worktree(branch):
-    """/review-mr works out of a dedicated worktree so your own checkout is untouched.
-    The pointer is repo-wide (one path per project), so both reviewed MRs share it."""
-    path = WORKDIR + "-review"
-    if os.path.isdir(path):
-        git("worktree", "remove", "--force", path, cwd=WORKDIR, check=False)
-        shutil.rmtree(path, ignore_errors=True)
+def review_worktree(branch, iid):
+    """/review-mr works out of a dedicated worktree so your own checkout is untouched —
+    **one per MR**, which is what the skill records and what a real review uses.
+
+    They used to share a single checkout, back when the skill's pointer was repo-wide.
+    That stopped being true and the rig did not follow, which left the two reviewed MRs
+    pointing at one directory that could only ever hold one of them: a run that failed
+    to re-check-out reviewed the OTHER MR's code with nothing failing. Separate
+    worktrees remove the possibility rather than defending against it — and remove the
+    ordering constraint that came with it.
+    """
+    path = f"{WORKDIR}-review-mr{iid}"
+    # The shared checkout these replaced. A reset re-clones WORKDIR, which orphans any
+    # worktree registered against the old clone, so it is removed by path.
+    for stale in (WORKDIR + "-review", path):
+        if os.path.isdir(stale):
+            git("worktree", "remove", "--force", stale, cwd=WORKDIR, check=False)
+            shutil.rmtree(stale, ignore_errors=True)
     git("fetch", "--quiet", "origin", branch, cwd=WORKDIR)
     # --detach, matching what /review-mr itself does (SKILL.md: "Check out detached —
     # nothing here reads the local branch name"). Creating a named branch instead would
@@ -630,7 +651,7 @@ def seed_mr2(iid):
     step("MR !2 — seeding the review conversation")
     # Repo-wide draft language. Must happen after the state wipe, which removes the
     # whole ~/.claude/review-mr/<slug>/ directory including this file.
-    wt0 = review_worktree(MR2_BRANCH)
+    wt0 = review_worktree(MR2_BRANCH, iid)
     findings(wt0, "lang", "--set", "en")
     info("draft language set to en")
     posted = []
@@ -679,6 +700,25 @@ def seed_mr2(iid):
         if t["reply"]:
             reply(iid, did, "author-bot", t["reply"])
             info(f"replied ({t['state']}) on {t['key']}")
+
+    title_peer_topic(wt, iid)
+
+
+def title_peer_topic(wt, iid):
+    """Author a summary for the peer's thread, which `sync` adopts as a topic of its own.
+
+    The handle is read back from the rendered table rather than assumed to be t5: the
+    adopted topic's number depends on how many were imported before it, and a hardcoded
+    one would break silently the day that changes. Same reason `seed_mr2` parses `import`'s
+    output instead of counting."""
+    out = findings(wt, "sync", "--iid", str(iid))
+    row = [ln for ln in out.splitlines() if "needs summary" in ln]
+    if not row:
+        die("MR !2: no topic is waiting for a summary — the peer thread was not adopted, "
+            "so sync is not seeing it")
+    tid = re.search(r"t\d+", row[0]).group(0)
+    findings(wt, "set", tid, "--summary", MR2_PEER_THREAD["summary"], "--iid", str(iid))
+    info(f"titled the peer topic {tid}")
 
 
 # ---------------------------------------------------------------- MR !3 threads
@@ -755,6 +795,44 @@ def reclone_workdir():
     info(f"cloned, on {MR3_BRANCH}")
 
 
+ARTIFACTS = os.path.join(HERE, "artifacts")
+
+
+def register_mr1_inputs(iid=1):
+    """Freeze the two slow steps of MR !1's first pass.
+
+    Generating the explainer and seeding from review-branch are each minutes of agent
+    work, and on stage they are minutes of nothing visible happening — with a real
+    chance of a different answer than the rehearsal gave. Both results stay valid as
+    long as the branch does, and `/review-mr` asks for a prepared one before generating
+    anything, so recording them here turns both into a lookup.
+
+    The recorded tip is MR !1's, which is pushed once and never moved, so the reuse
+    check cannot go stale between a reset and the talk.
+
+    This deliberately writes NO findings.json: MR !1 must still open as a FRESH review,
+    with the import happening live in front of the audience. Only the inputs are
+    prepared, never the review state.
+    """
+    step("MR !1 — registering the prepared explainer and seed")
+    # Its own worktree, already on its own branch — the same thing MR !2 gets, and the
+    # reason the two segments no longer have to be run in order. Without the recorded
+    # pointer the skill has to work out which checkout to review in, and that is the one
+    # step SKILL.md lets it stop and ask about — a question mid-segment, on stage. It
+    # sets no findings.json, so MR !1 stays a fresh review.
+    wt = review_worktree(MR1_BRANCH, iid)
+    findings(wt, "worktree", "--iid", str(iid), "--set", wt)
+    info(f"worktree → {wt}")
+    for what, artifact in (("explainer", "explainer-mr1.html"),
+                           ("seed", "seed-mr1.json")):
+        path = os.path.join(ARTIFACTS, artifact)
+        if not os.path.exists(path):
+            die(f"missing demo artifact {path} — it is tracked in git, so this means "
+                f"the checkout is incomplete, not that a rehearsal needs re-running")
+        findings(wt, what, "--iid", str(iid), "--set", path)
+        info(f"{what} → {artifact}")
+
+
 def wipe_skill_state():
     """Skill state lives outside both git and GitLab, so a project delete and a
     re-clone leave it behind. A stale findings.json would make the live run resume
@@ -774,7 +852,7 @@ def wipe_skill_state():
 # ---------------------------------------------------------------- driver
 
 
-STAGES = ("project", "main", "mr1", "mr2", "mr3", "clone", "state")
+STAGES = ("project", "main", "mr1", "mr2", "mr3", "clone", "state", "prepared")
 
 
 def main():
@@ -815,6 +893,10 @@ def main():
         wipe_skill_state()
     if "mr2" in want:
         seed_mr2(2)
+    # Last, and after the state wipe: the wipe removes ~/.claude/review-mr/<slug>--mr1/
+    # wholesale, so anything registered before it would be thrown away again.
+    if "prepared" in want:
+        register_mr1_inputs()
     step(f"fixture ready in {time.time() - started:.0f} s")
     print(f"    {E['E2E_GITLAB_URL']}/{E['E2E_PROJECT']}/-/merge_requests")
 
