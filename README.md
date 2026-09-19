@@ -97,7 +97,8 @@ What the diagram at the top of this page means for installing:
   when a range turns out to be a single commit.
 - **`review-mr` needs `explain-branch` and `review-branch` installed** (and therefore
   `explain-diff` too). It runs the explainer in the background and `review-branch` in the
-  foreground to seed its findings.
+  foreground to seed its findings — each only once per branch tip: both results are recorded
+  and reused until somebody pushes, so re-opening a review costs neither again.
 - **`visualize`, `review-branch` and `rework-mr` stand alone.**
 - **Shared code needs nothing installed.** The diagram engine and the GitLab plumbing live in
   `lib/`, inside the clone every symlink points at, so they are always there — which is why the

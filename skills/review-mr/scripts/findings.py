@@ -58,8 +58,15 @@ Subcommands (all read-only against GitLab):
   candidates     your posted threads not yet linked to any topic (for matching)
   head           one-line push check (branch tip vs last-reviewed head)
   base           GitLab's own merge-base SHA for this MR (feed to review-branch)
+  branch         the MR's source branch — for the worktree checkout, which has no
+                 other source of truth (a shared worktree sits on the LAST MR's branch)
   set-head       mark the current branch tip as reviewed
   worktree [--set PATH]   get/set this MR's review worktree path
+  explainer [--set PATH]  a prepared explainer for this MR: prints its path, or
+                  nothing if none applies to the current tip (branch on it — the
+                  clickable link goes at the top of `present`/`resume` by itself)
+  seed [--set PATH]       a prepared review-branch seed for this MR: prints its path
+                  (feed it to `import`), or nothing if none applies to the current tip
   prune [--iid N]  remove OTHER merged/closed MRs' worktrees for this repo
                    (skips --iid's own; never touches findings.json)
   lang [--set XX]         get/set the repo's draft language (default de)
@@ -1293,6 +1300,95 @@ def set_worktree(slug, iid, path):
         f.write(path.strip() + "\n")
 
 
+# ------------------------------------------------- prepared inputs (explainer, seed)
+#
+# The two slow steps of a first pass — generating the explainer (a subagent, minutes)
+# and seeding from review-branch — each produce something that stays valid as long as
+# the branch does, but nothing used to remember either. So re-opening a review paid for
+# both again, and neither could be relied on to come out the same way twice.
+#
+# Both are recorded against the MR tip they were made for. A recorded input whose tip
+# has moved is reported stale and regenerated rather than reused, so a reuse can never
+# quietly show an explainer for code that has since been pushed over. That check is the
+# reason this is a recorded path and not just a naming convention on disk.
+
+def prepared_path(slug, iid, what):
+    return state_file(STATE_ROOT, slug, iid, f"{what}.json")
+
+
+def set_prepared(slug, iid, what, path, head):
+    rec = {"path": os.path.abspath(os.path.expanduser(path.strip())), "sha": head}
+    save(prepared_path(slug, iid, what), rec)
+    return rec
+
+
+def get_prepared(slug, iid, what, head):
+    """The recorded path if it still applies, else None and the reason it doesn't.
+
+    The reason is None when simply nothing was ever recorded — the overwhelmingly
+    common case, and not worth a word. A recorded input that has stopped applying is
+    the interesting one, because it is about to be regenerated at real cost, so that
+    always says why."""
+    rec = load(prepared_path(slug, iid, what))
+    if not rec:
+        return None, None
+    path, sha = rec.get("path"), rec.get("sha")
+    if not path or not os.path.exists(path):
+        return None, f"the {what} recorded for MR !{iid} is gone from disk ({path})"
+    if sha and head and sha != head:
+        return None, (f"the {what} recorded for MR !{iid} was made at `{sha[:12]}`, "
+                      f"but the tip is now `{head[:12]}` — regenerate it")
+    return path, None
+
+
+def wrong_checkout_warning(slug, iid, topics):
+    """Reason to suspect the review worktree is on the wrong branch, or None.
+
+    The review worktree is detached and shared between the MRs of a repo, so a run that
+    fails to check it out lands on the PREVIOUS MR's code — and nothing fails. Every
+    command still works, the table still renders, and the only visible symptom is that
+    the findings describe files that aren't there, which reads as a bad seed rather
+    than a bad checkout. One session concluded exactly that and offered to throw the
+    seed away.
+
+    Only fires when NOT ONE located finding's file exists. A few missing files are
+    ordinary — a finding can name a file the MR deletes, or sit on the MR itself with
+    no location at all — but a whole seed missing means the checkout, not the seed.
+    """
+    wt = get_worktree(slug, iid)
+    if not wt or not os.path.isdir(wt):
+        return None
+    located = [t.get("file") for t in topics if t.get("file")]
+    if not located or any(os.path.exists(os.path.join(wt, f)) for f in located):
+        return None
+    return (f"⚠️  none of the {len(located)} files these findings name exist in "
+            f"{wt} — that worktree is almost certainly checked out on another MR's "
+            f"branch. Re-run the checkout "
+            f"(`git -C {wt} checkout -f --detach origin/$(findings.py branch "
+            f"--iid {iid})`) before reading any of them; the findings are fine.")
+
+
+def explainer_line(ctx, iid):
+    """The pasteable link for this MR's prepared explainer, or None.
+
+    It belongs to the OPENER's output rather than to the lookup command, for two
+    reasons. The user gets it in one fixed place — above the table, which is what they
+    read while deciding what to click — instead of wherever the agent chose to mention
+    it. And a lookup printing a line the agent must paste is a second gated block that
+    tends to share a shell call with the opener, where its extra lines read to the Stop
+    hook as lines the agent dropped from the block it was told to paste whole.
+
+    Marked critical, so an explainer that exists is one the user is actually handed a
+    way to open. The recorded path is checked before the tip is fetched: almost no MR
+    has a prepared explainer, and `present`/`resume` are the commands run most, so the
+    common answer must not cost a round trip to GitLab.
+    """
+    if not load(prepared_path(ctx["slug"], iid, "explainer")):
+        return None
+    p, _ = get_prepared(ctx["slug"], iid, "explainer", mr_head(ctx, iid))
+    return critical_manifest.mark(f"📖 **Explainer:** file://{p}") if p else None
+
+
 def prune_worktrees(ctx, skip_iid=None):
     """Remove the git worktree — never the findings/state file — for any MR of
     this repo that has one recorded and that GitLab now reports merged or closed.
@@ -1426,12 +1522,19 @@ def main():
     sub = ap.add_subparsers(dest="cmd")
 
     for name in ("sync", "todo", "present", "resume", "bodies", "candidates",
-                 "head", "base", "set-head", "updates", "path"):
+                 "head", "base", "branch", "set-head", "updates", "path"):
         sub.add_parser(name).add_argument("--iid", type=int)
 
     pw = sub.add_parser("worktree")
     pw.add_argument("--iid", type=int)
     pw.add_argument("--set", dest="set_path")
+
+    for name, what in (("explainer", "explainer HTML"),
+                       ("seed", "review-branch seed JSON")):
+        pp = sub.add_parser(name)
+        pp.add_argument("--iid", type=int)
+        pp.add_argument("--set", dest="set_path",
+                        help=f"record this {what} as prepared for the MR's current tip")
 
     sub.add_parser("prune").add_argument(
         "--iid", type=int, help="this run's own MR — its worktree is never pruned")
@@ -1554,7 +1657,9 @@ def main():
     elif cmd == "present":
         sync(state, fetch_threads(ctx, iid, me, author), ctx, iid)
         save(path, state)
-        print(render_present(state) + critical_manifest.manifest())
+        ex = explainer_line(ctx, iid)
+        print((f"{ex}\n\n" if ex else "") + render_present(state)
+              + critical_manifest.manifest())
         # Again, after the render: `render_quote` records the context it just showed, and
         # `--refine` compares against that. Every command that renders a topic in full
         # saves for this reason, and it is the only reason a view writes at all.
@@ -1589,18 +1694,44 @@ def main():
         # does, and paste-gate.py needs it all in one place to check the whole thing.
         sync(state, fetch_threads(ctx, iid, me, author), ctx, iid)
         save(path, state)
+        ex = explainer_line(ctx, iid)
         u = render_updates(state, ctx, iid)
         p = render_present(state)
-        print(f"{u}\n\n---\n\n{p}{critical_manifest.manifest()}")
+        print((f"{ex}\n\n" if ex else "")
+              + f"{u}\n\n---\n\n{p}{critical_manifest.manifest()}")
         save(path, state)                 # the context digest present recorded
     elif cmd == "head":
         print(head_report(state, ctx, iid))
+    elif cmd == "branch":
+        # The MR's own source branch, for the checkout that puts the review worktree on
+        # the code being reviewed. It exists because the checkout is the one step with
+        # no local source of truth: the worktree is detached and shared between MRs, so
+        # whatever it happens to sit on is the PREVIOUS MR's branch, and a run that
+        # guesses from it reviews the wrong diff while every command still succeeds.
+        obj = mr_object(ctx, iid)
+        print(obj.get("source_branch") or die(f"MR !{iid} has no source_branch"))
     elif cmd == "base":
         # GitLab's own merge-base for this MR — feed it to review-branch
         # (REVIEW_BRANCH_BASE) instead of letting it re-derive one locally; see
         # lib/gitlab.py's mr_base for why the local guess can drift.
         base = mr_base(ctx, iid) or die(f"MR !{iid} has no diff_refs.base_sha")
         print(base)
+    elif cmd in ("explainer", "seed"):
+        head = mr_head(ctx, iid)
+        if args.set_path:
+            rec = set_prepared(ctx["slug"], iid, cmd, args.set_path, head)
+            print(f"{cmd} recorded for MR !{iid} at "
+                  f"`{(rec['sha'] or '')[:12]}`: {rec['path']}")
+        else:
+            p, why = get_prepared(ctx["slug"], iid, cmd, head)
+            # A bare path, or nothing at all. Both lookups exist to be BRANCHED ON —
+            # generate, or don't — so the answer is the path and never a sentence. What
+            # the user sees is the opener's own explainer line (see `explainer_line`)
+            # and the imported topics; neither is this command's job to render.
+            if p:
+                print(p)
+            if why:
+                print(why, file=sys.stderr)
     elif cmd == "set-head":
         state["last_reviewed_head"] = mr_head(ctx, iid)
         save(path, state)
@@ -1612,6 +1743,12 @@ def main():
         save(path, state)
         print(f"added {len(added)} findings: "
               f"{', '.join(tref(x) for x in added)}")
+        # Said at the import, which is the first moment the two can be compared — and
+        # well before the agent starts reading code that isn't the code under review.
+        wrong = wrong_checkout_warning(ctx["slug"], iid,
+                                       [t for t in state["topics"] if t["id"] in added])
+        if wrong:
+            print(wrong)
         # Said here, not just in the next table: the seed is where a whole batch of
         # summaries in the draft language arrives, and fixing them one command later
         # is cheaper than after they have been shown.

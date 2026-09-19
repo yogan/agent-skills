@@ -227,5 +227,10 @@ reused, so a late finding slots in cleanly. Draft and post it through the normal
 ## State & files
 
 - Per-MR state: `~/.claude/review-mr/<slug>--mr<iid>/findings.json` (survives sessions).
-- Repo review-worktree path: `~/.claude/review-mr/<slug>/worktree`.
+- Review-worktree path, **per MR** (not repo-wide — several MRs of one repo get reviewed in
+  parallel): `~/.claude/review-mr/<slug>--mr<iid>/worktree`. It records *where* the checkout
+  is and never what is in it, so the checkout onto the MR tip happens on every run.
+- Prepared inputs, beside it: `explainer.json` and `seed.json`, each a path plus the tip it
+  was made at. Reused only while that tip is current, so neither can describe code that has
+  since been pushed over.
 - `findings.py path` prints the state file; scratch drafts can live beside it.

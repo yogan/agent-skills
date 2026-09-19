@@ -847,5 +847,170 @@ class TestPruneWorktrees(Throwaway, unittest.TestCase):
         self.assertEqual(F.get_worktree(theirs, 1), wt_theirs)
 
 
+class TestPreparedInputs(Throwaway, unittest.TestCase):
+    """A recorded explainer or seed may only be reused while the branch it was made
+    from is still the branch being reviewed. Every case here is a way that can stop
+    being true between two runs — and each one has to regenerate rather than reuse,
+    because reusing silently shows the user an explanation of code nobody pushed."""
+
+    def setUp(self):
+        self.orig_root = F.STATE_ROOT
+        F.STATE_ROOT = self._throwaway_dir()
+        self.addCleanup(setattr, F, "STATE_ROOT", self.orig_root)
+        self.slug = "acme-repo"
+
+    def _a_file(self, name="explainer.html"):
+        path = os.path.join(self._throwaway_dir(), name)
+        with open(path, "w") as f:
+            f.write("<h1>explained</h1>")
+        return path
+
+    def test_reused_while_the_tip_is_unchanged(self):
+        src = self._a_file()
+        F.set_prepared(self.slug, 1, "explainer", src, "abc123def456")
+        got, why = F.get_prepared(self.slug, 1, "explainer", "abc123def456")
+        self.assertEqual(got, src)
+        self.assertIsNone(why)
+
+    def test_a_relative_path_is_stored_absolute(self):
+        # The skill records from inside the review worktree but reads back from
+        # wherever the next shell call happens to land, which is rarely the same place.
+        src = self._a_file()
+        cwd = os.getcwd()
+        self.addCleanup(os.chdir, cwd)
+        os.chdir(os.path.dirname(src))
+        rec = F.set_prepared(self.slug, 1, "explainer", os.path.basename(src), "abc123")
+        self.assertTrue(os.path.isabs(rec["path"]))
+        os.chdir(cwd)
+        got, _ = F.get_prepared(self.slug, 1, "explainer", "abc123")
+        self.assertEqual(got, rec["path"])
+
+    def test_a_moved_tip_makes_it_stale_and_names_both_shas(self):
+        F.set_prepared(self.slug, 1, "explainer", self._a_file(), "abc123def456")
+        got, why = F.get_prepared(self.slug, 1, "explainer", "999888777666")
+        self.assertIsNone(got)
+        self.assertIn("abc123def456"[:12], why)
+        self.assertIn("999888777666"[:12], why)
+
+    def test_a_deleted_file_is_not_offered(self):
+        src = self._a_file()
+        F.set_prepared(self.slug, 1, "explainer", src, "abc123")
+        os.remove(src)
+        got, why = F.get_prepared(self.slug, 1, "explainer", "abc123")
+        self.assertIsNone(got)
+        self.assertIn("gone from disk", why)
+
+    def test_nothing_recorded_says_nothing_at_all(self):
+        """The ordinary case — no MR has a prepared anything until somebody records one
+        — and it is silent on purpose. The lookup shares a shell call with the opener
+        often enough that a sentence here reads to the Stop hook as a line the agent
+        dropped from a block it was told to paste whole, which blocked a correct reply."""
+        got, why = F.get_prepared(self.slug, 7, "seed", "abc123")
+        self.assertIsNone(got)
+        self.assertIsNone(why)
+
+    def test_a_record_that_stopped_applying_always_says_why(self):
+        """The opposite case: something IS recorded and is about to be regenerated at
+        real cost, so the reason is never swallowed."""
+        src = self._a_file()
+        F.set_prepared(self.slug, 7, "seed", src, "abc123")
+        os.remove(src)
+        got, why = F.get_prepared(self.slug, 7, "seed", "abc123")
+        self.assertIsNone(got)
+        self.assertIn("!7", why)
+
+    def test_explainer_and_seed_are_recorded_separately(self):
+        ex, sd = self._a_file(), self._a_file("seed.json")
+        F.set_prepared(self.slug, 1, "explainer", ex, "abc123")
+        F.set_prepared(self.slug, 1, "seed", sd, "abc123")
+        self.assertEqual(F.get_prepared(self.slug, 1, "explainer", "abc123")[0], ex)
+        self.assertEqual(F.get_prepared(self.slug, 1, "seed", "abc123")[0], sd)
+
+    def test_one_mrs_record_is_not_another_mrs(self):
+        F.set_prepared(self.slug, 1, "explainer", self._a_file(), "abc123")
+        self.assertIsNone(F.get_prepared(self.slug, 2, "explainer", "abc123")[0])
+
+
+class TestWrongCheckoutWarning(Throwaway, unittest.TestCase):
+    """The review worktree is shared between a repo's MRs and left detached on whichever
+    was reviewed last, so a missed checkout reviews the previous MR's code with nothing
+    failing. Observed: a session read the resulting file-not-found as a stale SEED and
+    offered to discard it."""
+
+    def setUp(self):
+        self.orig_root = F.STATE_ROOT
+        F.STATE_ROOT = self._throwaway_dir()
+        self.addCleanup(setattr, F, "STATE_ROOT", self.orig_root)
+        self.slug = "acme-repo"
+        self.wt = self._throwaway_dir()
+        F.set_worktree(self.slug, 1, self.wt)
+
+    def _touch(self, rel):
+        p = os.path.join(self.wt, rel)
+        os.makedirs(os.path.dirname(p), exist_ok=True)
+        open(p, "w").close()
+
+    def test_warns_when_not_one_named_file_is_in_the_checkout(self):
+        topics = [{"file": "mock-server.ts"}, {"file": "src/testing/mocks/db.ts"}]
+        w = F.wrong_checkout_warning(self.slug, 1, topics)
+        self.assertIn("another MR's", w)
+        self.assertIn(self.wt, w)
+
+    def test_silent_when_even_one_file_is_there(self):
+        # Normal: an MR can delete a file a finding names, so a partial miss proves
+        # nothing about the checkout.
+        self._touch("mock-server.ts")
+        topics = [{"file": "mock-server.ts"}, {"file": "src/testing/mocks/db.ts"}]
+        self.assertIsNone(F.wrong_checkout_warning(self.slug, 1, topics))
+
+    def test_silent_for_mr_level_topics_with_no_file(self):
+        self.assertIsNone(F.wrong_checkout_warning(self.slug, 1, [{"summary": "x"}]))
+
+    def test_silent_when_no_worktree_is_recorded(self):
+        self.assertIsNone(
+            F.wrong_checkout_warning(self.slug, 99, [{"file": "mock-server.ts"}]))
+
+
+class TestExplainerLine(Throwaway, unittest.TestCase):
+    """The link the opener carries. It is what the user clicks, so it is marked critical
+    — and it must cost nothing on the MRs (nearly all of them) that have no explainer."""
+
+    def setUp(self):
+        self.orig_root = F.STATE_ROOT
+        F.STATE_ROOT = self._throwaway_dir()
+        self.addCleanup(setattr, F, "STATE_ROOT", self.orig_root)
+        critical_manifest.reset()
+        self.addCleanup(critical_manifest.reset)
+        self.ctx = {"slug": "acme-repo"}
+
+    def _record(self, sha="abc123def456"):
+        path = os.path.join(self._throwaway_dir(), "explainer.html")
+        with open(path, "w") as f:
+            f.write("<h1>x</h1>")
+        F.set_prepared(self.ctx["slug"], 1, "explainer", path, sha)
+        return path
+
+    def test_renders_a_clickable_file_url_and_marks_it_critical(self):
+        path = self._record()
+        with patch.object(F, "mr_head", return_value="abc123def456"):
+            line = F.explainer_line(self.ctx, 1)
+        self.assertIn(f"file://{path}", line)
+        self.assertIn(line, critical_manifest.current())
+
+    def test_no_record_means_no_line_and_no_call_to_gitlab(self):
+        # present/resume run on every check; an MR with no explainer must not pay a
+        # round trip to discover that.
+        with patch.object(F, "mr_head", side_effect=AssertionError("asked GitLab")) as h:
+            self.assertIsNone(F.explainer_line(self.ctx, 1))
+            h.assert_not_called()
+        self.assertEqual(critical_manifest.current(), [])
+
+    def test_a_stale_record_yields_no_line(self):
+        self._record(sha="000000000000")
+        with patch.object(F, "mr_head", return_value="abc123def456"):
+            self.assertIsNone(F.explainer_line(self.ctx, 1))
+        self.assertEqual(critical_manifest.current(), [])
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

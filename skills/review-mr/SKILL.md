@@ -100,15 +100,25 @@ may have more than one checked out at once now. **Then `cd` into the worktree an
 everything — glab *and* findings.py — from there.** Both auto-resolve the project from that
 worktree's `origin`, so you never name it by hand. **Do NOT guess the repo** (no
 `glab mr view -R "$(glab repo view …)"` — it misfires into 404s); and `findings.py` takes
-`--iid`, never `-R`. The review worktree is **disposable**, so hard-reset it onto the MR tip.
-Check out **detached** — nothing here reads the local branch name (sync/detection run off
-`--iid` + the GitLab API), so a detached HEAD keeps your local branch list clean:
+`--iid`, never `-R`.
+
+**Now check it out — every run, no exceptions, however the path was obtained.** A stored
+worktree path says *where* the checkout is, never *what is in it*: the worktree is shared
+between this repo's MRs and left detached on whichever one was reviewed last. Skip this and
+you review the previous MR's code while every command still succeeds and every table still
+renders. The review worktree is **disposable**, so hard-reset it onto the MR tip. Check out
+**detached** — nothing here reads the local branch name (sync/detection run off `--iid` + the
+GitLab API), so a detached HEAD keeps your local branch list clean:
 
 ```bash
 cd <wt>                                     # the review worktree
 git fetch origin
-git checkout -f --detach origin/<mr-branch>   # detached: lands exactly on the tip, no local branch created; -f discards worktree cruft — pause only if <wt> holds work that looks intentionally yours
+git checkout -f --detach "origin/$(python3 $SD/findings.py branch --iid <n>)"   # detached: lands exactly on the tip, no local branch created; -f discards worktree cruft — pause only if <wt> holds work that looks intentionally yours
 ```
+
+**Take the branch name from `branch --iid <n>`, never from the worktree.** It is the one
+value with no local source of truth, and `git branch --show-current` in a detached worktree
+answers with the *last* MR's branch — which is a wrong answer that looks like a right one.
 
 Fresh vs resume: the state file exists iff you've reviewed this MR before —
 
@@ -130,7 +140,20 @@ annotate afterwards):
 python3 $SD/findings.py resume --iid <n>
 ```
 
-**Explainer (default for non-trivial diffs, parallel).** If the user **asked for** an explainer
+**Explainer (default for non-trivial diffs, parallel).** **Ask for a prepared one before
+generating anything** — it costs minutes to build and stays the same document until somebody
+pushes:
+
+```bash
+python3 $SD/findings.py explainer --iid <n>    # a path, or nothing
+```
+
+If that printed a path, **spawn nothing** — the explainer already exists for this exact tip,
+and `present`/`resume` put its clickable `file://` link at the top of the opener for you, so
+there is nothing extra to paste or to mention. If it printed nothing, there is none (a record
+that has stopped applying says why on stderr) — generate one.
+
+To generate: if the user **asked for** an explainer
 (in the invocation or since), generate it — **their request beats the size heuristic, always**;
 never talk them out of it because the diff looks short. If they said "no explain(er)", skip it.
 Otherwise decide by size — changed LOC **excluding tests**; below ~40 → skip (it's a short
@@ -142,7 +165,30 @@ Invoking `/review-mr` **is** the user's request for this subagent — a general 
 agents unless asked" rule does not suppress it. If a harness rule genuinely blocks the spawn,
 say so in the opener rather than skipping silently.
 
-**Seed the findings.** First pin the diff scope to GitLab's own answer — **never** let
+**When the subagent comes back, record what it wrote** — that is what makes the next session on
+this MR free instead of another few minutes:
+
+```bash
+python3 $SD/findings.py explainer --iid <n> --set "$FILE_PATH"
+```
+
+**Seed the findings.** **Ask for a prepared seed first**, for the same reason as the explainer —
+a review-branch run costs a minute or more, and a seed recorded against this tip is the answer
+it already gave:
+
+```bash
+python3 $SD/findings.py seed --iid <n>    # a path, or nothing
+```
+
+If that printed a path, import it and **skip review-branch entirely** — no
+`REVIEW_BRANCH_BASE`, no subagent:
+
+```bash
+python3 $SD/findings.py import "$(python3 $SD/findings.py seed --iid <n>)" --iid <n>
+python3 $SD/findings.py present --iid <n>    # paste verbatim as the top of your reply
+```
+
+Otherwise seed it the long way. First pin the diff scope to GitLab's own answer — **never** let
 review-branch re-derive it locally here:
 
 ```bash
@@ -167,6 +213,7 @@ returns a prioritized critique. Turn each finding into a JSON object and import 
 ```
 ```bash
 python3 $SD/findings.py import /tmp/seed.json --iid <n>
+python3 $SD/findings.py seed --iid <n> --set /tmp/seed.json   # so a re-run is instant
 python3 $SD/findings.py present --iid <n>    # paste verbatim as the top of your reply
 ```
 
@@ -385,4 +432,5 @@ paraphrased away.
 repo. `python3`. (`clip.sh` copies to the clipboard via macOS `pbcopy`; where that is
 missing the copy is skipped and nothing else changes.) Build blocks: the `explain-branch` and `review-branch`
 skills installed. `findings.py` subcommands: sync·todo·present·resume·updates·bodies·quote·diff·candidates·
-import·add·set·drop·merge·link·head·base·set-head·worktree·prune·path (run any with `-h`).
+import·add·set·drop·merge·link·head·base·branch·set-head·worktree·explainer·seed·prune·path
+(run any with `-h`).
