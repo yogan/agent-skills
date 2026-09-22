@@ -1,10 +1,10 @@
-"""The critical-lines manifest: a trailing, non-visible payload gated commands (in both
+"""The block manifest: a trailing, non-visible payload gated commands (in both
 review-mr's findings.py and rework-mr's threads.py) append to their own stdout, so
-hooks/paste-gate.py's Stop hook can tell which lines of a rendered block must never be
-silently dropped — a table row, a line inside a fenced code block — without re-parsing
-the rendered Markdown itself. See hooks/README.md's "The critical-lines manifest"
-section for the full mechanism and why the producer, not the hook, is the source of
-truth for this.
+hooks/paste-gate.py's Stop hook knows two things it cannot reliably work out for itself —
+where the block it must enforce STARTS inside the tool result, and which of its lines must
+never be silently dropped (a table row, a line inside a fenced code block). See
+hooks/README.md's "The block manifest" section for the full mechanism and why the
+producer, not the hook, is the source of truth for both.
 
 Shared here (not duplicated per skill) because it is pure and has no coupling to either
 skill's state shape — the two implementations were byte-identical modulo a comment
@@ -54,12 +54,33 @@ def current():
     return list(_critical)
 
 
-def manifest():
-    """Trailing, non-visible payload for a gated command's stdout: paste-gate.py splits
-    this off before checking what the model pasted, so it is never something the model
-    is asked to reproduce. Empty when nothing this run built was critical — no marker at
-    all beats an empty one, since SKILL.md and paste-gates.json treat a bare mention of
-    the marker text as something that must never reach a visible reply."""
-    if not _critical:
-        return ""
-    return "\n\n<!-- paste-gate:critical\n" + json.dumps(_critical) + "\n-->"
+def with_manifest(block):
+    """`block` plus its trailing, non-visible manifest — what a gated command prints.
+
+    Every gated command goes through here rather than concatenating a payload of its own,
+    because the manifest has to describe THIS block and nothing else, and the print site
+    is the last place that still knows which text that is.
+
+    The payload carries two things:
+
+    `first` — the block's opening line, so the hook can find where the block begins inside
+    a tool result that may hold more than the block. A gated command is not always alone
+    in its Bash call: the model chains a formatter or a linter ahead of it (the skill asks
+    for silent QA immediately before showing the diff, so combining them into one call is
+    the obvious reading), and `2>&1` folds stderr in as well. Those extra lines used to
+    count as lines the model had dropped, and two of them were enough to force a retry on
+    a message that had pasted the block perfectly — observed on a real MR rework, twice in
+    one session, with nothing the model could have done about it.
+
+    `critical` — the lines that must never be silently dropped, whatever they look like
+    syntactically. The trailing end needs no equivalent: the marker itself is the boundary.
+
+    Emitted even when nothing was marked critical, unlike the older payload this replaces:
+    `first` alone earns it, and a block with no critical lines is exactly as prone to
+    being preceded by somebody else's output as any other.
+    """
+    if not block.strip():
+        return block
+    first = next(ln.strip() for ln in block.splitlines() if ln.strip())
+    payload = {"first": first, "critical": list(_critical)}
+    return block + "\n\n<!-- paste-gate:critical\n" + json.dumps(payload) + "\n-->"

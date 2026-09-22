@@ -8,14 +8,17 @@ fixed — the tests exist so the next engine change cannot quietly bring one bac
 is exercised as a SUBPROCESS with a synthetic transcript, because its contract is exactly
 that: transcript JSONL + stdin JSON in, `{"decision":"block"}` or silence out.
 
-Split from the "blocks" cases in test_paste_gate_slow.py: every gated command that ends
-up BLOCKED pays the hook's own widening-delay retry (see hooks/README.md's "Patient")
-before it commits to blocking — real time.sleep(), since the hook runs as a genuine
-subprocess and there's no reaching into it to mock that from here. Measured: the ~20
-"blocks" cases run ~1.85s each; every case here runs under 0.15s. Keeping them apart
-means the tests you run on every small change stay fast, and the slow ones are there
-when you're actually touching the retry/blocking logic (`python3
+Split from the "blocks" cases in test_paste_gate_slow.py: a case that ends up BLOCKED
+pays the hook's own widening-delay retry (see hooks/README.md's "Patient") before it
+commits — real time.sleep(), since the hook runs as a genuine subprocess and there's no
+reaching into it to mock that from here. Measured: ~2s for a blocking case against
+~0.16s for one here, which is 39 cases in ~6s here against 36 in ~72s there. Keeping
+them apart means the tests you run on every small change stay fast, and the slow ones
+are there when you're actually touching the retry/blocking logic (`python3
 hooks/test_paste_gate_slow.py`, or the runner's `--slow` flag).
+
+One blocking case stays here, in TestGarbledEscape: `_garbled_backtick_escape` has no
+retry loop at all (see paste-gate.py's main()), so it costs what an allow costs.
 """
 import json
 import os
@@ -111,17 +114,44 @@ src/retry.py:   +1 −0
 ACK to fix up and push? — or say what to change, here or as notes on the diff in that window.
 """
 
+# What render_diff_pointer marks critical in the fixture above: the head line, because it
+# is the only one naming the window, and every row inside the fence.
+POINTER_CRITICAL = ["**Diff (t3)** — 2 files, +3 −1 · tmux window 9 (!123)",
+                    "src/client.py:  +2 −1", "src/retry.py:   +1 −0"]
 
-def with_manifest(text, critical_lines):
-    """`text` with a trailing critical-lines manifest appended, mirroring what
+# A project's formatter and linter, chained into the same Bash call ahead of the gated
+# command — see TestBlockBoundaries for why this shape has its own fixture.
+QA_NOISE = "Poe => python scripts/format_schemas.py\nAll checks passed!\n"
+
+
+def with_manifest(text, critical_lines, before=""):
+    """`text` with a trailing block manifest appended, mirroring what
     findings.py/threads.py actually emit for a gated command (see lib/critical_manifest.py's
-    `mark`/`manifest`, which both now share). Applied to the RESULT only, and only AFTER
-    any `body`/`shown` variant has already been derived from the manifest-free `text` —
-    several tests build `shown` by filtering `text.splitlines()`, and if the manifest
-    lived inside the shared base constant, those filters could fragment it into `shown`
-    too (or leak its opening marker line through untouched), tripping the "marker must
-    never be visible" check for a reason that has nothing to do with what the test is
-    actually exercising."""
+    `mark`/`with_manifest`, which both now share). Built by hand rather than imported, so
+    these tests pin the WIRE FORMAT the hook has to read — `TestManifestRoundTrip` is what
+    keeps the producer agreeing with it.
+
+    `before` is whatever the Bash call printed ahead of the block (a linter chained in
+    front of the gated command, stderr folded in by `2>&1`); it sits outside the block and
+    outside the payload, which is the whole point of the payload's `first`.
+
+    Applied to the RESULT only, and only AFTER any `body`/`shown` variant has already
+    been derived from the manifest-free `text` — several tests build `shown` by filtering
+    `text.splitlines()`, and if the manifest lived inside the shared base constant, those
+    filters could fragment it into `shown` too (or leak its opening marker line through
+    untouched), tripping the "marker must never be visible" check for a reason that has
+    nothing to do with what the test is actually exercising."""
+    payload = {"first": text.strip().splitlines()[0].strip(), "critical": critical_lines}
+    return before + text + "\n\n<!-- paste-gate:critical\n" + json.dumps(payload) + "\n-->"
+
+
+def with_legacy_manifest(text, critical_lines):
+    """The payload shape before it carried `first`: a bare JSON list of critical lines.
+
+    Still read, for its critical lines alone: a skill copied into ~/.claude rather than
+    symlinked would otherwise lose its protection outright the next time the engine was
+    updated on its own. An older producer gets the older guarantee — its critical lines,
+    and no trimming of whatever ran ahead of the block."""
     return text + "\n\n<!-- paste-gate:critical\n" + json.dumps(critical_lines) + "\n-->"
 
 
@@ -267,18 +297,6 @@ class TestGates(HookCase):
             assistant_text("Two pushes since your last look.\n" + "\n".join(body)),
         ])
 
-    def test_cwd_reset_noise_stripped_but_a_real_second_drop_still_blocks(self):
-        """The noise line is invisible to the check, but it is not a second free pass —
-        drop a genuine second line on top of it and the block still fires."""
-        dropped = "- **push 1:** 3 files, +42/-7"
-        body = [ln for ln in RESUME_OUT.strip().splitlines()[1:] if ln != dropped]
-        self.assertBlocked([
-            user_prompt(),
-            bash_call("u1", "cd /some/wt && python3 $SD/findings.py resume --iid 123"),
-            tool_result("u1", RESUME_OUT + "\nShell cwd was reset to /some/wt"),
-            assistant_text("Two pushes since your last look.\n" + "\n".join(body)),
-        ])
-
     def test_errored_run_allows(self):
         """No signature in the output → the command failed and the model is mid-fix."""
         self.assertAllowed([
@@ -370,6 +388,68 @@ class TestGates(HookCase):
         ])
 
 
+class TestBlockBoundaries(HookCase):
+    """What the gated COMMAND printed, versus what its Bash CALL printed.
+
+    Observed on a real MR rework, twice in one session: the model ran the project's
+    formatter and linter in the same Bash call as `diff-view.sh` — which is what
+    rework-mr's own step 2 asks for, silent QA and then the diff as the last action
+    before replying — so two lines of build output landed in the tool result ahead of the
+    block. The message pasted the block perfectly; those two lines still counted as lines
+    dropped from it, one over the tolerance, and the turn was blocked with nothing the
+    model could have corrected. Its retry was byte-identical and only got through because
+    the loop guard had already spent the one block per reply.
+    """
+
+    def test_a_linter_chained_ahead_of_the_block_allows(self):
+        self.assertAllowed([
+            user_prompt(),
+            bash_call("u1", "uv run poe format 2>&1|tail -1; uv run poe lint 2>&1|tail -1; "
+                            "$SD/diff-view.sh t3 2>&1"),
+            tool_result("u1", with_manifest(DIFF_VIEW_POINTER_OUT, POINTER_CRITICAL,
+                                            before=QA_NOISE)),
+            assistant_text("Robin asked for the retry to be bounded; it is.\n\n"
+                           + DIFF_VIEW_POINTER_OUT),
+        ])
+
+    def test_a_legacy_list_payload_still_allows_a_full_paste(self):
+        """A skill a few commits behind the engine emits the older payload — a bare list,
+        no `first`. It gets the older guarantee (its critical lines are protected, nothing
+        is trimmed), not a crash and not a blanket allow."""
+        self.assertAllowed([
+            user_prompt(),
+            bash_call("u1", "$SD/diff-view.sh t3"),
+            tool_result("u1", with_legacy_manifest(DIFF_VIEW_POINTER_OUT,
+                                                   POINTER_CRITICAL)),
+            assistant_text("Bounded the retry.\n\n" + DIFF_VIEW_POINTER_OUT),
+        ])
+
+
+class TestManifestRoundTrip(unittest.TestCase):
+    """The producer and the hook are the two halves of one wire format, and nothing else
+    reads it. Each side has its own tests against its own idea of that format; this is the
+    one place they have to agree, so a change to either that the other did not follow
+    fails here instead of in a live session."""
+
+    def setUp(self):
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("paste_gate", HOOK)
+        self.hook = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(self.hook)
+        sys.path.insert(0, REPO)
+        from lib import critical_manifest
+        self.cm = critical_manifest
+        self.cm.reset()
+        self.addCleanup(self.cm.reset)
+
+    def test_the_hook_recovers_exactly_what_the_producer_declared(self):
+        block = "**Diff (t3)** — 1 file\n\n```yaml\n" + self.cm.mark("src/a.py: +1 −0") + "\n```"
+        result = "Poe => reformatted 3 files\n" + self.cm.with_manifest(block)
+        visible, critical = self.hook._split_manifest(result)
+        self.assertEqual(visible, block)
+        self.assertEqual(critical, {"src/a.py: +1 −0"})
+
+
 class TestForbidden(HookCase):
     def test_mid_sentence_mention_allows(self):
         """quote's own trailing note mentions the fence mid-sentence."""
@@ -433,28 +513,10 @@ class TestRequired(HookCase):
         self.assertAllowed([
             user_prompt(),
             bash_call("u1", "$SD/diff-view.sh t3"),
-            tool_result("u1", with_manifest(
-                DIFF_VIEW_POINTER_OUT,
-                ["**Diff (t3)** — 2 files, +3 −1 · tmux window 9 (!123)",
-                 "src/client.py:  +2 −1", "src/retry.py:   +1 −0"])),
+            tool_result("u1", with_manifest(DIFF_VIEW_POINTER_OUT, POINTER_CRITICAL)),
             assistant_text("Robin asked for the retry to be bounded; it is, with a test.\n\n"
                            "→ fixup into abc1234 (\"feat: add client\").\n\n"
                            + DIFF_VIEW_POINTER_OUT),
-        ])
-
-    def test_dropping_the_line_that_names_the_window_blocks(self):
-        """The head line is the only one saying where the diff is. Before it was declared
-        critical, losing exactly that line passed under the one-dropped-line tolerance and
-        left the user approving a force-push against a window nothing named."""
-        pasted = "\n".join(DIFF_VIEW_POINTER_OUT.splitlines()[1:])
-        self.assertBlocked([
-            user_prompt(),
-            bash_call("u1", "$SD/diff-view.sh t3"),
-            tool_result("u1", with_manifest(
-                DIFF_VIEW_POINTER_OUT,
-                ["**Diff (t3)** — 2 files, +3 −1 · tmux window 9 (!123)",
-                 "src/client.py:  +2 −1", "src/retry.py:   +1 −0"])),
-            assistant_text("Bounded the retry.\n\n" + pasted),
         ])
 
     def test_mid_sentence_mention_allows(self):
@@ -467,43 +529,12 @@ class TestRequired(HookCase):
 
 
 class TestRequiredIllustration(HookCase):
-    """Reproducing the block at a line start blocks, even when only illustrating it, and
-    that is the accepted cost of the rule working at all.
-
-    It was briefly exempted by also anchoring the phrase to the END of the message, on the
-    theory that a real ask is always the last line. The two tests below are why that had to
-    go: the exemption let every improvised ask through — and an improvising model is the
-    only kind this rule ever sees — while still blocking an illustration that happened to
-    end the message. It bought nothing and disarmed the rule. Per hooks/README.md, the
-    answer to a false block here is to say what happened and move on; the loop guard makes
-    it cost exactly one retry.
-    """
-
-    def test_an_improvised_ask_with_a_closing_line_still_blocks(self):
-        """The shape the end-anchor let through. Verified against this hook: identical
-        input was ALLOWED while that anchor was in place."""
-        self.assertBlocked([
-            user_prompt(),
-            assistant_text("Fixed t3 by bounding the loop.\n\n"
-                           "ACK to fix up and push?\n\n"
-                           "I'll run the full suite right after the rebase."),
-        ], "fixup+push ACK")
-
-    def test_an_ask_in_an_earlier_block_of_the_turn_still_blocks(self):
-        """The hook joins every assistant block of a turn into one string, so an ask
-        followed by another tool call and a sign-off escaped the end-anchor too — which is
-        the exact sequence SKILL.md documents as the recurring production bug."""
-        self.assertBlocked([
-            user_prompt(),
-            assistant_text("Fixed t3.\n\nACK to fix up and push?"),
-            bash_call("u1", "git blame -L 10,20 src/a.ts"),
-            tool_result("u1", "abc1234 (Ada 2026-01-01 10) const x = 1\n"),
-            assistant_text("Blame says commit 2."),
-        ], "fixup+push ACK")
+    """The one exemption that needs no heuristic: the ACK phrase NOT at a line start is
+    prose about the rule, not the rule being invoked. Its blocking siblings — an
+    illustration at a line start blocks, and that is the accepted cost of the rule
+    working at all — are in the slow file."""
 
     def test_a_mid_sentence_mention_still_allows(self):
-        """The one exemption that survives, because it needs no heuristic: the phrase not
-        at a line start is prose about the rule, not the rule being invoked."""
         self.assertAllowed([
             user_prompt(),
             assistant_text("The block ends by asking 'ACK to fix up and push?' — which is "

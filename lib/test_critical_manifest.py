@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
-"""Tests for the critical-lines manifest mechanism — see critical_manifest.py's module
-docstring and hooks/README.md's "The critical-lines manifest" section for the mechanism
-this is part of.
+"""Tests for the block manifest mechanism — see critical_manifest.py's module docstring
+and hooks/README.md's "The block manifest" section for the mechanism this is part of.
 
 Run: `python3 lib/test_critical_manifest.py` (stdlib only).
 """
@@ -24,23 +23,40 @@ class TestCriticalManifest(unittest.TestCase):
         self.assertEqual(line, "  padded  ")           # returned value is untouched
         self.assertEqual(cm.current(), ["padded"])      # recorded value is stripped
 
-    def test_manifest_empty_when_nothing_marked(self):
-        self.assertEqual(cm.manifest(), "")
+    def payload_of(self, out):
+        self.assertTrue(out.endswith("\n-->"), out)
+        return json.loads(out.split("<!-- paste-gate:critical\n", 1)[1].rsplit("\n-->", 1)[0])
 
-    def test_manifest_carries_every_marked_line_as_json(self):
-        cm.mark("a")
+    def test_block_comes_through_untouched_with_the_payload_appended(self):
         cm.mark("b")
-        payload = cm.manifest()
-        self.assertTrue(payload.startswith("\n\n<!-- paste-gate:critical\n"))
-        self.assertTrue(payload.endswith("\n-->"))
-        body = payload.split("<!-- paste-gate:critical\n", 1)[1].rsplit("\n-->", 1)[0]
-        self.assertEqual(json.loads(body), ["a", "b"])
+        out = cm.with_manifest("a\nb\nc")
+        self.assertTrue(out.startswith("a\nb\nc\n\n<!-- paste-gate:critical\n"))
+        self.assertEqual(self.payload_of(out), {"first": "a", "critical": ["b"]})
+
+    def test_first_is_the_opening_line_that_carries_text(self):
+        """It is what the hook looks for to find where the block begins inside a tool
+        result that also holds whatever ran before it, so a leading blank line — or the
+        indentation on the first real one — must not be what it searches for."""
+        self.assertEqual(self.payload_of(cm.with_manifest("\n\n   **MR !7** — x\nrest"))
+                         ["first"], "**MR !7** — x")
+
+    def test_emitted_even_when_nothing_was_marked_critical(self):
+        """`first` alone earns the payload: a block with no critical lines is exactly as
+        likely to have a linter's output printed ahead of it as any other."""
+        self.assertEqual(self.payload_of(cm.with_manifest("just prose")),
+                         {"first": "just prose", "critical": []})
+
+    def test_an_empty_block_gets_no_payload(self):
+        """Nothing was printed, so there is nothing to locate or protect — and a marker
+        with no block in front of it would be pure noise in the tool result."""
+        self.assertEqual(cm.with_manifest(""), "")
+        self.assertEqual(cm.with_manifest("\n  \n"), "\n  \n")
 
     def test_reset_clears_between_calls(self):
         cm.mark("a")
         cm.reset()
         self.assertEqual(cm.current(), [])
-        self.assertEqual(cm.manifest(), "")
+        self.assertEqual(self.payload_of(cm.with_manifest("x"))["critical"], [])
 
     def test_suspended_discards_what_is_marked_inside_it(self):
         """A render produced to be COMPARED, not shown: its code lines must not reach the

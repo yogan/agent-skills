@@ -58,7 +58,9 @@ narrow, deterministic, and trivial for the model to fix, unlike the broader
 verbatim-paste checks, and a retry forced by some OTHER violation can introduce either
 as a side effect ("just paste everything to be safe") on the very turn where the
 general loop guard would otherwise hide it. The manifest case was observed in
-production on a real MR review, not theoretical.
+production on a real MR review, not theoretical. Because they keep looking, those two
+judge only what a retry can still change (`_retractable_text`) — a message already shown
+to the user cannot be taken back, and blocking on it again would wedge the turn.
 
 Scope: only acts on a turn where a gated command actually ran AND produced real output
 (or where a forbidden/required pattern hits) — every other turn, and every session that
@@ -79,14 +81,20 @@ actually separates the two — a command segment that merely reads a file cannot
 
 The pasted block itself is meant to stay clean (no marker the user would see) — but the
 producer's OWN trailing manifest (see `_split_manifest`) is a deliberate exception: each
-gated command appends a machine-readable "these lines are critical" payload after a
-`<!-- paste-gate:critical -->` marker, which this file strips before comparing anything
-and which must never survive into the model's visible reply (enforced unconditionally,
-independent of any spec). Table rows and fenced-code content used to be re-derived here
-by parsing the rendered Markdown (fence-run-length tracking, `startswith("|")`) — the
-producer (findings.py / threads.py) is the only place that unambiguously KNOWS which
-lines are which, since it built them, and re-deriving that fact downstream from text is
-exactly the kind of context-sensitive parsing that kept finding new edge cases (this
+gated command appends a machine-readable "my block starts here, and these of its lines
+are critical" payload after a `<!-- paste-gate:critical -->` marker, which this file
+strips before comparing anything and which must never survive into the model's visible
+reply (enforced unconditionally, independent of any spec). That first half is what keeps
+a gated command from being judged on output it did not print: it is routinely not alone
+in its Bash call — a formatter or a linter chained ahead of it, stderr folded in by
+`2>&1` — and those lines are nobody's to paste.
+
+The other half — which lines are table rows and fenced-code content — used to be
+re-derived here by parsing the rendered Markdown (fence-run-length tracking,
+`startswith("|")`) — but the producer (findings.py / threads.py) is the only place that
+unambiguously KNOWS which lines are which, since it built them, and re-deriving that fact
+downstream from text is exactly the kind of context-sensitive parsing that kept finding
+new edge cases (this
 file's own history has two examples: a naive fence toggle, then one that didn't account
 for a WIDENED fence). The manifest replaces that heuristic outright — there is no
 fallback if a producer doesn't emit one, by design; see `_split_manifest`.
@@ -207,23 +215,46 @@ MANIFEST_MARKER = "<!-- paste-gate:critical"
 _MANIFEST_RE = re.compile(re.escape(MANIFEST_MARKER) + r"\n(.*?)\n-->", re.S)
 
 
+def _from_line(text, first):
+    """`text` from the first line that IS `first` (compared stripped) onward, or `text`
+    unchanged when no line matches — never a guess about where else the block might
+    start. The first match is the right one even in the pathological case of a command
+    run twice in one call: the marker this is paired with is that run's FIRST marker too,
+    so both boundaries stay on the same copy of the block."""
+    lines = text.splitlines()
+    for i, ln in enumerate(lines):
+        if ln.strip() == first:
+            return "\n".join(lines[i:])
+    return text
+
+
 def _split_manifest(result):
-    """(visible, critical) — the human-visible block a gated command printed, and the
-    SET of lines its own producer (findings.py / threads.py) declared critical.
+    """(visible, critical) — the human-visible block a gated command printed, carved out
+    of everything its Bash call produced, and the SET of lines its own producer
+    (findings.py / threads.py) declared critical.
 
-    The producer is the single source of truth for this, not a heuristic re-derived here
-    from the rendered text: it is the only place that unambiguously KNOWS which lines are
-    table rows or fenced code content, since it built them — this hook used to re-parse
-    that fact from Markdown syntax (fence-run-length tracking, `startswith("|")`), which
-    is exactly the kind of context-sensitive parsing regex/string heuristics keep getting
-    subtly wrong at the margins (this file's own history has two examples). The producer
-    appends its manifest as a trailing, non-visible payload; `visible` is everything
-    before it — what a gate's signature check and the verbatim comparison both operate on.
+    The producer is the single source of truth for both, not a heuristic re-derived here
+    from the rendered text. For the critical lines, it is the only place that
+    unambiguously KNOWS which are table rows or fenced code content, since it built them —
+    this hook used to re-parse that from Markdown syntax (fence-run-length tracking,
+    `startswith("|")`), exactly the kind of context-sensitive parsing that keeps getting
+    subtly wrong at the margins (this file's own history has two examples).
 
-    A missing or malformed manifest yields an EMPTY critical set, not a fallback guess:
-    there is no heuristic left to fall back to, by design (see the commit that removed
-    it) — a producer that doesn't emit one is a producer that hasn't been updated yet,
-    which should be visible as "nothing here is protected", not silently patched over.
+    For the boundaries, the point is that a gated command is not always alone in its Bash
+    call. The model chains a formatter or a linter ahead of it, and `2>&1` folds stderr in
+    as well; every such line used to read as a line of the block the model had dropped,
+    and two were enough to force a retry on a message that had pasted the block perfectly.
+    So the producer says where its block starts (`first`) and ends (the marker itself),
+    and everything outside that is not the model's to reproduce.
+
+    A missing or malformed manifest yields an EMPTY critical set and no trimming, not a
+    fallback guess: there is no heuristic left to fall back to, by design (see the commit
+    that removed it) — a producer that doesn't emit one is a producer that hasn't been
+    updated yet, which should be visible as "nothing here is protected", not silently
+    patched over. A payload that is a bare JSON LIST is the older shape of the same idea
+    and is still read for its critical lines: the install is documented as symlinks into
+    ~/.claude but nothing enforces that, and a skill COPIED there once would otherwise go
+    from protected to silently unprotected the moment the engine was updated on its own.
     """
     i = result.find(MANIFEST_MARKER)
     if i == -1:
@@ -231,12 +262,16 @@ def _split_manifest(result):
     m = _MANIFEST_RE.search(result, i)
     if not m:
         return result, set()
+    visible, first = result[:i].rstrip("\n"), ""
     try:
-        lines = json.loads(m.group(1))
-        critical = {str(x).strip() for x in lines}
+        payload = json.loads(m.group(1))
+        if isinstance(payload, dict):
+            first = str(payload.get("first", "")).strip()
+            payload = payload.get("critical", [])
+        critical = {str(x).strip() for x in payload}
     except Exception:                      # noqa: BLE001 — malformed → no critical lines
         critical = set()
-    return result[:i].rstrip("\n"), critical
+    return (_from_line(visible, first) if first else visible), critical
 
 
 def _missing_lines(result, shown, critical):
@@ -424,8 +459,43 @@ def _turn_state(path, gates=()):
     return matched, result_by_id, shown
 
 
+_HOOK_FEEDBACK = "Stop hook feedback:"
+
+
+def _retractable_text(path):
+    """The assistant text this turn that a retry can still change: everything written
+    after the most recent block, or the whole turn when there hasn't been one.
+
+    Only `_leaked_manifest` uses this, and only because it is exempt from the loop guard.
+    Every other check gets one shot per reply and then stops looking, so it can safely
+    reason about the whole turn. This one keeps looking — and a message Claude Code has
+    already shown the user cannot be taken back, so judging it again on the next reply
+    asks the model to remove text it has no way to reach. That is not a hypothetical: an
+    explanation of this very mechanism, quoting the marker with a payload under it, pinned
+    the block on for every subsequent reply in the turn and there was no message that
+    could have cleared it.
+
+    Wedging a session is the one thing this file must never do, and "block forever on
+    something already sent" is that, arrived at the long way round.
+    """
+    rows = _load(path)
+    if rows is None:
+        return None
+    for i in range(len(rows) - 1, -1, -1):
+        r = rows[i]
+        if r.get("type") == "system" and r.get("subtype") == "stop_hook_summary":
+            rows = rows[i + 1:]
+            break
+        if (r.get("type") == "user" and r.get("isMeta")
+                and _HOOK_FEEDBACK in _result_text(r.get("message", {}).get("content"))):
+            rows = rows[i + 1:]
+            break
+    _, _, shown = _scan_turn(rows, [])
+    return shown if shown.strip() else None
+
+
 def _leaked_manifest(path):
-    """Reason to block if the producer's own critical-lines manifest leaked into the
+    """Reason to block if the producer's own block manifest leaked into the
     visible message, or None. Deliberately callable independent of `stop_hook_active`
     — see `main()` for why this ONE check is exempt from the usual once-per-reply loop
     guard: it is narrow and deterministic (a fixed structural pattern, not a fuzzy
@@ -449,11 +519,13 @@ def _leaked_manifest(path):
     fence (see their own `m` / mid-sentence tests). An actual leak has real JSON between
     the marker and the closer; a prose mention almost never reproduces that whole shape
     by accident.
+
+    Scoped to what a retry can still change (`_retractable_text`), not to the whole turn,
+    because unlike every other check here this one keeps looking after it has fired once.
     """
-    state = _turn_state(path)
-    if state is None:
+    shown = _retractable_text(path)
+    if shown is None:
         return None
-    _, _, shown = state
     if _MANIFEST_RE.search(shown):
         return ("Your message contains an internal `<!-- paste-gate:critical -->` "
                 "manifest block. A gated command appends that payload AFTER the "
@@ -491,11 +563,11 @@ def _garbled_backtick_escape(path):
     has no such escape, so this renders as a garbled mess of glued-together words
     instead of the intended literal text. Engine-level and unconditional, like
     `_leaked_manifest`: nothing about it is specific to either skill's vocabulary, so it
-    protects any spec built on this engine, not just the two shipped today."""
-    state = _turn_state(path)
-    if state is None:
+    protects any spec built on this engine, not just the two shipped today — and scoped
+    the same way, to what a retry can still change, for the same reason."""
+    shown = _retractable_text(path)
+    if shown is None:
         return None
-    _, _, shown = state
     if _BROKEN_BACKTICK_ESCAPE_RE.search(shown):
         return ("Your message backslash-escapes a run of backticks to show them "
                 "literally — Markdown has no such escape, so it renders as garbled, "
@@ -504,6 +576,36 @@ def _garbled_backtick_escape(path):
                 "(a single backtick, the plain run, a single backtick) — no "
                 "backslashes. Re-send your message with that fixed.")
     return None
+
+
+def _diagnosis(missing, corrupted, critical_out):
+    """The evidence behind a block, appended to the gate's own instruction.
+
+    A gate's `reason` says what to do; on its own it never says what was actually wrong,
+    so a model whose paste was in fact correct has nothing to act on and re-sends the same
+    message — which the loop guard then lets through, since the one block per reply is
+    already spent. That happened for real (a linter chained ahead of the gated command,
+    before the manifest declared where the block started), and it is unfalsifiable from
+    the model's side without this: quoting the lines is what turns "paste it again" into
+    something that can be checked, and what makes a future false block diagnosable by
+    whoever reads the transcript rather than only by rerunning the comparison by hand.
+
+    Capped and truncated: it rides inside a hook `reason`, so a long block's worth of
+    lines would bury the instruction it is attached to.
+    """
+    def sample(lines):
+        out = [ln if len(ln) <= 100 else ln[:99] + "…" for ln in lines[:3]]
+        return "; ".join(f"`{ln}`" for ln in out) + (" …" if len(lines) > 3 else "")
+
+    parts = []
+    if critical_out or missing:
+        parts.append("absent from your message: " + sample(critical_out + missing))
+    if corrupted:
+        parts.append("run together with other text instead of standing alone: "
+                     + sample(corrupted))
+    if not parts:
+        return ""
+    return "\n\nLines of that output " + ", and ".join(parts) + "."
 
 
 def violation(path, specs):
@@ -551,7 +653,7 @@ def violation(path, specs):
         if reason is None and visible.strip():
             missing, corrupted, crit_out = _missing_lines(visible, shown, critical)
             if corrupted or crit_out or len(missing) > 1:
-                reason = gate["reason"]
+                reason = gate["reason"] + _diagnosis(missing, corrupted, crit_out)
     if reason:
         return reason
 

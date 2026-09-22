@@ -66,13 +66,17 @@ the hook loads.
   output, or where a `forbidden`/`required` pattern hits. Every other turn — and every
   session that never touches these skills — passes straight through.
 - **Loop-safe:** `stop_hook_active` forces at most one retry per reply, so it never
-  spins — with one deliberate exception: a leaked critical-lines manifest (see below) is
+  spins — with one deliberate exception: a leaked block manifest (see below) is
   checked regardless. It's narrow, deterministic, and trivial for the model to fix,
   unlike the broader verbatim-paste checks — and it's exactly the kind of thing a retry
   forced by some OTHER violation can introduce as a side effect ("just paste everything
   to be safe"), on the one turn the general loop guard would otherwise never look at
   again. Observed on a real MR review, not theoretical: a dropped `present` output got
-  blocked once, and the fix leaked the manifest as collateral damage.
+  blocked once, and the fix leaked the manifest as collateral damage. Because those two
+  keep looking, they judge only what a retry can still change — the text written since
+  the last block. A message Claude Code has already shown you cannot be taken back, so
+  judging it again would refuse every further reply in the turn for something no reply
+  can reach; that wedged a real session once.
 - **Fails open:** any error (unreadable transcript, malformed spec, a bug in the engine)
   allows the stop. It can never wedge a session.
 - **Clean reply, not a clean tool result:** nothing is added to what you're asked to
@@ -82,38 +86,58 @@ the hook loads.
   it. The tool result itself does carry one addition: a trailing, non-visible manifest
   (see below) that must never survive into your reply — enforced unconditionally, not
   something a spec can opt out of.
+- **Specific:** a block carries the evidence for itself — the lines of the command's
+  output that were absent from the message, or that ended up run together with other
+  text, quoted and capped at three. A gate's own `reason` only says what to do; without
+  the evidence a model whose paste was actually fine has nothing to act on, re-sends the
+  same message, and the loop guard waves it through. It is also what makes a false block
+  readable from the transcript afterwards instead of by rerunning the comparison by hand.
 - **Patient:** the transcript is written asynchronously (a block was once observed 348 ms
   after the message was produced), so a turn that looks like a violation is re-read with a
   widening delay before it is blocked. Only turns that are genuinely about to be blocked
   pay the wait.
 
-## The critical-lines manifest
+## The block manifest
 
-Dropping ONE line is tolerated — a message that pastes the whole block but swaps the
-leading status line for its own preamble is noise, not the failure this hook guards
-against. But that tolerance cannot apply uniformly: dropping one *table row* silently
-disappears a whole finding, and dropping one line inside a *fenced code block* removes
-the source the user is meant to judge a finding against. Those need zero tolerance.
-
-Telling the two apart used to mean re-parsing the rendered Markdown here — tracking fence
-open/close state, checking for a leading `|`. That produced two real bugs (a fence-toggle
-that broke on a nested ``` , then one that broke again on a *widened* fence), because this
-file is not the place that actually knows the answer: `findings.py`/`threads.py` do,
-since they built each line and know exactly what it is. So they say so directly. Every
-gated command appends a trailing, non-visible payload to its own stdout:
+Two things about a rendered block cannot be worked out reliably from the text of a tool
+result, and both are known for certain by the command that printed it. So it says them,
+in a trailing, non-visible payload appended to its own stdout:
 
 ```
 <!-- paste-gate:critical
-["| open | some finding | src/x.py:12 |", "the exact code line"]
+{"first": "**MR !123** — Add rate limiting · `feat/rate-limit` → `main`",
+ "critical": ["| open | some finding | src/x.py:12 |", "the exact code line"]}
 -->
 ```
 
-`_split_manifest` strips this before anything else happens: the text before it is what
-gets signature-checked and verbatim-compared; the JSON list becomes the set of lines that
-get NO drop tolerance, whatever they look like syntactically. A command that doesn't
-emit one gets an empty critical set — there is no heuristic fallback, on purpose: a
-producer that hasn't been updated should visibly protect nothing, not silently keep
-being guessed at.
+**`critical` — which lines get no drop tolerance.** Dropping ONE line is tolerated: a
+message that pastes the whole block but swaps the leading status line for its own preamble
+is noise, not the failure this hook guards against. But that tolerance cannot apply
+uniformly — dropping one *table row* silently disappears a whole finding, and dropping one
+line inside a *fenced code block* removes the source the user is meant to judge a finding
+against. Telling those apart used to mean re-parsing the rendered Markdown here (tracking
+fence open/close state, checking for a leading `|`), which produced two real bugs: a
+fence-toggle that broke on a nested ``` , then one that broke again on a *widened* fence.
+`findings.py`/`threads.py` built each line and know exactly what it is, so they say.
+
+**`first` — where the block starts.** A gated command is often not alone in its Bash call:
+the model chains the project's formatter and linter ahead of it (rework-mr's step 2 asks
+for exactly that — silent QA, then the diff as the last action before replying) and `2>&1`
+folds stderr in too. Every such line used to read as a line of the block the model had
+dropped. Two of them is one over the tolerance, which is how a *correct* paste of a diff
+got blocked twice in one real session, with nothing the model could have corrected — its
+retry was byte-identical and only got through because the loop guard had already spent the
+one block per reply. The trailing marker was always the block's end; `first` is its
+beginning, and between them nothing outside the block is the model's to reproduce.
+
+`_split_manifest` carves this out before anything else happens: what remains is what gets
+signature-checked and verbatim-compared. A command that emits no manifest gets an empty
+critical set and no trimming — there is no heuristic fallback, on purpose: a producer that
+hasn't been updated should visibly protect nothing, not silently keep being guessed at. A
+payload that is a bare JSON *list* is the older shape of the same idea and is still read
+for its critical lines: the install above is symlinks, but nothing enforces that, and a
+skill *copied* into `~/.claude` once would otherwise go from protected to silently
+unprotected the moment the engine was updated on its own.
 
 The marker must never appear in your reply — checked unconditionally, independent of any
 gate or spec — since it exists purely for this hook to read.
@@ -179,18 +203,27 @@ engine change, no second hook entry.
 ## Tests
 
 ```bash
-python3 hooks/test_paste_gate.py
+python3 hooks/test_paste_gate.py       # 39 cases, ~6 s
+python3 hooks/test_paste_gate_slow.py  # 36 cases, ~72 s (or the runner's --slow)
 ```
 
-Stdlib only, ~25 s — every case that ends in a block pays the engine's own re-read delay,
-which is the point of it.
+Stdlib only, and split by cost: anything that ends in a block pays the engine's own
+re-read delay — ~2 s a case, real `time.sleep()` in a real subprocess — so those live in
+the slow file and the fast one stays cheap enough to run on every edit.
 
 Each case is either the hook's contract or a bug found in production: the paraphrase, the
-interleaved-but-complete paste that used to false-block, the stale re-render, the `isMeta`
-row that used to cut the turn short, the source grep that must not trip a gate, the odd
-`tool_result` shapes, and the fail-open paths. The hook runs as a subprocess against a
-synthetic transcript, because that is exactly its contract: transcript JSONL plus stdin
-JSON in, `{"decision":"block"}` or silence out.
+interleaved-but-complete paste that used to false-block, the linter chained ahead of a
+gated command whose output was counted against the model, the leak in an already-sent
+message that used to wedge the turn, the stale re-render, the `isMeta` row that used to
+cut the turn short, the source grep that must not trip a gate, the odd `tool_result`
+shapes, and the fail-open paths. The hook runs as a subprocess against a synthetic
+transcript, because that is exactly its contract: transcript JSONL plus stdin JSON in,
+`{"decision":"block"}` or silence out.
+
+`TestManifestRoundTrip` is the one case that crosses the boundary: the producer
+(`lib/critical_manifest.py`) and the engine are the two halves of one wire format, tested
+separately against their own idea of it, so one test builds a block with the real producer
+and takes it apart with the real engine.
 
 One case is about the design's own blind spot: a malformed spec is dropped silently, so
 `TestShippedSpecs` asserts that both shipped specs actually load, with the gate keys they

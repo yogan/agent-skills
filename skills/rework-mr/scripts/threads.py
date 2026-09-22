@@ -1121,8 +1121,8 @@ def context_digest(state, tid):
     while whatever `render_quote` puts on screen is by definition what the user saw.
 
     Marking is suspended because this render is thrown away. Its code lines would
-    otherwise land in the critical-lines manifest and the Stop hook would demand lines
-    that appear nowhere in the message.
+    otherwise land in the block manifest's critical lines, and the Stop hook would
+    demand lines that appear nowhere in the message.
     """
     with critical_manifest.suspended():
         return _digest(render_quote(state, tid, remember=False))
@@ -1410,7 +1410,8 @@ def main():
                 text = fh.read()
         else:
             text = sys.stdin.read()
-        print(render_change_view(args.topic, text, args.for_path) + critical_manifest.manifest())
+        print(critical_manifest.with_manifest(
+            render_change_view(args.topic, text, args.for_path)))
         return
     if cmd == "diff-view":
         notes = []
@@ -1434,8 +1435,8 @@ def main():
             die("--note cannot be used with git arguments: narrowing the diff forces the "
                 "inline shape, and an inline diff has no lines to anchor a note to. Put "
                 "the point in your prose instead, or show the whole diff.")
-        print(diff_view_block(args.topic, sys.stdin.read(), args.plain, notes)
-              + critical_manifest.manifest())
+        print(critical_manifest.with_manifest(
+            diff_view_block(args.topic, sys.stdin.read(), args.plain, notes)))
         return
     if cmd == "hunk-notes":
         # Stateless like the views above, and deliberately silent when there is nothing:
@@ -1484,7 +1485,7 @@ def main():
     if cmd == "path":
         print(path)
     elif cmd == "quote":
-        print(render_quote(state, args.topic) + critical_manifest.manifest())
+        print(critical_manifest.with_manifest(render_quote(state, args.topic)))
         # `render_quote` recorded what it showed; persist it so a later `--refine` can
         # tell whether the context still matches. Every command that renders a topic in
         # full does this — it is the only reason these read-only views write at all.
@@ -1493,14 +1494,14 @@ def main():
         print(render_url(state, args.topic))
     elif cmd == "reply-view":
         body = reply_body(state, args.topic, os.path.dirname(path))
-        print(render_reply_view(state, args.topic, body, args.refine)
-              + critical_manifest.manifest())
+        print(critical_manifest.with_manifest(
+            render_reply_view(state, args.topic, body, args.refine)))
         save(path, state)
     elif cmd == "reply":
         # body only — the payload for the clipboard or `glab api -F body=@-`
         print(reply_body(state, args.topic, os.path.dirname(path)), end="")
     elif cmd == "present":
-        print(render_present(state) + critical_manifest.manifest())
+        print(critical_manifest.with_manifest(render_present(state)))
         save(path, state)
     elif cmd == "bodies":
         print(render_bodies(state))
@@ -1512,8 +1513,9 @@ def main():
         # `sync` isn't gated (see paste-gates.json's note), so the manifest it carries
         # is simply never read for that command — harmless, and keeping one code path
         # for both is simpler than branching just to omit it.
-        print(render_table(state, "mine" if cmd == "todo" else "all",
-                           show_done=getattr(args, "all", False)) + critical_manifest.manifest())
+        print(critical_manifest.with_manifest(
+            render_table(state, "mine" if cmd == "todo" else "all",
+                         show_done=getattr(args, "all", False))))
     elif cmd == "set":
         t = topic_for(state, args.topic) or die(f"no topic {args.topic}")
         fld = {"start-sha": "start_sha", "diff-url": "diff_url"}

@@ -823,8 +823,8 @@ def context_digest(state, tid):
     two builders above.
 
     Marking is suspended because this render is thrown away. Its code lines would
-    otherwise land in the critical-lines manifest and the Stop hook would demand lines
-    that appear nowhere in the message.
+    otherwise land in the block manifest's critical lines, and the Stop hook would
+    demand lines that appear nowhere in the message.
     """
     t = topic_for(state, tid) or die(f"no topic {tid}")
     with critical_manifest.suspended():
@@ -1656,13 +1656,13 @@ def main():
     elif cmd == "todo":
         sync(state, fetch_threads(ctx, iid, me, author), ctx, iid)
         save(path, state)
-        print(render_table(state, "mine") + critical_manifest.manifest())
+        print(critical_manifest.with_manifest(render_table(state, "mine")))
     elif cmd == "present":
         sync(state, fetch_threads(ctx, iid, me, author), ctx, iid)
         save(path, state)
         ex = explainer_line(ctx, iid)
-        print((f"{ex}\n\n" if ex else "") + render_present(state)
-              + critical_manifest.manifest())
+        print(critical_manifest.with_manifest(
+            (f"{ex}\n\n" if ex else "") + render_present(state)))
         # Again, after the render: `render_quote` records the context it just showed, and
         # `--refine` compares against that. Every command that renders a topic in full
         # saves for this reason, and it is the only reason a view writes at all.
@@ -1674,16 +1674,18 @@ def main():
         save(path, state)
         print(render_candidates(state, me))
     elif cmd == "quote":
-        print(render_quote(state, args.topic, args.refine) + critical_manifest.manifest())
+        print(critical_manifest.with_manifest(
+            render_quote(state, args.topic, args.refine)))
         save(path, state)                 # the context digest it just recorded
     elif cmd == "draft":
         print(draft_body(state, args.topic))
     elif cmd == "diff":
-        print(render_topic_diff(state, ctx, iid, args.topic) + critical_manifest.manifest())
+        print(critical_manifest.with_manifest(
+            render_topic_diff(state, ctx, iid, args.topic)))
     elif cmd == "updates":
         sync(state, fetch_threads(ctx, iid, me, author), ctx, iid)
         save(path, state)
-        print(render_updates(state, ctx, iid) + critical_manifest.manifest())
+        print(critical_manifest.with_manifest(render_updates(state, ctx, iid)))
     elif cmd == "resume":
         # The complete opener for an in-progress review, in one call: pushes since your
         # baseline THEN the overview table THEN the first topic needing you.
@@ -1700,8 +1702,8 @@ def main():
         ex = explainer_line(ctx, iid)
         u = render_updates(state, ctx, iid)
         p = render_present(state)
-        print((f"{ex}\n\n" if ex else "")
-              + f"{u}\n\n---\n\n{p}{critical_manifest.manifest()}")
+        print(critical_manifest.with_manifest(
+            (f"{ex}\n\n" if ex else "") + f"{u}\n\n---\n\n{p}"))
         save(path, state)                 # the context digest present recorded
     elif cmd == "head":
         print(head_report(state, ctx, iid))
@@ -1802,8 +1804,8 @@ def main():
             # and reconstructing the block by hand reintroduces the raw ```suggestion
             # fence (unhighlighted) that render_quote deliberately re-fences for display.
             # Printing it here means the correct block is already in front of it.
-            print(render_quote(state, args.topic, args.refine)
-                  + critical_manifest.manifest())
+            print(critical_manifest.with_manifest(
+                render_quote(state, args.topic, args.refine)))
             save(path, state)             # the context digest it just recorded
     elif cmd == "drop":
         t = topic_for(state, args.topic)
