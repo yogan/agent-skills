@@ -9,6 +9,8 @@ import os
 import sys
 import unittest
 
+os.environ["AGENT_SKILLS_PASTE_GATE"] = "1"
+
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from lib import critical_manifest as cm

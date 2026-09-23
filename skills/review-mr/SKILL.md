@@ -10,8 +10,9 @@ Reviewing **someone else's** GitLab MR. glab-only, **read-only** against GitLab.
 
 ## ⛔ Read this first — it is the whole skill
 
-**The user cannot see your tool calls or their output** — those are collapsed.
-Your chat message is their *only* window. So:
+**Tool-output visibility varies by client and user settings.** Your chat message must stand
+on its own: the user must not have to expand or reveal a tool call to see the table, code,
+comment, or question they are being asked to act on. So:
 
 0. **Your first reply in a session is an opener, pasted whole.** Before anything else —
    no "picking up where we left off", no summary of what is left, no question:
@@ -36,6 +37,11 @@ Your chat message is their *only* window. So:
    applies to **your own prose**, never to pasted tool output. Compress your commentary to
    one line if you like — but the table, the quote and the code block go in whole. Dropping
    them to save space removes the only thing the user can act on.
+
+   **Run a user-facing rendering command in its own tool call.** Never chain setup before
+   `present`/`resume`/`todo`/`quote`/`updates`/`diff`: setup output would then become part of
+   the same tool result and can leak into the pasted block. Finish setup first, then run the
+   rendering command alone as the final action before replying.
 
    **This holds even when the output looks wrong to you.** If a rendered state
    contradicts what you expected (or the state file), paste the output anyway and add one
@@ -73,6 +79,13 @@ refer to the author as `Jane`. The table header already renders the short name (
 **You're given the MR number** (`534` from `/review-mr 534`) — **use it as `--iid` on every
 `findings.py` call** and don't rely on branch inference: you may be launched in a detached or
 unrelated worktree, and a bare `glab mr view` / `findings.py` there resolves the wrong thing.
+
+**Run setup in the order written, waiting for each step before starting the next.** Several
+`findings.py` commands read and replace the same state file. In particular, checkout →
+`set-head` → `import` is a dependency chain on a fresh review, not three parallel tool calls:
+parallel `set-head` and `import` can each read the old state and the last writer silently
+erase the other's update. Read-only lookups may run together only when no state-writing
+command is in flight.
 
 **Prune first.** Each MR gets its **own** review worktree (reviewing several MRs of the same
 repo in parallel used to mean they all fought over one shared checkout). Old ones pile up
@@ -382,7 +395,9 @@ auto-surfaces threads you didn't open: a peer reviewer's (💬) or the author's 
 land in your lists and can be `merge`d with your findings.
 
 For each `◐ needs-ack` (author replied and/or resolved), present it **one at a time**. **Read
-the thread first — it is the source of truth for what was agreed:**
+the thread first — it is the source of truth for what was agreed.** The opener already ends
+with the first topic's full thread, so do not run `quote` for that topic again; continue
+straight to its diff and judgment. Run `quote` once when moving to each later topic:
 
 ```bash
 python3 $SD/findings.py quote <t>       # the full thread: your point + the author's reply
@@ -425,9 +440,10 @@ yet. Source: 🤖 llm · 👤 you · 👥 both/merged · 💬 peer reviewer · �
 
 ## Prerequisites
 
-The shared `Stop` hook (`hooks/paste-gate.py` + this skill's `scripts/paste-gates.json`)
-registered in `settings.json` — see the repo README; without it, pasted blocks get silently
-paraphrased away.
+On Claude Code, register the shared `Stop` hook (`hooks/paste-gate.py` + this skill's
+`scripts/paste-gates.json`) in `settings.json` — see the repo README. OpenCode needs no hook;
+the script output stays clean there, but the exact-output rules above still apply because tool
+details can be collapsed or hidden.
 `glab` authenticated; a review worktree (or willingness to create one); run inside the target
 repo. `python3`. (`clip.sh` copies to the clipboard via macOS `pbcopy`; where that is
 missing the copy is skipped and nothing else changes.) Build blocks: the `explain-branch` and `review-branch`

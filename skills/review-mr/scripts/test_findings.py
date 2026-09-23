@@ -66,6 +66,25 @@ def add_linked_topic(state, thread_id, **fields):
     t["thread_ids"] = [thread_id]
     return t
 
+class TestAttachThread(unittest.TestCase):
+    def test_first_posted_thread_consumes_the_initial_draft(self):
+        state = new_state()
+        t = F.add_topic(state, draft="The comment already posted to GitLab.")
+
+        F.attach_thread(state, t, "d1", None, 1, start_sha="abc")
+
+        self.assertIsNone(t["draft"])
+        self.assertEqual(t["thread_ids"], ["d1"])
+
+    def test_an_additional_thread_keeps_a_genuine_follow_up_draft(self):
+        state = new_state()
+        t = add_linked_topic(state, "d1", draft="A follow-up still waiting to be posted.")
+
+        F.attach_thread(state, t, "d2", None, 1, start_sha="abc")
+
+        self.assertEqual(t["draft"], "A follow-up still waiting to be posted.")
+        self.assertEqual(t["thread_ids"], ["d1", "d2"])
+
 
 class Throwaway:
     """A temp directory that removes itself when the test ends.
@@ -573,6 +592,18 @@ class TestSync(unittest.TestCase):
         state = new_state()
         F.sync(state, {"d1": {"awaiting": "you"}}, None, None)
         self.assertEqual(state["threads"]["d1"], {"awaiting": "you"})
+
+    def test_a_linked_draft_matching_the_posted_comment_is_repaired(self):
+        state = new_state(threads={"d1": {"body": "already posted"}})
+        t = add_linked_topic(state, "d1", draft="already posted")
+        F.sync(state, {"d1": {"body": "already posted"}}, None, None)
+        self.assertIsNone(t["draft"])
+
+    def test_a_genuine_follow_up_draft_survives_sync(self):
+        state = new_state(threads={"d1": {"body": "original comment"}})
+        t = add_linked_topic(state, "d1", draft="new follow-up")
+        F.sync(state, {"d1": {"body": "original comment"}}, None, None)
+        self.assertEqual(t["draft"], "new follow-up")
 
 
 class TestSyncBackfillsMissingBaseline(unittest.TestCase):

@@ -17,7 +17,7 @@ reply per topic. See [SKILL.md](SKILL.md) for the full flow and
   instead of typing — see `diff-view.sh` below. With neither, the diff is printed inline
   exactly as before; nothing else in the skill changes and there is nothing to configure.
 
-## Required setup — the paste-enforcement Stop hook
+## Claude Code setup — the paste-enforcement Stop hook
 
 Several steps show you something by pasting a script's output into chat: the
 opener's overview table + first topic's comment (`present`), the status-only
@@ -27,7 +27,7 @@ a trivial topic's change illustration (`change-view`). Claude Code
 **collapses tool output**, so each of these only reaches you if the model
 pastes it — and the model reliably *drops* it: it decides what to paste,
 makes another tool call (research, a `git blame`, a Read) before writing the
-message, and that pushes the pasted content out of mind, so the reply starts
+message, and that pushes the content out of mind, so the reply starts
 with the model's own prose, or jumps straight to the trailing question/ACK,
 with the promised block never actually shown.
 
@@ -36,6 +36,11 @@ the fixup+push ACK without having run `diff-view.sh` at all is blocked too.
 Without the hook the skill still works, but on many turns you won't see the
 overview, the reviewer's comment, the diff, the draft, or the change before
 choosing an action or ACKing a push.
+
+OpenCode needs no equivalent hook. It shows Bash output itself, and the scripts omit the
+hook's internal metadata there. The skill still puts each block in its chat message because
+tool details can be collapsed or hidden and are not a substitute for the decision being
+presented in the conversation.
 
 The hook is shared with `review-mr` and installed once, outside the skill:
 **[`hooks/README.md`](../../hooks/README.md)** has the install snippet and how it

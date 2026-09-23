@@ -27,6 +27,8 @@ import sys
 import tempfile
 import unittest
 
+os.environ["AGENT_SKILLS_PASTE_GATE"] = "1"
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 HOOK = os.path.join(HERE, "paste-gate.py")
 REPO = os.path.dirname(HERE)

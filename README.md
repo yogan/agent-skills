@@ -1,8 +1,9 @@
 # agent-skills
 
-[Claude Code](https://docs.claude.com/en/docs/claude-code) skills for **agentic code review** and
-for understanding unfamiliar code. The agent does the reading, the digging and the drafting,
-with a human in the loop for every judgement.
+Agent Skills for [Claude Code](https://docs.claude.com/en/docs/claude-code) and
+[OpenCode](https://opencode.ai/) — for **agentic code review** and understanding unfamiliar
+code. The agent does the reading, the digging and the drafting, with a human in the loop for
+every judgement.
 
 They cover three kinds of work:
 
@@ -110,7 +111,9 @@ What the diagram at the top of this page means for installing:
 
 Every skill lives in `skills/<name>/`, so linking them all is one loop. **Keep the clone where
 you put it**: the links point back into it, and the scripts find their shared code relative to
-the real file.
+the real file. Install into the Claude-compatible skill directory shown below: Claude Code uses
+it directly, and OpenCode discovers it natively too. Keeping one shared location also matches
+the bundled commands, which use `~/.claude/skills/<name>` to find sibling skills and scripts.
 
 ```bash
 git clone git@github.com:yogan/agent-skills.git ~/src/agent-skills
@@ -136,9 +139,10 @@ for d in ~/.claude/skills/*/; do
 done
 ```
 
-Restart Claude Code (or start a new session) afterwards, so it picks the new skills up.
+Restart Claude Code or OpenCode (or start a new session) afterwards, so it picks the new skills
+up.
 
-### Required for `review-mr` and `rework-mr`: a `Stop` hook
+### Required on Claude Code for `review-mr` and `rework-mr`: a `Stop` hook
 
 Both skills work by showing things — an overview table, a quoted topic with its code, a drafted
 comment, the diff behind a push. Claude Code collapses tool output, so the chat message is the
@@ -151,7 +155,11 @@ open**, so a bug in it can never wedge a session, and it never fires outside tho
 their own hooks. One symlink and one `Stop` entry, both copy-pasteable:
 [`hooks/README.md`](hooks/README.md).
 
-### Recommended: three read permissions
+OpenCode needs no equivalent hook: Bash output is visible there, and the scripts omit the
+hook's internal block metadata. The skills still include each block in their chat message so
+it remains visible when tool details are collapsed or hidden.
+
+### Recommended on Claude Code: three read permissions
 
 Claude Code guards `~/.claude/**` separately from the normal permission rules — a blanket
 `Read` allow does **not** cover it — so without these, every skill file and every per-MR state

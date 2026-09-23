@@ -272,8 +272,11 @@ def add_topic(state, **fields):
 
 def attach_thread(state, t, discussion_id, ctx, iid, start_sha=None):
     """Link a posted GitLab thread to a topic and capture its baseline."""
+    first_thread = not t["thread_ids"]
     if discussion_id not in t["thread_ids"]:
         t["thread_ids"].append(discussion_id)
+    if first_thread:
+        t["draft"] = None
     if start_sha:
         t["start_sha"] = start_sha
     elif not t.get("start_sha"):
@@ -365,6 +368,12 @@ def sync(state, live, ctx, iid):
     # this whole change closes, just for topics adopted before it shipped. Frozen the
     # same way, the first time a baseline is available after that.
     for t in state["topics"]:
+        # Before attach_thread consumed an initial draft, old state kept the posted body
+        # as a pending follow-up too. Exact equality makes this repair safe for real replies.
+        if (t["thread_ids"] and t.get("draft") and
+                any(state["threads"].get(tid, {}).get("body") == t["draft"]
+                    for tid in t["thread_ids"])):
+            t["draft"] = None
         if t["thread_ids"] and not t.get("start_sha"):
             t["start_sha"] = state.get("last_reviewed_head")
             if not t["start_sha"] and ctx is not None and iid is not None:

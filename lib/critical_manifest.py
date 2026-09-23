@@ -10,10 +10,25 @@ Shared here (not duplicated per skill) because it is pure and has no coupling to
 skill's state shape — the two implementations were byte-identical modulo a comment
 before this move.
 """
+
 import contextlib
 import json
+import os
 
 _critical = []
+
+
+def _paste_gate_enabled():
+    """Whether stdout needs metadata for Claude Code's paste-enforcement hook.
+
+    OpenCode shows Bash output, so this internal payload would be visible there. Other
+    clients retain the established output unless explicitly overridden; only Claude Code
+    and OpenCode are detected. The override supports tests and unusual launchers.
+    """
+    override = os.environ.get("AGENT_SKILLS_PASTE_GATE")
+    if override is not None:
+        return override == "1"
+    return not bool(os.environ.get("OPENCODE"))
 
 
 @contextlib.contextmanager
@@ -55,7 +70,7 @@ def current():
 
 
 def with_manifest(block):
-    """`block` plus its trailing, non-visible manifest — what a gated command prints.
+    """`block`, plus its trailing manifest when Claude Code's paste gate needs it.
 
     Every gated command goes through here rather than concatenating a payload of its own,
     because the manifest has to describe THIS block and nothing else, and the print site
@@ -79,7 +94,7 @@ def with_manifest(block):
     `first` alone earns it, and a block with no critical lines is exactly as prone to
     being preceded by somebody else's output as any other.
     """
-    if not block.strip():
+    if not block.strip() or not _paste_gate_enabled():
         return block
     first = next(ln.strip() for ln in block.splitlines() if ln.strip())
     payload = {"first": first, "critical": list(_critical)}

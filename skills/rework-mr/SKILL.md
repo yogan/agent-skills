@@ -9,13 +9,17 @@ Reworking **your own** MR against reviewer feedback. glab-only. `SD=~/.claude/sk
 
 ## ⛔ Read this first — it is the whole skill
 
-**The user cannot see your tool calls or their output** — those are collapsed. Your chat
-message is their *only* window. If a script prints a table and you don't put it in your
-message, the user sees nothing. So:
+**Tool-output visibility varies by client and user settings.** Your chat message must stand
+on its own: the user must not have to expand or reveal a tool call to see the table, code,
+comment, diff, or question they are being asked to act on. So:
 
 1. When a `threads.py` command prints something, **paste that output verbatim into your
    reply** — markdown table, blockquote and all. Do **not** summarize it, shorten it,
    re-type it, or wrap it in a code fence. Reproduce it exactly.
+   **Run a user-facing rendering command in its own tool call.** Never chain setup before
+   `present`/`todo`/`quote`/`diff-view.sh`/`reply-view`/`change-view`: setup output would
+   then become part of the same tool result and can leak into the pasted block. Finish
+   setup first, then run the rendering command alone as the final action before replying.
 2. **One topic at a time.** After presenting the current topic, **STOP and wait**. Never
    mention, preview, or recommend anything about other topics. On t24? Don't write "t25/t26…".
 3. **Never re-paste a topic's context while you sit on that topic.** Its header, the code the
@@ -375,7 +379,7 @@ for the clipboard path),
 its own ```diff fence and it stays highlighted; `--for <path>` sets the language for a non-diff
 snippet; `change-preview.sh` is the same block from a file), `diff-view.sh` (working diff
 before the fixup+push ACK, one paste). Run any with `-h`.
-**Setup:** `present`/`todo`/`quote`/`diff-view.sh`/`reply-view`/`change-view` all need the
-shared `Stop` hook (`hooks/paste-gate.py` + this skill's `scripts/paste-gates.json`) registered
-in `settings.json` — see [README.md](README.md); without it their output often won't reach the
-user.
+**Claude Code setup:** register the shared `Stop` hook (`hooks/paste-gate.py` + this skill's
+`scripts/paste-gates.json`) in `settings.json` — see [README.md](README.md). OpenCode needs no
+hook; script output stays clean there, but the exact-output rules above still apply because
+tool details can be collapsed or hidden.
