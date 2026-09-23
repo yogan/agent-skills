@@ -482,6 +482,16 @@ def _rows(state, scope):
 
 def render_table(state, scope="all"):
     st, counts, shown = _rows(state, scope)
+    untitled = [t["id"] for t in shown if needs_title(state, t)]
+    if untitled:
+        # Refuse instead of rendering a `✍️ needs summary` row. The marker was pasted
+        # through on OpenCode (no Stop hook there to block it), wedged mid-cell between
+        # the raiser's name and their words, and read as content — so the dirty row is
+        # made unreachable rather than merely discouraged, on every agent. The message
+        # itself carries the fix; e2e's title_peer_topic parses the handle from it.
+        die(f"needs summary: {', '.join(untitled)} — read the threads (`bodies`), "
+            + " / ".join(f'`set {x} --summary "..."`' for x in untitled)
+            + ", then re-run")
     head = f"**MR !{state['iid']}** — {state.get('title') or ''}"
     if state.get("author"):
         head += f" · by {state['author']}"
@@ -494,8 +504,6 @@ def render_table(state, scope="all"):
             tid = t["id"]
             s = st[tid]
             summ = short_summary(state, t).replace("|", "\\|")
-            if needs_title(state, t):
-                summ = f"✍️ _needs summary:_ {summ}"    # raw quote, not an authored title
             if t.get("source") in INBOUND and t.get("by"):
                 summ = f"_{t['by']}:_ {summ}"           # who raised this thread
             resolved = any(state["threads"].get(x, {}).get("resolved")
@@ -886,7 +894,21 @@ def render_quote(state, tid, refine=False):
             ctx = _code_context(state, t)
             t["shown"] = _digest(ctx)
             out += ctx
-        out += _draft_block(state, t, t.get("draft") or t.get("note"))
+        if t.get("draft") or t.get("note"):
+            out += _draft_block(state, t, t.get("draft") or t.get("note"))
+        else:
+            # Header + code and silence read as a complete presentation — reported
+            # live as title, code fragment, "nothing else", with no sign a comment
+            # was missing. The gap is the AGENT's to fill (SKILL: analysis, then ask
+            # how to handle it), so the reminder goes to stderr: everything in the
+            # returned block is pasted to the user verbatim, and a "write the draft"
+            # instruction shown to THEM is the same leak the ✍️ marker was. The
+            # follow-up branch deliberately gets no note: a posted topic without a
+            # pending reply has nothing missing.
+            print(f"note: {t['id']} has no draft yet — your reply is the block above "
+                  f"+ your analysis of the topic, then ask how they want to handle "
+                  f'it; store the agreed draft with `set {t["id"]} --draft "…"`',
+                  file=sys.stderr)
         return "\n".join(out).strip()
     shown = []                            # the notes, as rendered — see `context_digest`
     for i, th in enumerate(t["thread_ids"]):

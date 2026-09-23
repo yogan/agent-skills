@@ -705,18 +705,26 @@ def seed_mr2(iid):
 
 
 def title_peer_topic(wt, iid):
-    """Author a summary for the peer's thread, which `sync` adopts as a topic of its own.
+    """Author a summary for the peer's thread, discovered through the table's refusal.
 
-    The handle is read back from the rendered table rather than assumed to be t5: the
-    adopted topic's number depends on how many were imported before it, and a hardcoded
-    one would break silently the day that changes. Same reason `seed_mr2` parses `import`'s
+    `sync` refuses to render while any visible topic lacks a summary, exiting non-zero
+    with `needs summary: tN — …` — so the untitled topic IS the adoption signal: parse
+    its handle out of the refusal, author the summary, and the next `sync` renders
+    clean. (Before the refusal the handle came from the marker ROW in the rendered
+    table; same discovery, one step earlier in the pipeline.) The refusal fires AFTER
+    sync has adopted and saved, so the `set` below still sees the adopted state. The
+    handle is parsed rather than assumed to be t5: the adopted topic's number depends
+    on how many were imported before it. Same reason `seed_mr2` parses `import`'s
     output instead of counting."""
-    out = findings(wt, "sync", "--iid", str(iid))
-    row = [ln for ln in out.splitlines() if "needs summary" in ln]
-    if not row:
-        die("MR !2: no topic is waiting for a summary — the peer thread was not adopted, "
-            "so sync is not seeing it")
-    tid = re.search(r"t\d+", row[0]).group(0)
+    sd = os.path.expanduser("~/.claude/skills/review-mr/scripts/findings.py")
+    r = subprocess.run(["python3", sd, "sync", "--iid", str(iid)], cwd=wt,
+                       capture_output=True, text=True)
+    m = re.search(r"needs summary: (t\d+)", r.stderr)
+    if not m:
+        die("MR !2: sync did not refuse for an untitled topic — the peer thread was "
+            f"not adopted, so sync is not seeing it (rc={r.returncode}: "
+            f"{(r.stderr or r.stdout).strip()})")
+    tid = m.group(1)
     findings(wt, "set", tid, "--summary", MR2_PEER_THREAD["summary"], "--iid", str(iid))
     info(f"titled the peer topic {tid}")
 

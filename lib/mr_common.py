@@ -196,7 +196,8 @@ def short_summary(state, t, width=64):
     rather than showing a line of the reviewer's proposed code as if it were a title.
 
     Either way the fallback is a stand-in for display, never a title: callers that render
-    a topic as a heading (the table, `quote`) must also flag that nobody has written one,
+    a topic as a heading must also surface that nobody has written one — the quote view
+    with a warning line, review-mr's table by refusing to render until it is authored —
     rather than treating this string as a finished summary.
     """
     text = t.get("summary")

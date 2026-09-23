@@ -76,14 +76,16 @@
       "note": [
         "adopt_inbound cannot author a title for a thread it did not write — only the raw",
         "comment body is available, in whatever language/wording the commenter used. It",
-        "flags the topic `needs_title` instead of ever storing that raw text as `summary`,",
-        "and render_table marks it with this exact glyph+label so it can only ever appear",
-        "in a message that still has the placeholder. Anchored to a table row (`^\\|`) so a",
-        "prose mention of the phrase elsewhere can't false-positive."
+        "flags the topic `needs_title` instead of ever storing that raw text as `summary`.",
+        "review-mr's render_table now REFUSES while such a topic would show (die:",
+        "`needs summary: tN …`), so a row in this shape can only reach a message built by",
+        "hand around the placeholder — this rule is the backstop for exactly that, and for",
+        "rework-mr's table, which still renders the marker. Anchored to a table row",
+        "(`^\\|`) so a prose mention of the phrase elsewhere can't false-positive."
       ],
       "text": "^\\|.*✍️ _needs summary:_",
       "flags": "m",
-      "reason": "Your message pastes a topic whose title is still the unresolved `needs_title` placeholder (`✍️ needs summary:` — a raw, un-authored thread quote). Resolve it first: author an English one-liner (`findings.py set <t> --summary \"...\"`), or `drop`/`merge` the topic if it doesn't need one, then re-render (`sync`/`present`/`todo`) before showing it to the user. (Both MR skills emit this warning and the hook may hand you the other one's wording: the command is `findings.py` in review-mr and `threads.py` in rework-mr — use the one this session's skill ships.)"
+      "reason": "Your message pastes a topic whose title is still the unresolved `needs_title` placeholder (`✍️ needs summary:` — a raw, un-authored thread quote). Resolve it first: author an English one-liner (`findings.py set <t> --summary \"...\"`), or `drop`/`merge` the topic if it doesn't need one, then re-render (`sync`/`present`/`todo`) before showing it to the user. (review-mr's commands refuse to render such a table at all and name the fix on stderr; rework-mr still renders this row, and the hook may hand you its wording: the command is `findings.py` in review-mr and `threads.py` in rework-mr — use the one this session's skill ships.)"
     },
     {
       "key": "summary-in-draft-language",

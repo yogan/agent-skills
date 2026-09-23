@@ -254,6 +254,15 @@ the user reads in the table and in every topic heading. The `· drafts <lang> ·
 applies to the **body of a comment you draft for posting**, and to nothing else. `findings.py`
 flags a summary that reads as the draft language, and the paste gate blocks the view.
 
+A topic still marked `✍️ needs summary` has no authored summary — its table row would be the
+raw thread quote. The table commands (`sync`/`todo`/`present`/`resume`) **refuse to render
+while any topic they would show is in that state**: they exit with
+`needs summary: t5 — author …` instead of output. Author those first (`bodies` for the thread
+text, then `set <t> --summary "…"`), or `drop`/`merge` the topic, and re-run. On Claude Code
+the `Stop` hook additionally blocks a hand-built table carrying the marker; **OpenCode has no
+hook — the refusal is what enforces the rule there**, and either way it is not optional: a
+Summary cell that is somebody else's truncated sentence tells the user nothing.
+
 ### Comments the user posts in the UI while you work
 
 Expected, not exceptional — they read the diff in the browser in parallel. `sync` handles it:
@@ -377,7 +386,17 @@ new/edited commit message — **call it out loudly**.
 **2 — the overview + first topic** (the part after the `---`). Paste verbatim: the **overview table** (your map of every topic's state) plus
 the first topic needing you. **The overview table is mandatory in the opener — never drop it**
 (it's the user's only view of where all topics stand). Then walk the needs-ack topics one at a
-time from there. Advance the baseline (`set-head`) at the end, once you've digested the pushes.
+time from there.
+
+The pasted first-topic block is **the start of the answer, not the answer**: your 2-4 lines of
+judgment (what was found or agreed, why, with `file:line`) follow it, same rule as Phase 2's
+"Lead with the topic". For a topic with no draft yet that means analysis FIRST — what the
+finding is and why it matters — then **ask how they want to handle it** (recommendation-first
+for the obvious call, grilling for the complex one); the draft is written and shown only once
+agreed, in Phase 2. Never put a "write the draft" instruction in front of the user — `quote`
+prints such a note on stderr, for you alone.
+
+Advance the baseline (`set-head`) at the end, once you've digested the pushes.
 
 ## The re-review loop
 

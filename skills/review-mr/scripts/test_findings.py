@@ -4,6 +4,7 @@ table, topic status derivation, and thread reconciliation.
 
 Run: `python3 skills/review-mr/scripts/test_findings.py` (stdlib only).
 """
+import io
 import json
 import os
 import re
@@ -11,6 +12,7 @@ import shutil
 import sys
 import tempfile
 import unittest
+from contextlib import redirect_stderr
 from unittest.mock import patch
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -289,6 +291,58 @@ class TestRefineRender(Throwaway, unittest.TestCase):
         self.assertNotIn("follow-up", F.render_quote(state, "t1"))
 
 
+class TestBodylessQuote(Throwaway, unittest.TestCase):
+    """An unposted topic with no stored draft used to render header + code and stop.
+    Read as a complete presentation it left the user with no comment and no sign one
+    was missing — reported live as title, code fragment, "nothing else". The gap is
+    the agent's to fill (analysis, then ask how to handle it), so the reminder is its
+    own stderr note: anything in the returned block is pasted to the user verbatim."""
+
+    def _topic(self, draft=None):
+        wt = self._throwaway_dir()
+        with open(os.path.join(wt, "worker.py"), "w") as f:
+            f.write("try:\n    run()\nexcept Exception:\n    pass\n")
+        original = F.get_worktree
+        F.get_worktree = lambda slug, iid: wt
+        self.addCleanup(setattr, F, "get_worktree", original)
+        state = new_state(slug="x")
+        F.add_topic(state, summary="swallowed exception hides real failures",
+                    file="worker.py", line=3, draft=draft)
+        return state
+
+    def test_a_bodyless_topic_renders_clean_and_nudges_the_agent_on_stderr(self):
+        state = self._topic()
+        buf = io.StringIO()
+        with redirect_stderr(buf):
+            out = F.render_quote(state, "t1")
+        self.assertIn("except Exception:", out)          # the context still shows
+        self.assertNotIn("has no draft yet", out)        # nothing meta for the user
+        note = buf.getvalue()
+        self.assertIn("t1 has no draft yet", note)
+        self.assertIn("ask how they want to handle it", note)
+        self.assertIn('`set t1 --draft "…"`', note)
+
+    def test_a_stored_draft_suppresses_the_note(self):
+        buf = io.StringIO()
+        with redirect_stderr(buf):
+            out = F.render_quote(self._topic(draft="Kürzer geht es nicht."), "t1")
+        self.assertIn("Draft of comment to post", out)
+        self.assertNotIn("has no draft yet", buf.getvalue())
+
+    def test_a_posted_topic_without_a_follow_up_stays_silent(self):
+        """The follow-up branch's silence is correct: a posted topic with no pending
+        reply has nothing to say about a draft, and must not inherit the note."""
+        state = new_state(threads={"d1": {"body": "b", "author": "A",
+                                          "file": "a.py", "line": 3}})
+        add_linked_topic(state, "d1", summary="an English title",
+                         file="a.py", line=3)
+        buf = io.StringIO()
+        with redirect_stderr(buf):
+            out = F.render_quote(state, "t1")
+        self.assertNotIn("has no draft yet", out)
+        self.assertNotIn("has no draft yet", buf.getvalue())
+
+
 class TestCriticalManifest(Throwaway, unittest.TestCase):
     def setUp(self):
         critical_manifest.reset()
@@ -469,14 +523,18 @@ class TestSummaryLanguage(unittest.TestCase):
         self.assertNotIn("summaries must be English", F.render_table(state))
 
     def test_a_needs_title_topic_is_never_flagged(self):
-        """Its "summary" is a raw thread quote, foreign by design — `needs_title`
-        already says so, and two warnings about the same gap contradict each other."""
+        """Its "summary" is a raw thread quote, foreign by design — two warnings about
+        the same gap would contradict each other. The table now refuses instead of
+        rendering anything (TestNeedsTitle), so the one-warning guarantee is the quote
+        view's to keep."""
         state = new_state(lang="de",
                           threads={"d1": {"body": "Sollten wir das nicht in der "
                                                   "Fabrik machen?", "file": "a.py",
                                           "line": 3}})
         F.adopt_inbound(state, None, None)
-        self.assertNotIn("summaries must be English", F.render_table(state))
+        out = F.render_quote(state, "t1")
+        self.assertIn("needs an English summary", out)
+        self.assertNotIn("summaries must be English", out)
 
     def test_the_quote_view_flags_it_too(self):
         state = new_state(lang="de")
@@ -499,7 +557,8 @@ class TestNeedsTitle(unittest.TestCase):
     """adopt_inbound has no way to author an English one-liner for a thread it did not
     write — the only text available is the raw comment body, in whatever language the
     commenter used. `needs_title` makes that gap visible instead of letting the raw
-    quote silently pass as a finished title (see `short_summary`'s docstring)."""
+    quote silently pass as a finished title (see `short_summary`'s docstring): the
+    table refuses to render while the flag stands, and `quote` warns under the heading."""
 
     def test_adopted_thread_is_flagged_with_no_authored_summary(self):
         state = new_state(threads={"d1": {"body": "Sollten wir hier nicht X machen?",
@@ -509,16 +568,37 @@ class TestNeedsTitle(unittest.TestCase):
         self.assertTrue(t["needs_title"])
         self.assertIsNone(t["summary"])
 
-    def test_render_table_flags_a_needs_title_topic(self):
+    def test_the_table_refuses_instead_of_rendering_the_marker(self):
+        """Reported on a live table: the ✍️ marker row was pasted through on OpenCode,
+        wedged mid-cell between the raiser's name and their words, and read as content —
+        nothing blocks a paste there. Refusal at the renderer makes the dirty row
+        unreachable instead of merely discouraged, on every agent."""
+        state = new_state(threads={"d1": {"body": "Sollten wir hier nicht X machen?",
+                                           "file": "a.py", "line": 3,
+                                           "author": "Vogel, Petra - X9"}})
+        F.adopt_inbound(state, None, None)
+        with self.assertRaises(SystemExit):
+            F.render_table(state)
+
+    def test_the_refusal_names_the_topic_and_the_exact_fix(self):
+        """The message is the workflow: e2e's title_peer_topic parses the handle out
+        of it, so `needs summary: tN` is a contract, not wording."""
         state = new_state(threads={"d1": {"body": "Sollten wir hier nicht X machen?",
                                            "file": "a.py", "line": 3}})
         F.adopt_inbound(state, None, None)
-        self.assertIn("needs summary", F.render_table(state))
+        buf = io.StringIO()
+        with redirect_stderr(buf), self.assertRaises(SystemExit):
+            F.render_table(state)
+        msg = buf.getvalue()
+        self.assertIn("needs summary: t1", msg)
+        self.assertIn('`set t1 --summary "..."`', msg)
+        self.assertIn("bodies", msg)
 
     def test_render_table_leaves_an_authored_summary_alone(self):
         state = new_state(threads={"d1": {"body": "irrelevant"}})
         add_linked_topic(state, "d1", summary="a real English title")
-        self.assertNotIn("needs summary", F.render_table(state))
+        out = F.render_table(state)
+        self.assertIn("a real English title", out)
 
     def test_quote_warns_when_topic_needs_a_title(self):
         state = new_state(threads={"d1": {"body": "Sollten wir hier nicht X machen?",
@@ -533,36 +613,42 @@ class TestNeedsTitle(unittest.TestCase):
 
     def test_both_warnings_match_the_stop_hook_rules(self):
         """The gate spec keys off these literals; rewording one silently disables it.
-        Mirrors rework-mr's test of the same name — review-mr pinned only its gate
-        SIGNATURES, so its two forbidden patterns had nothing holding them to the
-        renders they describe, and a line anchor added to either went unverified."""
+        Mirrors rework-mr's test of the same name with one inversion: review-mr's
+        table REFUSES where rework-mr's still renders the marker row, so the table
+        pattern can no longer be held to a rendered table. It is pinned both ways
+        instead — the render must NOT be able to produce it (the refusal test above),
+        and the pattern must still match a hand-built row of the old shape (synthetic
+        here, engine-side in hooks/test_paste_gate_slow.py), which is all it can meet
+        in a message now. The quote pattern stays anchored to its live render."""
         rules = forbidden_rules()
         adopted = new_state(threads={"d1": {"body": "Sollten wir hier nicht X machen?",
-                                            "file": "a.py", "line": 3}})
+                                             "file": "a.py", "line": 3}})
         F.adopt_inbound(adopted, None, None)
-        self.assertRegex(F.render_table(adopted),
+        with self.assertRaises(SystemExit):
+            F.render_table(adopted)
+        self.assertRegex("| ● open | ✍️ _needs summary:_ raw quote |",
                          rules["unresolved-needs-title-table"])
         self.assertRegex(F.render_quote(adopted, "t1"),
                          rules["unresolved-needs-title-quote"])
 
-        foreign = new_state(threads={"d1": {"body": "irrelevant"}})
-        add_linked_topic(foreign, "d1", summary="Das wird hier nicht gesetzt")
-        self.assertRegex(F.render_table(foreign), rules["summary-in-draft-language"])
-
     def test_a_closed_topic_needs_no_title(self):
-        """Nothing acts on an acked topic any more, and the gate would otherwise block
-        every table on a finished review until somebody titled closed work. rework-mr's
-        `needs_summary` draws the same line at `done`."""
+        """Nothing acts on an acked topic any more, and the refusal (and, before it,
+        the gate rule) would otherwise block every table on a finished review until
+        somebody titled closed work. rework-mr's `needs_summary` draws the same line
+        at `done`."""
         state = new_state(threads={"d1": {"body": "Sollten wir hier nicht X machen?",
                                            "file": "a.py", "line": 3, "mine": False,
                                            "awaiting": "you",
                                            "last_at": "2026-01-01T00:00:00Z"}})
         F.adopt_inbound(state, None, None)
         t = F.topic_for(state, "t1")
-        self.assertIn("needs summary", F.render_table(state))
+        with self.assertRaises(SystemExit):     # still open: the table refuses
+            F.render_table(state)
         t["state"] = "acked"                       # what `set --state acked` does,
         t["acked_at"] = "2026-01-02T00:00:00Z"     # stamp included
-        self.assertNotIn("needs summary", F.render_table(state))
+        out = F.render_table(state)                # terminal: the exemption renders
+        self.assertIn("**t1**", out)
+        self.assertNotIn("needs summary", out)
         self.assertNotIn("needs an English summary", F.render_quote(state, "t1"))
 
     def test_setting_a_summary_clears_the_flag(self):
@@ -570,9 +656,12 @@ class TestNeedsTitle(unittest.TestCase):
                                            "file": "a.py", "line": 3}})
         F.adopt_inbound(state, None, None)
         t = F.topic_for(state, "t1")
+        with self.assertRaises(SystemExit):
+            F.render_table(state)              # refuses until the summary exists
         t["summary"] = "Clarify the X behavior"
         t["needs_title"] = False              # what `set --summary` does, see cmd == "set"
-        self.assertNotIn("needs summary", F.render_table(state))
+        out = F.render_table(state)
+        self.assertIn("Clarify the X behavior", out)
         self.assertNotIn("needs an English summary", F.render_quote(state, "t1"))
 
 
