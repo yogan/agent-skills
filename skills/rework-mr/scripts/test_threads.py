@@ -7,6 +7,8 @@ These cover the rendering that has to survive a markdown renderer, which is wher
 were: a change illustration wrapped in a second fence lost its highlighting and spilled its
 tail as prose, and a code anchor read against the wrong version shows unrelated lines.
 """
+
+import argparse
 import json
 import os
 import re
@@ -19,8 +21,8 @@ from unittest import mock
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 
-import threads as T                                   # noqa: E402
-from lib import critical_manifest                     # noqa: E402
+import threads as T  # noqa: E402
+from lib import critical_manifest  # noqa: E402
 
 
 def _spec():
@@ -50,8 +52,10 @@ def forbidden_rules():
     matching a warning that sits on its own line, this test stops, and the failure reads
     as "the producer stopped emitting the warning" when the producer never changed.
     """
-    return {r["key"]: re.compile(r["text"], sum(_FLAGS[c] for c in r.get("flags", "")))
-            for r in _spec()["forbidden"]}
+    return {
+        r["key"]: re.compile(r["text"], sum(_FLAGS[c] for c in r.get("flags", "")))
+        for r in _spec()["forbidden"]
+    }
 
 
 def required_rule(key):
@@ -62,10 +66,14 @@ def required_rule(key):
 
 class TestLooksLikeDiff(unittest.TestCase):
     def test_unified_diff(self):
-        self.assertTrue(T.looks_like_diff("-  const a = 1\n+  const a = 2\n   const b = 3\n"))
+        self.assertTrue(
+            T.looks_like_diff("-  const a = 1\n+  const a = 2\n   const b = 3\n")
+        )
 
     def test_diff_with_headers(self):
-        self.assertTrue(T.looks_like_diff("diff --git a/x b/x\n@@ -1 +1 @@\nwhatever\n"))
+        self.assertTrue(
+            T.looks_like_diff("diff --git a/x b/x\n@@ -1 +1 @@\nwhatever\n")
+        )
 
     def test_plain_snippet_is_not_a_diff(self):
         """A before/after snippet wants the file's language, not `diff`."""
@@ -75,7 +83,9 @@ class TestLooksLikeDiff(unittest.TestCase):
         self.assertFalse(T.looks_like_diff("  return 1\n  return 2\n"))
 
     def test_prose_is_not_a_diff(self):
-        self.assertFalse(T.looks_like_diff("Drop the weaker test and keep the other one.\n"))
+        self.assertFalse(
+            T.looks_like_diff("Drop the weaker test and keep the other one.\n")
+        )
 
     def test_index_assignment_is_not_a_diff_header(self):
         """git's header is `index abc1234..def5678`; `index = 0` is just code."""
@@ -134,7 +144,7 @@ class TestRenderChange(unittest.TestCase):
 
     def test_untagged_inner_fence_gets_a_language(self):
         out = T.render_change("Before:\n\n```\n-  a\n+  b\n```\n", "src/a.ts")
-        self.assertIn("```diff\n", out)          # sniffed from the block's own content
+        self.assertIn("```diff\n", out)  # sniffed from the block's own content
 
     def test_untagged_inner_snippet_gets_the_paths_language(self):
         out = T.render_change("Before:\n\n```\nconst a = 1\n```\n", "src/a.ts")
@@ -162,8 +172,9 @@ class TestViews(unittest.TestCase):
     def test_diff_view_shape(self):
         out = T.render_diff_view("t3", "diff --git a/x b/x\n@@ -1 +1 @@\n-a\n+b\n")
         self.assertTrue(out.startswith("**Diff (◈ t3):**"))
-        self.assertTrue(out.rstrip().endswith("ACK to fix up and push? — or say what "
-                                              "to change."))
+        self.assertTrue(
+            out.rstrip().endswith("ACK to fix up and push? — or say what to change.")
+        )
         self.assertIn("```diff", out)
 
     def test_the_ack_ask_stays_one_line_and_last(self):
@@ -172,8 +183,10 @@ class TestViews(unittest.TestCase):
         anything printed after it would stop the gate recognising a legitimate ask."""
         with mock.patch.object(T, "_git", lambda *a: ""):
             pointer = T.render_diff_pointer("t1", [("a.ts", 1, 0)], "tmux window 9")
-        for out, extra in ((pointer, "notes on the diff"),
-                           (T.render_diff_view("t1", "-a\n+b\n"), "say what to change")):
+        for out, extra in (
+            (pointer, "notes on the diff"),
+            (T.render_diff_view("t1", "-a\n+b\n"), "say what to change"),
+        ):
             last = out.rstrip().splitlines()[-1]
             self.assertTrue(last.startswith("ACK to fix up and push?"), last)
             self.assertIn(extra, last)
@@ -183,8 +196,10 @@ class TestViews(unittest.TestCase):
         rule = required_rule("fixup-ack")
         with mock.patch.object(T, "_git", lambda *a: ""):
             pointer = T.render_diff_pointer("t1", [("a.py", 1, 0)], "tmux window 9")
-        for name, block in (("pointer", pointer),
-                            ("inline", T.render_diff_view("t1", "-a\n+b\n"))):
+        for name, block in (
+            ("pointer", pointer),
+            ("inline", T.render_diff_view("t1", "-a\n+b\n")),
+        ):
             self.assertTrue(rule.search("Summary of the change.\n\n" + block), name)
 
     def test_the_ack_rule_is_not_escaped_by_anything_after_it(self):
@@ -193,17 +208,26 @@ class TestViews(unittest.TestCase):
         exactly the one that adds a closing sentence — walked straight through. Every case
         here was verified against the real hook to pass while that anchor was in place."""
         rule = required_rule("fixup-ack")
-        for tail in ("\n\nI'll run the full suite right after the rebase.",
-                     "\n\n- tests pass\n- lint clean", "\n\n---", "\n\n✅", "\n\n```\nx\n```",
-                     "\n\n(then I'll push)", "\n"):
-            self.assertTrue(rule.search("Fixed t3.\n\nACK to fix up and push?" + tail),
-                            repr(tail))
+        for tail in (
+            "\n\nI'll run the full suite right after the rebase.",
+            "\n\n- tests pass\n- lint clean",
+            "\n\n---",
+            "\n\n✅",
+            "\n\n```\nx\n```",
+            "\n\n(then I'll push)",
+            "\n",
+        ):
+            self.assertTrue(
+                rule.search("Fixed t3.\n\nACK to fix up and push?" + tail), repr(tail)
+            )
 
     def test_view_signatures_match_the_stop_hook_gates(self):
         """The gate spec keys off these literals; renaming a header silently disables it.
         Read from the spec, not retyped, so the two cannot drift apart unnoticed."""
-        for key, out in (("change-preview", T.render_change_view("t1", "-a\n+b\n")),
-                         ("diff-view", T.render_diff_view("t1", "-a\n+b\n"))):
+        for key, out in (
+            ("change-preview", T.render_change_view("t1", "-a\n+b\n")),
+            ("diff-view", T.render_diff_view("t1", "-a\n+b\n")),
+        ):
             for sig in gate_signature(key):
                 self.assertIn(sig, out, key)
 
@@ -256,8 +280,10 @@ class TestDiffStat(unittest.TestCase):
         itself the moment a `rebase --autosquash` fixup conflicts. Unrecognised, the stanza
         was not a file boundary: it disappeared from the summary and its own headers were
         charged to the previous file — '1 file, +3 −3' over a two-file change."""
-        d = ("diff --git a/ok.ts b/ok.ts\n--- a/ok.ts\n+++ b/ok.ts\n@@ -1 +1 @@\n-a\n+b\n"
-             "diff --cc conf.ts\n--- a/conf.ts\n+++ b/conf.ts\n@@@ -1,1 -1,1 +1,1 @@@\n")
+        d = (
+            "diff --git a/ok.ts b/ok.ts\n--- a/ok.ts\n+++ b/ok.ts\n@@ -1 +1 @@\n-a\n+b\n"
+            "diff --cc conf.ts\n--- a/conf.ts\n+++ b/conf.ts\n@@@ -1,1 -1,1 +1,1 @@@\n"
+        )
         self.assertEqual([p for p, _, _ in T.diff_stat(d)], ["ok.ts", "conf.ts"])
         self.assertEqual(T.diff_stat(d)[0], ("ok.ts", 1, 1))
 
@@ -271,8 +297,7 @@ class TestDiffStat(unittest.TestCase):
         self.assertEqual(T.diff_stat(d), [("x.ts", 1, 1)])
 
     def test_a_binary_file_counts_no_lines(self):
-        d = ("diff --git a/i.png b/i.png\n"
-             "Binary files a/i.png and b/i.png differ\n")
+        d = "diff --git a/i.png b/i.png\nBinary files a/i.png and b/i.png differ\n"
         self.assertEqual(T.diff_stat(d), [("i.png", 0, 0)])
 
     def test_an_empty_diff_has_no_files(self):
@@ -282,13 +307,15 @@ class TestDiffStat(unittest.TestCase):
         """Diffing a file that itself contains a patch — a fixture, this repo's own docs —
         produces body lines beginning `+++ ` and `--- `. They are CONTENT: they must count
         toward the totals and must not rename the file. Headers only exist before `@@`."""
-        d = ("diff --git a/doc.md b/doc.md\n"
-             "--- a/doc.md\n"
-             "+++ b/doc.md\n"
-             "@@ -1,2 +1,3 @@\n"
-             " intro\n"
-             "+--- a/not-a-header.py\n"
-             "+++ b/not-a-header.py\n")
+        d = (
+            "diff --git a/doc.md b/doc.md\n"
+            "--- a/doc.md\n"
+            "+++ b/doc.md\n"
+            "@@ -1,2 +1,3 @@\n"
+            " intro\n"
+            "+--- a/not-a-header.py\n"
+            "+++ b/not-a-header.py\n"
+        )
         self.assertEqual(T.diff_stat(d), [("doc.md", 2, 0)])
 
 
@@ -299,17 +326,22 @@ class TestDiffViewRouting(unittest.TestCase):
 
     def setUp(self):
         critical_manifest.reset()
-        self._git = mock.patch.object(T, "_git", lambda *a: {
-            ("rev-parse", "--show-toplevel"): "/repo\n",
-            ("remote", "get-url", "origin"): "",
-            ("rev-parse", "--abbrev-ref", "HEAD"): "feat/x\n",
-        }.get(a, ""))
+        self._git = mock.patch.object(
+            T,
+            "_git",
+            lambda *a: {
+                ("rev-parse", "--show-toplevel"): "/repo\n",
+                ("remote", "get-url", "origin"): "",
+                ("rev-parse", "--abbrev-ref", "HEAD"): "feat/x\n",
+            }.get(a, ""),
+        )
         self._git.start()
         self.addCleanup(self._git.stop)
 
     def test_pointer_when_the_viewer_took_the_diff(self):
-        with mock.patch.object(T.hunk, "show_working_diff",
-                               return_value=("sid", "9 (◈!123)")):
+        with mock.patch.object(
+            T.hunk, "show_working_diff", return_value=("sid", "9 (◈!123)")
+        ):
             out = T.diff_view_block("t3", SAMPLE_DIFF)
         self.assertIn("3 files, +3 −4", out)
         self.assertIn("tmux window 9 (◈!123)", out)
@@ -320,8 +352,9 @@ class TestDiffViewRouting(unittest.TestCase):
         """The fence language is the only colour a pasted block can carry, and YAML is what
         tints a path apart from its counts. Pinned because dropping the language, or the
         colon that makes each row a key, silently turns the whole block grey again."""
-        with mock.patch.object(T.hunk, "show_working_diff",
-                               return_value=("sid", "9 (◈!123)")):
+        with mock.patch.object(
+            T.hunk, "show_working_diff", return_value=("sid", "9 (◈!123)")
+        ):
             out = T.diff_view_block("t3", SAMPLE_DIFF)
         self.assertIn("```yaml", out)
         self.assertIn("src/a.ts:  +2 −1", out)
@@ -333,8 +366,9 @@ class TestDiffViewRouting(unittest.TestCase):
         is — was the one line the hook's one-dropped-line tolerance allowed a message to
         lose, leaving filenames, a question about "that window", and no window named."""
         critical_manifest.reset()
-        with mock.patch.object(T.hunk, "show_working_diff",
-                               return_value=("sid", "9 (◈!123)")):
+        with mock.patch.object(
+            T.hunk, "show_working_diff", return_value=("sid", "9 (◈!123)")
+        ):
             out = T.diff_view_block("t3", SAMPLE_DIFF)
         head = out.splitlines()[0]
         self.assertIn("tmux window", head)
@@ -353,18 +387,24 @@ class TestDiffViewRouting(unittest.TestCase):
         above the block has already told the user the agent flagged something. Silence
         there sends them to a window with nothing in it, and then they ACK."""
         note = [{"filePath": "src/a.ts", "newLine": 1, "summary": "x"}]
-        with mock.patch.object(T.hunk, "show_working_diff",
-                               return_value=("sid", "9 (x)")), \
-             mock.patch.object(T.hunk, "add_notes", return_value=0):
+        with (
+            mock.patch.object(
+                T.hunk, "show_working_diff", return_value=("sid", "9 (x)")
+            ),
+            mock.patch.object(T.hunk, "add_notes", return_value=0),
+        ):
             out = T.diff_view_block("t3", SAMPLE_DIFF, notes=note)
         self.assertIn("could not be anchored", out)
         self.assertTrue(out.rstrip().endswith("in that window."))
 
     def test_notes_that_landed_are_not_reported(self):
         note = [{"filePath": "src/a.ts", "newLine": 1, "summary": "x"}]
-        with mock.patch.object(T.hunk, "show_working_diff",
-                               return_value=("sid", "9 (x)")), \
-             mock.patch.object(T.hunk, "add_notes", return_value=1):
+        with (
+            mock.patch.object(
+                T.hunk, "show_working_diff", return_value=("sid", "9 (x)")
+            ),
+            mock.patch.object(T.hunk, "add_notes", return_value=1),
+        ):
             out = T.diff_view_block("t3", SAMPLE_DIFF, notes=note)
         self.assertNotIn("could not be anchored", out)
 
@@ -394,11 +434,14 @@ class TestDiffViewRouting(unittest.TestCase):
         """That comparison is the whole verification: the viewer reads the working tree
         itself, so a window holding different files — or the same files at different line
         counts — is not this diff. It is handed the parsed stat, not a bare count."""
-        with mock.patch.object(T.hunk, "show_working_diff",
-                               return_value=("sid", "9 (x)")) as show:
+        with mock.patch.object(
+            T.hunk, "show_working_diff", return_value=("sid", "9 (x)")
+        ) as show:
             T.diff_view_block("t3", SAMPLE_DIFF)
-        self.assertEqual(show.call_args[0][2],
-                         [("src/a.ts", 2, 1), ("new/n.ts", 1, 1), ("gone.ts", 0, 2)])
+        self.assertEqual(
+            show.call_args[0][2],
+            [("src/a.ts", 2, 1), ("new/n.ts", 1, 1), ("gone.ts", 0, 2)],
+        )
 
     def test_the_window_names_the_mr_worked_on_most_recently(self):
         """Ranked by each state FILE's mtime, not its directory's. A directory's mtime only
@@ -407,8 +450,10 @@ class TestDiffViewRouting(unittest.TestCase):
         untouched since, and its number went onto the block a force-push is approved from.
         """
         with tempfile.TemporaryDirectory() as root:
-            for name, dir_age, file_age in (("acme-api--mr123", 100, 1),
-                                            ("acme-api--mr456", 1, 100)):
+            for name, dir_age, file_age in (
+                ("acme-api--mr123", 100, 1),
+                ("acme-api--mr456", 1, 100),
+            ):
                 d = os.path.join(root, name)
                 os.makedirs(d)
                 f = os.path.join(d, "topics.json")
@@ -416,9 +461,11 @@ class TestDiffViewRouting(unittest.TestCase):
                     fh.write("{}")
                 os.utime(f, (0, 10_000 - file_age))
                 os.utime(d, (0, 10_000 - dir_age))
-            with mock.patch.object(T, "STATE_ROOT", root), \
-                 mock.patch.object(T, "project_slug", lambda: "acme-api"), \
-                 mock.patch.object(T, "_git", lambda *a: "git@host:acme/api.git\n"):
+            with (
+                mock.patch.object(T, "STATE_ROOT", root),
+                mock.patch.object(T, "project_slug", lambda: "acme-api"),
+                mock.patch.object(T, "_git", lambda *a: "git@host:acme/api.git\n"),
+            ):
                 self.assertEqual(T.window_label(), T.TOPIC_ICON + "!123")
 
     def test_naming_the_window_never_calls_glab(self):
@@ -436,8 +483,9 @@ class TestDiffViewRouting(unittest.TestCase):
     def test_both_shapes_satisfy_the_stop_hook_gate(self):
         """The gate has one signature and two renders to cover; pinning it to the old
         ```diff marker would have left the pointer shape — the common one — ungated."""
-        with mock.patch.object(T.hunk, "show_working_diff",
-                               return_value=("sid", "9 (◈!123)")):
+        with mock.patch.object(
+            T.hunk, "show_working_diff", return_value=("sid", "9 (◈!123)")
+        ):
             pointer = T.diff_view_block("t3", SAMPLE_DIFF)
         with mock.patch.object(T.hunk, "show_working_diff", return_value=None):
             inline = T.diff_view_block("t3", SAMPLE_DIFF)
@@ -454,17 +502,22 @@ class TestHunkNoteHandover(unittest.TestCase):
     def test_a_note_is_reported_with_its_file_and_line(self):
         self.assertEqual(
             T.hunk_note_lines([("a.py", "new", 42, "why not keep the map?", "n1")]),
-            ["a.py:42: why not keep the map?"])
+            ["a.py:42: why not keep the map?"],
+        )
 
     def test_a_note_on_a_removed_line_says_so(self):
         """Without it the number reads as a line in the file the model is about to edit,
         where the deletion has since put something unrelated."""
-        self.assertEqual(T.hunk_note_lines([("b.py", "old", 7, "why drop this?", "n2")]),
-                         ["b.py:7 (on a removed line): why drop this?"])
+        self.assertEqual(
+            T.hunk_note_lines([("b.py", "old", 7, "why drop this?", "n2")]),
+            ["b.py:7 (on a removed line): why drop this?"],
+        )
 
     def test_an_mr_level_note_has_no_line_to_print(self):
-        self.assertEqual(T.hunk_note_lines([("c.py", "new", None, "general point", "n3")]),
-                         ["c.py: general point"])
+        self.assertEqual(
+            T.hunk_note_lines([("c.py", "new", None, "general point", "n3")]),
+            ["c.py: general point"],
+        )
 
     def test_a_clean_window_closes(self):
         self.assertEqual(T.hunk_close_decision([]), (None, True))
@@ -509,25 +562,43 @@ class TestCriticalManifest(unittest.TestCase):
         content — including the embedded ``` markers themselves, which are DATA here,
         not delimiters — must still be marked critical, not just the lines before the
         first embed."""
-        content = ("# first illustration:\n```\nold snippet\n```\n"
-                  "# second illustration, a bit wider:\n````\nnewer snippet\n````\n"
-                  "for _ in range(MAX_RETRIES):\n    resp = self._send(req)")
+        content = (
+            "# first illustration:\n```\nold snippet\n```\n"
+            "# second illustration, a bit wider:\n````\nnewer snippet\n````\n"
+            "for _ in range(MAX_RETRIES):\n    resp = self._send(req)"
+        )
         out = T.fence(content, "python")
-        self.assertTrue(out.startswith("`````python\n"))     # widened past the widest embed
+        self.assertTrue(
+            out.startswith("`````python\n")
+        )  # widened past the widest embed
         for line in content.splitlines():
             self.assertIn(line.strip(), critical_manifest.current())
 
     def test_render_table_marks_rows_not_header(self):
-        state = {"iid": 1, "title": "x", "topics": [
-            {"id": "t1", "thread_ids": ["d1"], "summary": "s", "state": None,
-             "decision": None, "plan": None, "diff_url": None},
-        ], "threads": {"d1": {"file": "a.py", "line": 1, "resolved": False,
-                              "awaiting": "you"}}}
+        state = {
+            "iid": 1,
+            "title": "x",
+            "topics": [
+                {
+                    "id": "t1",
+                    "thread_ids": ["d1"],
+                    "summary": "s",
+                    "state": None,
+                    "decision": None,
+                    "plan": None,
+                    "diff_url": None,
+                },
+            ],
+            "threads": {
+                "d1": {"file": "a.py", "line": 1, "resolved": False, "awaiting": "you"}
+            },
+        }
         out = T.render_table(state)
         row = next(ln for ln in out.splitlines() if ln.startswith("| ○"))
         self.assertIn(row, critical_manifest.current())
-        self.assertNotIn("| Status | Topic | Location | Summary |",
-                          critical_manifest.current())
+        self.assertNotIn(
+            "| Status | Topic | Location | Summary |", critical_manifest.current()
+        )
 
 
 class TestLocationlessThread(unittest.TestCase):
@@ -536,20 +607,38 @@ class TestLocationlessThread(unittest.TestCase):
     backticks and `quote` showed `None:`."""
 
     def _state(self, **thread):
-        return {"iid": 1, "title": "x", "topics": [
-            {"id": "t1", "thread_ids": ["d1"], "summary": "s", "state": None,
-             "decision": None, "plan": None, "diff_url": None}],
-            "threads": {"d1": {"resolved": False, "awaiting": "you", **thread}}}
+        return {
+            "iid": 1,
+            "title": "x",
+            "topics": [
+                {
+                    "id": "t1",
+                    "thread_ids": ["d1"],
+                    "summary": "s",
+                    "state": None,
+                    "decision": None,
+                    "plan": None,
+                    "diff_url": None,
+                }
+            ],
+            "threads": {"d1": {"resolved": False, "awaiting": "you", **thread}},
+        }
 
     def test_table_names_it_instead_of_empty_backticks(self):
-        row = next(ln for ln in T.render_table(self._state(file=None, line=None))
-                   .splitlines() if ln.startswith("| ○"))
+        row = next(
+            ln
+            for ln in T.render_table(self._state(file=None, line=None)).splitlines()
+            if ln.startswith("| ○")
+        )
         self.assertIn("MR-level", row)
         self.assertNotIn("``", row)
 
     def test_table_still_shows_a_real_location(self):
-        row = next(ln for ln in T.render_table(self._state(file="src/a.py", line=7))
-                   .splitlines() if ln.startswith("| ○"))
+        row = next(
+            ln
+            for ln in T.render_table(self._state(file="src/a.py", line=7)).splitlines()
+            if ln.startswith("| ○")
+        )
         self.assertIn("`a.py:7`", row)
 
     def test_the_further_thread_count_survives_an_mr_level_topic(self):
@@ -558,15 +647,20 @@ class TestLocationlessThread(unittest.TestCase):
         state = self._state(file=None, line=None)
         state["topics"][0]["thread_ids"] = ["d1", "d2"]
         state["threads"]["d2"] = {"resolved": False, "awaiting": "you"}
-        row = next(ln for ln in T.render_table(state).splitlines()
-                   if ln.startswith("| ○"))
+        row = next(
+            ln for ln in T.render_table(state).splitlines() if ln.startswith("| ○")
+        )
         self.assertIn("MR-level", row)
         self.assertIn("(+1)", row)
         self.assertNotIn("``", row)
 
     def test_quote_prints_no_none(self):
-        out = T.render_quote(self._state(file=None, line=None, body="a comment",
-                                         author="Someone", notes=[]), "t1")
+        out = T.render_quote(
+            self._state(
+                file=None, line=None, body="a comment", author="Someone", notes=[]
+            ),
+            "t1",
+        )
         self.assertIn("MR-level", out)
         self.assertNotIn("None:", out)
 
@@ -577,24 +671,54 @@ class TestSummaryIsAuthored(unittest.TestCase):
     rows of one real MR opened with a ```suggestion fence. Mirrors review-mr's
     TestNeedsTitle, with the flag derived rather than stored (see `needs_summary`)."""
 
-    def _state(self, summary=None, body="Hier passt eine Generator Function.",
-               state_=None, diff_url=None):
-        return {"iid": 1, "title": "x", "topics": [
-            {"id": "t1", "thread_ids": ["d1"], "summary": summary, "state": state_,
-             "decision": None, "plan": None, "diff_url": diff_url}],
-            "threads": {"d1": {"resolved": False, "awaiting": "you", "author": "Robin",
-                               "body": body, "file": "src/a.py", "line": 7,
-                               "notes": [{"author": "Robin", "body": body}]}}}
+    def _state(
+        self,
+        summary=None,
+        body="Hier passt eine Generator Function.",
+        state_=None,
+        diff_url=None,
+    ):
+        return {
+            "iid": 1,
+            "title": "x",
+            "topics": [
+                {
+                    "id": "t1",
+                    "thread_ids": ["d1"],
+                    "summary": summary,
+                    "state": state_,
+                    "decision": None,
+                    "plan": None,
+                    "diff_url": diff_url,
+                }
+            ],
+            "threads": {
+                "d1": {
+                    "resolved": False,
+                    "awaiting": "you",
+                    "author": "Robin",
+                    "body": body,
+                    "file": "src/a.py",
+                    "line": 7,
+                    "notes": [{"author": "Robin", "body": body}],
+                }
+            },
+        }
 
     def _row(self, state):
-        return next(ln for ln in T.render_table(state, show_done=True).splitlines()
-                    if ln.startswith("|") and "t1" in ln)
+        return next(
+            ln
+            for ln in T.render_table(state, show_done=True).splitlines()
+            if ln.startswith("|") and "t1" in ln
+        )
 
     def test_an_unsummarised_topic_is_flagged_in_the_table(self):
         self.assertIn("✍️ _needs summary:_", self._row(self._state()))
 
     def test_an_authored_summary_is_not_flagged(self):
-        self.assertNotIn("needs summary", self._row(self._state(summary="retry is unbounded")))
+        self.assertNotIn(
+            "needs summary", self._row(self._state(summary="retry is unbounded"))
+        )
 
     def test_the_raw_fallback_carries_no_markup(self):
         """The reported case: a comment opening with a fence put ``` into the cell."""
@@ -628,10 +752,13 @@ class TestSummaryIsAuthored(unittest.TestCase):
         rules = forbidden_rules()
         state = self._state()
         self.assertRegex(self._row(state), rules["unsummarised-topic-in-a-table"])
-        self.assertRegex(T.render_quote(state, "t1"),
-                         rules["unsummarised-topic-in-a-quote"])
-        self.assertRegex(T.render_table(self._state(summary="Das wird nicht gesetzt")),
-                         rules["summary-in-the-threads-language"])
+        self.assertRegex(
+            T.render_quote(state, "t1"), rules["unsummarised-topic-in-a-quote"]
+        )
+        self.assertRegex(
+            T.render_table(self._state(summary="Das wird nicht gesetzt")),
+            rules["summary-in-the-threads-language"],
+        )
 
 
 class TestNoteRendering(unittest.TestCase):
@@ -643,33 +770,43 @@ class TestNoteRendering(unittest.TestCase):
     read as grey prose.
     """
 
-    NOTE = ("Minor:\n\nDer Test schaut nicht wirklich ob die Reihenfolge aus `fields` "
-            "übernommen wird. Entweder:\n\n"
-            "```suggestion:-0+0\n  it('lists multiple changed leaves', () => {\n```\n\n"
-            "Oder `ExtractedData` umdrehen?\n\n"
-            "    const original: ExtractedData = {\n"
-            "      money_related: object({ summe: scalar(10) }),\n"
-            "    }\n")
+    NOTE = (
+        "Minor:\n\nDer Test schaut nicht wirklich ob die Reihenfolge aus `fields` "
+        "übernommen wird. Entweder:\n\n"
+        "```suggestion:-0+0\n  it('lists multiple changed leaves', () => {\n```\n\n"
+        "Oder `ExtractedData` umdrehen?\n\n"
+        "    const original: ExtractedData = {\n"
+        "      money_related: object({ summe: scalar(10) }),\n"
+        "    }\n"
+    )
 
     def test_suggestion_is_lifted_and_re_fenced(self):
         out = T._note_md("Robin", self.NOTE, "src/x.test.ts", 184)
         self.assertIn("\n```ts\n  it('lists multiple changed leaves", out)
-        self.assertNotIn("> ```", out)            # never left inside the quote
+        self.assertNotIn("> ```", out)  # never left inside the quote
         self.assertNotIn("suggestion:-0+0", out)  # replaced by a caption
 
     def test_suggestion_caption_names_the_lines_it_replaces(self):
-        self.assertIn("_suggested replacement for line 184:_",
-                      T._note_md("Robin", self.NOTE, "src/x.test.ts", 184))
-        self.assertIn("_suggested replacement for lines 182–187:_",
-                      T._note_md("Robin", "```suggestion:-2+3\nx\n```\n", "src/x.ts", 184))
+        self.assertIn(
+            "_suggested replacement for line 184:_",
+            T._note_md("Robin", self.NOTE, "src/x.test.ts", 184),
+        )
+        self.assertIn(
+            "_suggested replacement for lines 182–187:_",
+            T._note_md("Robin", "```suggestion:-2+3\nx\n```\n", "src/x.ts", 184),
+        )
 
     def test_suggestion_without_an_anchor_still_gets_a_caption(self):
-        self.assertIn("_suggested replacement:_",
-                      T._note_md("Robin", "```suggestion\nx\n```\n", "src/x.ts", None))
+        self.assertIn(
+            "_suggested replacement:_",
+            T._note_md("Robin", "```suggestion\nx\n```\n", "src/x.ts", None),
+        )
 
     def test_a_tab_indented_snippet_is_code_too(self):
         """Markdown counts a tab as four spaces; a space-only check missed it."""
-        out = T._note_md("Robin", "So:\n\n\tconst a = 1\n\tconst b = 2\n", "src/x.ts", 5)
+        out = T._note_md(
+            "Robin", "So:\n\n\tconst a = 1\n\tconst b = 2\n", "src/x.ts", 5
+        )
         self.assertIn("```ts\nconst a = 1\nconst b = 2\n```", out)
 
     def test_caption_clamps_at_the_top_of_the_file(self):
@@ -678,12 +815,13 @@ class TestNoteRendering(unittest.TestCase):
 
     def test_an_empty_suggestion_block_is_skipped(self):
         """No block, and no caption promising one."""
-        self.assertEqual(T._note_md("Robin", "```suggestion\n```", "src/x.ts", 3),
-                         "> **Robin**")
+        self.assertEqual(
+            T._note_md("Robin", "```suggestion\n```", "src/x.ts", 3), "> **Robin**"
+        )
 
     def test_indented_snippet_becomes_a_fenced_block(self):
         out = T._note_md("Robin", self.NOTE, "src/x.test.ts", 184)
-        self.assertIn("```ts\nconst original: ExtractedData = {", out)   # and dedented
+        self.assertIn("```ts\nconst original: ExtractedData = {", out)  # and dedented
         self.assertNotIn(">     const original", out)
 
     def test_prose_stays_quoted_and_keeps_the_author(self):
@@ -713,16 +851,34 @@ class TestNoteRendering(unittest.TestCase):
         self.assertIn("```diff\n", out)
 
     def test_plain_prose_is_unchanged(self):
-        self.assertEqual(T._note_md("Robin", "Sieht gut aus.\n"),
-                         "> **Robin**\n>\n> Sieht gut aus.")
+        self.assertEqual(
+            T._note_md("Robin", "Sieht gut aus.\n"), "> **Robin**\n>\n> Sieht gut aus."
+        )
 
     def test_quote_passes_the_file_and_anchor_through(self):
-        state = {"iid": 1, "threads": {"d1": {
-            "author": "Robin", "file": "src/x.test.ts", "line": 184, "body": self.NOTE,
-            "resolved": False, "note_count": 1, "url": "http://gl/1",
-            "notes": [{"author": "Robin", "body": self.NOTE}]}},
-            "topics": [{"id": "t2", "summary": "order test", "thread_ids": ["d1"],
-                        "state": None}]}
+        state = {
+            "iid": 1,
+            "threads": {
+                "d1": {
+                    "author": "Robin",
+                    "file": "src/x.test.ts",
+                    "line": 184,
+                    "body": self.NOTE,
+                    "resolved": False,
+                    "note_count": 1,
+                    "url": "http://gl/1",
+                    "notes": [{"author": "Robin", "body": self.NOTE}],
+                }
+            },
+            "topics": [
+                {
+                    "id": "t2",
+                    "summary": "order test",
+                    "thread_ids": ["d1"],
+                    "state": None,
+                }
+            ],
+        }
         out = T.render_quote(state, "t2")
         self.assertIn("_suggested replacement for line 184:_", out)
         self.assertIn("```ts\n", out)
@@ -737,15 +893,28 @@ class TestSyncRefreshesThreads(unittest.TestCase):
     A fresh session on a days-old MR kept rendering "(working tree)" with no span.
     """
 
-    POSITION = {"new_path": "src/x.ts", "old_path": "src/x.ts", "new_line": 22,
-                "head_sha": "abc123def456", "start_sha": "999base", "base_sha": "888base",
-                "line_range": {"start": {"new_line": 12, "old_line": None},
-                               "end": {"new_line": 22, "old_line": None}}}
+    POSITION = {
+        "new_path": "src/x.ts",
+        "old_path": "src/x.ts",
+        "new_line": 22,
+        "head_sha": "abc123def456",
+        "start_sha": "999base",
+        "base_sha": "888base",
+        "line_range": {
+            "start": {"new_line": 12, "old_line": None},
+            "end": {"new_line": 22, "old_line": None},
+        },
+    }
 
     def live(self, position=None, body="Unit test?"):
-        note = {"resolvable": True, "id": 7361603, "author": {"name": "Robin"},
-                "body": body, "resolved": False,
-                "position": self.POSITION if position is None else position}
+        note = {
+            "resolvable": True,
+            "id": 7361603,
+            "author": {"name": "Robin"},
+            "body": body,
+            "resolved": False,
+            "position": self.POSITION if position is None else position,
+        }
         orig = T.api
         T.api = lambda *a, **k: [{"id": "d1", "notes": [note]}]
         try:
@@ -755,11 +924,26 @@ class TestSyncRefreshesThreads(unittest.TestCase):
 
     def old_shaped_state(self):
         """A thread as it was stored before side/head_sha/line_range existed."""
-        return {"iid": 575, "title": "T", "threads": {"d1": {
-            "author": "Robin", "file": "src/x.ts", "line": 22, "body": "Unit test?",
-            "resolved": False, "url": "http://gl/1", "note_count": 1,
-            "last_author": "Robin", "awaiting": "you"}},
-            "topics": [{"id": "t3", "summary": "s", "thread_ids": ["d1"], "state": None}]}
+        return {
+            "iid": 575,
+            "title": "T",
+            "threads": {
+                "d1": {
+                    "author": "Robin",
+                    "file": "src/x.ts",
+                    "line": 22,
+                    "body": "Unit test?",
+                    "resolved": False,
+                    "url": "http://gl/1",
+                    "note_count": 1,
+                    "last_author": "Robin",
+                    "awaiting": "you",
+                }
+            },
+            "topics": [
+                {"id": "t3", "summary": "s", "thread_ids": ["d1"], "state": None}
+            ],
+        }
 
     def test_new_fields_reach_an_existing_thread(self):
         state = self.old_shaped_state()
@@ -805,16 +989,24 @@ class TestSyncRefreshesThreads(unittest.TestCase):
             T.LOCAL_THREAD_FIELDS = ()
 
     def test_a_partial_range_is_not_stored(self):
-        pos = dict(self.POSITION,
-                   line_range={"start": {"new_line": None}, "end": {"new_line": 22}})
+        pos = dict(
+            self.POSITION,
+            line_range={"start": {"new_line": None}, "end": {"new_line": 22}},
+        )
         state = self.old_shaped_state()
         T.sync(state, self.live(position=pos))
         self.assertNotIn("line_start", state["threads"]["d1"])
 
     def test_an_old_side_comment_takes_the_base_blob(self):
-        pos = {"new_path": "src/x.ts", "old_path": "src/old.ts", "new_line": None,
-               "old_line": 40, "head_sha": "head", "start_sha": "start",
-               "line_range": {"start": {"old_line": 35}, "end": {"old_line": 40}}}
+        pos = {
+            "new_path": "src/x.ts",
+            "old_path": "src/old.ts",
+            "new_line": None,
+            "old_line": 40,
+            "head_sha": "head",
+            "start_sha": "start",
+            "line_range": {"start": {"old_line": 35}, "end": {"old_line": 40}},
+        }
         state = self.old_shaped_state()
         T.sync(state, self.live(position=pos))
         x = state["threads"]["d1"]
@@ -827,13 +1019,31 @@ class TestReplyDraft(unittest.TestCase):
     """The draft lives in the state file, and `reply` is the only way out of it."""
 
     def state(self, reply=None):
-        t = {"id": "t1", "summary": "retry unbounded", "thread_ids": ["d1"], "state": None}
+        t = {
+            "id": "t1",
+            "summary": "retry unbounded",
+            "thread_ids": ["d1"],
+            "state": None,
+        }
         if reply is not None:
             t["reply"] = reply
-        return {"iid": 7, "title": "x", "topics": [t], "threads": {"d1": {
-            "author": "Robin", "file": "src/client.py", "line": 88, "body": "unbounded retry",
-            "resolved": False, "note_count": 1, "url": "http://gl/y/1",
-            "notes": [{"author": "Robin", "body": "unbounded retry"}]}}}
+        return {
+            "iid": 7,
+            "title": "x",
+            "topics": [t],
+            "threads": {
+                "d1": {
+                    "author": "Robin",
+                    "file": "src/client.py",
+                    "line": 88,
+                    "body": "unbounded retry",
+                    "resolved": False,
+                    "note_count": 1,
+                    "url": "http://gl/y/1",
+                    "notes": [{"author": "Robin", "body": "unbounded retry"}],
+                }
+            },
+        }
 
     def test_body_round_trips_shell_hazards(self):
         """A quoted heredoc into stdin is why this text survives at all: as a double-quoted
@@ -855,7 +1065,9 @@ class TestReplyDraft(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             with open(os.path.join(d, "reply-t1.md"), "w") as f:
                 f.write("Aus der alten Datei.\n")
-            self.assertEqual(T.reply_body(self.state(), "t1", d), "Aus der alten Datei.\n")
+            self.assertEqual(
+                T.reply_body(self.state(), "t1", d), "Aus der alten Datei.\n"
+            )
 
     def test_state_wins_over_the_legacy_file(self):
         with tempfile.TemporaryDirectory() as d:
@@ -876,9 +1088,16 @@ class TestReplyDraft(unittest.TestCase):
 
     def test_reply_view_carries_every_part(self):
         out = T.render_reply_view(self.state("Gefixt.\n"), "t1", "Gefixt.\n")
-        for part in ("◈ t1", "src/client.py:88", "http://gl/y/1", "unbounded retry",
-                     "**Draft reply:**", "> Gefixt.", "Thread (to post on):",
-                     "**`c`** copy to clipboard"):
+        for part in (
+            "◈ t1",
+            "src/client.py:88",
+            "http://gl/y/1",
+            "unbounded retry",
+            "**Draft reply:**",
+            "> Gefixt.",
+            "Thread (to post on):",
+            "**`c`** copy to clipboard",
+        ):
             self.assertIn(part, out)
 
     def test_reply_view_signature_matches_the_stop_hook_gate(self):
@@ -886,7 +1105,9 @@ class TestReplyDraft(unittest.TestCase):
         prompt drifts out of the gate's signature stops being enforced, and a gate that
         never fires is invisible — nothing tells you the block went unpasted."""
         for refine in (False, True):
-            out = T.render_reply_view(self.state("Gefixt.\n"), "t1", "Gefixt.\n", refine)
+            out = T.render_reply_view(
+                self.state("Gefixt.\n"), "t1", "Gefixt.\n", refine
+            )
             for sig in gate_signature("reply-view"):
                 self.assertIn(sig, out, f"--refine={refine}")
 
@@ -894,34 +1115,44 @@ class TestReplyDraft(unittest.TestCase):
         """A state whose topic has already had its context rendered in full — which is
         what `--refine` is allowed to leave out."""
         state = self.state(reply)
-        T.render_quote(state, "t1")          # records the digest, as every full view does
+        T.render_quote(state, "t1")  # records the digest, as every full view does
         return state
 
     def test_refine_drops_the_context_and_keeps_the_ask(self):
         """Re-showing a reworded draft repeats only what changed. The code and the thread
         were pasted in full when the topic came up and have not changed since; pasting
         them again buries the draft the user asked to see."""
-        out = T.render_reply_view(self._shown("Kürzer.\n"), "t1", "Kürzer.\n", refine=True)
+        out = T.render_reply_view(
+            self._shown("Kürzer.\n"), "t1", "Kürzer.\n", refine=True
+        )
         for gone in ("src/client.py:88", "unbounded retry", "> **Robin**"):
             self.assertNotIn(gone, out)
-        for kept in ("◈ t1", "> Kürzer.", "Thread (to post on): http://gl/y/1",
-                     "**`c`** copy to clipboard"):
+        for kept in (
+            "◈ t1",
+            "> Kürzer.",
+            "Thread (to post on): http://gl/y/1",
+            "**`c`** copy to clipboard",
+        ):
             self.assertIn(kept, out)
 
     def test_refine_falls_back_when_the_context_was_never_shown(self):
         """The short render must not be a topic's first reply view — the user would be
         asked about a comment they have not seen. Nothing recorded, nothing to leave out."""
-        out = T.render_reply_view(self.state("Gefixt.\n"), "t1", "Gefixt.\n", refine=True)
+        out = T.render_reply_view(
+            self.state("Gefixt.\n"), "t1", "Gefixt.\n", refine=True
+        )
         self.assertIn("has not been shown yet", out)
-        self.assertIn("unbounded retry", out)                 # the thread, in full
-        self.assertIn("**`c`** copy to clipboard", out)       # still the same ask
+        self.assertIn("unbounded retry", out)  # the thread, in full
+        self.assertIn("**`c`** copy to clipboard", out)  # still the same ask
 
     def test_refine_falls_back_when_a_new_note_arrived(self):
         """A `sync` mid-topic can bring a reviewer note. Leaving the thread out then would
         answer a comment the user is not looking at."""
         state = self._shown("Gefixt.\n")
         thread = state["threads"]["d1"]
-        thread["notes"].append({"author": "Robin", "body": "Und was ist mit dem Timeout?"})
+        thread["notes"].append(
+            {"author": "Robin", "body": "Und was ist mit dem Timeout?"}
+        )
         thread["note_count"] = 2
         out = T.render_reply_view(state, "t1", "Gefixt.\n", refine=True)
         self.assertIn("changed since this was last shown", out)
@@ -973,10 +1204,11 @@ class TestCodeContext(unittest.TestCase):
         cls._git("config", "user.name", "T")
         cls._git("add", "-A")
         cls._git("commit", "-qm", "seed")
-        cls.sha = subprocess.run(["git", "rev-parse", "HEAD"], cwd=cls.repo,
-                                 capture_output=True, text=True).stdout.strip()
+        cls.sha = subprocess.run(
+            ["git", "rev-parse", "HEAD"], cwd=cls.repo, capture_output=True, text=True
+        ).stdout.strip()
         cls.cwd = os.getcwd()
-        os.chdir(cls.repo)                # the helpers shell out to git in cwd
+        os.chdir(cls.repo)  # the helpers shell out to git in cwd
 
     @classmethod
     def tearDownClass(cls):
@@ -993,15 +1225,20 @@ class TestCodeContext(unittest.TestCase):
         subprocess.run(["git", *args], cwd=cls.repo, capture_output=True, check=True)
 
     def thread(self, **kw):
-        base = {"file": self.file, "line": 10, "side": "new",
-                "head_sha": self.sha, "base_sha": self.sha}
+        base = {
+            "file": self.file,
+            "line": 10,
+            "side": "new",
+            "head_sha": self.sha,
+            "base_sha": self.sha,
+        }
         base.update(kw)
         return base
 
     def test_window_is_centred_and_marked(self):
         out = T.render_code_context(self.thread())
         self.assertIn("► 10 | const line10 = 10", out)
-        self.assertIn("   4 | const line4 = 4", out)      # 6 lines of context
+        self.assertIn("   4 | const line4 = 4", out)  # 6 lines of context
         self.assertIn("  16 | const line16 = 16", out)
         self.assertNotIn("line3 =", out)
         self.assertIn("```ts", out)
@@ -1017,11 +1254,14 @@ class TestCodeContext(unittest.TestCase):
     def test_reads_the_reviewed_blob_not_the_working_tree(self):
         """The line number belongs to the version commented on. Once the author edits, a
         working-tree read would render unrelated lines with no warning."""
-        self._write("// header added on top\n"
-                    + "\n".join(f"const line{i} = {i}" for i in range(1, 31)) + "\n")
+        self._write(
+            "// header added on top\n"
+            + "\n".join(f"const line{i} = {i}" for i in range(1, 31))
+            + "\n"
+        )
         try:
             out = T.render_code_context(self.thread())
-            self.assertIn("► 10 | const line10 = 10", out)     # not line9, as reviewed
+            self.assertIn("► 10 | const line10 = 10", out)  # not line9, as reviewed
             self.assertIn("working tree differs", out)
         finally:
             self._write("\n".join(f"const line{i} = {i}" for i in range(1, 31)) + "\n")
@@ -1058,26 +1298,40 @@ class TestCodeContext(unittest.TestCase):
         """The complaint that started this: 12 lines of unrelated declarations under a
         comment about one function."""
         out = T.render_code_context(self.thread(line=14, line_start=8, line_end=14))
-        self.assertIn("   5 | const line5 = 5", out)      # 3 above the span
+        self.assertIn("   5 | const line5 = 5", out)  # 3 above the span
         self.assertNotIn("line4 =", out)
-        self.assertIn("  15 | const line15 = 15", out)    # 1 below, no more
+        self.assertIn("  15 | const line15 = 15", out)  # 1 below, no more
         self.assertNotIn("line16 =", out)
 
     def test_doc_comment_above_a_span_is_pulled_in(self):
         """`/** … */` explains the marked code; stopping one line short of it is the
         difference between context and a fragment."""
-        self._write("\n".join(
-            ["const a = 1", "", "/**", " * why this exists", " */",
-             "function f() {", "  return 1", "}"]) + "\n")
+        self._write(
+            "\n".join(
+                [
+                    "const a = 1",
+                    "",
+                    "/**",
+                    " * why this exists",
+                    " */",
+                    "function f() {",
+                    "  return 1",
+                    "}",
+                ]
+            )
+            + "\n"
+        )
         self._git("commit", "-qam", "doc")
-        sha = subprocess.run(["git", "rev-parse", "HEAD"], cwd=self.repo,
-                             capture_output=True, text=True).stdout.strip()
+        sha = subprocess.run(
+            ["git", "rev-parse", "HEAD"], cwd=self.repo, capture_output=True, text=True
+        ).stdout.strip()
         try:
-            out = T.render_code_context(self.thread(line=8, line_start=6, line_end=8,
-                                                    head_sha=sha))
+            out = T.render_code_context(
+                self.thread(line=8, line_start=6, line_end=8, head_sha=sha)
+            )
             self.assertIn("/**", out)
             self.assertIn("* why this exists", out)
-            self.assertNotIn("const a = 1", out)          # blank line ends the block
+            self.assertNotIn("const a = 1", out)  # blank line ends the block
         finally:
             self._write("\n".join(f"const line{i} = {i}" for i in range(1, 31)) + "\n")
             self._git("commit", "-qam", "restore")
@@ -1088,8 +1342,12 @@ class TestCodeContext(unittest.TestCase):
         self.assertNotIn("┃", out)
 
     def test_a_reversed_or_partial_range_falls_back_to_the_anchor(self):
-        for bad in ({"line_start": 14, "line_end": 8}, {"line_start": 8},
-                    {"line_end": 14}, {"line_start": "8", "line_end": "14"}):
+        for bad in (
+            {"line_start": 14, "line_end": 8},
+            {"line_start": 8},
+            {"line_end": 14},
+            {"line_start": "8", "line_end": "14"},
+        ):
             out = T.render_code_context(self.thread(line=10, **bad))
             self.assertIn("► 10 |", out, bad)
             self.assertNotIn("┃", out, bad)
@@ -1105,8 +1363,9 @@ class TestCodeContext(unittest.TestCase):
 
     def test_a_huge_span_collapses_its_middle(self):
         """A reviewer can select a 200-line file; the block must stay readable."""
-        out = T.render_code_context(self.thread(file=self.big, line=200,
-                                                line_start=1, line_end=200))
+        out = T.render_code_context(
+            self.thread(file=self.big, line=200, line_start=1, line_end=200)
+        )
         self.assertIn("200 lines in total", out)
         self.assertIn("┃   1 | const big1 = 1", out)
         self.assertIn("┃ 200 | const big200 = 200", out)
@@ -1116,11 +1375,21 @@ class TestCodeContext(unittest.TestCase):
     def test_fetch_to_sync_to_quote_renders_the_span(self):
         """The whole chain, because the parts were each right while the seam was not: a
         GitLab position with a line_range, through fetch and sync, into `quote`."""
-        note = {"resolvable": True, "id": 1, "author": {"name": "Robin"}, "resolved": False,
-                "body": "Ganze Funktion — Test?", "position": {
-                    "new_path": self.file, "old_path": self.file, "new_line": 14,
-                    "head_sha": self.sha, "start_sha": self.sha,
-                    "line_range": {"start": {"new_line": 8}, "end": {"new_line": 14}}}}
+        note = {
+            "resolvable": True,
+            "id": 1,
+            "author": {"name": "Robin"},
+            "resolved": False,
+            "body": "Ganze Funktion — Test?",
+            "position": {
+                "new_path": self.file,
+                "old_path": self.file,
+                "new_line": 14,
+                "head_sha": self.sha,
+                "start_sha": self.sha,
+                "line_range": {"start": {"new_line": 8}, "end": {"new_line": 14}},
+            },
+        }
         orig = T.api
         T.api = lambda *a, **k: [{"id": "d9", "notes": [note]}]
         try:
@@ -1133,19 +1402,73 @@ class TestCodeContext(unittest.TestCase):
         self.assertIn("┃  8 | const line8 = 8", out)
         self.assertIn("┃ 14 | const line14 = 14", out)
         self.assertNotIn("►", out)
-        self.assertIn("as reviewed", out)          # read from the blob, not the working tree
+        self.assertIn("as reviewed", out)  # read from the blob, not the working tree
         self.assertLess(out.index("const line14"), out.index("Ganze Funktion"))
 
     def test_quote_puts_the_code_above_the_note(self):
-        state = {"iid": 1, "title": "x", "threads": {"d1": dict(
-            self.thread(), author="Robin", body="ist äquivalent?", resolved=False,
-            note_count=1, url="http://gl/x#note_1",
-            notes=[{"author": "Robin", "body": "ist äquivalent?"}])},
-            "topics": [{"id": "t1", "summary": "dupe test", "thread_ids": ["d1"],
-                        "state": None}]}
+        state = {
+            "iid": 1,
+            "title": "x",
+            "threads": {
+                "d1": dict(
+                    self.thread(),
+                    author="Robin",
+                    body="ist äquivalent?",
+                    resolved=False,
+                    note_count=1,
+                    url="http://gl/x#note_1",
+                    notes=[{"author": "Robin", "body": "ist äquivalent?"}],
+                )
+            },
+            "topics": [
+                {
+                    "id": "t1",
+                    "summary": "dupe test",
+                    "thread_ids": ["d1"],
+                    "state": None,
+                }
+            ],
+        }
         out = T.render_quote(state, "t1")
         self.assertLess(out.index("const line10"), out.index("ist äquivalent?"))
         self.assertLess(out.index("http://gl/x#note_1"), out.index("const line10"))
+
+
+class TestSetState(unittest.TestCase):
+    """`set --state done` is the natural command after a reviewer resolves, and the
+    old error only listed open/waiting — which reads like the CLI forgot a state,
+    not like `done` being derived from GitLab resolution elsewhere."""
+
+    def test_done_and_reply_pending_explain_they_are_derived(self):
+        for v in ("done", "reply_pending", "reply-pending"):
+            with self.assertRaises(argparse.ArgumentTypeError) as cm:
+                T.settable_state(v)
+            msg = str(cm.exception)
+            self.assertIn("derived", msg)
+            self.assertIn("sync", msg)
+
+    def test_open_and_waiting_pass_through(self):
+        for v in ("open", "waiting"):
+            self.assertEqual(T.settable_state(v), v)
+
+    def test_the_cli_prints_that_message_not_a_bare_choice_list(self):
+        """End-to-end through argparse: the type error must surface as the usage
+        error, ahead of the choices check that would replace it."""
+        proc = subprocess.run(
+            [
+                sys.executable,
+                os.path.join(HERE, "threads.py"),
+                "set",
+                "t1",
+                "--state",
+                "done",
+            ],
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(proc.returncode, 2)
+        self.assertIn("derived", proc.stderr)
+        self.assertIn("sync", proc.stderr)
 
 
 if __name__ == "__main__":

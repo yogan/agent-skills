@@ -32,7 +32,8 @@ Subcommands:
   reply <t>   the drafted reply BODY only — the payload for clip.sh / glab
   set <t> --reply -   store a reply body from stdin (quoted heredoc; never a
               scratch file — see reply_body())
-  set <t> …   update a topic's fields (summary, decision, plan, start-sha, diff-url, reply)
+  set <t> …   update a topic's fields (state open|waiting, summary, decision, plan,
+              start-sha, diff-url, reply)
   merge <into> <o…>   fold other topics' threads into <into>
   path        print the state-file path
   change-view <t> [file]  render a change illustration — reads the change from stdin
@@ -42,6 +43,7 @@ Subcommands:
   hunk-close  close the viewer window once the push has landed
   check-handles   internal — used by guard-reply.sh, no MR context needed
 """
+
 import argparse
 import glob
 import hashlib
@@ -52,18 +54,39 @@ import sys
 # Repo root, 4 levels up from skills/rework-mr/scripts/threads.py — needed so `lib/`,
 # which lives outside this skill's own directory, is importable regardless of how this
 # script is invoked (direct, or symlinked into ~/.claude/skills/).
-_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(
-    os.path.realpath(__file__)))))
+_REPO_ROOT = os.path.dirname(
+    os.path.dirname(os.path.dirname(os.path.dirname(os.path.realpath(__file__))))
+)
 if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
 
-from lib import critical_manifest, hunk                         # noqa: E402
-from lib.gitlab import (api, context, current_user, die, mr_view,  # noqa: E402
-                        project_slug, run, web_base)
-from lib.mr_common import (DEFAULT_LANG, MR_LEVEL, TOPIC_ICON, first_name,  # noqa: E402
-                           load, loc_md, num, reads_as, save, short_summary,
-                           state_file, topic_for, tref)
-from lib.snippet import MAX_BACKTRACK, open_construct            # noqa: E402
+from lib import critical_manifest, hunk  # noqa: E402
+from lib.gitlab import (
+    api,
+    context,
+    current_user,
+    die,
+    mr_view,  # noqa: E402
+    project_slug,
+    run,
+    web_base,
+)
+from lib.mr_common import (
+    DEFAULT_LANG,
+    MR_LEVEL,
+    TOPIC_ICON,
+    first_name,  # noqa: E402
+    load,
+    loc_md,
+    num,
+    reads_as,
+    save,
+    short_summary,
+    state_file,
+    topic_for,
+    tref,
+)
+from lib.snippet import MAX_BACKTRACK, open_construct  # noqa: E402
 
 # internal topic handles (t5, t6, t10 …) — must never reach a GitLab comment.
 # Single source of truth: guard-reply.sh shells out to `check-handles` below
@@ -81,9 +104,9 @@ STATE_ROOT = os.path.expanduser("~/.claude/rework-mr")
 # add one status; keying off one table keeps that to one place.
 STATUSES = {
     "reply_pending": (0, "✎", "reply-pending"),
-    "open":          (1, "○", "open"),
-    "waiting":       (2, "◐", "waiting"),
-    "done":          (3, "●", "done"),
+    "open": (1, "○", "open"),
+    "waiting": (2, "◐", "waiting"),
+    "done": (3, "●", "done"),
 }
 STATUS_ORDER = {k: v[0] for k, v in STATUSES.items()}
 GLYPH = {k: v[1] for k, v in STATUSES.items()}
@@ -92,9 +115,13 @@ WORD = {k: v[2] for k, v in STATUSES.items()}
 
 def new_state(ctx, mr):
     return {
-        "project": ctx["path"], "slug": ctx["slug"], "iid": mr["iid"],
-        "mr_web_url": mr.get("web_url"), "title": mr.get("title"),
-        "threads": {}, "topics": [],
+        "project": ctx["path"],
+        "slug": ctx["slug"],
+        "iid": mr["iid"],
+        "mr_web_url": mr.get("web_url"),
+        "title": mr.get("title"),
+        "threads": {},
+        "topics": [],
     }
 
 
@@ -123,8 +150,10 @@ def _range_keys(pos, on_new):
 
 
 def fetch_threads(ctx, iid, me):
-    disc = api(f"projects/{ctx['enc']}/merge_requests/{iid}/discussions?per_page=100",
-               paginate=True)
+    disc = api(
+        f"projects/{ctx['enc']}/merge_requests/{iid}/discussions?per_page=100",
+        paginate=True,
+    )
     out = {}
     for d in disc:
         notes = [n for n in (d.get("notes") or []) if not n.get("system")]
@@ -147,7 +176,8 @@ def fetch_threads(ctx, iid, me):
             "author": (first.get("author") or {}).get("name")
             or (first.get("author") or {}).get("username"),
             "file": (pos.get("new_path") if on_new else pos.get("old_path"))
-            or pos.get("new_path") or pos.get("old_path"),
+            or pos.get("new_path")
+            or pos.get("old_path"),
             "line": pos.get("new_line") if on_new else pos.get("old_line"),
             "side": "new" if on_new else "old",
             # GitLab's `line_range` is the reviewer's actual selection ("Comment on lines
@@ -168,9 +198,14 @@ def fetch_threads(ctx, iid, me):
             "awaiting": "reviewer" if (me and last_user == me) else "you",
             # full thread in order, so `quote` can show the whole discussion
             # (original + every reply), not just first + last.
-            "notes": [{"author": (n.get("author") or {}).get("name")
-                       or (n.get("author") or {}).get("username"),
-                       "body": n.get("body")} for n in notes],
+            "notes": [
+                {
+                    "author": (n.get("author") or {}).get("name")
+                    or (n.get("author") or {}).get("username"),
+                    "body": n.get("body"),
+                }
+                for n in notes
+            ],
         }
     return out
 
@@ -226,7 +261,7 @@ def topic_status(state, t):
         # left. Takes precedence over "you spoke last, no push", so a resume
         # never mistakes a pushed topic for unstarted work.
         return "reply_pending"
-    return t.get("state") or "open"          # you spoke last, no push → LLM decides
+    return t.get("state") or "open"  # you spoke last, no push → LLM decides
 
 
 def sync(state, live):
@@ -242,16 +277,26 @@ def sync(state, live):
     """
     for tid, rec in live.items():
         if tid in state["threads"]:
-            local = {k: v for k, v in state["threads"][tid].items()
-                     if k in LOCAL_THREAD_FIELDS}
+            local = {
+                k: v
+                for k, v in state["threads"][tid].items()
+                if k in LOCAL_THREAD_FIELDS
+            }
             state["threads"][tid] = {**rec, **local}
         else:
             state["threads"][tid] = rec
-            state["topics"].append({
-                "id": next_tid(state), "thread_ids": [tid], "summary": None,
-                "state": None, "decision": None, "plan": None,
-                "start_sha": None, "diff_url": None,
-            })
+            state["topics"].append(
+                {
+                    "id": next_tid(state),
+                    "thread_ids": [tid],
+                    "summary": None,
+                    "state": None,
+                    "decision": None,
+                    "plan": None,
+                    "start_sha": None,
+                    "diff_url": None,
+                }
+            )
     for tid in state["threads"]:
         if tid not in live:
             state["threads"][tid]["resolved"] = True
@@ -273,8 +318,11 @@ def _rows(state, scope, show_done=False):
     st = {t["id"]: topic_status(state, t) for t in topics}
     counts = {s: sum(1 for t in topics if st[t["id"]] == s) for s in GLYPH}
     ordered = sorted(topics, key=lambda t: (STATUS_ORDER[st[t["id"]]], num(t["id"])))
-    keep = {"open", "reply_pending"} if scope == "mine" else \
-           ({"open", "reply_pending", "waiting"} | ({"done"} if show_done else set()))
+    keep = (
+        {"open", "reply_pending"}
+        if scope == "mine"
+        else ({"open", "reply_pending", "waiting"} | ({"done"} if show_done else set()))
+    )
     return st, counts, [t for t in ordered if st[t["id"]] in keep]
 
 
@@ -284,8 +332,14 @@ def _loc(state, t):
     request itself has none). Stays duplicated: this table also carries the count of
     the topic's further threads, which review-mr's does not."""
     thr = [state["threads"].get(x, {}) for x in t["thread_ids"]]
-    return next((f"{os.path.basename(x['file'])}:{x.get('line') or ''}"
-                 for x in thr if x.get("file")), "")
+    return next(
+        (
+            f"{os.path.basename(x['file'])}:{x.get('line') or ''}"
+            for x in thr
+            if x.get("file")
+        ),
+        "",
+    )
 
 
 def _loc_cell(state, t):
@@ -316,9 +370,11 @@ def needs_summary_warning(state, t):
     comment, and still nothing the user can recognise the topic by."""
     if not needs_summary(state, t):
         return None
-    return (f"⚠️ **needs an English summary** — `{t['id']}` has no authored `summary` "
-            f"yet. Read the thread and run `set {t['id']} --summary \"<short English "
-            f"line>\"` before working this topic.")
+    return (
+        f"⚠️ **needs an English summary** — `{t['id']}` has no authored `summary` "
+        f'yet. Read the thread and run `set {t["id"]} --summary "<short English '
+        f'line>"` before working this topic.'
+    )
 
 
 def summary_language_warning(state, topics):
@@ -334,15 +390,20 @@ def summary_language_warning(state, topics):
     German thread the whole time, which is exactly the pull that produced a review with
     all ten summaries in the wrong language.
     """
-    ids = [t["id"] for t in topics if t.get("summary")
-           and reads_as(t["summary"], DEFAULT_LANG)]
+    ids = [
+        t["id"]
+        for t in topics
+        if t.get("summary") and reads_as(t["summary"], DEFAULT_LANG)
+    ]
     if not ids:
         return None
-    return (f"⚠️ **summaries must be English** — {', '.join(tref(x) for x in ids)} "
-            f"read as {DEFAULT_LANG}. The thread's own language governs one thing, the "
-            f"body of a reply you post into it; the table and every topic heading are "
-            f"English. Reword each with `set <t> --summary \"<short English line>\"`, "
-            f"then re-render.")
+    return (
+        f"⚠️ **summaries must be English** — {', '.join(tref(x) for x in ids)} "
+        f"read as {DEFAULT_LANG}. The thread's own language governs one thing, the "
+        f"body of a reply you post into it; the table and every topic heading are "
+        f'English. Reword each with `set <t> --summary "<short English line>"`, '
+        f"then re-render."
+    )
 
 
 def render_table(state, scope="all", show_done=False):
@@ -355,12 +416,19 @@ def render_table(state, scope="all", show_done=False):
             s = st[tid]
             summ = short_summary(state, t, width=72).replace("|", "\\|")
             if needs_summary(state, t):
-                summ = f"✍️ _needs summary:_ {summ}"   # raw quote, not an authored title
-            out.append(critical_manifest.mark(f"| {GLYPH[s]} {WORD[s]} | {tref(f'**{tid}**')} "
-                             f"| {_loc_cell(state, t)} | {summ} |"))
+                summ = f"✍️ _needs summary:_ {summ}"  # raw quote, not an authored title
+            out.append(
+                critical_manifest.mark(
+                    f"| {GLYPH[s]} {WORD[s]} | {tref(f'**{tid}**')} "
+                    f"| {_loc_cell(state, t)} | {summ} |"
+                )
+            )
     else:
-        out.append("_✓ nothing needs you — open threads are waiting on the reviewer_"
-                   if scope == "mine" else "_✓ no open threads_")
+        out.append(
+            "_✓ nothing needs you — open threads are waiting on the reviewer_"
+            if scope == "mine"
+            else "_✓ no open threads_"
+        )
     warn = summary_language_warning(state, shown)
     if warn:
         out += ["", warn]
@@ -373,7 +441,7 @@ def render_table(state, scope="all", show_done=False):
 
 
 SUGGESTION_INFO = re.compile(r"^suggestion(?::-(\d+)\+(\d+))?$")
-INDENT_CODE = re.compile(r"^(?: {4,}|\t+)\S")   # markdown counts a tab as 4 spaces
+INDENT_CODE = re.compile(r"^(?: {4,}|\t+)\S")  # markdown counts a tab as 4 spaces
 DEDENT = re.compile(r"^(?: {4}|\t)")
 LIST_ITEM = re.compile(r"^\s*([-*+]|\d+[.)])\s")
 
@@ -395,8 +463,10 @@ def _suggestion_caption(info, anchor):
         b = max(a, int(anchor) + int(m.group(2) or 0))
     except (TypeError, ValueError):
         return "_suggested replacement:_"
-    return f"_suggested replacement for {'line' if a == b else 'lines'} " \
-           f"{a if a == b else f'{a}–{b}'}:_"
+    return (
+        f"_suggested replacement for {'line' if a == b else 'lines'} "
+        f"{a if a == b else f'{a}–{b}'}:_"
+    )
 
 
 def _indented_runs(seg):
@@ -407,19 +477,20 @@ def _indented_runs(seg):
     hanging under a list item is left as prose — that indentation is list continuation, not
     code.
     """
+
     def before(i):
         """Index of the nearest non-blank line above `i`, or None."""
         return next((j for j in range(i - 1, -1, -1) if seg[j].strip()), None)
 
     code = [bool(INDENT_CODE.match(ln)) for ln in seg]
-    for i, ln in enumerate(seg):                  # blanks: only inside a block
+    for i, ln in enumerate(seg):  # blanks: only inside a block
         if ln.strip():
             continue
         nxt = next((j for j in range(i + 1, len(seg)) if seg[j].strip()), None)
         prev = before(i)
-        code[i] = (prev is not None and nxt is not None and code[prev] and code[nxt])
+        code[i] = prev is not None and nxt is not None and code[prev] and code[nxt]
     i = 0
-    while i < len(seg):                           # list continuation is not code
+    while i < len(seg):  # list continuation is not code
         if not code[i]:
             i += 1
             continue
@@ -441,8 +512,9 @@ def _indented_runs(seg):
         buf.append(ln)
     if buf:
         runs.append((kind, buf))
-    return [(k, [DEDENT.sub("", ln) if k == "code" else ln for ln in v])
-            for k, v in runs]
+    return [
+        (k, [DEDENT.sub("", ln) if k == "code" else ln for ln in v]) for k, v in runs
+    ]
 
 
 def _note_md(name, body, path=None, anchor=None):
@@ -468,13 +540,16 @@ def _note_md(name, body, path=None, anchor=None):
             out.extend(f"> {ln}".rstrip() if ln.strip() else ">" for ln in lines)
 
     def code(content, info):
-        if not content.strip():                   # an empty suggestion is not worth a block
+        if not content.strip():  # an empty suggestion is not worth a block
             return
         cap = _suggestion_caption(info, anchor)
         if cap:
             out.extend(["", cap])
-        lang = info if info and not SUGGESTION_INFO.match(info) else (
-            "diff" if looks_like_diff(content) else lang_for(path))
+        lang = (
+            info
+            if info and not SUGGESTION_INFO.match(info)
+            else ("diff" if looks_like_diff(content) else lang_for(path))
+        )
         out.extend(["", fence(content, lang)])
 
     for kind, info, seg in _segments((body or "").strip().splitlines() or [""]):
@@ -491,12 +566,33 @@ def _note_md(name, body, path=None, anchor=None):
 
 # ------------------------------------------------------- fences & code context
 
-FENCE_BY_EXT = {".ts": "ts", ".tsx": "tsx", ".js": "js", ".jsx": "jsx", ".mjs": "js",
-                ".py": "python", ".rb": "ruby", ".go": "go", ".java": "java",
-                ".kt": "kotlin", ".rs": "rust", ".php": "php", ".cs": "csharp",
-                ".sh": "bash", ".env": "bash", ".yml": "yaml", ".yaml": "yaml",
-                ".json": "json", ".sql": "sql", ".css": "css", ".scss": "scss",
-                ".html": "html", ".vue": "vue", ".svelte": "svelte", ".md": "markdown"}
+FENCE_BY_EXT = {
+    ".ts": "ts",
+    ".tsx": "tsx",
+    ".js": "js",
+    ".jsx": "jsx",
+    ".mjs": "js",
+    ".py": "python",
+    ".rb": "ruby",
+    ".go": "go",
+    ".java": "java",
+    ".kt": "kotlin",
+    ".rs": "rust",
+    ".php": "php",
+    ".cs": "csharp",
+    ".sh": "bash",
+    ".env": "bash",
+    ".yml": "yaml",
+    ".yaml": "yaml",
+    ".json": "json",
+    ".sql": "sql",
+    ".css": "css",
+    ".scss": "scss",
+    ".html": "html",
+    ".vue": "vue",
+    ".svelte": "svelte",
+    ".md": "markdown",
+}
 FENCE_RE = re.compile(r"^(\s*)(`{3,})(.*)$")
 #  git's own headers. `index` is matched with its sha shape, not as a bare word: a code
 #  snippet starting a line with `index = 0` is not a diff.
@@ -577,7 +673,7 @@ def _segments(lines):
         while i < len(lines) and not close.match(lines[i]):
             body.append(lines[i])
             i += 1
-        i += 1                                    # skip the closing fence, if any
+        i += 1  # skip the closing fence, if any
         segs.append(("code", info.strip(), body))
     if buf:
         segs.append(("text", "", buf))
@@ -602,9 +698,12 @@ def render_change(text, path=None):
             out += body
         else:
             content = "\n".join(body)
-            out.append(fence(content,
-                             info or ("diff" if looks_like_diff(content)
-                                      else lang_for(path))))
+            out.append(
+                fence(
+                    content,
+                    info or ("diff" if looks_like_diff(content) else lang_for(path)),
+                )
+            )
     return "\n".join(out).strip("\n")
 
 
@@ -685,7 +784,7 @@ def render_code_context(x):
     """
     path, line = x.get("file"), x.get("line")
     if not path or not line:
-        return None                               # not a diff comment (or no position)
+        return None  # not a diff comment (or no position)
     try:
         n = int(line)
     except (TypeError, ValueError):
@@ -693,18 +792,20 @@ def render_code_context(x):
     on_new = (x.get("side") or "new") == "new"
     sha = x.get("head_sha") if on_new else x.get("base_sha")
     text, source = _blob_text(sha, path), f"as reviewed, `{(sha or '')[:8]}`"
-    working = _repo_file(path)                     # read once: each call shells out to git
+    working = _repo_file(path)  # read once: each call shells out to git
     drift = None
     if text is None:
         text, source = working, "working tree"
     elif working not in (None, text):
-        drift = ("_⚠️ the working tree differs from this — you may already have changed "
-                 "the file; the lines above are the version the comment is on._")
+        drift = (
+            "_⚠️ the working tree differs from this — you may already have changed "
+            "the file; the lines above are the version the comment is on._"
+        )
     if text is None:
         return None
     lines = text.splitlines()
     if n > len(lines):
-        return None                               # anchor outside the file → show nothing
+        return None  # anchor outside the file → show nothing
     a, b, span = _anchor_span(x, n, len(lines))
     above, below = (CTX_ABOVE, CTX_BELOW) if span else (CTX_SINGLE, CTX_SINGLE)
     lo, hi = max(1, a - above), min(len(lines), b + below)
@@ -729,7 +830,7 @@ def render_code_context(x):
     body = []
     for i in range(lo, hi + 1):
         if hi - lo + 1 > MAX_BODY and lo + MAX_BODY - 10 < i < hi - 8:
-            if body and body[-1] is not None:     # collapse the middle of a huge span once
+            if body and body[-1] is not None:  # collapse the middle of a huge span once
                 body.append(None)
             continue
         body.append(i)
@@ -739,12 +840,18 @@ def render_code_context(x):
         if i is None:
             rendered.append(f"  {'…'.rjust(width)} | … {b - a + 1} lines in total …")
             continue
-        mark = MARK_SPAN if span and a <= i <= b else (MARK_LINE if not span and i == n
-                                                       else " ")
+        mark = (
+            MARK_SPAN
+            if span and a <= i <= b
+            else (MARK_LINE if not span and i == n else " ")
+        )
         rendered.append(f"{mark} {str(i).rjust(width)} | {lines[i - 1]}")
     where = f"{path}:{a}–{b}" if span else f"{path}:{n}"
-    out = [f"_Code the comment is on — `{where}` ({source}):_", "",
-           fence("\n".join(rendered), lang)]
+    out = [
+        f"_Code the comment is on — `{where}` ({source}):_",
+        "",
+        fence("\n".join(rendered), lang),
+    ]
     if drift:
         out += ["", drift]
     return "\n".join(out)
@@ -757,8 +864,9 @@ def render_change_view(tid, text, path=None):
     fail on MR resolution. `path` (optional) only supplies the fence language for an
     unfenced snippet that isn't a diff.
     """
-    return "\n".join([f"**Change ({tref(tid)}):**", "",
-                      render_change(text, path), "", "Agreed?"])
+    return "\n".join(
+        [f"**Change ({tref(tid)}):**", "", render_change(text, path), "", "Agreed?"]
+    )
 
 
 # The closing line of both diff-view shapes, and the paste gate's signature for them — the
@@ -795,8 +903,11 @@ def render_diff_view(tid, diff, notice=""):
     `render_diff_pointer`, which replaces it when it could. Its closing line offers one
     fewer answer than the pointer's: with no viewer window there is nothing to annotate.
     """
-    return "\n".join([f"**Diff ({tref(tid)}):**", "",
-                      fence(diff, "diff")] + _notice(notice) + ["", ACK_ASK + "."])
+    return "\n".join(
+        [f"**Diff ({tref(tid)}):**", "", fence(diff, "diff")]
+        + _notice(notice)
+        + ["", ACK_ASK + "."]
+    )
 
 
 def _header_path(rest):
@@ -890,22 +1001,31 @@ def render_diff_pointer(tid, stat, where, notice=""):
     each row is a key and a value, which tints the path apart from its counts; the trailing
     colon is the whole cost of that, and it replaces a column separator that cost as much.
     """
-    files, adds, dels = len(stat), sum(a for _, a, _ in stat), sum(r for _, _, r in stat)
+    files, adds, dels = (
+        len(stat),
+        sum(a for _, a, _ in stat),
+        sum(r for _, _, r in stat),
+    )
     # Padded to the longest path, capped so one deeply nested file cannot push every count
     # off the far side of a terminal; a path past the cap simply loses its alignment.
     width = min(max((len(p) for p, _, _ in stat), default=0), 60)
     # Not marked critical here — `fence` marks every line it wraps, and marking twice puts
     # each row in the manifest twice.
     rows = [f"{p + ':':<{width + 2}} +{a} −{r}" for p, a, r in stat]
-    head = (f"**Diff ({tref(tid)})** — {files} file{'' if files == 1 else 's'}, "
-            f"+{adds} −{dels} · {where}")
+    head = (
+        f"**Diff ({tref(tid)})** — {files} file{'' if files == 1 else 's'}, "
+        f"+{adds} −{dels} · {where}"
+    )
     # Marked critical explicitly, unlike the rows, which `fence` marks for us. This is the
     # ONLY line naming where the diff is, so under the hook's one-dropped-line tolerance it
     # was the one line a message could lose and still pass — leaving a list of filenames, a
     # closing question mentioning "that window", and no window named anywhere.
     critical_manifest.mark(head)
-    return "\n".join([head, "", fence("\n".join(rows), "yaml")] + _notice(notice)
-                     + ["", ACK_ASK + ", here or as notes on the diff in that window."])
+    return "\n".join(
+        [head, "", fence("\n".join(rows), "yaml")]
+        + _notice(notice)
+        + ["", ACK_ASK + ", here or as notes on the diff in that window."]
+    )
 
 
 def _state_mtime(state_dir):
@@ -948,7 +1068,7 @@ def window_label(default="diff"):
                 # happens to sit in a directory name above it.
                 newest = os.path.basename(max(dirs, key=_state_mtime))
                 return TOPIC_ICON + "!" + newest.rsplit("--mr", 1)[1]
-    except (Exception, SystemExit):         # noqa: BLE001 — no remote/state → use branch
+    except (Exception, SystemExit):  # noqa: BLE001 — no remote/state → use branch
         pass
     branch = (_git("rev-parse", "--abbrev-ref", "HEAD") or "").strip()
     return f"{TOPIC_ICON} {branch or default}"
@@ -981,18 +1101,24 @@ def diff_view_block(tid, diff, plain=False, notes=()):
     # the tree was already cleaned by a fixup and rebase, or the whole change is a new
     # untracked file.
     if not stat and not diff.strip():
-        die("`git diff` is empty — nothing to show and nothing to approve. The change is "
+        die(
+            "`git diff` is empty — nothing to show and nothing to approve. The change is "
             "probably staged (`git diff` reads unstaged only: pass `-- --cached`), already "
             "committed, or entirely in untracked files. Never ask for the fixup ACK over an "
-            "empty diff.")
+            "empty diff."
+        )
     root = (_git("rev-parse", "--show-toplevel") or "").strip()
     if plain or not stat or not root:
         return render_diff_view(tid, diff)
     # Whether the notes actually landed is reported, never assumed. The batch is
     # all-or-nothing in the viewer, so one bad anchor drops all of them — and the prose
     # above this block has already told the user the agent flagged something.
-    dropped = ("The notes could not be anchored on the diff — read the points in the prose "
-               "above instead." if notes else "")
+    dropped = (
+        "The notes could not be anchored on the diff — read the points in the prose "
+        "above instead."
+        if notes
+        else ""
+    )
     shown = hunk.show_working_diff(root, window_label(), stat)
     if not shown:
         return render_diff_view(tid, diff, dropped)
@@ -1028,13 +1154,19 @@ def hunk_close_decision(notes):
     the second destroys an unread request and the diff it was anchored to.
     """
     if notes is None:
-        return ("Could not read the viewer's notes, so the window is left open rather than "
-                "closed over something unread. Harmless — close it yourself, or it goes on "
-                "the next push.", False)
+        return (
+            "Could not read the viewer's notes, so the window is left open rather than "
+            "closed over something unread. Harmless — close it yourself, or it goes on "
+            "the next push.",
+            False,
+        )
     if notes:
-        return ("Notes were left in the viewer since the last read — the window is still "
-                "open. Run `threads.py hunk-notes` and answer them; they are a new change "
-                "on this topic, on top of the one just pushed.", False)
+        return (
+            "Notes were left in the viewer since the last read — the window is still "
+            "open. Run `threads.py hunk-notes` and answer them; they are a new change "
+            "on this topic, on top of the one just pushed.",
+            False,
+        )
     return (None, True)
 
 
@@ -1078,8 +1210,10 @@ def render_quote(state, tid, remember=True):
         if i == 0:
             title = f"**{tref(t['id'])}" + (f" — {summ}**" if summ else "**")
             out.append(f"{title} · {loc_md(path)}")
-            for w in (needs_summary_warning(state, t),
-                      summary_language_warning(state, [t])):
+            for w in (
+                needs_summary_warning(state, t),
+                summary_language_warning(state, [t]),
+            ):
                 if w:
                     out.append(w)
         else:
@@ -1095,10 +1229,10 @@ def render_quote(state, tid, remember=True):
         # language and labelled with the lines it replaces.
         f, ln = x.get("file"), x.get("line")
         notes = x.get("notes")
-        if notes:                               # whole thread, in order
+        if notes:  # whole thread, in order
             for n in notes:
                 out += ["", _note_md(n.get("author"), n.get("body"), f, ln)]
-        else:                                   # pre-`notes` state: first + last only
+        else:  # pre-`notes` state: first + last only
             out += ["", _note_md(x.get("author"), x.get("body"), f, ln)]
             if x.get("note_count", 1) > 1:
                 skipped = x["note_count"] - 2
@@ -1110,7 +1244,6 @@ def render_quote(state, tid, remember=True):
     if remember:
         t["shown"] = _digest(text)
     return text
-
 
 
 def context_digest(state, tid):
@@ -1164,13 +1297,17 @@ def reply_body(state, tid, legacy_dir=None):
             with open(f, encoding="utf-8", errors="replace") as fh:
                 body = fh.read()
     if not body:
-        die(f"no draft for {tid} yet — store one with:\n"
+        die(
+            f"no draft for {tid} yet — store one with:\n"
             f"  python3 threads.py set {tid} --reply - <<'REPLY_EOF'\n"
-            f"  <the reply body>\n  REPLY_EOF")
+            f"  <the reply body>\n  REPLY_EOF"
+        )
     hits = find_handles(body)
     if hits:
-        die(f"draft has internal topic handle(s): {' '.join(hits)} — reword "
-            f"(link the other thread via `url <other-t>`), then re-run")
+        die(
+            f"draft has internal topic handle(s): {' '.join(hits)} — reword "
+            f"(link the other thread via `url <other-t>`), then re-run"
+        )
     return body
 
 
@@ -1186,8 +1323,12 @@ def _quote_draft(body, path=None):
     for kind, info, seg in _segments((body or "").rstrip("\n").splitlines()):
         if kind == "code":
             content = "\n".join(seg)
-            blocks.append(fence(content, info or ("diff" if looks_like_diff(content)
-                                                  else lang_for(path))))
+            blocks.append(
+                fence(
+                    content,
+                    info or ("diff" if looks_like_diff(content) else lang_for(path)),
+                )
+            )
             continue
         # Blank lines at a text segment's edges would render as stray `>` markers hugging
         # the fence; the blank line between blocks below does that job properly.
@@ -1196,8 +1337,9 @@ def _quote_draft(body, path=None):
         while seg and not seg[-1].strip():
             seg = seg[:-1]
         if seg:
-            blocks.append("\n".join(f"> {ln}".rstrip() if ln.strip() else ">"
-                                    for ln in seg))
+            blocks.append(
+                "\n".join(f"> {ln}".rstrip() if ln.strip() else ">" for ln in seg)
+            )
     return "\n\n".join(blocks)
 
 
@@ -1222,22 +1364,36 @@ def render_reply_view(state, tid, body, refine=False):
     So `refine` is always safe to pass when re-showing; it gives itself up when it must.
     """
     t = topic_for(state, tid) or die(f"no topic {tid}")
-    path = next((state["threads"].get(th, {}).get("file") for th in t["thread_ids"]
-                 if state["threads"].get(th, {}).get("file")), None)
+    path = next(
+        (
+            state["threads"].get(th, {}).get("file")
+            for th in t["thread_ids"]
+            if state["threads"].get(th, {}).get("file")
+        ),
+        None,
+    )
     out = []
     if refine and t.get("shown") != context_digest(state, tid):
-        out.append("_(the code or the thread changed since this was last shown — in full "
-                   "again)_" if t.get("shown") else
-                   "_(this topic's context has not been shown yet — in full)_")
+        out.append(
+            "_(the code or the thread changed since this was last shown — in full "
+            "again)_"
+            if t.get("shown")
+            else "_(this topic's context has not been shown yet — in full)_"
+        )
         refine = False
     if not refine:
         out += [render_quote(state, tid), ""]
-    out += [f"**Draft reply — {tref(tid)}:**" if refine else "**Draft reply:**", "",
-            _quote_draft(body, path),
-            "", f"Thread (to post on): {render_url(state, tid)}",
-            "", "**`c`** copy to clipboard · **`p`** post on GitLab · "
-            "**`n`** next topic (already replied/resolved) · "
-            "or just type your thoughts to refine it."]
+    out += [
+        f"**Draft reply — {tref(tid)}:**" if refine else "**Draft reply:**",
+        "",
+        _quote_draft(body, path),
+        "",
+        f"Thread (to post on): {render_url(state, tid)}",
+        "",
+        "**`c`** copy to clipboard · **`p`** post on GitLab · "
+        "**`n`** next topic (already replied/resolved) · "
+        "or just type your thoughts to refine it.",
+    ]
     return "\n".join(out)
 
 
@@ -1269,8 +1425,12 @@ def render_plans(state):
         s = topic_status(state, t)
         if s == "done" or not (t.get("decision") or t.get("plan")):
             continue
-        stamp = ("  [✎ ALREADY PUSHED — reply pending; do NOT re-implement, "
-                 "go to the reply step]" if s == "reply_pending" else "")
+        stamp = (
+            "  [✎ ALREADY PUSHED — reply pending; do NOT re-implement, "
+            "go to the reply step]"
+            if s == "reply_pending"
+            else ""
+        )
         out.append(f"{tref(t['id'])} — {t.get('summary') or ''}{stamp}")
         if t.get("decision"):
             out.append(f"  decision: {t['decision']}")
@@ -1296,15 +1456,24 @@ def render_bodies(state):
             continue
         for th in t["thread_ids"]:
             x = state["threads"].get(th, {})
-            loc = (f"{os.path.basename(x['file'])}:{x.get('line') or ''}"
-                   if x.get("file") else MR_LEVEL)
-            out.append(f"[{tref(t['id'])}] {loc}"
-                       f"  (last spoke: {first_name(x.get('last_author'))})"
-                       f"  {x.get('url')}")
-            out.append(f"  {first_name(x.get('author'))}: {(x.get('body') or '').strip()}")
+            loc = (
+                f"{os.path.basename(x['file'])}:{x.get('line') or ''}"
+                if x.get("file")
+                else MR_LEVEL
+            )
+            out.append(
+                f"[{tref(t['id'])}] {loc}"
+                f"  (last spoke: {first_name(x.get('last_author'))})"
+                f"  {x.get('url')}"
+            )
+            out.append(
+                f"  {first_name(x.get('author'))}: {(x.get('body') or '').strip()}"
+            )
             if x.get("note_count", 1) > 1:
-                out.append(f"  {first_name(x.get('last_author'))} (last of {x['note_count']}): "
-                           f"{(x.get('last_body') or '').strip()}")
+                out.append(
+                    f"  {first_name(x.get('last_author'))} (last of {x['note_count']}): "
+                    f"{(x.get('last_body') or '').strip()}"
+                )
         out.append("")
     return "\n".join(out).strip() or "(no open threads)"
 
@@ -1330,42 +1499,81 @@ def resolve_state(args):
     return ctx, iid, path, state
 
 
+def settable_state(v):
+    # done/reply_pending are derived (GitLab resolution / a stored diff_url), never
+    # stored — naming one here gets the reason and the fix, not just the two choices.
+    if v in ("done", "reply_pending", "reply-pending"):
+        raise argparse.ArgumentTypeError(
+            f"{v} is derived, not settable — done = reviewer resolved the thread, "
+            "reply-pending = a diff_url is stored; run sync to see it. "
+            "set --state accepts only: open, waiting"
+        )
+    return v
+
+
 def main():
-    ap = argparse.ArgumentParser(description=__doc__,
-                                 formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     sub = ap.add_subparsers(dest="cmd")
     for name in ("sync", "todo", "present", "bodies", "plans", "path"):
         sub.add_parser(name).add_argument("--iid", type=int)
-    sub.add_parser("check-handles", help="print any internal topic handles "
-                    "found in stdin (used by guard-reply.sh; no MR context needed)")
+    sub.add_parser(
+        "check-handles",
+        help="print any internal topic handles "
+        "found in stdin (used by guard-reply.sh; no MR context needed)",
+    )
     # The two view renderers are stateless (no glab, no state file) — see their
     # docstrings. change-preview.sh / diff-view.sh are their entry points; the rendering
     # lives here so the fence handling has one implementation instead of one per script.
-    pc = sub.add_parser("change-view", help="render a change illustration (used by "
-                        "change-preview.sh; reads the change from FILE or stdin)")
+    pc = sub.add_parser(
+        "change-view",
+        help="render a change illustration (used by "
+        "change-preview.sh; reads the change from FILE or stdin)",
+    )
     pc.add_argument("topic")
     pc.add_argument("file", nargs="?", help="the change; omit to read stdin")
-    pc.add_argument("--for", dest="for_path",
-                    help="path the change applies to — supplies the fence language "
-                         "for a snippet that isn't a diff")
-    pdv = sub.add_parser("diff-view", help="render a working diff (used by "
-                         "diff-view.sh; reads the diff from stdin)")
+    pc.add_argument(
+        "--for",
+        dest="for_path",
+        help="path the change applies to — supplies the fence language "
+        "for a snippet that isn't a diff",
+    )
+    pdv = sub.add_parser(
+        "diff-view",
+        help="render a working diff (used by diff-view.sh; reads the diff from stdin)",
+    )
     pdv.add_argument("topic")
-    pdv.add_argument("--plain", action="store_true",
-                     help="always render the diff inline, never in a viewer window "
-                          "(diff-view.sh passes this when it narrowed the diff itself)")
-    pdv.add_argument("--note", action="append", default=[], metavar="FILE:LINE:TEXT",
-                     help=f"anchor one short note in the viewer, at most "
-                          f"{hunk.MAX_NOTES} per topic; only where the change deviates "
-                          f"from the agreed plan, does more than was asked, or is not "
-                          f"obvious from the diff (repeatable)")
-    sub.add_parser("hunk-notes", help="print the notes the USER left in the viewer, and "
-                   "take them out of it (nothing if there are none — read this before "
-                   "acting on an ACK, and answer everything it prints)")
-    sub.add_parser("hunk-close", help="close this topic's diff viewer window once the "
-                   "push has landed; refuses while unread notes are in it")
-    sub.choices["sync"].add_argument("--all", action="store_true",
-                                     help="include resolved topics")
+    pdv.add_argument(
+        "--plain",
+        action="store_true",
+        help="always render the diff inline, never in a viewer window "
+        "(diff-view.sh passes this when it narrowed the diff itself)",
+    )
+    pdv.add_argument(
+        "--note",
+        action="append",
+        default=[],
+        metavar="FILE:LINE:TEXT",
+        help=f"anchor one short note in the viewer, at most "
+        f"{hunk.MAX_NOTES} per topic; only where the change deviates "
+        f"from the agreed plan, does more than was asked, or is not "
+        f"obvious from the diff (repeatable)",
+    )
+    sub.add_parser(
+        "hunk-notes",
+        help="print the notes the USER left in the viewer, and "
+        "take them out of it (nothing if there are none — read this before "
+        "acting on an ACK, and answer everything it prints)",
+    )
+    sub.add_parser(
+        "hunk-close",
+        help="close this topic's diff viewer window once the "
+        "push has landed; refuses while unread notes are in it",
+    )
+    sub.choices["sync"].add_argument(
+        "--all", action="store_true", help="include resolved topics"
+    )
     pq = sub.add_parser("quote")
     pq.add_argument("topic")
     pq.add_argument("--iid", type=int)
@@ -1375,24 +1583,38 @@ def main():
     prv = sub.add_parser("reply-view")
     prv.add_argument("topic")
     prv.add_argument("--iid", type=int)
-    prv.add_argument("--refine", action="store_true",
-                     help="re-showing a reworded draft on the SAME topic: omit the "
-                          "topic's context — its header, the code and the thread, all "
-                          "on screen already and unchanged — and print only the draft, "
-                          "its thread URL and the prompt. Safe whenever you are "
-                          "re-showing: a context that moved since, or was never shown, "
-                          "comes back in full anyway.")
-    pr = sub.add_parser("reply", help="the drafted reply BODY only — the paste/post payload")
+    prv.add_argument(
+        "--refine",
+        action="store_true",
+        help="re-showing a reworded draft on the SAME topic: omit the "
+        "topic's context — its header, the code and the thread, all "
+        "on screen already and unchanged — and print only the draft, "
+        "its thread URL and the prompt. Safe whenever you are "
+        "re-showing: a context that moved since, or was never shown, "
+        "comes back in full anyway.",
+    )
+    pr = sub.add_parser(
+        "reply", help="the drafted reply BODY only — the paste/post payload"
+    )
     pr.add_argument("topic")
     pr.add_argument("--iid", type=int)
     ps = sub.add_parser("set")
     ps.add_argument("topic")
     ps.add_argument("--iid", type=int)
-    ps.add_argument("--state", choices=("open", "waiting"))
+    ps.add_argument(
+        "--state",
+        type=settable_state,
+        choices=("open", "waiting"),
+        help="open (your turn) or waiting (you fully addressed it); "
+        "done/reply-pending are derived — run sync",
+    )
     for f in ("summary", "decision", "plan", "start-sha", "diff-url"):
         ps.add_argument(f"--{f}")
-    ps.add_argument("--reply", help="the drafted reply body; `-` reads stdin (use a quoted "
-                                    "heredoc for anything multi-line)")
+    ps.add_argument(
+        "--reply",
+        help="the drafted reply body; `-` reads stdin (use a quoted "
+        "heredoc for anything multi-line)",
+    )
     pm = sub.add_parser("merge")
     pm.add_argument("into")
     pm.add_argument("others", nargs="+")
@@ -1410,8 +1632,11 @@ def main():
                 text = fh.read()
         else:
             text = sys.stdin.read()
-        print(critical_manifest.with_manifest(
-            render_change_view(args.topic, text, args.for_path)))
+        print(
+            critical_manifest.with_manifest(
+                render_change_view(args.topic, text, args.for_path)
+            )
+        )
         return
     if cmd == "diff-view":
         notes = []
@@ -1427,31 +1652,39 @@ def main():
         # caller has to hear about: the diff is not going to a viewer, so there is nothing
         # to anchor them to, and staying quiet let the model report notes it never left.
         if len(notes) > hunk.MAX_NOTES:
-            die(f"{len(notes)} notes for one topic, at most {hunk.MAX_NOTES} are allowed. "
+            die(
+                f"{len(notes)} notes for one topic, at most {hunk.MAX_NOTES} are allowed. "
                 "A note belongs only where the change deviates from the agreed plan, does "
                 "more than was asked, or is not obvious from the diff; everything else is "
-                "already visible in the diff itself.")
+                "already visible in the diff itself."
+            )
         if notes and args.plain:
-            die("--note cannot be used with git arguments: narrowing the diff forces the "
+            die(
+                "--note cannot be used with git arguments: narrowing the diff forces the "
                 "inline shape, and an inline diff has no lines to anchor a note to. Put "
-                "the point in your prose instead, or show the whole diff.")
-        print(critical_manifest.with_manifest(
-            diff_view_block(args.topic, sys.stdin.read(), args.plain, notes)))
+                "the point in your prose instead, or show the whole diff."
+            )
+        print(
+            critical_manifest.with_manifest(
+                diff_view_block(args.topic, sys.stdin.read(), args.plain, notes)
+            )
+        )
         return
     if cmd == "hunk-notes":
         # Stateless like the views above, and deliberately silent when there is nothing:
         # "no output" is the common answer and the one that means "go ahead and push".
         # Which is exactly why every OTHER outcome has to say something — see below.
         root = (_git("rev-parse", "--show-toplevel") or "").strip()
-        sid = (root and hunk.installed()
-               and hunk.find_session(root, hunk.owner_id()))
+        sid = root and hunk.installed() and hunk.find_session(root, hunk.owner_id())
         if not sid:
             return
         notes = hunk.user_notes(sid)
         if notes is None:
-            die("could not read the viewer's notes — the daemon did not answer. This is "
+            die(
+                "could not read the viewer's notes — the daemon did not answer. This is "
                 "NOT the same as there being none: do not push. Retry, and if it keeps "
-                "failing ask the user whether they left anything on the diff.")
+                "failing ask the user whether they left anything on the diff."
+            )
         for line in hunk_note_lines(notes):
             print(line)
         # Printed first, dropped second: the note is the user's only copy of the request
@@ -1494,8 +1727,11 @@ def main():
         print(render_url(state, args.topic))
     elif cmd == "reply-view":
         body = reply_body(state, args.topic, os.path.dirname(path))
-        print(critical_manifest.with_manifest(
-            render_reply_view(state, args.topic, body, args.refine)))
+        print(
+            critical_manifest.with_manifest(
+                render_reply_view(state, args.topic, body, args.refine)
+            )
+        )
         save(path, state)
     elif cmd == "reply":
         # body only — the payload for the clipboard or `glab api -F body=@-`
@@ -1513,14 +1749,27 @@ def main():
         # `sync` isn't gated (see paste-gates.json's note), so the manifest it carries
         # is simply never read for that command — harmless, and keeping one code path
         # for both is simpler than branching just to omit it.
-        print(critical_manifest.with_manifest(
-            render_table(state, "mine" if cmd == "todo" else "all",
-                         show_done=getattr(args, "all", False))))
+        print(
+            critical_manifest.with_manifest(
+                render_table(
+                    state,
+                    "mine" if cmd == "todo" else "all",
+                    show_done=getattr(args, "all", False),
+                )
+            )
+        )
     elif cmd == "set":
         t = topic_for(state, args.topic) or die(f"no topic {args.topic}")
         fld = {"start-sha": "start_sha", "diff-url": "diff_url"}
-        for f in ("summary", "state", "decision", "plan", "start-sha", "diff-url",
-                  "reply"):
+        for f in (
+            "summary",
+            "state",
+            "decision",
+            "plan",
+            "start-sha",
+            "diff-url",
+            "reply",
+        ):
             v = getattr(args, f.replace("-", "_"))
             if v is None:
                 continue
@@ -1533,8 +1782,10 @@ def main():
                     v = sys.stdin.read()
                 hits = find_handles(v)
                 if hits:
-                    die(f"draft has internal topic handle(s): {' '.join(hits)} — reword "
-                        f"(link the other thread via `url <other-t>`), then re-run")
+                    die(
+                        f"draft has internal topic handle(s): {' '.join(hits)} — reword "
+                        f"(link the other thread via `url <other-t>`), then re-run"
+                    )
                 v = v.rstrip("\n") + "\n"
             t[fld.get(f, f)] = v
         save(path, state)
@@ -1544,8 +1795,9 @@ def main():
             o = topic_for(state, oid)
             if not o:
                 continue
-            into["thread_ids"] += [x for x in o["thread_ids"]
-                                   if x not in into["thread_ids"]]
+            into["thread_ids"] += [
+                x for x in o["thread_ids"] if x not in into["thread_ids"]
+            ]
             state["topics"] = [t for t in state["topics"] if t["id"] != oid]
         save(path, state)
 

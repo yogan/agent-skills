@@ -125,7 +125,8 @@ The output is markdown the chat renders (bold title, GFM table, `code` locations
 comment). Status: `✎ reply-pending` (code already fixed **and pushed** — only the thread reply
 is left; derived from a stored `diff_url`) · `○ open` (your turn, still needs the fix —
 default) · `◐ waiting` (you fully addressed it; only the reviewer's action is left — set
-semantically) · `● done` (reviewer resolved).
+semantically) · `● done` (reviewer resolved). Settable with `--state`: `open` and
+`waiting` only — `reply-pending`/`done` are derived (`sync` computes them).
 
 ## Resuming — topics already planned
 
