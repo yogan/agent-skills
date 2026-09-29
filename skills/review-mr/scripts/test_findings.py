@@ -739,6 +739,42 @@ class TestNeedsTitle(unittest.TestCase):
         self.assertNotIn("needs an English summary", F.render_quote(state, "t1"))
 
 
+class TestSettledThreads(unittest.TestCase):
+    """Someone else's thread already resolved when `sync` first sees it is not taken on.
+    Each one used to cost a summary and an ack, and the table refused to render until all
+    had a summary — so a merge request with an old discussion blocked the opener."""
+
+    @staticmethod
+    def peer(resolved):
+        return {"author": "Sam", "body": "Warum nicht ein Timeout?", "file": "a.py",
+                "line": 3, "resolved": resolved, "awaiting": "author"}
+
+    def test_a_thread_resolved_at_first_sight_is_left_out(self):
+        state = new_state()
+        F.sync(state, {"d1": self.peer(True), "d2": self.peer(False)}, None, None)
+        self.assertEqual([t["thread_ids"] for t in state["topics"]], [["d2"]])
+        state["topics"][0].update(summary="timeout on the client", needs_title=False)
+        F.render_table(state)               # would refuse over a d1 topic's missing summary
+
+    def test_one_adopted_while_open_stays_when_it_resolves(self):
+        state = new_state()
+        F.sync(state, {"d1": self.peer(False)}, None, None)
+        F.sync(state, {"d1": self.peer(True)}, None, None)
+        self.assertEqual([t["thread_ids"] for t in state["topics"]], [["d1"]])
+
+    def test_one_reopened_later_is_adopted_then(self):
+        state = new_state()
+        F.sync(state, {"d1": self.peer(True)}, None, None)
+        F.sync(state, {"d1": self.peer(False)}, None, None)
+        self.assertEqual([t["thread_ids"] for t in state["topics"]], [["d1"]])
+
+    def test_your_own_resolved_thread_is_still_offered(self):
+        """Yours may be a posted draft; that matching is `candidates`/`link`'s, not this."""
+        state = new_state()
+        F.sync(state, {"d1": {**self.peer(True), "mine": True}}, None, None)
+        self.assertEqual([t["thread_ids"] for t in state["topics"]], [["d1"]])
+
+
 class TestSync(unittest.TestCase):
     def test_local_fields_survive_a_fetch(self):
         state = new_state(threads={"d1": {"gone": True, "awaiting": "you"}})

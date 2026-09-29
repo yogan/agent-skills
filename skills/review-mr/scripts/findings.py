@@ -382,7 +382,7 @@ def sync(state, live, ctx, iid):
 
 
 def adopt_inbound(state, ctx, iid):
-    """Surface discussions you didn't open — a peer reviewer's thread (💬, first
+    """Surface open discussions you didn't open — a peer reviewer's thread (💬, first
     class and mergeable) or the author's own (🖊️, rare) — as topics, so they show
     up in the overview and needs-ack flow. Threads you opened stay out of this
     (they belong to your drafts, matched via `candidates`/`link`).
@@ -410,6 +410,14 @@ def adopt_inbound(state, ctx, iid):
     baseline_ready = baseline is not None
     for tid, x in state["threads"].items():
         if tid in linked or tid in ignored or x.get("gone"):
+            continue
+        # Someone else's thread that is already resolved the first time sync sees it was
+        # settled without you — before your review began, or between two syncs. Adopting
+        # it costs a summary and an ack per old discussion, and the table refuses to render
+        # until every summary is written. A thread adopted while open is `linked` above
+        # and stays when it resolves later: that is the resolution you are there to ack.
+        # One reopened later is unresolved again and is adopted then.
+        if x.get("resolved") and not x.get("mine"):
             continue
         if x.get("mine") and x.get("file") in draft_files:
             continue                          # could be that draft, posted — ask instead
