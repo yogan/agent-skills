@@ -595,7 +595,12 @@ def render_draft(body, lang, anchor=None):
     return "\n".join(out)
 
 
-def code_snippet(state, t, context_lines=4):
+# Lines of code shown either side of a topic's anchor. The anchor check counts a name
+# inside this window as already in view, so both read the one value.
+SNIPPET_CONTEXT = 4
+
+
+def code_snippet(state, t, context_lines=SNIPPET_CONTEXT):
     """The lines under discussion, read from the review worktree.
 
     A draft is a comment about specific code, so the code belongs next to it — without
@@ -650,7 +655,7 @@ def code_snippet(state, t, context_lines=4):
     return f"```{lang}\n" + "\n".join(body) + "\n```"
 
 
-def anchor_warning(state, t, context_lines=4):
+def anchor_warning(state, t, context_lines=SNIPPET_CONTEXT):
     """Flag a topic whose `line` probably points at the wrong code.
 
     Seeded line numbers come from review-branch's output — a model's estimate — and they
@@ -658,9 +663,15 @@ def anchor_warning(state, t, context_lines=4):
     next to the finding, and a comment posted there lands on the wrong line in GitLab.
 
     Heuristic: the summary almost always names the culprit in backticks. If none of those
-    identifiers appear on the marked line but one does appear elsewhere in the file, say so
-    and name the closest candidate. Silent when the summary has no usable identifier, or
-    when the marked line already matches.
+    identifiers appear in the snippet shown around the marked line but one does appear
+    elsewhere in the file, say so and name the closest candidate. Silent when the summary
+    has no usable identifier, or when one of them is already in view.
+
+    The whole snippet counts, not just the marked line: a summary names the enclosing
+    construct ("caching moved into `OrderLoader`"), while the finding sits a few lines
+    into its body, so demanding the name on the marked line itself flags anchors that are
+    right. What the check exists to catch is a snippet that shows unrelated code, and a
+    name the reader can see in it rules that out.
     """
     file, line, summary = t.get("file"), t.get("line"), t.get("summary") or ""
     if not (file and line and summary):
@@ -701,14 +712,14 @@ def anchor_warning(state, t, context_lines=4):
         return (f"⚠️ **anchor check**: `{file}` has {len(lines)} lines, so line {n} does not "
                 f"exist. Seeded line numbers are the reviewer model's estimate — fix it "
                 f"with `set {t['id']} --line <n>` before posting.")
-    if any(x in lines[n - 1] for x in needles):
-        return None
     hits = [i for i, text in enumerate(lines, 1) if any(x in text for x in needles)]
     if not hits:
         return None
     best = min(hits, key=lambda i: abs(i - n))
+    if abs(best - n) <= context_lines:
+        return None
     named = ", ".join(f"`{x}`" for x in dict.fromkeys(needles))
-    return (f"⚠️ **anchor check**: line {n} does not mention {named}; the closest line that "
+    return (f"⚠️ **anchor check**: no line near {n} mentions {named}; the closest line that "
             f"does is **{best}**. Seeded line numbers are the reviewer model's estimate, so "
             f"verify before posting — `set {t['id']} --line {best}` if that is the right spot.")
 

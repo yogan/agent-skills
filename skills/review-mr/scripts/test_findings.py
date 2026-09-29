@@ -156,6 +156,40 @@ class TestCodeSnippet(Throwaway, unittest.TestCase):
         self.assertTrue(out.startswith("```bash\n"))
 
 
+class TestAnchorWarning(Throwaway, unittest.TestCase):
+    """The anchor check judges the snippet the reader sees, not only the marked line."""
+
+    SRC = "\n".join([
+        "function ShelfEntry({ label, gate }) {",      # 1
+        "  const { data: me } = useViewer()",           # 2
+        "",                                             # 3
+        "  if (gate === 'staff' && !me?.staff) return null",  # 4
+        "  return label",                               # 5
+        "}",                                            # 6
+    ] + [f"const filler{i} = {i}" for i in range(7, 30)])
+
+    def setUp(self):
+        wt = self._throwaway_dir()
+        with open(os.path.join(wt, "Shelf.tsx"), "w") as f:
+            f.write(self.SRC)
+        original = F.get_worktree
+        F.get_worktree = lambda slug, iid: wt
+        self.addCleanup(setattr, F, "get_worktree", original)
+
+    def _warn(self, line):
+        return F.anchor_warning(new_state(slug="x"), {
+            "id": "t1", "file": "Shelf.tsx", "line": line,
+            "summary": "Gating moved into generic ShelfEntry (useViewer per entry)"})
+
+    def test_name_a_few_lines_above_the_mark_is_in_view(self):
+        self.assertIsNone(self._warn(4))
+
+    def test_name_only_outside_the_snippet_warns(self):
+        out = self._warn(20)
+        self.assertIn("anchor check", out)
+        self.assertIn("**2**", out)
+
+
 class TestRefineRender(Throwaway, unittest.TestCase):
     """Re-showing a reworded draft repeats only what changed. The code was pasted when
     the topic came up and has not changed since; pasting it again every time a wording is
