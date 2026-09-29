@@ -739,6 +739,40 @@ class TestNeedsTitle(unittest.TestCase):
         self.assertNotIn("needs an English summary", F.render_quote(state, "t1"))
 
 
+class TestCodeStaysCode(unittest.TestCase):
+    """A code block the user is asked to judge must render as one — highlighted, whole."""
+
+    def test_a_drafts_plain_snippet_is_fenced_at_line_start(self):
+        """It was blockquoted like prose, so the `> ```python` lost its highlighting."""
+        out = F.render_draft("So:\n\n```python\ny = 2\n```", "python")
+        self.assertIn("\n```python\ny = 2\n```", out)
+        self.assertNotIn("> ```", out)
+
+    def test_a_suggestion_indented_under_a_list_item_is_re_fenced(self):
+        out = F.render_draft("- so\n  ```suggestion:-0+0\n  x = 1\n  ```", "python", 20)
+        self.assertIn("```python\n20 | x = 1\n```", out)
+        self.assertNotRegex(out, forbidden_rules()["raw-suggestion-fence"])
+
+    def test_a_suggestions_lines_are_numbered_from_its_range(self):
+        out = F.render_draft("```suggestion:-1+1\na\nb\nc\n```", "python", 20)
+        self.assertIn("19 | a\n20 | b\n21 | c", out)
+
+    def test_the_diff_of_a_markdown_file_stays_in_one_block(self):
+        """Its own ``` closed a bare ```diff early and spilled the rest as prose."""
+        state = new_state(threads={"d1": {"body": "x", "file": "docs/a.md", "line": 3,
+                                          "url": "u"}},
+                          last_reviewed_head="OLD1",
+                          mr_web_url="https://gitlab.example.com/g/r/-/merge_requests/1")
+        F.adopt_inbound(state, None, None)
+        diff = " ```suggestion\n-old\n+new\n ```\n"
+        with patch.object(F, "mr_head", return_value="NEW1"), \
+             patch.object(F, "versions", return_value=[{"id": 2}]), \
+             patch.object(F, "_compare", return_value=[
+                 {"new_path": "docs/a.md", "old_path": "docs/a.md", "diff": diff}]):
+            out = F.render_topic_diff(state, {"enc": "x"}, 1, "t1")
+        self.assertIn("````diff\n--- docs/a.md\n ```suggestion\n-old\n+new\n ```\n````", out)
+
+
 class TestSettledThreads(unittest.TestCase):
     """Someone else's thread already resolved when `sync` first sees it is not taken on.
     Each one used to cost a summary and an ack, and the table refused to render until all

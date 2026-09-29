@@ -81,6 +81,7 @@ import re
 import shutil
 import subprocess
 import sys
+import textwrap
 
 # Repo root, 4 levels up from skills/review-mr/scripts/findings.py — needed so `lib/`,
 # which lives outside this skill's own directory, is importable regardless of how this
@@ -91,7 +92,8 @@ if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
 
 from lib import critical_manifest                               # noqa: E402
-from lib.fences import lang_for, note_md                         # noqa: E402
+from lib.fences import (SUGGESTION_INFO, fence, lang_for, note_md,  # noqa: E402
+                        segments)
 from lib.gitlab import (api, context, current_user, die, mr_base, mr_head,  # noqa: E402
                         mr_object, mr_view, versions, web_base)
 from lib.mr_common import (DEFAULT_LANG, MR_LEVEL, first_name, load,  # noqa: E402
@@ -541,7 +543,17 @@ def render_table(state, scope="all"):
     return "\n".join(out + tail)
 
 
-SUGGESTION_FENCE = re.compile(r"^```suggestion(?::-(\d+)\+(\d+))?\s*$")
+def _numbered(content, info, anchor):
+    """A suggestion's lines numbered from the range `suggestion:-A+B` implies — A lines
+    above the anchor through B below — or unchanged when there is no anchor to count from."""
+    m = SUGGESTION_INFO.match(info)
+    try:
+        start = int(anchor) - int(m.group(1) or 0)
+        width = len(str(int(anchor) + int(m.group(2) or 0)))
+    except (TypeError, ValueError):
+        return content
+    return "\n".join(f"{str(start + k).rjust(width)} | {ln}"
+                     for k, ln in enumerate(content.splitlines()))
 
 
 def render_draft(body, lang, anchor=None):
@@ -556,38 +568,22 @@ def render_draft(body, lang, anchor=None):
       (A lines above the anchor through B below), so the replacement lines up against the
       source shown above it — and it becomes visible when 3 lines are replaced by 2.
     * PROSE is blockquoted so the draft reads as the artefact being posted rather than as
-      commentary. Fenced blocks stay at line start on purpose: indenting or prefixing a
-      fence (even with "> ") risks losing the syntax highlighting, which is the single most
-      useful thing in this view.
+      commentary. EVERY fenced block — a suggestion, a snippet, one indented under a list
+      item — is lifted to line start instead: indenting or prefixing a fence (even with
+      "> ") loses the syntax highlighting, which is the single most useful thing here.
     """
     if not body:
         return body
-    out, in_sug, num, width = [], False, None, 2
-    for line in body.splitlines():
-        m = SUGGESTION_FENCE.match(line)
-        if m and not in_sug:
-            in_sug = True
-            above, below = m.group(1), m.group(2)
-            num, width = None, 2
-            if anchor:
-                try:
-                    start_ln = int(anchor) - int(above or 0)
-                    end_ln = int(anchor) + int(below or 0)
-                    num, width = start_ln, len(str(end_ln))
-                except (TypeError, ValueError):
-                    num = None
-            out.append(f"```{lang}" if lang else "```")
+    out = []
+    for kind, info, seg in segments(body.splitlines()):
+        if kind == "text":
+            out += [f"> {ln}".rstrip() if ln.strip() else ">" for ln in seg]
             continue
-        if in_sug and line.strip() == "```":
-            in_sug, num = False, None
-            out.append(line)
-            continue
-        if in_sug:
-            out.append(critical_manifest.mark(f"{str(num).rjust(width)} | {line}" if num is not None else line))
-            if num is not None:
-                num += 1
-            continue
-        out.append(f"> {line}".rstrip() if line.strip() else ">")
+        content = textwrap.dedent("\n".join(seg))
+        if SUGGESTION_INFO.match(info):
+            out.append(fence(_numbered(content, info, anchor), lang))
+        else:
+            out.append(fence(content, info or lang))
     return "\n".join(out)
 
 
@@ -1319,9 +1315,9 @@ def render_topic_diff(state, ctx, iid, tid, inline_limit=80):
     text = "\n".join(blocks)
     nlines = text.count("\n") + 1 if text else 0
     if 0 < nlines <= inline_limit:
-        for ln in text.splitlines():
-            critical_manifest.mark(ln)
-        out += ["", "```diff", text, "```"]
+        # `fence` widens past any backtick run inside: a diff of a markdown file carries
+        # its own fences, and a bare ``` would close on the first of them.
+        out += ["", fence(text, "diff")]
     elif nlines:
         out.append(f"_(diff is {nlines} lines — too big to inline; open the URL)_")
     return "\n".join(out)
