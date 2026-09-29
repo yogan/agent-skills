@@ -82,7 +82,7 @@ The user reviews the code in parallel and often posts some comments by hand befo
 drafting (they're slower than you). Fold those in — **never silently**:
 
 ```bash
-python3 $SD/findings.py candidates      # threads YOU authored that no topic references yet
+python3 $SD/findings.py candidates --iid <n>  # threads YOU authored that no topic references yet
 ```
 
 For each candidate, propose the match to an existing draft topic by `file:line` + gist, or
@@ -90,8 +90,8 @@ propose it as a **new** topic (guess a severity, show the user, let them adjust)
 user's confirmation:
 
 ```bash
-python3 $SD/findings.py link <t> <discussion_id>            # match to an existing topic (✎→○)
-python3 $SD/findings.py add --file … --line … --summary … --source human   # or a brand-new topic
+python3 $SD/findings.py link <t> <discussion_id> --iid <n>                          # match to an existing topic (✎→○)
+python3 $SD/findings.py add --file … --line … --summary … --source human --iid <n>  # or a brand-new topic
 ```
 
 When the same point was found by both you and the agent, `merge` them — the source becomes
@@ -103,7 +103,7 @@ A review spans days; the state file persists across sessions. Each check:
 
 1. **Sync.** Reconcile the live threads and surface inbound ones:
    ```bash
-   python3 $SD/findings.py sync        # overview table + a one-line push banner; paste verbatim
+   python3 $SD/findings.py sync --iid <n>  # overview table + a one-line push banner; paste verbatim
    ```
    `sync` reconciles toward GitLab (the source of truth for a thread's existence and its
    resolved flag). The local file only overlays *your* ack/wontfix. A thread the author
@@ -113,7 +113,7 @@ A review spans days; the state file persists across sessions. Each check:
 2. **Any updates? (author push).** Rework is almost always a force-push, so detection is by
    **head-SHA delta, never commit count**. The banner says if the tip moved; for the detail:
    ```bash
-   python3 $SD/findings.py updates     # each push since your baseline; paste verbatim
+   python3 $SD/findings.py updates --iid <n>  # each push since your baseline; paste verbatim
    ```
    Each push is a `- **push N:** <url>` bullet with a nested `  - ` detail line — either a
    **diffstat** (`` `+33/−23` · 2 files ``) + **topics touched**, or — when the branch was rebased
@@ -149,8 +149,8 @@ A review spans days; the state file persists across sessions. Each check:
 
 3. **Work the `◐ needs-ack` topics, one at a time.** For each:
    ```bash
-   python3 $SD/findings.py quote <t>   # the thread's notes (author's reply, resolved flag)
-   python3 $SD/findings.py diff <t>    # THIS topic's change since you posted (server-side)
+   python3 $SD/findings.py quote <t> --iid <n>  # the thread's notes (author's reply, resolved flag)
+   python3 $SD/findings.py diff <t> --iid <n>   # THIS topic's change since you posted (server-side)
    ```
    Paste `quote`, add a **short summary of what the author did**, and judge it. **The thread is
    the source of truth — judge against what was *agreed there*, not against the finding's
@@ -171,9 +171,9 @@ A review spans days; the state file persists across sessions. Each check:
 
    On the user's decision:
    ```bash
-   python3 $SD/findings.py set <t> --state acked                 # ● satisfied
-   python3 $SD/findings.py set <t> --state wontfix --ticket ABC-1  # ⊘ agreed not to fix / deferred
-   python3 $SD/findings.py set <t> --state reset                 # clear an overlay (re-open)
+   python3 $SD/findings.py set <t> --state acked --iid <n>                   # ● satisfied
+   python3 $SD/findings.py set <t> --state wontfix --ticket ABC-1 --iid <n>  # ⊘ agreed not to fix / deferred
+   python3 $SD/findings.py set <t> --state reset --iid <n>                   # clear an overlay (re-open)
    ```
    Not satisfied → draft a follow-up reply (draft rules above) with `set <t> --draft`, whose
    echo shows it under the thread's notes; the topic stays `○`/`◐`. A rewording of it re-shows
@@ -182,12 +182,12 @@ A review spans days; the state file persists across sessions. Each check:
 4. **Advance the baseline** once you've reviewed the current push, so the next check's diffs
    and re-review start from here:
    ```bash
-   python3 $SD/findings.py set-head
+   python3 $SD/findings.py set-head --iid <n>
    ```
 
 5. **Always end with what's left:**
    ```bash
-   python3 $SD/findings.py todo        # ✎ still to post + ◐ still needing your ack
+   python3 $SD/findings.py todo --iid <n>  # ✎ still to post + ◐ still needing your ack
    ```
 
 ## Inbound threads (peer reviewers / the author)

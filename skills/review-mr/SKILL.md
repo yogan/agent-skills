@@ -243,10 +243,10 @@ Walk the seeded findings **one at a time**. For each: 2–4 lines of research (w
 does + the real trade-off, citing `file:line`), then let the user reshape the *list*:
 
 ```bash
-python3 $SD/findings.py set <t> --severity … --summary … --source …   # reclassify / reword
-python3 $SD/findings.py drop <t>                                       # not worth raising
-python3 $SD/findings.py merge <into> <other…>                         # same point (→ source 👥)
-python3 $SD/findings.py add --file … --line … --summary … --source human   # the user's own find
+python3 $SD/findings.py set <t> --severity … --summary … --source … --iid <n>       # reclassify / reword
+python3 $SD/findings.py drop <t> --iid <n>                                          # not worth raising
+python3 $SD/findings.py merge <into> <other…> --iid <n>                             # same point (→ source 👥)
+python3 $SD/findings.py add --file … --line … --summary … --source human --iid <n>  # the user's own find
 ```
 
 **A `--summary` is always English** — it is the one-line title of the topic, and it is what
@@ -274,10 +274,10 @@ Expected, not exceptional — they read the diff in the browser in parallel. `sy
   posted by hand. It shows up under `candidates`. Ask which it is, then **one** call:
 
 ```bash
-python3 $SD/findings.py candidates --iid <n>                    # your unlinked threads
-python3 $SD/findings.py link <t> <discussion_id> --iid <n>      # it was that draft, posted
+python3 $SD/findings.py candidates --iid <n>                # your unlinked threads
+python3 $SD/findings.py link <t> <discussion_id> --iid <n>  # it was that draft, posted
 python3 $SD/findings.py add --thread <discussion_id> --source human \
-    --file … --line … --summary … --iid <n>                    # it is a NEW point
+    --file … --line … --summary … --iid <n>                 # it is a NEW point
 ```
 
 **Never** `add` and then ask whether to link — adopting a posted comment is one intention, so
@@ -322,9 +322,9 @@ which also gives **where to open the thread** — `file:line` — and the surrou
 the line marked), and offer the clipboard:
 
 ```bash
-python3 $SD/findings.py set <t> --draft "…"              # store the accepted draft (echoes the view)
-python3 $SD/findings.py set <t> --draft "…" --refine     # a REWORDING of a draft already on screen
-$SD/clip.sh <(python3 $SD/findings.py draft <t>)   # copy the comment BODY only, for pasting
+python3 $SD/findings.py set <t> --draft "…" --iid <n>           # store the accepted draft (echoes the view)
+python3 $SD/findings.py set <t> --draft "…" --refine --iid <n>  # a REWORDING of a draft already on screen
+$SD/clip.sh <(python3 $SD/findings.py draft <t> --iid <n>)      # copy the comment BODY only, for pasting
 ```
 
 `--refine` is rule 3 at the top: the second and every later draft for the same topic comes
@@ -343,8 +343,8 @@ When the user says they've posted (or on the next check), reconcile their live t
 your topics. **Never auto-link — the user confirms each match:**
 
 ```bash
-python3 $SD/findings.py candidates      # your GitLab threads not yet linked to a topic
-python3 $SD/findings.py link <t> <discussion_id>   # on the user's OK → topic flips ✎ → ○
+python3 $SD/findings.py candidates --iid <n>                # your GitLab threads not yet linked to a topic
+python3 $SD/findings.py link <t> <discussion_id> --iid <n>  # on the user's OK → topic flips ✎ → ○
 ```
 
 A linked topic captures a `start_sha` baseline, so later you can show exactly what the author
@@ -358,7 +358,7 @@ A state file exists (the common case — a review spans days). Fetch + checkout 
 whole:
 
 ```bash
-python3 $SD/findings.py resume          # pushes since your baseline + overview table + first topic
+python3 $SD/findings.py resume --iid <n>  # pushes since your baseline + overview table + first topic
 ```
 
 It is one call on purpose. As two steps ("run `updates`, then run `present`") the second gets
@@ -404,9 +404,9 @@ Advance the baseline (`set-head`) at the end, once you've digested the pushes.
 [REFERENCE.md](REFERENCE.md). In short:
 
 ```bash
-python3 $SD/findings.py sync            # reconcile threads + one-line push banner; paste it
-python3 $SD/findings.py updates         # pushes since baseline: URLs + diffstats/rebase + topics
-python3 $SD/findings.py todo            # only what needs you (✎ + ◐)
+python3 $SD/findings.py sync --iid <n>     # reconcile threads + one-line push banner; paste it
+python3 $SD/findings.py updates --iid <n>  # pushes since baseline: URLs + diffstats/rebase + topics
+python3 $SD/findings.py todo --iid <n>     # only what needs you (✎ + ◐)
 ```
 
 `updates` — **paste verbatim**, then one summary sentence per push (see *Resuming*). `sync` also
@@ -419,7 +419,7 @@ with the first topic's full thread, so do not run `quote` for that topic again; 
 straight to its diff and judgment. Run `quote` once when moving to each later topic:
 
 ```bash
-python3 $SD/findings.py quote <t>       # the full thread: your point + the author's reply
+python3 $SD/findings.py quote <t> --iid <n>  # the full thread: your point + the author's reply
 ```
 
 **Judge against what the thread agreed, not against the finding's original one-line summary.**
@@ -433,7 +433,7 @@ re-litigation.
 Use the diff only to **confirm the agreed change landed**:
 
 ```bash
-python3 $SD/findings.py diff <t>        # the author's change for THIS topic (server-side)
+python3 $SD/findings.py diff <t> --iid <n>  # the author's change for THIS topic (server-side)
 ```
 
 `diff <t>` shows the topic file's change since you posted it — **inline when small**, else just
@@ -441,8 +441,8 @@ the compare URL to `open`. It's server-side (force-push-safe), so it works even 
 sha is long gone locally. Paste whatever it returns. On the user's word:
 
 ```bash
-python3 $SD/findings.py set <t> --state acked            # ● you're satisfied
-python3 $SD/findings.py set <t> --state wontfix --ticket …   # ⊘ agreed not to fix / deferred
+python3 $SD/findings.py set <t> --state acked --iid <n>               # ● you're satisfied
+python3 $SD/findings.py set <t> --state wontfix --ticket … --iid <n>  # ⊘ agreed not to fix / deferred
 # not satisfied → draft a follow-up reply (Phase-2 rules); topic stays open
 ```
 
