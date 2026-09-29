@@ -64,60 +64,6 @@ def required_rule(key):
     return re.compile(r["text"], sum(_FLAGS[c] for c in r.get("flags", "")))
 
 
-class TestLooksLikeDiff(unittest.TestCase):
-    def test_unified_diff(self):
-        self.assertTrue(
-            T.looks_like_diff("-  const a = 1\n+  const a = 2\n   const b = 3\n")
-        )
-
-    def test_diff_with_headers(self):
-        self.assertTrue(
-            T.looks_like_diff("diff --git a/x b/x\n@@ -1 +1 @@\nwhatever\n")
-        )
-
-    def test_plain_snippet_is_not_a_diff(self):
-        """A before/after snippet wants the file's language, not `diff`."""
-        self.assertFalse(T.looks_like_diff("export function foo() {\n  return 1\n}\n"))
-
-    def test_indented_snippet_without_markers_is_not_a_diff(self):
-        self.assertFalse(T.looks_like_diff("  return 1\n  return 2\n"))
-
-    def test_prose_is_not_a_diff(self):
-        self.assertFalse(
-            T.looks_like_diff("Drop the weaker test and keep the other one.\n")
-        )
-
-    def test_index_assignment_is_not_a_diff_header(self):
-        """git's header is `index abc1234..def5678`; `index = 0` is just code."""
-        self.assertFalse(T.looks_like_diff("index = 0\nwhile (index < n) {\n"))
-        self.assertTrue(T.looks_like_diff("index 1a2b3c4..5d6e7f8 100644\n-a\n+b\n"))
-
-    def test_empty(self):
-        self.assertFalse(T.looks_like_diff(""))
-
-
-class TestFence(unittest.TestCase):
-    def test_plain(self):
-        self.assertEqual(T.fence("x = 1", "python"), "```python\nx = 1\n```")
-
-    def test_widens_for_a_nested_fence(self):
-        out = T.fence("```bash\necho hi\n```", "markdown")
-        self.assertTrue(out.startswith("````markdown\n"))
-        self.assertTrue(out.endswith("\n````"))
-
-    def test_widens_for_an_indented_closer(self):
-        """Inside a diff every line carries a prefix, so a fence arrives as "` ```"` — a
-        valid closer that a column-0 scan misses. This was a real miss."""
-        diff = "-```bash\n+```sh\n echo hi\n ```\n"
-        self.assertTrue(T.fence(diff, "diff").startswith("````diff\n"))
-
-    def test_widens_past_four(self):
-        self.assertTrue(T.fence("````\nx\n````", "").startswith("`````\n"))
-
-    def test_no_language(self):
-        self.assertEqual(T.fence("x", ""), "```\nx\n```")
-
-
 class TestRenderChange(unittest.TestCase):
     def test_bare_diff_gets_a_diff_fence(self):
         out = T.render_change("-  a\n+  b\n")
@@ -761,14 +707,9 @@ class TestSummaryIsAuthored(unittest.TestCase):
         )
 
 
-class TestNoteRendering(unittest.TestCase):
-    """A reviewer's own code has to render as code.
-
-    GitLab reviewers paste a ```suggestion block or a 4-space indented snippet. Inside the
-    `> ` blockquote both come out flat — the suggestion's info string is a language no
-    highlighter knows, and an indented block has no language at all — so the proposed code
-    read as grey prose.
-    """
+class TestQuoteNotes(unittest.TestCase):
+    """The note renderer itself is lib/test_fences.py's; this pins that `quote` hands it
+    the thread's file and anchor, which is what the suggestion caption and language need."""
 
     NOTE = (
         "Minor:\n\nDer Test schaut nicht wirklich ob die Reihenfolge aus `fields` "
@@ -779,81 +720,6 @@ class TestNoteRendering(unittest.TestCase):
         "      money_related: object({ summe: scalar(10) }),\n"
         "    }\n"
     )
-
-    def test_suggestion_is_lifted_and_re_fenced(self):
-        out = T._note_md("Robin", self.NOTE, "src/x.test.ts", 184)
-        self.assertIn("\n```ts\n  it('lists multiple changed leaves", out)
-        self.assertNotIn("> ```", out)  # never left inside the quote
-        self.assertNotIn("suggestion:-0+0", out)  # replaced by a caption
-
-    def test_suggestion_caption_names_the_lines_it_replaces(self):
-        self.assertIn(
-            "_suggested replacement for line 184:_",
-            T._note_md("Robin", self.NOTE, "src/x.test.ts", 184),
-        )
-        self.assertIn(
-            "_suggested replacement for lines 182–187:_",
-            T._note_md("Robin", "```suggestion:-2+3\nx\n```\n", "src/x.ts", 184),
-        )
-
-    def test_suggestion_without_an_anchor_still_gets_a_caption(self):
-        self.assertIn(
-            "_suggested replacement:_",
-            T._note_md("Robin", "```suggestion\nx\n```\n", "src/x.ts", None),
-        )
-
-    def test_a_tab_indented_snippet_is_code_too(self):
-        """Markdown counts a tab as four spaces; a space-only check missed it."""
-        out = T._note_md(
-            "Robin", "So:\n\n\tconst a = 1\n\tconst b = 2\n", "src/x.ts", 5
-        )
-        self.assertIn("```ts\nconst a = 1\nconst b = 2\n```", out)
-
-    def test_caption_clamps_at_the_top_of_the_file(self):
-        """`suggestion:-99+0` near the top produced "lines -94–5"."""
-        self.assertIn("lines 1–5:", T._suggestion_caption("suggestion:-99+0", 5))
-
-    def test_an_empty_suggestion_block_is_skipped(self):
-        """No block, and no caption promising one."""
-        self.assertEqual(
-            T._note_md("Robin", "```suggestion\n```", "src/x.ts", 3), "> **Robin**"
-        )
-
-    def test_indented_snippet_becomes_a_fenced_block(self):
-        out = T._note_md("Robin", self.NOTE, "src/x.test.ts", 184)
-        self.assertIn("```ts\nconst original: ExtractedData = {", out)  # and dedented
-        self.assertNotIn(">     const original", out)
-
-    def test_prose_stays_quoted_and_keeps_the_author(self):
-        out = T._note_md("Robin", self.NOTE, "src/x.test.ts", 184)
-        self.assertTrue(out.startswith("> **Robin**\n>\n> Minor:"))
-        self.assertIn("> Oder `ExtractedData` umdrehen?", out)
-
-    def test_no_empty_quote_line_after_a_lifted_fence(self):
-        """A `>` directly after a fence renders as a stray empty quote bar."""
-        out = T._note_md("Robin", self.NOTE, "src/x.test.ts", 184)
-        self.assertNotIn("```\n>\n", out)
-
-    def test_list_continuation_is_not_code(self):
-        """Indentation under a bullet is list continuation — fencing it would break the
-        list and misrepresent prose as code."""
-        note = "Zwei Punkte:\n\n- erstens\n    weiter im Listenpunkt\n- zweitens\n"
-        out = T._note_md("Robin", note, "src/x.ts", 10)
-        self.assertNotIn("```", out)
-        self.assertIn(">     weiter im Listenpunkt", out)
-
-    def test_an_explicit_language_is_preserved(self):
-        out = T._note_md("Robin", "So:\n\n```bash\nnpm test\n```\n", "src/x.ts", 5)
-        self.assertIn("```bash\nnpm test", out)
-
-    def test_a_diff_in_a_note_is_fenced_as_a_diff(self):
-        out = T._note_md("Robin", "```\n-  a\n+  b\n```\n", "src/x.ts", 5)
-        self.assertIn("```diff\n", out)
-
-    def test_plain_prose_is_unchanged(self):
-        self.assertEqual(
-            T._note_md("Robin", "Sieht gut aus.\n"), "> **Robin**\n>\n> Sieht gut aus."
-        )
 
     def test_quote_passes_the_file_and_anchor_through(self):
         state = {

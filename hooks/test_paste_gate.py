@@ -629,6 +629,16 @@ class TestGarbledEscape(HookCase):
             assistant_text("the path ends with a literal backtick \\` there"),
         ])
 
+    def test_an_escape_the_model_writes_beside_a_pasted_block_still_blocks(self):
+        """Pasted lines are exempt; the model's own line next to them is not."""
+        block = "◈ **t1** — x\n\n> **Robin**\n>\n> Use \\`\\`\\` there."
+        self.assertBlocked([
+            user_prompt(),
+            bash_call("u1", "python3 $SD/findings.py quote t1 --iid 1"),
+            tool_result("u1", block),
+            assistant_text(block + "\n\nRobin means `\\`\\`\\`suggestion` here."),
+        ], contains="backslash-escapes")
+
     def test_plain_mid_sentence_fence_mention_allows(self):
         """The correct, unescaped way to mention a fence mid-sentence — no backslashes
         needed at all."""
@@ -684,6 +694,104 @@ class TestShippedSpecs(unittest.TestCase):
             for gate in spec["gates"]:
                 self.assertTrue(len(gate["reason"]) > 80, gate["key"])
                 self.assertTrue(gate["signature"], gate["key"])
+
+
+class TestRealViewsPasteClean(HookCase):
+    """Every view either skill asks to paste verbatim, rendered by the real code from a
+    comment holding every shape that ever tripped a rule, then pasted exactly — must pass.
+
+    The class of bug this pins: a rule meant to catch the model COMPOSING a block refused
+    the command's own output, because the MR held that text (another reviewer's
+    suggestion, a quoted one, a markdown example, an escaped backtick run). The escaped
+    run was the worst of them: that check ignores the loop guard, so every retry the gate
+    demanded was refused again."""
+
+    HOSTILE = ("Kürzer:\n\n```suggestion:-0+0\nnew sentence\n```\n\n"
+               "> ```suggestion:-1+0\n> the older proposal\n> ```\n\n"
+               "````markdown\n```suggestion\nx\n```\n````\n\n"
+               "Use \\`\\`\\` there.")
+
+    def setUp(self):
+        import importlib.util
+        sys.path.insert(0, REPO)
+        from lib import critical_manifest
+        self.cm = critical_manifest
+        self.cm.reset()
+        self.addCleanup(self.cm.reset)
+
+        def load(name, rel):
+            spec = importlib.util.spec_from_file_location(name, os.path.join(REPO, rel))
+            mod = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(mod)
+            return mod
+        self.F = load("findings", "skills/review-mr/scripts/findings.py")
+        self.T = load("threads", "skills/rework-mr/scripts/threads.py")
+
+    def thread(self, **kw):
+        th = {"author": "Robin", "body": self.HOSTILE, "file": "docs/retries.md",
+              "line": 21, "url": "http://gl/1", "note_count": 2, "last_author": "Robin",
+              "last_body": self.HOSTILE, "resolved": False,
+              "notes": [{"author": "Robin", "body": self.HOSTILE}]}
+        th.update(kw)
+        return th
+
+    def assertPastesClean(self, command, block):
+        """No manifest on the result: it makes the hook wait out a possible leak before
+        allowing (~1.75s a case), and the lines it marks are not what this is about."""
+        self.assertRegex(block, r"(?m)^[>\s]*```suggestion")   # the case is really there
+        self.assertAllowed([
+            user_prompt(),
+            bash_call("u1", command),
+            tool_result("u1", block),
+            assistant_text(block + "\n\nAck?"),
+        ])
+
+    def test_review_mr_quote(self):
+        state = {"iid": 1, "title": "x", "author": None, "lang": None,
+                 "threads": {"d1": self.thread()}, "topics": []}
+        t = self.F.add_topic(state, summary="rewording of the retry paragraph",
+                             file="docs/retries.md", line=21)
+        t["thread_ids"] = ["d1"]
+        self.assertPastesClean("python3 $SD/findings.py quote t1 --iid 1",
+                               self.F.render_quote(state, "t1"))
+
+    def test_review_mr_diff_of_a_markdown_file(self):
+        """Not rendered: `diff` needs the GitLab API. The shape is the one it prints — an
+        unchanged diff line of a doc that itself holds a suggestion block."""
+        block = ("◈ **t1** — rewording of the retry paragraph\nhttp://gl/compare\n\n"
+                 "````diff\n--- docs/retries.md\n@@ -20,3 +20,3 @@\n ```suggestion\n"
+                 "-old sentence\n+new sentence\n ```\n````")
+        self.assertPastesClean("python3 $SD/findings.py diff t1 --iid 1", block)
+
+    def rework_state(self):
+        return {"iid": 1, "threads": {"d1": self.thread()},
+                "topics": [{"id": "t1", "summary": "rewording of the retry paragraph",
+                            "thread_ids": ["d1"], "state": None}]}
+
+    def test_rework_mr_quote(self):
+        self.assertPastesClean("python3 $SD/threads.py quote t1",
+                               self.T.render_quote(self.rework_state(), "t1",
+                                                   remember=False))
+
+    def test_rework_mr_reply_view(self):
+        block = self.T.render_reply_view(self.rework_state(), "t1",
+                                         "Wie wäre es so:\n\n> " + self.HOSTILE)
+        self.assertPastesClean("python3 $SD/threads.py reply-view t1", block)
+
+    def test_rework_mr_change_view(self):
+        """A reply's own suggestion is re-fenced for display, so it is not the case here;
+        the quoted one left in the prose is."""
+        block = self.T.render_change_view("t1", "Changed:\n\n> " + self.HOSTILE,
+                                          "docs/retries.md")
+        self.assertPastesClean("python3 $SD/threads.py change-view t1", block)
+
+    def test_rework_mr_reply_shows_its_own_suggestion_highlighted(self):
+        """Display only: the body that is posted keeps ```suggestion."""
+        out = self.T._quote_draft("So:\n\n```suggestion:-0+0\nreturn retry(3)\n```",
+                                  "src/client.py", 88)
+        self.assertIn("_suggested replacement for line 88:_\n\n```python\nreturn retry(3)",
+                      out)
+        self.assertNotRegex(out, r"(?m)^[>\s]*```suggestion")
 
 
 class TestBothSkills(HookCase):

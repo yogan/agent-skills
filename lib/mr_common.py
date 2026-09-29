@@ -36,8 +36,8 @@ def _drop_fenced(text):
     opened it, so the ```` block in a comment that quotes a ``` block ends at the LONGER
     marker — and a pattern that stops at the first bare-backtick line swallowed the prose
     after it instead. An unterminated fence runs to the end of the text, which is the
-    common case in a comment somebody pasted code into and never closed. (threads.py's
-    `_segments` scans for the same reason, on the rendering side.)
+    common case in a comment somebody pasted code into and never closed. (fences.py's
+    `segments` scans for the same reason, on the rendering side.)
     """
     kept, fence = [], None
     for line in (text or "").splitlines():

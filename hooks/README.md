@@ -180,6 +180,15 @@ The engine is skill-agnostic; what to enforce is data, in each skill's
   will block correct turns. (`rework-mr` deliberately has no `required` rule for
   `change-preview`'s `Agreed?` for exactly that reason: the non-trivial branch ends with a
   plain discussion question, which can legitimately be phrased that way.)
+- Every installed spec's `forbidden` and `required` rules judge **every** message, whichever
+  skill the session is running — so a rule has to hold against the other skill's output too.
+- `"composed_only": true` on a `forbidden` rule skips the lines copied from a gated block
+  this turn, and judges only what the model wrote itself. Use it when the pattern can
+  legitimately be part of what the MR holds (a reviewer's ```` ```suggestion ````, a diff
+  of a markdown file); without it, pasting the command's own output as the gate demands
+  gets refused. Leave it off for a rule whose job is to refuse a gated block's own line,
+  such as the "needs an English summary" warning. The engine-level escaped-backtick check
+  always makes the same exemption.
 
 Caveat when hacking on the skills themselves: `forbidden`/`required` patterns match your
 *visible message*, including when you are quoting a skill's own wording back at the user.

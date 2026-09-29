@@ -91,11 +91,12 @@ if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
 
 from lib import critical_manifest                               # noqa: E402
+from lib.fences import lang_for, note_md                         # noqa: E402
 from lib.gitlab import (api, context, current_user, die, mr_base, mr_head,  # noqa: E402
                         mr_object, mr_view, versions, web_base)
 from lib.mr_common import (DEFAULT_LANG, MR_LEVEL, first_name, load,  # noqa: E402
-                           loc_md, num, reads_as, save, short_summary,
-                           state_file, topic_for, tref)
+                           loc_md, num, plain_text, reads_as, save,
+                           short_summary, state_file, topic_for, tref)
 from lib.snippet import MAX_BACKTRACK, open_construct            # noqa: E402
 
 STATE_ROOT = os.path.expanduser("~/.claude/review-mr")
@@ -532,19 +533,6 @@ def render_table(state, scope="all"):
     return "\n".join(out + tail)
 
 
-def _note_md(name, body):
-    lines = (body or "").strip().splitlines() or [""]
-    quoted = "\n".join("> " + ln for ln in lines)
-    return f"> **{first_name(name)}**\n>\n{quoted}"
-
-
-FENCE_BY_EXT = {".ts": "ts", ".tsx": "tsx", ".js": "js", ".jsx": "jsx",
-                ".py": "python", ".rb": "ruby", ".go": "go", ".java": "java",
-                ".kt": "kotlin", ".sh": "bash", ".env": "bash", ".yml": "yaml",
-                ".yaml": "yaml", ".json": "json", ".sql": "sql", ".css": "css",
-                ".html": "html"}
-
-
 SUGGESTION_FENCE = re.compile(r"^```suggestion(?::-(\d+)\+(\d+))?\s*$")
 
 
@@ -636,7 +624,7 @@ def code_snippet(state, t, context_lines=SNIPPET_CONTEXT):
         return None
     lo = max(1, n - context_lines)
     hi = min(len(lines), n + context_lines)
-    lang = FENCE_BY_EXT.get(os.path.splitext(file)[1], "")
+    lang = lang_for(file)
     opened = open_construct(lines, lo)
     if opened:
         # Extend back to the real opening delimiter so the highlighter sees the whole
@@ -796,7 +784,7 @@ def _draft_block(state, t, body, follow_up=False):
     """
     if not body:
         return []
-    lang = FENCE_BY_EXT.get(os.path.splitext(t.get("file") or "")[1], "")
+    lang = lang_for(t.get("file"))
     loc = _loc(state, t, full=True)
     # A topic with no file:line is posted on the MR itself, so "thread on …" would name
     # nothing — say where it goes instead.
@@ -831,13 +819,17 @@ def _code_context(state, t):
 
 def _thread_context(state, x):
     """What `--refine` leaves out for a posted topic: the thread a follow-up replies
-    into — first note, last note, and the count of what sits between them."""
-    out = ["", _note_md(x.get("author"), x.get("body"))]
+    into — first note, last note, and the count of what sits between them.
+
+    A reviewer's ```suggestion is re-fenced to the file's language here, never shown raw:
+    the paste gate refuses a raw one on screen, so this output must never contain one."""
+    f, ln = x.get("file"), x.get("line")
+    out = ["", note_md(x.get("author"), x.get("body"), f, ln)]
     if x.get("note_count", 1) > 1:
         skipped = x["note_count"] - 2
         if skipped > 0:
             out += ["", f"_… {skipped} more …_"]
-        out += ["", _note_md(x.get("last_author"), x.get("last_body"))]
+        out += ["", note_md(x.get("last_author"), x.get("last_body"), f, ln)]
     return out
 
 
@@ -1027,8 +1019,10 @@ def render_candidates(state, me):
             continue
         if x.get("gone"):
             continue          # deleted upstream — offering it to link would be a trap
-        out.append(f"{tid}  {loc_md(_thread_loc(x))}  "
-                   f"{(x.get('body') or '').strip()[:80]}")
+        # A one-line preview, so markdown is flattened rather than cut mid-fence: the
+        # first 80 raw characters of a comment can open a ```suggestion block on screen.
+        preview = plain_text(x.get("body")) or "(no prose — code only)"
+        out.append(f"{tid}  {loc_md(_thread_loc(x))}  {preview[:80]}")
     return "\n".join(out).strip() or "(no unlinked threads of yours)"
 
 

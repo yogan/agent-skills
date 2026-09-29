@@ -155,6 +155,7 @@ def load_specs(paths):
                 "forbidden": [{
                     "text_re": _compile(f["text"], f.get("flags", "")),
                     "reason": f["reason"],
+                    "composed_only": bool(f.get("composed_only")),
                 } for f in raw.get("forbidden", [])],
                 "required": [{
                     "text_re": _compile(r["text"], r.get("flags", "")),
@@ -556,7 +557,7 @@ def _turn_could_leak(path):
 _BROKEN_BACKTICK_ESCAPE_RE = re.compile(r"(?:\\`){2,}")
 
 
-def _garbled_backtick_escape(path):
+def _garbled_backtick_escape(path, gates=()):
     """Reason to block if the assistant backslash-escaped a run of backticks (e.g.
     trying to show a literal fence) instead of wrapping it in single backticks with the
     run left plain inside — the technique every skill's own docs already use. Markdown
@@ -564,10 +565,18 @@ def _garbled_backtick_escape(path):
     instead of the intended literal text. Engine-level and unconditional, like
     `_leaked_manifest`: nothing about it is specific to either skill's vocabulary, so it
     protects any spec built on this engine, not just the two shipped today — and scoped
-    the same way, to what a retry can still change, for the same reason."""
+    the same way, to what a retry can still change, for the same reason.
+
+    Lines copied from a gated block this turn are not judged (see `_composed`): a
+    reviewer's comment can hold an escaped run, and since this check ignores the loop
+    guard, judging the verbatim paste refused every retry the gate itself demanded."""
     shown = _retractable_text(path)
     if shown is None:
         return None
+    if _BROKEN_BACKTICK_ESCAPE_RE.search(shown):
+        state = _turn_state(path, gates)
+        if state is not None:
+            shown = _composed(shown, _pasted_lines(state[0], state[1]))
     if _BROKEN_BACKTICK_ESCAPE_RE.search(shown):
         return ("Your message backslash-escapes a run of backticks to show them "
                 "literally — Markdown has no such escape, so it renders as garbled, "
@@ -606,6 +615,34 @@ def _diagnosis(missing, corrupted, critical_out):
     if not parts:
         return ""
     return "\n\nLines of that output " + ", and ".join(parts) + "."
+
+
+def _pasted_lines(matched, result_by_id):
+    """Every line of every gated block that really ran this turn — the text the model was
+    TOLD to paste verbatim.
+
+    Compared exactly (right-trimmed only): a line pasted verbatim keeps its leading
+    characters, and stripping them would let a line the model composed borrow the
+    exemption from an unrelated one that merely strips to the same text.
+    """
+    lines = set()
+    for uid, gate in matched.items():
+        visible, _ = _split_manifest(_strip_tool_noise(result_by_id.get(uid, "")))
+        if all(s in visible for s in gate["signature"]):
+            lines.update(ln.rstrip() for ln in visible.splitlines())
+    return lines
+
+
+def _composed(shown, pasted):
+    """`shown` without the lines that came from a gated block (see `_pasted_lines`) —
+    what the model wrote itself.
+
+    For the rules that exist to catch the model COMPOSING something: a gated command
+    reproduces whatever the MR holds, and a reviewer's comment or a diffed markdown file
+    can legitimately contain a raw ```suggestion or an escaped backtick run. Judging
+    those lines refused the command's own output, pasted exactly as the gate demands.
+    """
+    return "\n".join(ln for ln in shown.splitlines() if ln.rstrip() not in pasted)
 
 
 def violation(path, specs):
@@ -658,10 +695,13 @@ def violation(path, specs):
         return reason
 
     # Command-independent checks. A block the model wrote out itself needs no command to
-    # run, so no gate above can see it.
+    # run, so no gate above can see it. A `composed_only` rule judges only the lines the
+    # model wrote; the others exist to refuse a gated block's own warning line, so they
+    # judge all of it.
+    composed = _composed(shown, _pasted_lines(matched, result_by_id))
     for spec in specs:
         for bad in spec["forbidden"]:
-            if bad["text_re"].search(shown):
+            if bad["text_re"].search(composed if bad["composed_only"] else shown):
                 return bad["reason"]
         for req in spec["required"]:
             if req["gate"] not in fired and req["text_re"].search(shown):
@@ -720,7 +760,11 @@ def main(argv):
         if leak:
             _block(leak)
 
-    garble = _retry_until(lambda: _garbled_backtick_escape(path), delays=())
+    # Specs are loaded first only so the garble check can tell a verbatim paste from an
+    # escape the model wrote; with none installed it simply has nothing to exempt.
+    specs = load_specs(argv)
+    gates = [g for s in specs for g in s["gates"]]
+    garble = _retry_until(lambda: _garbled_backtick_escape(path, gates), delays=())
     if garble:
         _block(garble)
 
@@ -729,7 +773,6 @@ def main(argv):
     if data.get("stop_hook_active"):
         _allow()
 
-    specs = load_specs(argv)
     if not specs:                          # nothing installed to enforce
         _allow()
 

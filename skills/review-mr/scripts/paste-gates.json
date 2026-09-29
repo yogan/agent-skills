@@ -60,16 +60,22 @@
     {
       "key": "raw-suggestion-fence",
       "note": [
-        "A fence at the START of a line. render_quote re-fences suggestion blocks to the",
-        "file's language for display, so a raw one can only come from the model writing the",
-        "block out itself. (quote's own trailing note mentions ```suggestion mid-sentence,",
-        "which is why this is anchored to a line start.) `[>\\s]*` not `\\s*`: the model wrote",
-        "\"> ```suggestion\" inside a blockquote once, and a whitespace-only prefix class let",
-        "it straight through."
+        "Catches the model writing a suggestion block out itself instead of pasting the",
+        "rendered one. `composed_only`: lines copied from a gated block this turn are not",
+        "judged, because a command reproduces what the MR holds — another reviewer's",
+        "comment quoting a suggestion, a diff of a markdown file that contains one — and",
+        "judging those refused the command's own output, pasted exactly as asked. The",
+        "renderers still re-fence a suggestion for display wherever it is the thing being",
+        "judged (a draft, a reviewer's comment); that is for readability, not for this rule.",
+        "Rules apply to every message in every session, whichever skill is running — hence",
+        "the rework-mr wording in the reason. Anchored to a line start so a mid-sentence",
+        "mention passes; `[>\\s]*` not `\\s*` because the model once wrote",
+        "\"> ```suggestion\" inside a blockquote and a whitespace-only prefix let it through."
       ],
+      "composed_only": true,
       "text": "^[>\\s]*```suggestion",
       "flags": "m",
-      "reason": "Your message contains a raw ```suggestion fence, which means you wrote the draft block out yourself instead of pasting the rendered one. That block is shown unhighlighted, and the user cannot read the code they are approving. Re-send your message using the output of `python3 $SD/findings.py quote <t> --iid <n>` pasted verbatim (run it again if you have since changed the draft — `set <t> --draft` also prints the refreshed view). The ```suggestion fence belongs only in the PASTE PAYLOAD from `draft <t>` / the clipboard, never in what you show."
+      "reason": "Your message contains a raw ```suggestion fence, which means you wrote the draft block out yourself instead of pasting the rendered one. That block is shown unhighlighted, and the user cannot read the code they are approving. Re-send your message using the output of `python3 $SD/findings.py quote <t> --iid <n>` pasted verbatim (run it again if you have since changed the draft — `set <t> --draft` also prints the refreshed view). The ```suggestion fence belongs only in the PASTE PAYLOAD from `draft <t>` / the clipboard, never in what you show. (In rework-mr the rendered view is `threads.py reply-view` / `change-view` — use the command of the skill this session runs.)"
     },
     {
       "key": "unresolved-needs-title-table",

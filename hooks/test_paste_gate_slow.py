@@ -336,6 +336,17 @@ class TestForbidden(HookCase):
             assistant_text("Draft for t4:\n\n```suggestion\nlogger.exception(exc)\n```"),
         ], contains="raw ```suggestion fence")
 
+    def test_a_suggestion_the_model_writes_beside_a_pasted_block_still_blocks(self):
+        """The rule exempts lines copied from a gated block this turn, and only those: a
+        block the model composes next to a legitimate paste is still its own."""
+        block = "◈ **t4** — swallowed exception\n\n> **Robin**\n>\n> > ```suggestion\n> > x\n> > ```"
+        self.assertBlocked([
+            user_prompt(),
+            bash_call("u1", "python3 $SD/findings.py quote t4 --iid 1"),
+            tool_result("u1", block),
+            assistant_text(block + "\n\nMy take:\n\n```suggestion\nlogger.exception(exc)\n```"),
+        ], contains="raw ```suggestion fence")
+
     def test_blockquoted_suggestion_fence_blocks(self):
         """`[>\\s]*` not `\\s*` — the model hid it inside a blockquote once."""
         self.assertBlocked([

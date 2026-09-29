@@ -377,6 +377,46 @@ class TestBodylessQuote(Throwaway, unittest.TestCase):
         self.assertNotIn("has no draft yet", buf.getvalue())
 
 
+class TestSuggestionInThreadNotes(unittest.TestCase):
+    """Another reviewer's ```suggestion in a thread `quote` shows. It used to be printed
+    raw inside the note's blockquote, so pasting the tool's output verbatim — exactly what
+    the gate asks for — tripped the gate's own raw-suggestion-fence rule."""
+
+    SUGGESTION = ("```suggestion:-0+0\nRetries share one budget: a client that hits "
+                  "`MAX_RETRIES` stops, whichever call it was in.\n```")
+
+    def _state(self, **thread):
+        th = {"author": "Robin", "body": self.SUGGESTION, "file": "docs/retries.md",
+              "line": 21, "url": "http://gl/1", "note_count": 1, "resolved": True,
+              "resolved_by": "Sam"}
+        th.update(thread)
+        state = new_state(threads={"d1": th})
+        add_linked_topic(state, "d1", summary="rewording of the retry paragraph",
+                         file="docs/retries.md", line=21)
+        return state
+
+    def test_quote_never_trips_the_raw_suggestion_gate(self):
+        out = F.render_quote(self._state(), "t1")
+        self.assertNotRegex(out, forbidden_rules()["raw-suggestion-fence"])
+        self.assertIn("_suggested replacement for line 21:_", out)
+        self.assertIn("```markdown\nRetries share one budget", out)
+
+    def test_the_last_note_is_re_fenced_too(self):
+        out = F.render_quote(self._state(
+            body="Kürzer, bitte.", note_count=2, last_author="Robin",
+            last_body=self.SUGGESTION), "t1")
+        self.assertNotRegex(out, forbidden_rules()["raw-suggestion-fence"])
+        self.assertIn("```markdown\nRetries share one budget", out)
+
+    def test_a_one_line_preview_strips_the_suggestion(self):
+        """`candidates` lists a comment in one line, so the code is dropped, not cut."""
+        state = self._state(mine=True, body="Kürzer:\n\n" + self.SUGGESTION)
+        state["topics"] = []
+        out = F.render_candidates(state, None)
+        self.assertNotIn("suggestion", out)
+        self.assertIn("Kürzer:", out)
+
+
 class TestCriticalManifest(Throwaway, unittest.TestCase):
     def setUp(self):
         critical_manifest.reset()
