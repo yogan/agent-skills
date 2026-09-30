@@ -15,7 +15,7 @@
       "key": "present",
       "cmd": "threads\\.py\\s+present\\b",
       "signature": ["**MR !"],
-      "reason": "You ran `threads.py present` (the opener) but your message did not include its output. Tool output is COLLAPSED — the user cannot see it. Re-send your message starting with the FULL `present` output pasted verbatim: the MR title line, the overview table, and (if there is one) the first open topic's block — the fenced code the comment is anchored to, then the blockquoted comment. Do not summarise it or lead with your own research prose."
+      "reason": "You ran `threads.py present` (the opener) but your message did not include its output. Tool output is COLLAPSED — the user cannot see it. Re-send your message starting with the FULL `present` output pasted verbatim: the MR title line, the overview table, and (if there is one) the current topic's block — the fenced code the comment is anchored to, then the blockquoted comment. Do not summarise it or lead with your own research prose."
     },
     {
       "key": "todo",
@@ -25,6 +25,8 @@
     },
     {
       "key": "quote",
+      "note": ["Enforced only while its topic is the current one (lib/focus.py, hooks/README.md",
+               "\"The block manifest\"): the same command run for another topic is research."],
       "cmd": "threads\\.py\\s+quote\\b",
       "signature": ["◈"],
       "reason": "You ran `threads.py quote` (moving to the next topic) but your message did not include its output. Re-send your message starting with the FULL quote block pasted verbatim: the topic header, the fenced code the comment is anchored to, and the reviewer's blockquoted note with every reply. Not your own research prose, and not the note without the code — the user cannot judge a comment about lines they were never shown."
@@ -51,7 +53,8 @@
         "`--refine` for a reworded draft on a topic already on screen, which labels the",
         "draft `**Draft reply — ◈ t4:**` and drops the code and thread. Pinning the",
         "colon would leave the refine render ungated — the one the model is most likely",
-        "to drop, since it is the short one."
+        "to drop, since it is the short one.",
+        "It makes its topic the current one (lib/focus.py): drafting is asking the user to approve."
       ],
       "cmd": "threads\\.py\\s+reply-view\\b",
       "signature": ["**Draft reply", "Thread (to post on):", "**`c`** copy to clipboard"],

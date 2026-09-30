@@ -20,7 +20,7 @@ reply per topic. See [SKILL.md](SKILL.md) for the full flow and
 ## Claude Code setup — the paste-enforcement Stop hook
 
 Several steps show you something by pasting a script's output into chat: the
-opener's overview table + first topic's comment (`present`), the status-only
+opener's overview table + current topic's comment (`present`), the status-only
 answer (`todo`), the next topic's comment (`quote`), the working diff shown
 before a fixup+push ACK (`diff-view.sh`), the reply block (`reply-view`), and
 a trivial topic's change illustration (`change-view`). Claude Code
@@ -55,8 +55,12 @@ meaning).
 
 - `threads.py` — fetch/reconcile threads, render tables & the reply block. Run
   `threads.py -h` for subcommands
-  (`sync·todo·present·bodies·plans·quote·url·reply·reply-view [--refine]·set·merge·path·
-  change-view·diff-view·hunk-notes·hunk-close`).
+  (`sync·todo·present·bodies·plans·quote [--focus]·url·reply·reply-view [--refine]·set·merge·
+  path·change-view·diff-view·hunk-notes·hunk-close`).
+- **The current topic** — one topic at a time is current, kept in the state file. `present`
+  shows it, `quote <t> --focus` moves to another, and a `quote` of any other topic is
+  research the paste gate does not demand (it prints a `note:` saying so). Shared with
+  review-mr via `lib/focus.py`.
 - `quote <t>` — a topic in full: the code the reviewer's comment is anchored to (read
   from the exact blob the comment hangs on, so the line numbers are the reviewer's),
   then the whole thread. Shows the reviewer's own line range when they marked one —

@@ -103,14 +103,15 @@ the hook loads.
 
 ## The block manifest
 
-Two things about a rendered block cannot be worked out reliably from the text of a tool
-result, and both are known for certain by the command that printed it. So it says them,
-in a trailing, non-visible payload appended to its own stdout:
+Some things about a rendered block cannot be worked out reliably from the text of a tool
+result, and all of them are known for certain by the command that printed it. So it says
+them, in a trailing, non-visible payload appended to its own stdout:
 
 ```
 <!-- paste-gate:critical
 {"first": "**MR !123** — Add rate limiting · `feat/rate-limit` → `main`",
- "critical": ["| open | some finding | src/x.py:12 |", "the exact code line"]}
+ "critical": ["| open | some finding | src/x.py:12 |", "the exact code line"],
+ "topic": "t7", "focus": "t10"}
 -->
 ```
 
@@ -133,6 +134,18 @@ got blocked twice in one real session, with nothing the model could have correct
 retry was byte-identical and only got through because the loop guard had already spent the
 one block per reply. The trailing marker was always the block's end; `first` is its
 beginning, and between them nothing outside the block is the model's to reproduce.
+
+**`topic` / `focus` — which topic the block is about, and which topic is current.** Both
+skills work one topic at a time and keep the current one in their state file
+(`lib/focus.py`). A view of any other topic is research — `diff t7` run to write a push
+summary while t10 is being decided — and demanding it be pasted made the agent show t7's diff
+in the middle of t10. So a block whose `topic` is not the turn's current topic is not
+enforced. The turn's current topic is the `focus` the last block that declares one names; a
+block that declares no topic (a table), or a view that cannot know the current one
+(rework-mr's stateless `diff-view`/`change-view` leave `focus` out), is enforced as always,
+and so is everything when `focus` is `null` (nothing is current). Blocks are reduced to the
+last one per gate *and topic*: reduced per gate alone, a research `diff t7` after `diff t10`
+superseded it and let t10's diff go unshown.
 
 `_split_manifest` carves this out before anything else happens: what remains is what gets
 signature-checked and verbatim-compared. A command that emits no manifest gets an empty

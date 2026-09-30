@@ -106,7 +106,7 @@ the reply (step 10).
       re-anchored comment) or was never shown comes back in full, with a line saying why.
    c. Interpret the user's reply — **`c`** = copy, **`p`** = post, **`n`** = next topic (already
       replied/resolved: `set <t> --state waiting`, then **open the next one with
-      `quote <next-t>` pasted as the whole message, and stop** — `n` names the next comment to
+      `quote <next-t> --focus` pasted as the whole message, and stop** — `n` names the next comment to
       SHOW, not the next fix to start), **anything else** = discussion (no
       `d` command: engage with it, refine, store it again with `set <t> --reply -`, re-run
       `reply-view <t> --refine`, paste that):

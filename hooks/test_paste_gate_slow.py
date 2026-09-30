@@ -30,8 +30,8 @@ from test_paste_gate import (DIFF_VIEW_OUT, DIFF_VIEW_POINTER_OUT, HOOK,  # noqa
                              POINTER_CRITICAL, QA_NOISE, QUOTE_OUT, RESUME_CRITICAL,
                              RESUME_OUT, REVIEW_SPEC, REWORK_QUOTE_OUT, REWORK_SPEC,
                              HookCase, assistant_text, bash_call, row,
-                             tool_result, user_prompt, with_legacy_manifest,
-                             with_manifest)
+                             TestCurrentTopic, tool_result, user_prompt,
+                             with_legacy_manifest, with_manifest)
 
 
 class TestGates(HookCase):
@@ -315,6 +315,59 @@ class TestGates(HookCase):
             assistant_text("t1 needs you."),
         ]
         self.assertBlocked(rows)
+
+
+class TestCurrentTopicStillRefuses(HookCase):
+    """What the current-topic exemption must NOT let through (the allowed side is
+    TestCurrentTopic in the fast file, and these reuse its blocks)."""
+
+    T10, T7 = TestCurrentTopic.T10, TestCurrentTopic.T7
+    T10_DIFF = ("**◈ t10** — author changes since you posted (`aaa` → `bbb`)\n"
+                "http://gl/compare/10\n\n```diff\n--- tests/test_old.py\n"
+                "-def test_old():\n+def test_renamed():\n```")
+
+    def test_the_current_topics_diff_is_still_demanded(self):
+        self.assertBlocked([
+            user_prompt(),
+            bash_call("u1", "python3 $SD/findings.py diff t10 --iid 1"),
+            tool_result("u1", with_manifest(self.T10_DIFF, ["-def test_old():"],
+                                            topic="t10", focus="t10")),
+            assistant_text("t10 is fixed. Ack?"),
+        ], contains="findings.py diff")
+
+    def test_research_after_it_does_not_hide_the_current_topics_diff(self):
+        """Reduced per gate alone, the later `diff t7` superseded `diff t10`: pasting the
+        research diff satisfied the gate, and t10's own went unshown."""
+        self.assertBlocked([
+            user_prompt(),
+            bash_call("u1", "python3 $SD/findings.py diff t10 --iid 1"),
+            tool_result("u1", with_manifest(self.T10_DIFF, ["-def test_old():"],
+                                            topic="t10", focus="t10")),
+            bash_call("u2", "python3 $SD/findings.py diff t7 --iid 1"),
+            tool_result("u2", with_manifest(self.T7, ["-  if (a) return null"],
+                                            topic="t7", focus="t10")),
+            assistant_text(self.T7 + "\n\nt10 is fixed. Ack?"),
+        ], contains="findings.py diff")
+
+    def test_a_view_that_cannot_know_the_current_topic_is_enforced(self):
+        """rework-mr's diff-view is stateless: it names its topic, never the current one."""
+        self.assertBlocked([
+            user_prompt(),
+            bash_call("u1", "python3 $SD/threads.py quote t10"),
+            tool_result("u1", with_manifest(self.T10, [], topic="t10", focus="t10")),
+            bash_call("u2", "$SD/diff-view.sh t7"),
+            tool_result("u2", with_manifest(DIFF_VIEW_OUT, [], topic="t7")),
+            assistant_text(self.T10),
+        ], contains="diff-view")
+
+    def test_with_nothing_current_every_topic_view_is_enforced(self):
+        self.assertBlocked([
+            user_prompt(),
+            bash_call("u1", "python3 $SD/findings.py diff t7 --iid 1"),
+            tool_result("u1", with_manifest(self.T7, ["-  if (a) return null"],
+                                            topic="t7", focus=None)),
+            assistant_text("t7 looks fine."),
+        ], contains="findings.py diff")
 
 
 class TestForbidden(HookCase):

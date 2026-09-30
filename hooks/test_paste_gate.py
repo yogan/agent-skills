@@ -20,12 +20,14 @@ hooks/test_paste_gate_slow.py`, or the runner's `--slow` flag).
 One blocking case stays here, in TestGarbledEscape: `_garbled_backtick_escape` has no
 retry loop at all (see paste-gate.py's main()), so it costs what an allow costs.
 """
+import io
 import json
 import os
 import subprocess
 import sys
 import tempfile
 import unittest
+from contextlib import redirect_stdout
 
 os.environ["AGENT_SKILLS_PASTE_GATE"] = "1"
 
@@ -126,7 +128,7 @@ POINTER_CRITICAL = ["**Diff (t3)** — 2 files, +3 −1 · tmux window 9 (!123)"
 QA_NOISE = "Poe => python scripts/format_schemas.py\nAll checks passed!\n"
 
 
-def with_manifest(text, critical_lines, before=""):
+def with_manifest(text, critical_lines, before="", **declared):
     """`text` with a trailing block manifest appended, mirroring what
     findings.py/threads.py actually emit for a gated command (see lib/critical_manifest.py's
     `mark`/`with_manifest`, which both now share). Built by hand rather than imported, so
@@ -143,7 +145,8 @@ def with_manifest(text, critical_lines, before=""):
     filters could fragment it into `shown` too (or leak its opening marker line through
     untouched), tripping the "marker must never be visible" check for a reason that has
     nothing to do with what the test is actually exercising."""
-    payload = {"first": text.strip().splitlines()[0].strip(), "critical": critical_lines}
+    payload = {"first": text.strip().splitlines()[0].strip(), "critical": critical_lines,
+               **declared}       # `topic`, `focus` — see lib/focus.py
     return before + text + "\n\n<!-- paste-gate:critical\n" + json.dumps(payload) + "\n-->"
 
 
@@ -696,6 +699,28 @@ class TestShippedSpecs(unittest.TestCase):
                 self.assertTrue(gate["signature"], gate["key"])
 
 
+class TestCurrentTopic(HookCase):
+    """A view of a topic that is not the current one is research, and is not enforced.
+    The refusals this must not weaken are in test_paste_gate_slow.py's twin class."""
+
+    T10 = "◈ **t10** — rename the test file\n`tests/test_old.py`\n\n> **Robin**\n>\n> Umbenennen?"
+    T7 = ("**◈ t7** — author changes since you posted (`aaa` → `bbb`)\nhttp://gl/compare\n\n"
+          "```diff\n--- src/nav.tsx\n-  if (a) return null\n+  if (b) return null\n```")
+
+    def test_research_on_another_topic_is_not_demanded(self):
+        """The shape that pasted t7's diff into the middle of t10: the opener presented
+        t10, then `diff t7` ran to write a push summary."""
+        self.assertAllowed([
+            user_prompt(),
+            bash_call("u1", "python3 $SD/findings.py quote t10 --iid 1"),
+            tool_result("u1", with_manifest(self.T10, [], topic="t10", focus="t10")),
+            bash_call("u2", "python3 $SD/findings.py diff t7 --iid 1 | head -80"),
+            tool_result("u2", with_manifest(self.T7, ["-  if (a) return null"],
+                                            topic="t7", focus="t10")),
+            assistant_text(self.T10 + "\n\nt10 is done. Ack?"),
+        ])
+
+
 class TestRealViewsPasteClean(HookCase):
     """Every view either skill asks to paste verbatim, rendered by the real code from a
     comment holding every shape that ever tripped a rule, then pasted exactly — must pass.
@@ -784,6 +809,35 @@ class TestRealViewsPasteClean(HookCase):
         block = self.T.render_change_view("t1", "Changed:\n\n> " + self.HOSTILE,
                                           "docs/retries.md")
         self.assertPastesClean("python3 $SD/threads.py change-view t1", block)
+
+    def test_review_mr_research_on_another_topic_end_to_end(self):
+        """The producer's own manifest, read by the real hook: the opener presents t1,
+        then `diff t2` runs as research. Only t1's block is demanded."""
+        state = {"iid": 1, "title": "x", "author": None, "lang": None, "topics": [],
+                 "threads": {"d1": self.thread(awaiting="you", resolved=False),
+                             "d2": self.thread(awaiting="author", resolved=False)}}
+        for d in ("d1", "d2"):
+            t = self.F.add_topic(state, summary=f"point {d}", file="docs/retries.md",
+                                 line=21)
+            t["thread_ids"] = [d]
+
+        def printed(block, topic):
+            buf = io.StringIO()
+            with redirect_stdout(buf):
+                self.F.emit(state, block, topic)
+            return buf.getvalue()
+        opener = self.F.render_present(state)
+        diff = ("**◈ t2** — author changes since you posted\n\n```diff\n"
+                "-    retries = compute_backoff(attempt)\n"
+                "+    retries = compute_backoff(attempt, cap=MAX_RETRIES)\n```")
+        self.assertAllowed([
+            user_prompt(),
+            bash_call("u1", "python3 $SD/findings.py present --iid 1"),
+            tool_result("u1", printed(opener, "t1")),
+            bash_call("u2", "python3 $SD/findings.py diff t2 --iid 1"),
+            tool_result("u2", printed(diff, "t2")),
+            assistant_text(opener + "\n\nAck?"),
+        ])
 
     def test_rework_mr_reply_shows_its_own_suggestion_highlighted(self):
         """Display only: the body that is posted keeps ```suggestion."""

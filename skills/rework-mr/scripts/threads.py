@@ -19,12 +19,13 @@ Status:
 Subcommands:
   sync        fetch + reconcile, render the overview           (default; also for "status")
   todo        fetch + reconcile, render only what needs you (open + reply-pending)
-  present     overview table + the first open topic's comment  (the opener; no fetch)
+  present     overview table + the current topic's comment  (the opener; no fetch)
   bodies      print each open thread's first and last note (to summarize from; no fetch)
   plans       print recorded decisions/plans for open topics  (resume; no fetch)
   quote <t>   a topic in full: the code the comment is anchored to (the reviewer's own
               line range when they marked one), then the whole thread — original + every
-              reply  (no fetch)
+              reply  (no fetch). `--focus` makes it the current topic (lib/focus.py);
+              a topic that is not current is shown for research only
   url <t>     direct URL(s) to the topic's thread (to click & post)  (no fetch)
   reply-view <t>  code + thread + your drafted reply + URL, one paste  (no fetch)
               `--refine` drops the code and thread — for re-showing a reworded draft
@@ -60,7 +61,7 @@ _REPO_ROOT = os.path.dirname(
 if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
 
-from lib import critical_manifest, hunk  # noqa: E402
+from lib import critical_manifest, focus, hunk  # noqa: E402
 from lib.gitlab import (
     api,
     context,
@@ -1165,18 +1166,47 @@ def first_open(state):
     return min(opens, key=lambda t: num(t["id"])) if opens else None
 
 
-def render_present(state):
-    """The opener the user should see: overview table + the first open topic's
-    reviewer comment, ready to reproduce in one reply.
+# Statuses that are the user's to act on — what keeps a topic current (lib/focus.py).
+NEEDS_YOU = ("open", "reply_pending")
 
-    Mirrors review-mr's findings.py's `render_present` almost exactly — the only real
-    difference is `first_open` vs. its `first_todo`, each picking "the topic that needs
-    you" per this skill's own status vocabulary. Stays duplicated: see CLAUDE.md's
-    "Sharing vs. duplication"."""
+
+def next_topic(state):
+    """The topic the opener shows: the first open one, else the first whose reply is
+    still to be written."""
+    pending = [t for t in state["topics"] if topic_status(state, t) == "reply_pending"]
+    return first_open(state) or (min(pending, key=lambda t: num(t["id"])) if pending
+                                 else None)
+
+
+CURRENT = focus.Current(topic_status, NEEDS_YOU, next_topic)
+
+
+def current_topic(state):
+    """The current topic — a jump that still holds, else the next that needs you."""
+    return CURRENT.get(state)
+
+
+def emit(state, block, topic=None):
+    """Print a gated view with its manifest, naming the topic it is about and the current
+    one, so the paste gate enforces only what belongs to the topic being decided."""
+    print(
+        critical_manifest.with_manifest(
+            block, topic=topic, focus=current_topic(state)
+        )
+    )
+
+
+def render_present(state):
+    """The opener the user should see: overview table + the current topic's reviewer
+    comment, ready to reproduce in one reply.
+
+    Mirrors review-mr's findings.py's `render_present` almost exactly. Which topic is
+    current follows each skill's own status vocabulary, so it stays duplicated: see
+    CLAUDE.md's "Sharing vs. duplication"."""
     parts = [render_table(state, "all")]
-    t = first_open(state)
-    if t:
-        parts += ["\n---\n", render_quote(state, t["id"])]
+    tid = current_topic(state)
+    if tid:
+        parts += ["\n---\n", render_quote(state, tid)]
     return "\n".join(parts)
 
 
@@ -1340,6 +1370,13 @@ def main():
     pq = sub.add_parser("quote")
     pq.add_argument("topic")
     pq.add_argument("--iid", type=int)
+    pq.add_argument(
+        "--focus",
+        action="store_true",
+        help="make this the current topic — the user asked to move to it, "
+        "or the current one is settled. Without it, a topic that is not "
+        "current is shown for your research only",
+    )
     pu = sub.add_parser("url")
     pu.add_argument("topic")
     pu.add_argument("--iid", type=int)
@@ -1395,9 +1432,11 @@ def main():
                 text = fh.read()
         else:
             text = sys.stdin.read()
+        # Stateless, so it names its topic but not the current one: the hook then enforces
+        # it as before, which is right — a change illustration is never research.
         print(
             critical_manifest.with_manifest(
-                render_change_view(args.topic, text, args.for_path)
+                render_change_view(args.topic, text, args.for_path), topic=args.topic
             )
         )
         return
@@ -1429,7 +1468,8 @@ def main():
             )
         print(
             critical_manifest.with_manifest(
-                diff_view_block(args.topic, sys.stdin.read(), args.plain, notes)
+                diff_view_block(args.topic, sys.stdin.read(), args.plain, notes),
+                topic=args.topic,
             )
         )
         return
@@ -1481,26 +1521,31 @@ def main():
     if cmd == "path":
         print(path)
     elif cmd == "quote":
-        print(critical_manifest.with_manifest(render_quote(state, args.topic)))
+        topic_for(state, args.topic) or die(f"no topic {args.topic}")
+        note = CURRENT.view(
+            state, args.topic, args.focus, f"threads.py quote {args.topic} --focus"
+        )
+        if note:
+            print(note, file=sys.stderr)
+        emit(state, render_quote(state, args.topic), args.topic)
         # `render_quote` recorded what it showed; persist it so a later `--refine` can
-        # tell whether the context still matches. Every command that renders a topic in
-        # full does this — it is the only reason these read-only views write at all.
+        # tell whether the context still matches — and the current topic with it. Every
+        # command that renders a topic in full does this; it is the only reason these
+        # read-only views write at all.
         save(path, state)
     elif cmd == "url":
         print(render_url(state, args.topic))
     elif cmd == "reply-view":
         body = reply_body(state, args.topic, os.path.dirname(path))
-        print(
-            critical_manifest.with_manifest(
-                render_reply_view(state, args.topic, body, args.refine)
-            )
-        )
+        # Drafting a reply is asking the user to approve it, so its topic is current.
+        CURRENT.jump(state, args.topic)
+        emit(state, render_reply_view(state, args.topic, body, args.refine), args.topic)
         save(path, state)
     elif cmd == "reply":
         # body only — the payload for the clipboard or `glab api -F body=@-`
         print(reply_body(state, args.topic, os.path.dirname(path)), end="")
     elif cmd == "present":
-        print(critical_manifest.with_manifest(render_present(state)))
+        emit(state, render_present(state), current_topic(state))
         save(path, state)
     elif cmd == "bodies":
         print(render_bodies(state))
@@ -1512,14 +1557,13 @@ def main():
         # `sync` isn't gated (see paste-gates.json's note), so the manifest it carries
         # is simply never read for that command — harmless, and keeping one code path
         # for both is simpler than branching just to omit it.
-        print(
-            critical_manifest.with_manifest(
-                render_table(
-                    state,
-                    "mine" if cmd == "todo" else "all",
-                    show_done=getattr(args, "all", False),
-                )
-            )
+        emit(
+            state,
+            render_table(
+                state,
+                "mine" if cmd == "todo" else "all",
+                show_done=getattr(args, "all", False),
+            ),
         )
     elif cmd == "set":
         t = topic_for(state, args.topic) or die(f"no topic {args.topic}")

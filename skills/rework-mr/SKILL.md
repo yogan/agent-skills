@@ -72,7 +72,8 @@ ich") with the work still to do, it stays `open`. `bodies` shows your last note 
 python3 $SD/threads.py set <t> --state waiting     # only for a truly-addressed thread
 ```
 
-**Now research the first open topic — silently, before `present`.** `bodies` already gave you
+**Now research the current topic — the first open one, or the one a jump left current (see
+"The current topic") — silently, before `present`.** `bodies` already gave you
 its reviewer comment, so you can read the code and work out the trade-off now. Do this first
 so that when you run `present` it is the **last** thing you read before you type your reply —
 this is what stops the table getting dropped.
@@ -83,7 +84,7 @@ Then, as your **final** action before replying, run `present`:
 python3 $SD/threads.py present      # run LAST — its output must lead your reply
 ```
 
-`present` outputs the overview table + a separator + the first open topic's reviewer comment.
+`present` outputs the overview table + a separator + the current topic's reviewer comment.
 Your reply is built in this exact order:
 
 1. **The entire `present` output, verbatim, as the very first thing** — MR title line, GFM
@@ -150,15 +151,31 @@ URL. **Never re-implement it** (you'd duplicate a pushed change). Only `○ open
 (no `diff_url`) get implemented from step 1. If a `reply-pending` topic's diff looks wrong or
 the reviewer re-commented asking for more, confirm with the user before touching code.
 
+## The current topic
+
+Exactly one topic is **current** at a time — the one being worked through. `threads.py` keeps
+it in the state file, and every view tells the `Stop` hook which topic it shows, so only the
+current topic's views must be pasted.
+
+- **Opening a topic** — the next one, or the one the user names ("skip this, do t7 first") — is
+  `quote <t> --focus`, pasted verbatim. Re-showing the current one is plain `quote <t>`.
+- **Any other topic is research.** `quote` for a topic that is not current prints a `note:`
+  saying so; use it to inform your answer and do not paste it. "Let's stop, I need to look into
+  X first" needs nothing — the topic stays current until you come back to it.
+- **It moves on by itself** when the topic stops needing the user — `waiting`, or resolved by
+  the reviewer — and `reply-view <t>` makes `t` current. `present` shows it, so a jump also
+  survives into the next session. `change-view`/`diff-view` always belong to the topic you are
+  on and are always enforced.
+
 ## Next topics
 
 Once the user agrees on the current topic, **record the plan (no code yet)** and open the
-next one. Same rule as the opener: research the next topic silently first, then run `quote`
-**last**, and lead your reply with its verbatim output before any prose.
+next one. Same rule as the opener: research the next topic silently first, then run `quote
+--focus` **last**, and lead your reply with its verbatim output before any prose.
 
 ```bash
 python3 $SD/threads.py set <t> --decision "…" --plan "…"
-python3 $SD/threads.py quote <next-t>      # run LAST — paste its output verbatim, first thing in your reply
+python3 $SD/threads.py quote <next-t> --focus   # run LAST — paste its output verbatim, first thing in your reply
 ```
 
 **Postcondition:** the reply must open with the `quote` block — the topic header, the fenced
@@ -317,7 +334,7 @@ Per topic:
       - **`p`** (or "post") → post it (the one allowed write).
       - **`n`** (or "next") → the topic is already handled (they replied by hand, or it's
         resolved): mark it `set <t> --state waiting`, then open the next topic **the way
-        every topic is opened — `quote <next-t>`, pasted as your whole message, then STOP**
+        every topic is opened — `quote <next-t> --focus`, pasted as your whole message, then STOP**
         (see "Next topics"). "Next" names the next *comment to show*, never the next fix to
         start: a topic whose comment the user has not been shown cannot be discussed, let
         alone agreed, and a diff arriving before it is a change they never asked for.

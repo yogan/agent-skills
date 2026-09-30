@@ -335,6 +335,24 @@ def _missing_lines(result, shown, critical):
     return missing, corrupted, critical_out
 
 
+def _manifest_meta(result):
+    """The topic a block is about and the current topic, as its producer declared them —
+    `{}` when the payload says neither (a table, a stateless view, an older producer).
+
+    A key that is absent means "not declared"; `focus: null` is a declaration that no
+    topic is current. The two are treated differently by `violation`.
+    """
+    i = result.find(MANIFEST_MARKER)
+    m = _MANIFEST_RE.search(result, i) if i != -1 else None
+    try:
+        payload = json.loads(m.group(1)) if m else {}
+    except Exception:                      # noqa: BLE001 — malformed → nothing declared
+        payload = {}
+    if not isinstance(payload, dict):
+        return {}
+    return {k: payload[k] for k in ("topic", "focus") if k in payload}
+
+
 def _load(path):
     try:
         with open(path) as f:
@@ -661,24 +679,37 @@ def violation(path, specs):
     # markers without actually pasting the block can't satisfy the check. Only enforce a
     # successful run; an errored one (no matching signature) means the model is mid-fix —
     # leave it alone.
-    # Keep only the LAST invocation per gate key. A topic can legitimately be re-rendered
-    # several times in one turn — quote, then an anchor fix, then `set --draft` — and each
-    # rendering supersedes the previous one. Demanding every one of them be pasted made a
-    # correct message (which pasted the newest block) get blocked for omitting a stale one.
-    # dict preserves transcript order, so the last write per key wins.
+    # Keep only the LAST invocation per gate key and topic. A topic can legitimately be
+    # re-rendered several times in one turn — quote, then an anchor fix, then `set
+    # --draft` — and each rendering supersedes the previous one. Demanding every one of
+    # them be pasted made a correct message (which pasted the newest block) get blocked
+    # for omitting a stale one. Per TOPIC, because a later run for a different topic
+    # supersedes nothing: reduced per key alone, `diff t10` followed by `diff t7` let
+    # t10's diff go unshown. dict preserves transcript order, so the last write wins.
+    #
+    # The current topic is what the LAST producer that knew it declared (see
+    # lib/focus.py): a block about any other topic is research, not something the user
+    # was asked to see, and is not enforced. A block that declares no topic, or whose
+    # producer could not know the current one, is enforced as always.
+    turn_focus = None
     last_per_key = {}
     for uid, gate in matched.items():
-        last_per_key[gate["key"]] = uid
+        meta = _manifest_meta(result_by_id.get(uid, ""))
+        if "focus" in meta:
+            turn_focus = meta["focus"]
+        last_per_key[(gate["key"], meta.get("topic"))] = (uid, meta)
 
     fired = set()      # gate keys that ran successfully — for the `required` rules
     reason = None
-    for gate_key, uid in last_per_key.items():
+    for (gate_key, topic), (uid, meta) in last_per_key.items():
         gate = matched[uid]
         result = _strip_tool_noise(result_by_id.get(uid, ""))
         visible, critical = _split_manifest(result)
         if not all(s in visible for s in gate["signature"]):
             continue
         fired.add(gate_key)
+        if topic and "focus" in meta and turn_focus and topic != turn_focus:
+            continue                      # research on another topic
         # Tolerate ONE dropped PROSE line. Observed: a message that pasted the whole
         # overview — table, counts, footer — but swapped the leading status line for its
         # own preamble. Blocking that is noise. Two or more missing lines still means a

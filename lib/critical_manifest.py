@@ -1,10 +1,11 @@
 """The block manifest: a trailing, non-visible payload gated commands (in both
 review-mr's findings.py and rework-mr's threads.py) append to their own stdout, so
-hooks/paste-gate.py's Stop hook knows two things it cannot reliably work out for itself —
-where the block it must enforce STARTS inside the tool result, and which of its lines must
-never be silently dropped (a table row, a line inside a fenced code block). See
+hooks/paste-gate.py's Stop hook knows what it cannot reliably work out for itself — where
+the block it must enforce STARTS inside the tool result, which of its lines must never be
+silently dropped (a table row, a line inside a fenced code block), and which topic the block
+is about next to the current one (lib/focus.py). See
 hooks/README.md's "The block manifest" section for the full mechanism and why the
-producer, not the hook, is the source of truth for both.
+producer, not the hook, is the source of truth for all of it.
 
 Shared here (not duplicated per skill) because it is pure and has no coupling to either
 skill's state shape — the two implementations were byte-identical modulo a comment
@@ -69,7 +70,10 @@ def current():
     return list(_critical)
 
 
-def with_manifest(block):
+_UNSET = object()
+
+
+def with_manifest(block, topic=None, focus=_UNSET):
     """`block`, plus its trailing manifest when Claude Code's paste gate needs it.
 
     Every gated command goes through here rather than concatenating a payload of its own,
@@ -90,6 +94,13 @@ def with_manifest(block):
     `critical` — the lines that must never be silently dropped, whatever they look like
     syntactically. The trailing end needs no equivalent: the marker itself is the boundary.
 
+    `topic` / `focus` — which topic the block is about, and which topic is current (see
+    lib/focus.py), when the command knows. The hook enforces a topic's block only while it
+    is the current one, so running a view for another topic is research, not something
+    the user has to be shown. `focus` is left out entirely by a command that cannot know it (a
+    stateless view), which is different from a declared `None` (nothing is current), and
+    the hook enforces such a block as before.
+
     Emitted even when nothing was marked critical, unlike the older payload this replaces:
     `first` alone earns it, and a block with no critical lines is exactly as prone to
     being preceded by somebody else's output as any other.
@@ -98,4 +109,8 @@ def with_manifest(block):
         return block
     first = next(ln.strip() for ln in block.splitlines() if ln.strip())
     payload = {"first": first, "critical": list(_critical)}
+    if topic is not None:
+        payload["topic"] = topic
+    if focus is not _UNSET:
+        payload["focus"] = focus
     return block + "\n\n<!-- paste-gate:critical\n" + json.dumps(payload) + "\n-->"

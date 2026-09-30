@@ -774,6 +774,67 @@ class TestCodeStaysCode(unittest.TestCase):
         self.assertIn("````diff\n--- docs/a.md\n ```suggestion\n-old\n+new\n ```\n````", out)
 
 
+class TestCurrentTopic(unittest.TestCase):
+    """The current topic is what the opener shows and what every view declares to the
+    paste gate. The rules themselves are lib/test_focus.py's; this pins the wiring."""
+
+    def state(self):
+        state = new_state(threads={
+            "d1": {"body": "a", "file": "a.py", "line": 1, "awaiting": "you",
+                   "resolved": False, "last_at": "2026-01-01T00:00:00Z"},
+            "d2": {"body": "b", "file": "b.py", "line": 2, "awaiting": "author",
+                   "resolved": False}})
+        for i, d in enumerate(("d1", "d2"), 1):
+            add_linked_topic(state, d, summary=f"point {i}", file=f"{'ab'[i - 1]}.py",
+                             line=i)
+        return state
+
+    def payload(self, state, block, topic=None):
+        buf = io.StringIO()
+        with patch("sys.stdout", buf), patch.dict(os.environ,
+                                                  {"AGENT_SKILLS_PASTE_GATE": "1"}):
+            F.emit(state, block, topic)
+        return json.loads(buf.getvalue().split("<!-- paste-gate:critical\n")[1]
+                          .rsplit("\n-->", 1)[0])
+
+    def test_the_opener_shows_the_first_topic_that_needs_you(self):
+        self.assertIn("point 1", F.render_present(self.state()).split("---")[-1])
+
+    def test_a_jump_is_what_the_opener_shows_next_time(self):
+        """"Let's do t2 first" survives into the next session's `resume`."""
+        state = self.state()
+        F.CURRENT.jump(state, "t2")
+        self.assertIn("point 2", F.render_present(state).split("---")[-1])
+
+    def test_a_view_declares_its_topic_and_the_current_one(self):
+        p = self.payload(self.state(), "◈ t2", "t2")
+        self.assertEqual((p["topic"], p["focus"]), ("t2", "t1"))
+
+    def test_acking_the_current_topic_moves_it_on(self):
+        state = self.state()
+        F.current_topic(state)
+        F.topic_for(state, "t1").update(state="acked", acked_at=F.now_iso())  # as `set`
+        self.assertEqual(self.payload(state, "table")["focus"], None)  # t2 awaits the author
+
+
+class TestRenamedFileDiff(unittest.TestCase):
+    def test_a_pure_rename_says_so(self):
+        """It printed the header and URL and then nothing, which read as "no change"."""
+        state = new_state(threads={"d1": {"body": "x", "file": "tests/test_old.py",
+                                          "line": 3, "url": "u"}},
+                          last_reviewed_head="OLD1",
+                          mr_web_url="https://gitlab.example.com/g/r/-/merge_requests/1")
+        F.adopt_inbound(state, None, None)
+        with patch.object(F, "mr_head", return_value="NEW1"), \
+             patch.object(F, "versions", return_value=[{"id": 2}]), \
+             patch.object(F, "_compare", return_value=[
+                 {"old_path": "tests/test_old.py", "new_path": "tests/test_new.py",
+                  "renamed_file": True, "diff": ""}]):
+            out = F.render_topic_diff(state, {"enc": "x"}, 1, "t1")
+        self.assertIn("_renamed `tests/test_old.py` → `tests/test_new.py` — no content "
+                      "change_", out)
+
+
 class TestSettledThreads(unittest.TestCase):
     """Someone else's thread already resolved when `sync` first sees it is not taken on.
     Each one used to cost a summary and an ack, and the table refused to render until all

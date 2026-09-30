@@ -707,6 +707,57 @@ class TestSummaryIsAuthored(unittest.TestCase):
         )
 
 
+class TestCurrentTopic(unittest.TestCase):
+    """The current topic is what the opener shows and what every view declares to the
+    paste gate. The rules themselves are lib/test_focus.py's; this pins the wiring."""
+
+    @staticmethod
+    def state(**extra):
+        th = lambda awaiting: {"author": "Robin", "body": "b", "file": "a.py",  # noqa: E731
+                               "line": 1, "resolved": False, "awaiting": awaiting,
+                               "note_count": 1, "url": "http://gl/1"}
+        return {"iid": 1, "threads": {"d1": th("you"), "d2": th("you")},
+                "topics": [{"id": "t1", "summary": "point one", "thread_ids": ["d1"],
+                            "state": None, **extra},
+                           {"id": "t2", "summary": "point two", "thread_ids": ["d2"],
+                            "state": None}]}
+
+    def test_the_opener_prefers_open_work_over_a_reply_left_to_write(self):
+        state = self.state(diff_url="http://gl/diff")      # t1 pushed, reply pending
+        state["threads"]["d1"]["awaiting"] = "reviewer"
+        self.assertEqual(T.topic_status(state, state["topics"][0]), "reply_pending")
+        self.assertEqual(T.next_topic(state)["id"], "t2")
+        state["topics"][1]["state"] = "waiting"
+        state["threads"]["d2"]["awaiting"] = "reviewer"
+        self.assertEqual(T.next_topic(state)["id"], "t1")
+
+    def test_a_jump_is_what_the_opener_shows_next_time(self):
+        state = self.state()
+        T.CURRENT.jump(state, "t2")
+        self.assertIn("point two", T.render_present(state).split("---")[-1])
+
+    def test_marking_it_waiting_moves_it_on(self):
+        state = self.state()
+        self.assertEqual(T.current_topic(state), "t1")
+        state["topics"][0]["state"] = "waiting"
+        state["threads"]["d1"]["awaiting"] = "reviewer"
+        self.assertEqual(T.current_topic(state), "t2")
+
+    def test_a_stateless_view_names_its_topic_but_not_the_current_one(self):
+        """So the hook enforces it whatever is current: a change is never research."""
+        with tempfile.NamedTemporaryFile("w", suffix=".diff", delete=False) as fh:
+            fh.write("-a\n+b\n")
+        self.addCleanup(os.unlink, fh.name)
+        out = subprocess.run(
+            [sys.executable, os.path.join(HERE, "threads.py"), "change-view", "t3",
+             fh.name], capture_output=True, text=True, check=True,
+            env={**os.environ, "AGENT_SKILLS_PASTE_GATE": "1"}).stdout
+        payload = json.loads(out.split("<!-- paste-gate:critical\n")[1]
+                             .rsplit("\n-->", 1)[0])
+        self.assertEqual(payload["topic"], "t3")
+        self.assertNotIn("focus", payload)
+
+
 class TestQuoteNotes(unittest.TestCase):
     """The note renderer itself is lib/test_fences.py's; this pins that `quote` hands it
     the thread's file and anchor, which is what the suggestion caption and language need."""

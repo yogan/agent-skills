@@ -23,7 +23,7 @@ comment, or question they are being asked to act on. So:
    ```
 
    Paste that output verbatim as the start of the reply. It carries the MR header, the
-   overview table, the pushes since your baseline and the topic that needs the user —
+   overview table, the pushes since your baseline and the current topic —
    i.e. everything they need to orient. **If your reply names a topic (`t2`) without a
    pasted table above it, it is wrong: the user has no idea what `t2` is.** Do not run
    `sync`/`head`/`bodies` first and narrate from those; `resume` already includes them.
@@ -235,7 +235,23 @@ call. A bare `cd <wt>` from an earlier command does **not** persist (each shell 
 cwd to the repo root, usually *your own* branch), so without `--iid` these silently resolve to
 the wrong MR and land findings in the wrong state file.
 
-`present` = the overview table + the first topic that needs you. Then enter Phase 1.
+`present` = the overview table + the current topic (below). Then enter Phase 1.
+
+## The current topic
+
+Exactly one topic is **current** at a time — the one being decided. `findings.py` keeps it in
+the state file, and every view tells the `Stop` hook which topic it shows, so only the current
+topic's views must be pasted.
+
+- **Opening a topic** — the next one, or the one the user names ("skip this, do t7 first") — is
+  `quote <t> --focus --iid <n>`, pasted verbatim. Re-showing the current one is plain `quote <t>`
+  (or `--refine`).
+- **Any other topic is research.** `quote`/`diff` for a topic that is not current prints a
+  `note:` saying so; use it to inform your answer and do not paste it. "Let's stop, I need to
+  look into X first" needs nothing — the topic stays current until you come back to it.
+- **It moves on by itself** when the topic stops needing the user — acked, `⊘ wontfix`,
+  posted and `link`ed — and `set <t> --draft` makes `t` current. `present`/`resume` show it, so
+  a jump also survives into the next session.
 
 ## Phase 1 — Curate (no drafts yet)
 
@@ -306,7 +322,7 @@ for a concrete example, refine wording — possibly over several turns. Finish t
 (draft accepted / self-posted / skipped) **before** moving on.
 
 **Lead with the topic, never with your research.** Every turn about a topic opens with
-`quote <t>` pasted verbatim — it names the topic, gives `file:line`, shows the code in
+`quote <t>` pasted verbatim (`--focus` when the topic is not yet current) — it names the topic, gives `file:line`, shows the code in
 question and the draft. Only *then* your 2-4 lines of reasoning. Opening on a verdict
 ("Confirmed: …", "Yes, that's a real bug") is unreadable: the user cannot tell which finding
 you mean, cannot see the code you are asserting things about, and has no `file:line` to open.
@@ -361,17 +377,18 @@ A state file exists (the common case — a review spans days). Fetch + checkout 
 whole:
 
 ```bash
-python3 $SD/findings.py resume --iid <n>  # pushes since your baseline + overview table + first topic
+python3 $SD/findings.py resume --iid <n>  # pushes since your baseline + overview table + current topic
 ```
 
 It is one call on purpose. As two steps ("run `updates`, then run `present`") the second gets
-dropped once you start digging into the first topic, and the overview table — the user's only
+dropped once you start digging into the current topic, and the overview table — the user's only
 view of where every topic stands — silently goes missing. If you catch yourself about to reply
 without that table, you skipped it.
 
 **1 — `updates`.** Paste verbatim, then annotate — don't collapse it into prose. Each push is a
 `- **push N:** <url>` line with a nested `  - ` detail (diffstat + topics touched, or a rebase
-label). Add your **one-line summary as a further `  - ` sub-bullet**:
+label). Add your **one-line summary as a further `  - ` sub-bullet** — to write it, `diff <t>`
+for the topics a push touches is research (see "The current topic"), not something to paste:
 
 ```
 - **push 1:** <url>
@@ -386,8 +403,8 @@ A **⚠️** rebase line — a real change hidden in the rebase, caught either b
 touched a topic's tracked file, whatever the commit messages say) or, failing that, by a
 new/edited commit message — **call it out loudly**.
 
-**2 — the overview + first topic** (the part after the `---`). Paste verbatim: the **overview table** (your map of every topic's state) plus
-the first topic needing you. **The overview table is mandatory in the opener — never drop it**
+**2 — the overview + current topic** (the part after the `---`). Paste verbatim: the **overview table** (your map of every topic's state) plus
+the current topic — the first needing you, or the one a jump left current. **The overview table is mandatory in the opener — never drop it**
 (it's the user's only view of where all topics stand). Then walk the needs-ack topics one at a
 time from there.
 
@@ -418,11 +435,11 @@ land in your lists and can be `merge`d with your findings.
 
 For each `◐ needs-ack` (author replied and/or resolved), present it **one at a time**. **Read
 the thread first — it is the source of truth for what was agreed.** The opener already ends
-with the first topic's full thread, so do not run `quote` for that topic again; continue
-straight to its diff and judgment. Run `quote` once when moving to each later topic:
+with the current topic's full thread, so do not run `quote` for that topic again; continue
+straight to its diff and judgment. Run `quote --focus` once when moving to each later topic:
 
 ```bash
-python3 $SD/findings.py quote <t> --iid <n>  # the full thread: your point + the author's reply
+python3 $SD/findings.py quote <t> --focus --iid <n>  # the full thread: your point + the author's reply
 ```
 
 **Judge against what the thread agreed, not against the finding's original one-line summary.**
@@ -440,8 +457,9 @@ python3 $SD/findings.py diff <t> --iid <n>  # the author's change for THIS topic
 ```
 
 `diff <t>` shows the topic file's change since you posted it — **inline when small**, else just
-the compare URL to `open`. It's server-side (force-push-safe), so it works even when the baseline
-sha is long gone locally. Paste whatever it returns. On the user's word:
+the compare URL to `open`; a file that was only renamed says so. It's server-side
+(force-push-safe), so it works even when the baseline sha is long gone locally. Paste whatever
+it returns for the current topic; for any other topic it is research (see "The current topic"). On the user's word:
 
 ```bash
 python3 $SD/findings.py set <t> --state acked --iid <n>               # ● you're satisfied

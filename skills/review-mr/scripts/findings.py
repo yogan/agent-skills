@@ -37,15 +37,16 @@ lists and can be merged with your findings.
 Subcommands (all read-only against GitLab):
   sync           fetch discussions + branch tip, reconcile, render overview  (default)
   todo           render only what needs YOU (✎ drafts + ◐ needs-ack)
-  present        overview + the first topic that needs you
-  resume         the whole resume opener: updates + overview + first topic (one call)
+  present        overview + the current topic (lib/focus.py)
+  resume         the whole resume opener: updates + overview + current topic (one call)
   updates        pushes since your baseline: compare URLs + diffstats + topics touched
   bodies         first + last note of each posted thread (to judge status)
   quote <t>      render a topic's thread notes verbatim (for a draft: display
                  with meta header + where to open the thread). `--refine` leaves the
                  topic's context out — the code, or the notes of the thread a follow-up
                  replies into — for re-showing a reworded draft on a topic already on
-                 screen; `set <t> --draft` takes it too, for its echo
+                 screen; `set <t> --draft` takes it too, for its echo. `--focus` makes it
+                 the current topic; a topic that is not current is shown for research only
   draft <t>      the draft's comment body ONLY — the paste/post payload (no meta)
   diff <t>       the author's change for one topic: compare URL + inline git command
   import <file>  bulk-add findings from a JSON array (review-branch seed)
@@ -91,7 +92,7 @@ _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(
 if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
 
-from lib import critical_manifest                               # noqa: E402
+from lib import critical_manifest, focus                        # noqa: E402
 from lib.fences import (SUGGESTION_INFO, fence, lang_for, note_md,  # noqa: E402
                         segments)
 from lib.gitlab import (api, context, current_user, die, mr_base, mr_head,  # noqa: E402
@@ -981,15 +982,37 @@ def first_todo(state):
     return min(todo, key=lambda t: (STATUS_ORDER[st[t["id"]]], num(t["id"])))
 
 
+# Statuses that are the user's to act on — what keeps a topic current (lib/focus.py).
+NEEDS_YOU = ("needs_ack", "draft")
+
+
+CURRENT = focus.Current(topic_status, NEEDS_YOU, first_todo)
+
+
+def current_topic(state):
+    """The current topic — a jump that still holds, else the first that needs you."""
+    return CURRENT.get(state)
+
+
+def _jump_cmd(tid, iid):
+    return f"findings.py quote {tid} --focus --iid {iid}"
+
+
+def emit(state, block, topic=None):
+    """Print a gated view with its manifest, naming the topic it is about and the current
+    one, so the paste gate enforces only what belongs to the topic being decided."""
+    print(critical_manifest.with_manifest(block, topic=topic,
+                                          focus=current_topic(state)))
+
+
 def render_present(state):
-    """Mirrors rework-mr's threads.py's `render_present` almost exactly — the only real
-    difference is `first_todo` vs. its `first_open`, each picking "the topic that needs
-    you" per this skill's own status vocabulary. Stays duplicated rather than threading
-    that picker in as a parameter: see CLAUDE.md's "Sharing vs. duplication"."""
+    """Mirrors rework-mr's threads.py's `render_present` almost exactly — the table, then
+    the current topic. Which topic that is follows each skill's own status vocabulary,
+    so it stays duplicated: see CLAUDE.md's "Sharing vs. duplication"."""
     parts = [render_table(state, "all")]
-    t = first_todo(state)
-    if t:
-        parts += ["\n---\n", render_quote(state, t["id"])]
+    tid = current_topic(state)
+    if tid:
+        parts += ["\n---\n", render_quote(state, tid)]
     return "\n".join(parts)
 
 
@@ -1314,8 +1337,14 @@ def render_topic_diff(state, ctx, iid, tid, inline_limit=80):
     blocks = []
     for d in picked:
         body = (d.get("diff") or "").rstrip("\n")
+        old, new = d.get("old_path"), d.get("new_path")
+        if d.get("renamed_file") or (old and new and old != new):
+            # A pure rename has no diff lines at all, and printing nothing after the URL
+            # read as "no change" — the one answer that is wrong.
+            out += ["", f"_renamed `{old}` → `{new}`"
+                        f"{'' if body else ' — no content change'}_"]
         if body:
-            blocks.append(f"--- {d.get('new_path') or d.get('old_path')}\n{body}")
+            blocks.append(f"--- {new or old}\n{body}")
     text = "\n".join(blocks)
     nlines = text.count("\n") + 1 if text else 0
     if 0 < nlines <= inline_limit:
@@ -1597,6 +1626,10 @@ def main():
                    "label. Safe whenever you are re-showing: a context that moved since, "
                    "or was never shown, comes back in full anyway.")
     pq.add_argument("--refine", action="store_true", help=REFINE_HELP)
+    pq.add_argument("--focus", action="store_true",
+                    help="make this the current topic — the user asked to move to it, or "
+                         "the current one is settled. Without it, a topic that is not "
+                         "current is shown for your research only")
 
     pdr = sub.add_parser("draft")
     pdr.add_argument("topic")
@@ -1700,13 +1733,13 @@ def main():
     elif cmd == "todo":
         sync(state, fetch_threads(ctx, iid, me, author), ctx, iid)
         save(path, state)
-        print(critical_manifest.with_manifest(render_table(state, "mine")))
+        emit(state, render_table(state, "mine"))
     elif cmd == "present":
         sync(state, fetch_threads(ctx, iid, me, author), ctx, iid)
         save(path, state)
         ex = explainer_line(ctx, iid)
-        print(critical_manifest.with_manifest(
-            (f"{ex}\n\n" if ex else "") + render_present(state)))
+        emit(state, (f"{ex}\n\n" if ex else "") + render_present(state),
+             current_topic(state))
         # Again, after the render: `render_quote` records the context it just showed, and
         # `--refine` compares against that. Every command that renders a topic in full
         # saves for this reason, and it is the only reason a view writes at all.
@@ -1718,36 +1751,41 @@ def main():
         save(path, state)
         print(render_candidates(state, me))
     elif cmd == "quote":
-        print(critical_manifest.with_manifest(
-            render_quote(state, args.topic, args.refine)))
-        save(path, state)                 # the context digest it just recorded
+        topic_for(state, args.topic) or die(f"no topic {args.topic}")
+        note = CURRENT.view(state, args.topic, args.focus, _jump_cmd(args.topic, iid))
+        if note:
+            print(note, file=sys.stderr)
+        emit(state, render_quote(state, args.topic, args.refine), args.topic)
+        save(path, state)                 # the context digest, and the current topic
     elif cmd == "draft":
         print(draft_body(state, args.topic))
     elif cmd == "diff":
-        print(critical_manifest.with_manifest(
-            render_topic_diff(state, ctx, iid, args.topic)))
+        note = CURRENT.view(state, args.topic, False, _jump_cmd(args.topic, iid))
+        if note:
+            print(note, file=sys.stderr)
+        emit(state, render_topic_diff(state, ctx, iid, args.topic), args.topic)
     elif cmd == "updates":
         sync(state, fetch_threads(ctx, iid, me, author), ctx, iid)
         save(path, state)
-        print(critical_manifest.with_manifest(render_updates(state, ctx, iid)))
+        emit(state, render_updates(state, ctx, iid))
     elif cmd == "resume":
         # The complete opener for an in-progress review, in one call: pushes since your
-        # baseline THEN the overview table THEN the first topic needing you.
+        # baseline THEN the overview table THEN the current topic.
         # Deliberately one command rather than "run updates, then run present": as two
         # steps the second one gets skipped, and the overview table — the user's only
         # view of where all topics stand — silently goes missing.
         #
         # A single combined print (not three separate ones) so the ONE trailing
         # manifest covers everything this command built — updates has no critical
-        # content of its own, but present's table (and first topic's code, if any)
+        # content of its own, but present's table (and the current topic's code, if any)
         # does, and paste-gate.py needs it all in one place to check the whole thing.
         sync(state, fetch_threads(ctx, iid, me, author), ctx, iid)
         save(path, state)
         ex = explainer_line(ctx, iid)
         u = render_updates(state, ctx, iid)
         p = render_present(state)
-        print(critical_manifest.with_manifest(
-            (f"{ex}\n\n" if ex else "") + f"{u}\n\n---\n\n{p}"))
+        emit(state, (f"{ex}\n\n" if ex else "") + f"{u}\n\n---\n\n{p}",
+             current_topic(state))
         save(path, state)                 # the context digest present recorded
     elif cmd == "head":
         print(head_report(state, ctx, iid))
@@ -1848,9 +1886,10 @@ def main():
             # and reconstructing the block by hand reintroduces the raw ```suggestion
             # fence (unhighlighted) that render_quote deliberately re-fences for display.
             # Printing it here means the correct block is already in front of it.
-            print(critical_manifest.with_manifest(
-                render_quote(state, args.topic, args.refine)))
-            save(path, state)             # the context digest it just recorded
+            # Drafting for a topic is asking the user to approve it, so it is current.
+            CURRENT.jump(state, args.topic)
+            emit(state, render_quote(state, args.topic, args.refine), args.topic)
+            save(path, state)             # the context digest, and the current topic
     elif cmd == "drop":
         t = topic_for(state, args.topic)
         if t and t["thread_ids"]:                 # keep dropped inbound threads dropped

@@ -151,9 +151,11 @@ A review spans days; the state file persists across sessions. Each check:
 
 3. **Work the `◐ needs-ack` topics, one at a time.** For each:
    ```bash
-   python3 $SD/findings.py quote <t> --iid <n>  # the thread's notes (author's reply, resolved flag)
-   python3 $SD/findings.py diff <t> --iid <n>   # THIS topic's change since you posted (server-side)
+   python3 $SD/findings.py quote <t> --focus --iid <n>  # make it current; the thread's notes (author's reply, resolved flag)
+   python3 $SD/findings.py diff <t> --iid <n>           # THIS topic's change since you posted (server-side)
    ```
+   `--focus` makes `<t>` the current topic (SKILL.md, "The current topic"); a `quote` or
+   `diff` of any other topic is research and prints a `note:` saying so.
    Paste `quote`, add a **short summary of what the author did**, and judge it. **The thread is
    the source of truth — judge against what was *agreed there*, not against the finding's
    original one-line summary.** Points get down-scoped in discussion: if you said a fix was

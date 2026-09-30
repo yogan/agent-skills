@@ -48,6 +48,16 @@ class TestCriticalManifest(unittest.TestCase):
         self.assertEqual(self.payload_of(cm.with_manifest("just prose")),
                          {"first": "just prose", "critical": []})
 
+    def test_topic_and_current_topic_are_declared_when_known(self):
+        self.assertEqual(self.payload_of(cm.with_manifest("x", topic="t7", focus="t10")),
+                         {"first": "x", "critical": [], "topic": "t7", "focus": "t10"})
+
+    def test_nothing_current_is_a_declaration_not_an_omission(self):
+        """`focus: null` says no topic is current; a missing key says the producer could
+        not know. The hook enforces both, but only the first may move the turn's focus."""
+        self.assertIsNone(self.payload_of(cm.with_manifest("x", focus=None))["focus"])
+        self.assertNotIn("focus", self.payload_of(cm.with_manifest("x", topic="t7")))
+
     def test_an_empty_block_gets_no_payload(self):
         """Nothing was printed, so there is nothing to locate or protect — and a marker
         with no block in front of it would be pure noise in the tool result."""
