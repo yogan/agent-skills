@@ -355,6 +355,7 @@ class TestBodylessQuote(Throwaway, unittest.TestCase):
         self.assertIn("t1 has no draft yet", note)
         self.assertIn("ask how they want to handle it", note)
         self.assertIn('`set t1 --draft "…"`', note)
+        self.assertIn("written in de", note)       # no language marker is on screen yet
 
     def test_a_stored_draft_suppresses_the_note(self):
         buf = io.StringIO()

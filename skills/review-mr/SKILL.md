@@ -257,7 +257,8 @@ flags a summary that reads as the draft language, and the paste gate blocks the 
 A topic still marked `✍️ needs summary` has no authored summary — its table row would be the
 raw thread quote. The table commands (`sync`/`todo`/`present`/`resume`) **refuse to render
 while any topic they would show is in that state**: they exit with
-`needs summary: t5 — author …` instead of output. Author those first (`bodies` for the thread
+`needs summary: t5 — read the threads (`bodies`), `set t5 --summary "..."`, then re-run`
+instead of output. Author those first (`bodies` for the thread
 text, then `set <t> --summary "…"`), or `drop`/`merge` the topic, and re-run. On Claude Code
 the `Stop` hook additionally blocks a hand-built table carrying the marker; **OpenCode has no
 hook — the refusal is what enforces the rule there**, and either way it is not optional: a
@@ -312,8 +313,10 @@ you mean, cannot see the code you are asserting things about, and has no `file:l
 If you find yourself writing a conclusion before a pasted `quote`, reorder.
 
 Draft rules — see [REFERENCE.md](REFERENCE.md). In short: **write the comment body in the
-language named by the `· drafts <lang>` marker** that every `sync`/`todo`/`present`/`quote`
-header carries — if you cannot see it in the output in front of you, run
+language named by the `drafts <lang>` marker** — on every `sync`/`todo`/`present` header and
+a posted topic's `quote` header; an unposted topic carries it on its draft label (`Draft of
+comment to post (de)`), and while it has no draft yet `quote`'s note to you names it. If you
+cannot see it in the output in front of you, run
 `python3 $SD/findings.py lang` rather than assuming (`de` means informal *du*). **The body is
 the only thing in that language**: summaries, headings and your own prose stay English. **As
 short as possible**; a ```suggestion block for a line-precise fix; identifiers in backticks;
@@ -466,6 +469,6 @@ details can be collapsed or hidden.
 `glab` authenticated; a review worktree (or willingness to create one); run inside the target
 repo. `python3`. (`clip.sh` copies to the clipboard via macOS `pbcopy`; where that is
 missing the copy is skipped and nothing else changes.) Build blocks: the `explain-branch` and `review-branch`
-skills installed. `findings.py` subcommands: sync·todo·present·resume·updates·bodies·quote·diff·candidates·
-import·add·set·drop·merge·link·head·base·branch·set-head·worktree·explainer·seed·prune·path
+skills installed. `findings.py` subcommands: sync·todo·present·resume·updates·bodies·quote·draft·diff·candidates·
+import·add·set·drop·merge·link·head·base·branch·set-head·worktree·explainer·seed·prune·path·lang
 (run any with `-h`).

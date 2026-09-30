@@ -379,7 +379,8 @@ for the clipboard path),
 `change-view` (trivial-topic change illustration piped in, one paste — write the change with
 its own ```diff fence and it stays highlighted; `--for <path>` sets the language for a non-diff
 snippet; `change-preview.sh` is the same block from a file), `diff-view.sh` (working diff
-before the fixup+push ACK, one paste). Run any with `-h`.
+before the fixup+push ACK, one paste). `threads.py` subcommands and `diff-view.sh` take `-h`;
+the other helpers' usage is in their header comment.
 **Claude Code setup:** register the shared `Stop` hook (`hooks/paste-gate.py` + this skill's
 `scripts/paste-gates.json`) in `settings.json` — see [README.md](README.md). OpenCode needs no
 hook; script output stays clean there, but the exact-output rules above still apply because

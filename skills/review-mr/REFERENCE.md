@@ -27,9 +27,11 @@ the UI never reached the table.
 
 ## Draft rules (Phase 2 and follow-ups)
 
-- **Language: whatever `drafts <lang>` says — for the comment BODY only.** Every view you
-  draft from — `sync`, `todo`, `present` and `quote <t>` — ends its header with
-  `· drafts <lang> · rest en` (just `· drafts en` when the two coincide). That is the
+- **Language: whatever `drafts <lang>` says — for the comment BODY only.** The `sync`, `todo`
+  and `present` headers, and a posted topic's `quote <t>` header, end with
+  `· drafts <lang> · rest en` (just `· drafts en` when the two coincide). An unposted topic
+  carries it on its draft label instead — `Draft of comment to post (de)` — and while it has
+  no draft yet, `quote`'s note to you on stderr names it. That is the
   instruction, and it governs exactly one thing: the text you hand the user to post.
   **Everything else is English, always** — every `--summary`, so the table and every topic
   heading, and your own prose in the reply. The one other non-English text is a *quoted* note,

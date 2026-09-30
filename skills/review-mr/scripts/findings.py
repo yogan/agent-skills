@@ -912,9 +912,13 @@ def render_quote(state, tid, refine=False):
             # instruction shown to THEM is the same leak the ✍️ marker was. The
             # follow-up branch deliberately gets no note: a posted topic without a
             # pending reply has nothing missing.
+            # It also names the draft language: an unposted topic's header carries no
+            # marker (the draft label does), so without a draft there is none on screen
+            # at exactly the moment one gets written.
             print(f"note: {t['id']} has no draft yet — your reply is the block above "
                   f"+ your analysis of the topic, then ask how they want to handle "
-                  f'it; store the agreed draft with `set {t["id"]} --draft "…"`',
+                  f'it; store the agreed draft with `set {t["id"]} --draft "…"`, '
+                  f"written in {state.get('lang') or DEFAULT_LANG}",
                   file=sys.stderr)
         return "\n".join(out).strip()
     shown = []                            # the notes, as rendered — see `context_digest`

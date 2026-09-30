@@ -66,17 +66,21 @@ the hook loads.
   output, or where a `forbidden`/`required` pattern hits. Every other turn — and every
   session that never touches these skills — passes straight through.
 - **Loop-safe:** `stop_hook_active` forces at most one retry per reply, so it never
-  spins — with one deliberate exception: a leaked block manifest (see below) is
-  checked regardless. It's narrow, deterministic, and trivial for the model to fix,
-  unlike the broader verbatim-paste checks — and it's exactly the kind of thing a retry
-  forced by some OTHER violation can introduce as a side effect ("just paste everything
-  to be safe"), on the one turn the general loop guard would otherwise never look at
-  again. Observed on a real MR review, not theoretical: a dropped `present` output got
-  blocked once, and the fix leaked the manifest as collateral damage. Because those two
-  keep looking, they judge only what a retry can still change — the text written since
-  the last block. A message Claude Code has already shown you cannot be taken back, so
-  judging it again would refuse every further reply in the turn for something no reply
-  can reach; that wedged a real session once.
+  spins — with two deliberate exceptions, checked regardless: a leaked block manifest
+  (see below), and a run of backticks each escaped with a backslash, which Markdown has
+  no escape for and renders as garbled text. Both are narrow, deterministic and trivial
+  for the model to fix, unlike the broader verbatim-paste checks — and both are exactly
+  the kind of thing a retry forced by some OTHER violation can introduce as a side effect
+  ("just paste everything to be safe"), on the one turn the general loop guard would
+  otherwise never look at again. Observed on a real MR review, not theoretical: a dropped
+  `present` output got blocked once, and the fix leaked the manifest as collateral
+  damage. Because those two keep looking, they judge only what a retry can still change —
+  the text written since the last block. A message Claude Code has already shown you
+  cannot be taken back, so judging it again would refuse every further reply in the turn
+  for something no reply can reach; that wedged a real session once. For the same reason
+  the escaped-backtick check skips lines copied from a gated block this turn: a
+  reviewer's comment can hold such a run, and the verbatim paste would be refused on
+  every retry.
 - **Fails open:** any error (unreadable transcript, malformed spec, a bug in the engine)
   allows the stop. It can never wedge a session.
 - **Clean reply, not a clean tool result:** nothing is added to what you're asked to
@@ -192,8 +196,8 @@ The engine is skill-agnostic; what to enforce is data, in each skill's
 
 Caveat when hacking on the skills themselves: `forbidden`/`required` patterns match your
 *visible message*, including when you are quoting a skill's own wording back at the user.
-Both current rules are line-anchored so that mid-sentence mentions are fine, but a
-message that reproduces one of those lines verbatim, at a line start, will be blocked.
+Every shipped rule is line-anchored so that mid-sentence mentions are fine, but a message
+that reproduces one of those lines verbatim, at a line start, will be blocked.
 
 The same goes for `gates`, one step further: merely reading or grepping a script is safe
 (the gate needs the command's own tool result to carry its output signature), but *running*

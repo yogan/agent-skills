@@ -20,7 +20,7 @@ Subcommands:
   sync        fetch + reconcile, render the overview           (default; also for "status")
   todo        fetch + reconcile, render only what needs you (open + reply-pending)
   present     overview table + the first open topic's comment  (the opener; no fetch)
-  bodies      print each open thread's opening note (to summarize from; no fetch)
+  bodies      print each open thread's first and last note (to summarize from; no fetch)
   plans       print recorded decisions/plans for open topics  (resume; no fetch)
   quote <t>   a topic in full: the code the comment is anchored to (the reviewer's own
               line range when they marked one), then the whole thread — original + every
@@ -635,9 +635,9 @@ def render_change_view(tid, text, path=None):
     )
 
 
-# The closing line of both diff-view shapes, and the paste gate's signature for them — the
-# `fixup-ack` rule additionally requires it to be the LAST line of the message, so the
-# alternatives to an ACK have to ride on this one line rather than follow it.
+# The closing line of both diff-view shapes, and the paste gate's signature for them. The
+# alternatives to an ACK ride on this one line rather than following it, so the ask reads
+# as a single line wherever it lands (the `fixup-ack` rule anchors it to a line start).
 #
 # They are spelled out because the ask alone reads as a yes/no: a user who has annotated the
 # diff in the viewer window has no way of knowing from "ACK to fix up and push?" that saying

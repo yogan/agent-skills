@@ -83,8 +83,8 @@ the reply (step 10).
 10. Reply — thread + draft + URL are shown via **one** command so none can be dropped:
    a. Store the reply **body only** (raw, no `>` prefixes) in the state file with a **quoted
       heredoc** — `<<'REPLY_EOF'`, so backticks and `$` in the body are not expanded by the
-      shell. Draft rules (SKILL.md): body in the thread's language, **scaffolding in the
-      session language**, and **NEVER an internal topic handle** (`t5`…) in the body — reword
+      shell. Draft rules (SKILL.md): body in the thread's language, **everything else —
+      scaffolding included — in English**, and **NEVER an internal topic handle** (`t5`…) in the body — reword
       (link another thread's URL); `set` refuses it anyway.
       ```bash
       python3 $SD/threads.py set <t> --reply - <<'REPLY_EOF'
