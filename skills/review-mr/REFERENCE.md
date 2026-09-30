@@ -51,9 +51,9 @@ the UI never reached the table.
 - **Concrete code only when it earns its place.** For a line-precise fix, prefer a GitLab
   ` ```suggestion ` block (renders as one-click-apply for the author). Bigger changes → a
   normal fenced snippet in the right language.
-  - `quote <t>` re-fences a ` ```suggestion ` block to the file's language **for display
-    only** — in your draft and in the thread's comments alike — so it is syntax-highlighted
-    where you review it. `draft <t>` — the paste payload —
+  - `quote <t>` re-fences a ` ```suggestion ` block **for display only**, so it is
+    syntax-highlighted where you review it: in your draft to the file's language, in a
+    thread's comment as a diff against the lines it replaces. `draft <t>` — the paste payload —
     keeps the literal ` ```suggestion `, which is what GitLab needs for one-click-apply.
     So always copy via `draft <t>` / the clipboard, never out of the rendered display.
 - No headings. Identifiers in `backticks`. Bullets only if they genuinely help.

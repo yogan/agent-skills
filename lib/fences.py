@@ -1,5 +1,5 @@
 """GitLab markdown as the user reads it: code fenced so it highlights, and a reviewer's
-comment with the code they pasted lifted out of its quote.
+comment quoted whole, the code they pasted included — a suggestion as a diff.
 
 Shared because showing a comment is the same job whichever skill does it — review-mr
 shows the thread a follow-up replies into, rework-mr the threads you are answering — and
@@ -7,6 +7,7 @@ a copy per skill drifts: one learns to re-fence a ```suggestion and the other go
 printing it raw. Nothing here knows either skill's state shape.
 """
 
+import difflib
 import os
 import re
 
@@ -134,27 +135,35 @@ DEDENT = re.compile(r"^(?: {4}|\t)")
 LIST_ITEM = re.compile(r"^\s*([-*+]|\d+[.)])\s")
 
 
-def suggestion_caption(info, anchor):
-    """Label for a GitLab ```suggestion block, which loses its marker when re-fenced.
+def suggestion_diff(content, info, anchor, source):
+    """A GitLab ```suggestion as a diff against the lines it replaces, the way GitLab shows
+    it — or None when those lines are not known, and the block is shown as plain code.
 
-    `suggestion:-A+B` means "replace the A lines above the anchor through the B below", so
-    the caption can name the lines the reviewer wants replaced — the one thing the raw
-    `:-0+0` never told anybody.
+    `suggestion:-A+B` replaces the A lines above the anchor through the B below. `source`
+    is the file as the comment saw it (a list of lines), because only that version holds
+    the lines the offsets count from; the working tree may have moved on. Lines the
+    suggestion keeps show as context, so a one-line change inside a three-line range reads
+    as one. An empty suggestion — "delete these lines" — is all removals.
     """
     m = SUGGESTION_INFO.match(info or "")
-    if not m:
+    if not m or source is None or anchor is None:
         return None
-    if anchor is None:
-        return "_suggested replacement:_"
     try:
-        a = max(1, int(anchor) - int(m.group(1) or 0))
-        b = max(a, int(anchor) + int(m.group(2) or 0))
+        n, above, below = int(anchor), int(m.group(1) or 0), int(m.group(2) or 0)
     except (TypeError, ValueError):
-        return "_suggested replacement:_"
-    return (
-        f"_suggested replacement for {'line' if a == b else 'lines'} "
-        f"{a if a == b else f'{a}–{b}'}:_"
-    )
+        return None
+    if not 1 <= n <= len(source):
+        return None
+    old = source[max(1, n - above) - 1:min(len(source), n + below)]
+    new = content.splitlines() if content.strip() else []
+    out = []
+    ops = difflib.SequenceMatcher(None, old, new, autojunk=False).get_opcodes()
+    for tag, i1, i2, j1, j2 in ops:
+        if tag == "equal":
+            out += [" " + ln for ln in old[i1:i2]]
+        else:
+            out += ["-" + ln for ln in old[i1:i2]] + ["+" + ln for ln in new[j1:j2]]
+    return "\n".join(out)
 
 
 def _indented_runs(seg):
@@ -205,32 +214,35 @@ def _indented_runs(seg):
     ]
 
 
-def code_block(content, info, path=None, anchor=None):
+def code_block(content, info, path=None):
     """One fenced block as it is SHOWN, never as it is posted.
 
     A block's own language is kept. A ```suggestion loses its marker — no highlighter knows
-    it as a language, so it would render as grey text — and gets the file's language and a
-    caption naming the lines it replaces instead. An untagged block gets `diff` when it is
-    one, else the file's language. The text that goes to GitLab keeps ```suggestion; that
-    is what makes it one-click-apply.
+    it as a language, so it would render as grey text — and gets the file's language
+    instead. An untagged block gets `diff` when it is one, else the file's language. The
+    text that goes to GitLab keeps ```suggestion; that is what makes it one-click-apply.
     """
-    cap = suggestion_caption(info, anchor)
     lang = (
         info
         if info and not SUGGESTION_INFO.match(info)
         else ("diff" if looks_like_diff(content) else lang_for(path))
     )
-    return (f"{cap}\n\n" if cap else "") + fence(content, lang)
+    return fence(content, lang)
 
 
-def note_md(name, body, path=None, anchor=None):
-    """One thread note: prose blockquoted, its code lifted out of the quote and fenced.
+def note_md(name, body, path=None, anchor=None, source=None):
+    """One thread comment, blockquoted whole — its code included, re-fenced so it renders.
 
-    Reviewers paste code — a ```suggestion block, or an indented snippet. Left
-    inside the `> ` quote both render flat: `> ```suggestion:-0+0` is a fence with an info
-    string no highlighter knows, and an indented block never carries a language at all. That
-    is the reviewer's proposed code rendered as grey text. Lifting it to line start and
-    re-fencing with the file's own language is the whole point of showing the note.
+    Reviewers paste code — a ```suggestion block, or an indented snippet — and both come
+    out flat as they are: `suggestion` is an info string no highlighter knows, and an
+    indented block never carries a language. So each is fenced with the file's own
+    language, inside the quote with the prose around it, so the comment reads as one.
+    A suggestion becomes a diff against the lines it replaces when `source` (the file as
+    the comment saw it) is given — see `suggestion_diff`.
+
+    The fence goes through `fence` with its marking suspended and the QUOTED lines are
+    marked instead: those are what the message carries, and the paste gate compares
+    against them.
     """
     out = [f"> **{first_name(name)}**"]
 
@@ -240,15 +252,23 @@ def note_md(name, body, path=None, anchor=None):
         while lines and not lines[-1].strip():
             lines = lines[:-1]
         if lines:
-            # `>` continues the quote we are already in; a blank line separates prose from a
-            # fence we just lifted out of it (a `>` there renders as an empty quoted line).
-            out.append(">" if out[-1].startswith(">") else "")
+            out.append(">")
             out.extend(f"> {ln}".rstrip() if ln.strip() else ">" for ln in lines)
 
     def code(content, info):
-        if not content.strip():  # an empty suggestion is not worth a block
+        diff = suggestion_diff(content, info, anchor, source)
+        if diff is None and not content.strip():  # an empty suggestion, nothing to diff
             return
-        out.extend(["", code_block(content, info, path, anchor)])
+        with critical_manifest.suspended():
+            if diff is None:
+                block = code_block(content, info, path)
+            else:
+                block = fence(diff, "diff")
+        quoted = [f"> {ln}".rstrip() for ln in block.splitlines()]
+        for ln in quoted[1:-1]:                   # the content, not the fence bars
+            if ln != ">":
+                critical_manifest.mark(ln)
+        out.extend([">"] + quoted)
 
     for kind, info, seg in segments((body or "").strip().splitlines() or [""]):
         if kind == "code":

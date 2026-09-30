@@ -96,8 +96,8 @@ if _REPO_ROOT not in sys.path:
 from lib import critical_manifest, focus, hunk                  # noqa: E402
 from lib.fences import (SUGGESTION_INFO, fence, lang_for, note_md,  # noqa: E402
                         segments)
-from lib.gitlab import (api, context, current_user, die, mr_base, mr_head,  # noqa: E402
-                        mr_object, mr_view, versions, web_base)
+from lib.gitlab import (api, context, current_user, die, file_at, mr_base,  # noqa: E402
+                        mr_head, mr_object, mr_view, versions, web_base)
 from lib.mr_common import (DEFAULT_LANG, MR_LEVEL, TOPIC_ICON, first_name,  # noqa: E402
                            load, loc_md, num, plain_text, reads_as, save,
                            short_summary, state_file, topic_for, tref)
@@ -219,6 +219,11 @@ def fetch_threads(ctx, iid, me, author=None):
             "first_username": first_user,
             "file": pos.get("new_path") or pos.get("old_path"),
             "line": pos.get("new_line") or pos.get("old_line"),
+            # The side and the exact blobs the position names — what a ```suggestion's
+            # line offsets count from (see `_comment_source`).
+            "side": "new" if pos.get("new_line") is not None else "old",
+            "head_sha": pos.get("head_sha"),
+            "base_sha": pos.get("start_sha") or pos.get("base_sha"),
             "body": first.get("body"),
             "resolved": resolved,
             "resolved_by": resolved_by,
@@ -823,19 +828,40 @@ def _code_context(state, t):
     return out
 
 
+# Mirrors rework-mr's threads.py's `_comment_source`: the same side-aware pick of the
+# blob, read here from the review worktree, there from the repository being reworked.
+def _comment_source(state, x):
+    """The file as the comment saw it, as lines — what a ```suggestion's offsets count
+    from — or None. Read only when the thread holds a suggestion, since it costs a call:
+    from the review worktree when it still has that commit, else from GitLab, which keeps
+    it after a force-push has dropped it locally."""
+    if not any("```suggestion" in (x.get(k) or "") for k in ("body", "last_body")):
+        return None
+    sha = x.get("head_sha") if (x.get("side") or "new") == "new" else x.get("base_sha")
+    if not (sha and x.get("file")):
+        return None
+    wt = get_worktree(state.get("slug") or "", state.get("iid"))
+    r = (subprocess.run(["git", "-C", wt, "show", f"{sha}:{x['file']}"],
+                        capture_output=True, text=True, errors="replace") if wt else None)
+    text = (r.stdout if r and r.returncode == 0
+            else file_at(state.get("project"), sha, x["file"]))
+    return text.splitlines() if text is not None else None
+
+
 def _thread_context(state, x):
     """What `--refine` leaves out for a posted topic: the thread a follow-up replies
     into — first note, last note, and the count of what sits between them.
 
-    A reviewer's ```suggestion is re-fenced to the file's language here, never shown raw:
-    the paste gate refuses a raw one on screen, so this output must never contain one."""
-    f, ln = x.get("file"), x.get("line")
-    out = ["", note_md(x.get("author"), x.get("body"), f, ln)]
+    A reviewer's ```suggestion is re-fenced here, never shown raw — as a diff against the
+    lines it replaces when the file it was made on can be read: the paste gate refuses a
+    raw one on screen, so this output must never contain one."""
+    f, ln, src = x.get("file"), x.get("line"), _comment_source(state, x)
+    out = ["", note_md(x.get("author"), x.get("body"), f, ln, src)]
     if x.get("note_count", 1) > 1:
         skipped = x["note_count"] - 2
         if skipped > 0:
             out += ["", f"_… {skipped} more …_"]
-        out += ["", note_md(x.get("last_author"), x.get("last_body"), f, ln)]
+        out += ["", note_md(x.get("last_author"), x.get("last_body"), f, ln, src)]
     return out
 
 

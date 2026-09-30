@@ -9,6 +9,7 @@ import json
 import os
 import re
 import shutil
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -399,15 +400,44 @@ class TestSuggestionInThreadNotes(unittest.TestCase):
     def test_quote_never_trips_the_raw_suggestion_gate(self):
         out = F.render_quote(self._state(), "t1")
         self.assertNotRegex(out, forbidden_rules()["raw-suggestion-fence"])
-        self.assertIn("_suggested replacement for line 21:_", out)
-        self.assertIn("```markdown\nRetries share one budget", out)
+        self.assertIn("> ```markdown\n> Retries share one budget", out)
+
+    def test_with_the_file_it_was_made_on_it_is_a_diff(self):
+        """Read from the review worktree at the comment's own commit, not the tip."""
+        with tempfile.TemporaryDirectory() as wt:
+            git = lambda *a: subprocess.run(["git", "-C", wt, *a], check=True,  # noqa: E731
+                                            capture_output=True, text=True)
+            git("init", "-q")
+            os.makedirs(os.path.join(wt, "docs"))
+            with open(os.path.join(wt, "docs/retries.md"), "w") as fh:
+                fh.write("".join(f"line {i}\n" for i in range(1, 21)) + "Old budget.\n")
+            git("add", ".")
+            git("-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "c")
+            sha = git("rev-parse", "HEAD").stdout.strip()
+            with open(os.path.join(wt, "docs/retries.md"), "w") as fh:
+                fh.write("moved on\n")                   # the tip is not what it saw
+            state = self._state(head_sha=sha, side="new")
+            with patch.object(F, "get_worktree", return_value=wt):
+                out = F.render_quote(state, "t1")
+        self.assertIn("> ```diff\n> -Old budget.\n> +Retries share one budget", out)
+
+    def test_a_commit_gone_from_the_worktree_is_read_from_gitlab(self):
+        """A force-push drops the version the comment was on; GitLab still has it."""
+        state = self._state(head_sha="GONE", side="new")
+        state["project"] = "g/r"
+        with patch.object(F, "get_worktree", return_value=None), \
+             patch.object(F, "file_at", return_value="".join(
+                 f"line {i}\n" for i in range(1, 21)) + "Old budget.\n") as api:
+            out = F.render_quote(state, "t1")
+        api.assert_called_with("g/r", "GONE", "docs/retries.md")
+        self.assertIn("> ```diff\n> -Old budget.\n> +Retries share one budget", out)
 
     def test_the_last_note_is_re_fenced_too(self):
         out = F.render_quote(self._state(
             body="Kürzer, bitte.", note_count=2, last_author="Robin",
             last_body=self.SUGGESTION), "t1")
         self.assertNotRegex(out, forbidden_rules()["raw-suggestion-fence"])
-        self.assertIn("```markdown\nRetries share one budget", out)
+        self.assertIn("> ```markdown\n> Retries share one budget", out)
 
     def test_a_one_line_preview_strips_the_suggestion(self):
         """`candidates` lists a comment in one line, so the code is dropped, not cut."""

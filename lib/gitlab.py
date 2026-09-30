@@ -6,6 +6,7 @@ duplicated per skill as `_gl.py` — genuinely identical apart from docstring fr
 used. Folded into lib/ wholesale rather than split, since a "talk to GitLab" module is
 one cohesive concern, not two — see CLAUDE.md's "Sharing vs. duplication".
 """
+import functools
 import json
 import subprocess
 from urllib.parse import quote
@@ -94,6 +95,23 @@ def api(endpoint, paginate=False):
     except json.JSONDecodeError:
         # --paginate concatenates one JSON array per page: "][" -> ","
         return json.loads(out.replace("][", ","))
+
+
+@functools.lru_cache(maxsize=64)
+def file_at(project, sha, path):
+    """The text of `path` at commit `sha` as GitLab holds it, or None — never fatal.
+
+    For a commit the local clone no longer has: a force-push drops the version a review
+    comment was made on from every branch, and `git fetch` brings back branch heads only.
+    GitLab keeps any commit a comment is anchored to, so the file the comment saw can
+    still be read from it. Cached because a commit never changes, and a view renders the
+    same thread more than once (the block, then the fingerprint `--refine` compares).
+    """
+    if not (project and sha and path):
+        return None
+    r = run(["glab", "api", f"projects/{quote(project, safe='')}/repository/files/"
+             f"{quote(path, safe='')}/raw?ref={sha}"])
+    return r.stdout if r.returncode == 0 else None
 
 
 def mr_view():

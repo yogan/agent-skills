@@ -704,9 +704,35 @@ class TestCurrentTopic(unittest.TestCase):
         self.assertNotIn("focus", payload)
 
 
+class TestCommentSource(unittest.TestCase):
+    """What a reviewer's suggestion is diffed against: the blob the comment was made on."""
+
+    def test_read_from_the_side_the_comment_is_on(self):
+        x = {"file": "a.py", "side": "old", "head_sha": "H", "base_sha": "B",
+             "body": "```suggestion\nx\n```"}
+        with mock.patch.object(T, "_blob_text", return_value="a\nb\n") as blob:
+            self.assertEqual(T._comment_source({}, x), ["a", "b"])
+        blob.assert_called_once_with("B", "a.py")
+
+    def test_a_commit_gone_locally_is_read_from_gitlab(self):
+        """Your own fixup and force-push replace the version the reviewer commented on."""
+        x = {"file": "a.py", "head_sha": "H", "body": "```suggestion\nx\n```"}
+        with mock.patch.object(T, "_blob_text", return_value=None), \
+                mock.patch.object(T, "file_at", return_value="old\n") as api:
+            self.assertEqual(T._comment_source({"project": "g/r"}, x), ["old"])
+        api.assert_called_once_with("g/r", "H", "a.py")
+
+    def test_not_read_at_all_without_a_suggestion(self):
+        with mock.patch.object(T, "_blob_text") as blob:
+            self.assertIsNone(
+                T._comment_source({}, {"file": "a.py", "body": "Sieht gut aus."})
+            )
+        blob.assert_not_called()
+
+
 class TestQuoteNotes(unittest.TestCase):
     """The note renderer itself is lib/test_fences.py's; this pins that `quote` hands it
-    the thread's file and anchor, which is what the suggestion caption and language need."""
+    the thread's file, which is what the suggestion's fence language comes from."""
 
     NOTE = (
         "Minor:\n\nDer Test schaut nicht wirklich ob die Reihenfolge aus `fields` "
@@ -743,8 +769,7 @@ class TestQuoteNotes(unittest.TestCase):
             ],
         }
         out = T.render_quote(state, "t2")
-        self.assertIn("_suggested replacement for line 184:_", out)
-        self.assertIn("```ts\n", out)
+        self.assertIn("> ```ts\n", out)                    # the file's language
 
 
 class TestSyncRefreshesThreads(unittest.TestCase):

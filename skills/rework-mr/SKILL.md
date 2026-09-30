@@ -193,8 +193,8 @@ agreed a plan (step 1).
 the user is actually looking at. It follows the reviewer's own selection: a multi-line comment
 ("lines +12 to +22") shows that whole span marked `┃`, a single-line one shows `►` on the line with
 a wider window around it. Code inside the reviewer's note — a ```suggestion block or an indented
-snippet — is lifted out of the blockquote so it stays highlighted; a suggestion carries a caption
-naming the lines it replaces, which is the offer you are accepting or declining. If it says the working tree has since diverged, the lines shown are the
+snippet — stays in their quote, fenced so it is highlighted; a suggestion shows as a diff against
+the lines it replaces, which is the offer you are accepting or declining. If it says the working tree has since diverged, the lines shown are the
 reviewer's version, not the current file — say so rather than reasoning past it.
 
 Outcomes: **fix** · **reply-only** (reviewer wrong / no improvement) · **push-back** ·

@@ -855,9 +855,8 @@ class TestRealViewsPasteClean(HookCase):
     def test_rework_mr_reply_shows_its_own_suggestion_highlighted(self):
         """Display only: the body that is posted keeps ```suggestion."""
         out = self.T._quote_draft("So:\n\n```suggestion:-0+0\nreturn retry(3)\n```",
-                                  "src/client.py", 88)
-        self.assertIn("_suggested replacement for line 88:_\n\n```python\nreturn retry(3)",
-                      out)
+                                  "src/client.py")
+        self.assertIn("```python\nreturn retry(3)", out)
         self.assertNotRegex(out, r"(?m)^[>\s]*```suggestion")
 
 

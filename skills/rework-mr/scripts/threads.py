@@ -68,6 +68,7 @@ from lib.gitlab import (
     context,
     current_user,
     die,
+    file_at,
     mr_view,  # noqa: E402
     project_slug,
     run,
@@ -505,6 +506,28 @@ def _blob_text(sha, path):
     return _git("show", f"{sha}:{path}")
 
 
+# Mirrors review-mr's findings.py's `_comment_source`: the same side-aware pick of the
+# blob, read here from the repository you are reworking, there from the review worktree.
+def _comment_source(state, x):
+    """The file as the comment saw it, as lines — what a ```suggestion's offsets count
+    from — or None. Read only when the thread holds a suggestion, since it costs a call:
+    from this repository when it still has that commit, else from GitLab, which keeps it
+    after your own fixup and force-push have replaced it. Never the working tree: that is
+    your own edit, not the lines the reviewer proposed to replace."""
+    bodies = [n.get("body") or "" for n in x.get("notes") or []] + [
+        x.get("body") or "",
+        x.get("last_body") or "",
+    ]
+    if not any("```suggestion" in b for b in bodies):
+        return None
+    on_new = (x.get("side") or "new") == "new"
+    sha = x.get("head_sha") if on_new else x.get("base_sha")
+    text = _blob_text(sha, x.get("file"))
+    if text is None:
+        text = file_at(state.get("project"), sha, x.get("file"))
+    return text.splitlines() if text is not None else None
+
+
 COMMENT_LINE = re.compile(r"^\s*(//|/\*|\*|#|--|<!--)")
 MARK_SPAN, MARK_LINE = "┃", "►"
 # One-line anchors get a symmetric window; a range the reviewer selected already IS the
@@ -912,20 +935,20 @@ def render_quote(state, tid, remember=True):
         code = render_code_context(x)
         if code:
             out += ["", code]
-        # The file and anchor let a reviewer's ```suggestion be re-fenced to the file's
-        # language and labelled with the lines it replaces.
-        f, ln = x.get("file"), x.get("line")
+        # The file, anchor and the file as the comment saw it let a reviewer's
+        # ```suggestion be fenced in the file's language, as a diff against what it replaces.
+        f, ln, src = x.get("file"), x.get("line"), _comment_source(state, x)
         notes = x.get("notes")
         if notes:  # whole thread, in order
             for n in notes:
-                out += ["", note_md(n.get("author"), n.get("body"), f, ln)]
+                out += ["", note_md(n.get("author"), n.get("body"), f, ln, src)]
         else:  # pre-`notes` state: first + last only
-            out += ["", note_md(x.get("author"), x.get("body"), f, ln)]
+            out += ["", note_md(x.get("author"), x.get("body"), f, ln, src)]
             if x.get("note_count", 1) > 1:
                 skipped = x["note_count"] - 2
                 if skipped > 0:
                     out += ["", f"_… {skipped} more …_"]
-                out += ["", note_md(x.get("last_author"), x.get("last_body"), f, ln)]
+                out += ["", note_md(x.get("last_author"), x.get("last_body"), f, ln, src)]
         out.append("")
     text = "\n".join(out).strip()
     if remember:
@@ -998,7 +1021,7 @@ def reply_body(state, tid, legacy_dir=None):
     return body
 
 
-def _quote_draft(body, path=None, anchor=None):
+def _quote_draft(body, path=None):
     """The draft as it should be DISPLAYED: prose blockquoted so it reads as the artefact
     being posted, fenced blocks left at line start.
 
@@ -1011,7 +1034,7 @@ def _quote_draft(body, path=None, anchor=None):
     blocks = []
     for kind, info, seg in segments((body or "").rstrip("\n").splitlines()):
         if kind == "code":
-            blocks.append(code_block("\n".join(seg), info, path, anchor))
+            blocks.append(code_block("\n".join(seg), info, path))
             continue
         # Blank lines at a text segment's edges would render as stray `>` markers hugging
         # the fence; the blank line between blocks below does that job properly.
@@ -1047,15 +1070,14 @@ def render_reply_view(state, tid, body, refine=False):
     So `refine` is always safe to pass when re-showing; it gives itself up when it must.
     """
     t = topic_for(state, tid) or die(f"no topic {tid}")
-    anchored = next(
+    path = next(
         (
-            state["threads"][th]
+            state["threads"].get(th, {}).get("file")
             for th in t["thread_ids"]
             if state["threads"].get(th, {}).get("file")
         ),
-        {},
+        None,
     )
-    path, anchor = anchored.get("file"), anchored.get("line")
     out = []
     if refine and t.get("shown") != context_digest(state, tid):
         out.append(
@@ -1070,7 +1092,7 @@ def render_reply_view(state, tid, body, refine=False):
     out += [
         f"**Draft reply — {tref(tid)}:**" if refine else "**Draft reply:**",
         "",
-        _quote_draft(body, path, anchor),
+        _quote_draft(body, path),
         "",
         f"Thread (to post on): {render_url(state, tid)}",
         "",

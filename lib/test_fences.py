@@ -10,7 +10,8 @@ import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from lib.fences import fence, looks_like_diff, note_md, suggestion_caption  # noqa: E402
+from lib import critical_manifest  # noqa: E402
+from lib.fences import fence, looks_like_diff, note_md, suggestion_diff  # noqa: E402
 
 
 class TestLooksLikeDiff(unittest.TestCase):
@@ -68,12 +69,11 @@ class TestFence(unittest.TestCase):
 
 
 class TestNoteRendering(unittest.TestCase):
-    """A reviewer's own code has to render as code.
+    """A reviewer's own code has to render as code, inside the quote with their prose.
 
-    GitLab reviewers paste a ```suggestion block or a 4-space indented snippet. Inside the
-    `> ` blockquote both come out flat — the suggestion's info string is a language no
-    highlighter knows, and an indented block has no language at all — so the proposed code
-    read as grey prose.
+    GitLab reviewers paste a ```suggestion block or a 4-space indented snippet. As they are,
+    both come out flat — the suggestion's info string is a language no highlighter knows,
+    and an indented block has no language at all — so the proposed code read as grey prose.
     """
 
     NOTE = (
@@ -86,48 +86,38 @@ class TestNoteRendering(unittest.TestCase):
         "    }\n"
     )
 
-    def test_suggestion_is_lifted_and_re_fenced(self):
+    def test_every_line_stays_inside_the_quote(self):
         out = note_md("Robin", self.NOTE, "src/x.test.ts", 184)
-        self.assertIn("\n```ts\n  it('lists multiple changed leaves", out)
-        self.assertNotIn("> ```", out)  # never left inside the quote
-        self.assertNotIn("suggestion:-0+0", out)  # replaced by a caption
+        self.assertTrue(all(ln.startswith(">") for ln in out.splitlines()), out)
 
-    def test_suggestion_caption_names_the_lines_it_replaces(self):
-        self.assertIn(
-            "_suggested replacement for line 184:_",
-            note_md("Robin", self.NOTE, "src/x.test.ts", 184),
-        )
-        self.assertIn(
-            "_suggested replacement for lines 182–187:_",
-            note_md("Robin", "```suggestion:-2+3\nx\n```\n", "src/x.ts", 184),
-        )
+    def test_a_suggestion_without_its_source_is_code_in_the_files_language(self):
+        out = note_md("Robin", self.NOTE, "src/x.test.ts", 184)
+        self.assertIn("> ```ts\n>   it('lists multiple changed leaves", out)
+        self.assertNotIn("suggestion", out)
+        self.assertNotIn("suggested", out)          # no caption: the code says enough
 
-    def test_suggestion_without_an_anchor_still_gets_a_caption(self):
-        self.assertIn(
-            "_suggested replacement:_",
-            note_md("Robin", "```suggestion\nx\n```\n", "src/x.ts", None),
-        )
+    def test_a_suggestion_with_its_source_is_a_diff_against_what_it_replaces(self):
+        source = ["def a():", "    return 1", "def b():"]
+        out = note_md("Robin", "So:\n\n```suggestion:-0+0\n    return 2\n```",
+                      "src/x.py", 2, source)
+        self.assertIn("> ```diff\n> -    return 1\n> +    return 2\n> ```", out)
 
     def test_a_tab_indented_snippet_is_code_too(self):
         """Markdown counts a tab as four spaces; a space-only check missed it."""
         out = note_md(
             "Robin", "So:\n\n\tconst a = 1\n\tconst b = 2\n", "src/x.ts", 5
         )
-        self.assertIn("```ts\nconst a = 1\nconst b = 2\n```", out)
+        self.assertIn("> ```ts\n> const a = 1\n> const b = 2\n> ```", out)
 
-    def test_caption_clamps_at_the_top_of_the_file(self):
-        """`suggestion:-99+0` near the top produced "lines -94–5"."""
-        self.assertIn("lines 1–5:", suggestion_caption("suggestion:-99+0", 5))
-
-    def test_an_empty_suggestion_block_is_skipped(self):
-        """No block, and no caption promising one."""
+    def test_an_empty_suggestion_without_its_source_is_skipped(self):
+        """There is nothing to show and no line to say it deletes."""
         self.assertEqual(
             note_md("Robin", "```suggestion\n```", "src/x.ts", 3), "> **Robin**"
         )
 
     def test_indented_snippet_becomes_a_fenced_block(self):
         out = note_md("Robin", self.NOTE, "src/x.test.ts", 184)
-        self.assertIn("```ts\nconst original: ExtractedData = {", out)  # and dedented
+        self.assertIn("> ```ts\n> const original: ExtractedData = {", out)  # and dedented
         self.assertNotIn(">     const original", out)
 
     def test_prose_stays_quoted_and_keeps_the_author(self):
@@ -135,10 +125,11 @@ class TestNoteRendering(unittest.TestCase):
         self.assertTrue(out.startswith("> **Robin**\n>\n> Minor:"))
         self.assertIn("> Oder `ExtractedData` umdrehen?", out)
 
-    def test_no_empty_quote_line_after_a_lifted_fence(self):
-        """A `>` directly after a fence renders as a stray empty quote bar."""
-        out = note_md("Robin", self.NOTE, "src/x.test.ts", 184)
-        self.assertNotIn("```\n>\n", out)
+    def test_code_is_marked_as_it_is_quoted(self):
+        """The paste gate compares against the message, which carries the `> ` form."""
+        critical_manifest.reset()
+        note_md("Robin", "```python\nx = 1\n```", "src/x.py", 1)
+        self.assertEqual(critical_manifest.current(), ["> x = 1"])
 
     def test_list_continuation_is_not_code(self):
         """Indentation under a bullet is list continuation — fencing it would break the
@@ -150,16 +141,41 @@ class TestNoteRendering(unittest.TestCase):
 
     def test_an_explicit_language_is_preserved(self):
         out = note_md("Robin", "So:\n\n```bash\nnpm test\n```\n", "src/x.ts", 5)
-        self.assertIn("```bash\nnpm test", out)
+        self.assertIn("> ```bash\n> npm test", out)
 
     def test_a_diff_in_a_note_is_fenced_as_a_diff(self):
         out = note_md("Robin", "```\n-  a\n+  b\n```\n", "src/x.ts", 5)
-        self.assertIn("```diff\n", out)
+        self.assertIn("> ```diff\n", out)
 
     def test_plain_prose_is_unchanged(self):
         self.assertEqual(
             note_md("Robin", "Sieht gut aus.\n"), "> **Robin**\n>\n> Sieht gut aus."
         )
+
+
+class TestSuggestionDiff(unittest.TestCase):
+    SOURCE = [f"line {i}" for i in range(1, 11)]
+
+    def test_lines_it_keeps_are_context(self):
+        """`-1+1` replaces lines 4–6; only the middle one changes."""
+        self.assertEqual(
+            suggestion_diff("line 4\nLINE 5\nline 6", "suggestion:-1+1", 5, self.SOURCE),
+            " line 4\n-line 5\n+LINE 5\n line 6")
+
+    def test_an_empty_suggestion_deletes(self):
+        self.assertEqual(suggestion_diff("", "suggestion:-0+1", 3, self.SOURCE),
+                         "-line 3\n-line 4")
+
+    def test_the_range_is_clamped_to_the_file(self):
+        self.assertEqual(suggestion_diff("x", "suggestion:-99+0", 2, self.SOURCE),
+                         "-line 1\n-line 2\n+x")
+
+    def test_unknown_lines_give_no_diff(self):
+        for anchor, source in ((5, None), (None, self.SOURCE), (99, self.SOURCE)):
+            self.assertIsNone(suggestion_diff("x", "suggestion", anchor, source))
+
+    def test_a_plain_block_is_not_a_suggestion(self):
+        self.assertIsNone(suggestion_diff("x", "python", 5, self.SOURCE))
 
 
 if __name__ == "__main__":
