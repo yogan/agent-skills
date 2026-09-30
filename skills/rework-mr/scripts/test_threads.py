@@ -211,60 +211,6 @@ deleted file mode 100644
 """
 
 
-class TestDiffStat(unittest.TestCase):
-    """The per-file counts are what lets a small change be approved without leaving the
-    chat, so they have to be right for the shapes git actually emits."""
-
-    def test_counts_per_file_ignoring_the_headers(self):
-        self.assertEqual(T.diff_stat(SAMPLE_DIFF)[0], ("src/a.ts", 2, 1))
-
-    def test_a_rename_is_reported_under_its_new_path(self):
-        self.assertEqual(T.diff_stat(SAMPLE_DIFF)[1], ("new/n.ts", 1, 1))
-
-    def test_a_conflicted_path_is_still_counted_as_a_file(self):
-        """`git diff` emits `diff --cc` for an unmerged path, which this skill produces
-        itself the moment a `rebase --autosquash` fixup conflicts. Unrecognised, the stanza
-        was not a file boundary: it disappeared from the summary and its own headers were
-        charged to the previous file — '1 file, +3 −3' over a two-file change."""
-        d = (
-            "diff --git a/ok.ts b/ok.ts\n--- a/ok.ts\n+++ b/ok.ts\n@@ -1 +1 @@\n-a\n+b\n"
-            "diff --cc conf.ts\n--- a/conf.ts\n+++ b/conf.ts\n@@@ -1,1 -1,1 +1,1 @@@\n"
-        )
-        self.assertEqual([p for p, _, _ in T.diff_stat(d)], ["ok.ts", "conf.ts"])
-        self.assertEqual(T.diff_stat(d)[0], ("ok.ts", 1, 1))
-
-    def test_a_deletion_keeps_the_old_path(self):
-        """Its `+++` side is /dev/null, so the `---` name is all there is."""
-        self.assertEqual(T.diff_stat(SAMPLE_DIFF)[2], ("gone.ts", 0, 2))
-
-    def test_a_repo_with_noprefix_configured(self):
-        """`diff.noprefix` drops the a//b/ prefixes; the path is still the header's."""
-        d = "diff --git x.ts x.ts\n--- x.ts\n+++ x.ts\n@@ -1 +1 @@\n-a\n+b\n"
-        self.assertEqual(T.diff_stat(d), [("x.ts", 1, 1)])
-
-    def test_a_binary_file_counts_no_lines(self):
-        d = "diff --git a/i.png b/i.png\nBinary files a/i.png and b/i.png differ\n"
-        self.assertEqual(T.diff_stat(d), [("i.png", 0, 0)])
-
-    def test_an_empty_diff_has_no_files(self):
-        self.assertEqual(T.diff_stat(""), [])
-
-    def test_content_that_looks_like_a_header_is_counted_not_obeyed(self):
-        """Diffing a file that itself contains a patch — a fixture, this repo's own docs —
-        produces body lines beginning `+++ ` and `--- `. They are CONTENT: they must count
-        toward the totals and must not rename the file. Headers only exist before `@@`."""
-        d = (
-            "diff --git a/doc.md b/doc.md\n"
-            "--- a/doc.md\n"
-            "+++ b/doc.md\n"
-            "@@ -1,2 +1,3 @@\n"
-            " intro\n"
-            "+--- a/not-a-header.py\n"
-            "+++ b/not-a-header.py\n"
-        )
-        self.assertEqual(T.diff_stat(d), [("doc.md", 2, 0)])
-
-
 class TestDiffViewRouting(unittest.TestCase):
     """Which of the two shapes `diff-view.sh` prints. The fallback is the case that
     matters: pointing at a window that does not hold the diff would have the user approve

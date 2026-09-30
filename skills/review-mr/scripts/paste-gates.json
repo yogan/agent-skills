@@ -53,11 +53,13 @@
     },
     {
       "key": "diff",
-      "note": ["Enforced only while its topic is the current one (lib/focus.py, hooks/README.md",
-               "\"The block manifest\"): the same command run for another topic is research."],
-      "cmd": "findings\\.py\\s+diff\\b",
+      "note": ["Only `--show` is gated: plain `diff <t>` is the agent's input, summarised for the",
+               "user in a few bullets, and `--show` is what runs when the user asks to see the",
+               "diff itself. Enforced only while its topic is the current one (lib/focus.py,",
+               "hooks/README.md \"The block manifest\")."],
+      "cmd": "findings\\.py\\s+diff\\b[^\\n]*--show",
       "signature": ["◈"],
-      "reason": "You ran `findings.py diff` to show what the author changed for this topic, but your message did not include its output. Re-send it with the FULL block pasted verbatim — the compare URL and the fenced diff — so the user can see the change instead of taking your word that it was addressed."
+      "reason": "The user asked to see the diff and you ran `findings.py diff <t> --show`, but your message did not include its output. Re-send it with the FULL block pasted verbatim — the compare URL and either the line naming the viewer window with its per-file counts, or the fenced diff — so the user sees the change itself, not your account of it."
     }
   ],
   "forbidden": [

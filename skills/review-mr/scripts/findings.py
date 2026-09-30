@@ -48,7 +48,8 @@ Subcommands (all read-only against GitLab):
                  screen; `set <t> --draft` takes it too, for its echo. `--focus` makes it
                  the current topic; a topic that is not current is shown for research only
   draft <t>      the draft's comment body ONLY — the paste/post payload (no meta)
-  diff <t>       the author's change for one topic: compare URL + inline git command
+  diff <t>       the author's change for one topic since you posted it, for YOU to summarise;
+                 `--show` when the user asks to see it (viewer window, or inline)
   import <file>  bulk-add findings from a JSON array (review-branch seed)
   add [--thread <id>]  add one finding; --thread links an already-posted thread
   set <t> …      update a topic's fields / state
@@ -92,13 +93,13 @@ _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(
 if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
 
-from lib import critical_manifest, focus                        # noqa: E402
+from lib import critical_manifest, focus, hunk                  # noqa: E402
 from lib.fences import (SUGGESTION_INFO, fence, lang_for, note_md,  # noqa: E402
                         segments)
 from lib.gitlab import (api, context, current_user, die, mr_base, mr_head,  # noqa: E402
                         mr_object, mr_view, versions, web_base)
-from lib.mr_common import (DEFAULT_LANG, MR_LEVEL, first_name, load,  # noqa: E402
-                           loc_md, num, plain_text, reads_as, save,
+from lib.mr_common import (DEFAULT_LANG, MR_LEVEL, TOPIC_ICON, first_name,  # noqa: E402
+                           load, loc_md, num, plain_text, reads_as, save,
                            short_summary, state_file, topic_for, tref)
 from lib.snippet import MAX_BACKTRACK, open_construct            # noqa: E402
 
@@ -1103,7 +1104,7 @@ def _gl_compare(ctx, frm, to):
     diffs = _compare(ctx, frm, to)
     if diffs is None:
         return None
-    # Mirrors skills/rework-mr/scripts/threads.py's `diff_stat`. Kept separate: these
+    # Mirrors lib/hunk.py's `diff_stat`. Kept separate: these
     # payloads are already split per file, so a `+++`/`---` here is always noise, while
     # there it can be a header or content depending on position.
     add = dele = 0
@@ -1306,10 +1307,16 @@ def render_updates(state, ctx, iid):
     return "\n".join(out)
 
 
-def render_topic_diff(state, ctx, iid, tid, inline_limit=80):
-    """What the author changed for one topic since you posted it. Server-side via
-    the compare API (force-push-safe): shows the topic file's diff inline when it's
-    small (≤ inline_limit lines), else just the compare URL. Always prints the URL."""
+def render_topic_diff(state, ctx, iid, tid, show=False, inline_limit=80):
+    """What the author changed for one topic since you posted it, server-side via the
+    compare API (force-push-safe). Always prints the compare URL.
+
+    Plain, it is the AGENT's input: the whole diff, from which it tells the user in a few
+    bullets what changed — the user reads that summary, not a dump. `show=True` is for when
+    the user asks to see the diff itself: in the agent's viewer window when there is one
+    (`_show_in_viewer`), else inline up to `inline_limit` lines, else just the URL. Only
+    that form is a gated view.
+    """
     t = topic_for(state, tid) or die(f"no topic {tid}")
     if not t["thread_ids"]:
         return f"{tref(tid)} isn't posted on GitLab yet — nothing the author could change"
@@ -1347,13 +1354,58 @@ def render_topic_diff(state, ctx, iid, tid, inline_limit=80):
             blocks.append(f"--- {new or old}\n{body}")
     text = "\n".join(blocks)
     nlines = text.count("\n") + 1 if text else 0
-    if 0 < nlines <= inline_limit:
+    if not nlines:
+        return "\n".join(out)
+    if show:
+        viewer = _show_in_viewer(ctx, iid, tid, picked)
+        if viewer:
+            return "\n".join(out + [""] + viewer)
+    if not show or nlines <= inline_limit:
         # `fence` widens past any backtick run inside: a diff of a markdown file carries
         # its own fences, and a bare ``` would close on the first of them.
         out += ["", fence(text, "diff")]
-    elif nlines:
+    else:
         out.append(f"_(diff is {nlines} lines — too big to inline; open the URL)_")
     return "\n".join(out)
+
+
+def topic_patch(picked):
+    """The compare API's per-file diffs as one git-style patch, which is what the viewer
+    reads. GitLab hands back each file's hunks without headers, so they are written here —
+    rename lines included, so the viewer shows a renamed file under its new name."""
+    out = []
+    for d in picked:
+        old, new = d.get("old_path"), d.get("new_path")
+        body = (d.get("diff") or "").rstrip("\n")
+        out.append(f"diff --git a/{old} b/{new}")
+        if old != new:
+            out += [f"rename from {old}", f"rename to {new}"]
+        if body:
+            out += ["--- /dev/null" if d.get("new_file") else f"--- a/{old}",
+                    "+++ /dev/null" if d.get("deleted_file") else f"+++ b/{new}", body]
+    return "\n".join(out) + "\n"
+
+
+def _show_in_viewer(ctx, iid, tid, picked):
+    """The pointer lines when the topic's diff is now in this agent's viewer window, or
+    None to show it inline — no tmux, no viewer, or a window that came back holding
+    anything but exactly this patch's files and line counts (see `hunk.show_patch`)."""
+    patch = topic_patch(picked)
+    path = state_file(STATE_ROOT, ctx["slug"], iid, f"diff-{tid}.patch")
+    with open(path, "w") as fh:
+        fh.write(patch)
+    shown = hunk.show_patch(path, f"{TOPIC_ICON}!{iid}",
+                            get_worktree(ctx["slug"], iid) or os.getcwd())
+    if not shown:
+        return None
+    stat = hunk.diff_stat(patch)
+    files = len(stat)
+    head = (f"_Full diff in tmux window {shown[1]} — {files} file"
+            f"{'' if files == 1 else 's'}, +{sum(a for _, a, _ in stat)} "
+            f"−{sum(r for _, _, r in stat)}:_")
+    # The only line naming where the diff is, so it must not be the one a paste may drop.
+    critical_manifest.mark(head)
+    return [head, "", fence("\n".join(hunk.stat_rows(stat)), "yaml")]
 
 
 # ---------------------------------------------------------------- worktree
@@ -1638,6 +1690,10 @@ def main():
     pdf = sub.add_parser("diff")
     pdf.add_argument("topic")
     pdf.add_argument("--iid", type=int)
+    pdf.add_argument("--show", action="store_true",
+                     help="the user asked to SEE the diff: put it in your viewer window "
+                          "(or inline) and paste this output. Without it the diff is your "
+                          "input, to summarise in a few bullets")
 
     pi = sub.add_parser("import")
     pi.add_argument("file")
@@ -1763,7 +1819,8 @@ def main():
         note = CURRENT.view(state, args.topic, False, _jump_cmd(args.topic, iid))
         if note:
             print(note, file=sys.stderr)
-        emit(state, render_topic_diff(state, ctx, iid, args.topic), args.topic)
+        emit(state, render_topic_diff(state, ctx, iid, args.topic, args.show), args.topic)
+        save(path, state)                 # a current topic it claimed, when none was
     elif cmd == "updates":
         sync(state, fetch_threads(ctx, iid, me, author), ctx, iid)
         save(path, state)

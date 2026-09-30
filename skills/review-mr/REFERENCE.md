@@ -152,10 +152,11 @@ A review spans days; the state file persists across sessions. Each check:
 3. **Work the `◐ needs-ack` topics, one at a time.** For each:
    ```bash
    python3 $SD/findings.py quote <t> --focus --iid <n>  # make it current; the thread's notes (author's reply, resolved flag)
-   python3 $SD/findings.py diff <t> --iid <n>           # THIS topic's change since you posted (server-side)
+   python3 $SD/findings.py diff <t> --iid <n>           # THIS topic's change since you posted — for you
    ```
-   `--focus` makes `<t>` the current topic (SKILL.md, "The current topic"); a `quote` or
-   `diff` of any other topic is research and prints a `note:` saying so.
+   `--focus` makes `<t>` the current topic (SKILL.md, "The current topic"); a `quote` of any
+   other topic is research and prints a `note:` saying so. `diff <t>` is never pasted: it is
+   what you summarise from. `diff <t> --show` is the one the user asked to see.
    Paste `quote`, add a **short summary of what the author did**, and judge it. **The thread is
    the source of truth — judge against what was *agreed there*, not against the finding's
    original one-line summary.** Points get down-scoped in discussion: if you said a fix was
@@ -164,10 +165,10 @@ A review spans days; the state file persists across sessions. Each check:
    fixed" is a classic mistake — read the notes first.
    - **Agreed & done** — the author did what the thread converged on (the fix, or the agreed
      TODO/defer, or a clean answer to a question) → say so plainly so the user can ack fast, or
-     `⊘ wontfix --ticket` for a tracked defer. **Confirm via `diff <t>`** (topic file's diff
-     inline when small, else the compare URL) — server-side, so it survives the force-pushes
-     that prune the baseline sha locally. Use the diff to *confirm the agreed change landed*,
-     not to reopen a settled scope.
+     `⊘ wontfix --ticket` for a tracked defer. **Confirm via `diff <t>`** and say in 2–4 bullets
+     what changed — server-side, so it survives the force-pushes that prune the baseline sha
+     locally; the user sees the diff itself only when they ask (`diff <t> --show`). Use the
+     diff to *confirm the agreed change landed*, not to reopen a settled scope.
    - **Author replied without a code change** (pushed back, or asked *you* something) → this is
      **not** a "fixed" case. Surface their point; it needs *your reply* (draft one) or your
      agreement (→ wontfix), never a silent ack.

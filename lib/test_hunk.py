@@ -13,6 +13,7 @@ user approves a force-push against something they never saw.
 import json
 import os
 import sys
+import tempfile
 import unittest
 from unittest.mock import patch
 
@@ -36,6 +37,88 @@ def session(sid="s1", repo=REPO, pane="%4"):
     return {"sessionId": sid, "repoRoot": repo, "terminal": {"locations": loc}}
 
 
+
+# Also in skills/rework-mr/scripts/test_threads.py, where diff-view's tests use it.
+SAMPLE_DIFF = """diff --git a/src/a.ts b/src/a.ts
+--- a/src/a.ts
++++ b/src/a.ts
+@@ -1,2 +1,3 @@
+ keep
+-old
++new
++extra
+diff --git a/old/n.ts b/new/n.ts
+rename from old/n.ts
+rename to new/n.ts
+--- a/old/n.ts
++++ b/new/n.ts
+@@ -1 +1 @@
+-x
++y
+diff --git a/gone.ts b/gone.ts
+deleted file mode 100644
+--- a/gone.ts
++++ /dev/null
+@@ -1,2 +0,0 @@
+-one
+-two
+"""
+
+
+class TestDiffStat(unittest.TestCase):
+    """The per-file counts are what lets a small change be approved without leaving the
+    chat, so they have to be right for the shapes git actually emits."""
+
+    def test_counts_per_file_ignoring_the_headers(self):
+        self.assertEqual(hunk.diff_stat(SAMPLE_DIFF)[0], ("src/a.ts", 2, 1))
+
+    def test_a_rename_is_reported_under_its_new_path(self):
+        self.assertEqual(hunk.diff_stat(SAMPLE_DIFF)[1], ("new/n.ts", 1, 1))
+
+    def test_a_conflicted_path_is_still_counted_as_a_file(self):
+        """`git diff` emits `diff --cc` for an unmerged path, which this skill produces
+        itself the moment a `rebase --autosquash` fixup conflicts. Unrecognised, the stanza
+        was not a file boundary: it disappeared from the summary and its own headers were
+        charged to the previous file — '1 file, +3 −3' over a two-file change."""
+        d = (
+            "diff --git a/ok.ts b/ok.ts\n--- a/ok.ts\n+++ b/ok.ts\n@@ -1 +1 @@\n-a\n+b\n"
+            "diff --cc conf.ts\n--- a/conf.ts\n+++ b/conf.ts\n@@@ -1,1 -1,1 +1,1 @@@\n"
+        )
+        self.assertEqual([p for p, _, _ in hunk.diff_stat(d)], ["ok.ts", "conf.ts"])
+        self.assertEqual(hunk.diff_stat(d)[0], ("ok.ts", 1, 1))
+
+    def test_a_deletion_keeps_the_old_path(self):
+        """Its `+++` side is /dev/null, so the `---` name is all there is."""
+        self.assertEqual(hunk.diff_stat(SAMPLE_DIFF)[2], ("gone.ts", 0, 2))
+
+    def test_a_repo_with_noprefix_configured(self):
+        """`diff.noprefix` drops the a//b/ prefixes; the path is still the header's."""
+        d = "diff --git x.ts x.ts\n--- x.ts\n+++ x.ts\n@@ -1 +1 @@\n-a\n+b\n"
+        self.assertEqual(hunk.diff_stat(d), [("x.ts", 1, 1)])
+
+    def test_a_binary_file_counts_no_lines(self):
+        d = "diff --git a/i.png b/i.png\nBinary files a/i.png and b/i.png differ\n"
+        self.assertEqual(hunk.diff_stat(d), [("i.png", 0, 0)])
+
+    def test_an_empty_diff_has_no_files(self):
+        self.assertEqual(hunk.diff_stat(""), [])
+
+    def test_content_that_looks_like_a_header_is_counted_not_obeyed(self):
+        """Diffing a file that itself contains a patch — a fixture, this repo's own docs —
+        produces body lines beginning `+++ ` and `--- `. They are CONTENT: they must count
+        toward the totals and must not rename the file. Headers only exist before `@@`."""
+        d = (
+            "diff --git a/doc.md b/doc.md\n"
+            "--- a/doc.md\n"
+            "+++ b/doc.md\n"
+            "@@ -1,2 +1,3 @@\n"
+            " intro\n"
+            "+--- a/not-a-header.py\n"
+            "+++ b/not-a-header.py\n"
+        )
+        self.assertEqual(hunk.diff_stat(d), [("doc.md", 2, 0)])
+
+
 class FakeRun:
     """Stands in for `hunk._run`, dispatching on the shape of the command.
 
@@ -46,7 +129,7 @@ class FakeRun:
 
     def __init__(self, sessions=(), owners=None, new_pane="%9", window="9 (!123)",
                  reload_files=1, reload_ok=True, list_ok=True, register=True,
-                 window_ids=None, loaded=None):
+                 window_ids=None, loaded=None, new_repo=REPO):
         self.sessions = list(sessions)
         self.owners = dict(owners or {})
         self.new_pane, self.window = new_pane, window
@@ -59,6 +142,8 @@ class FakeRun:
         # `register=False` is a viewer that starts and never reaches the daemon: the
         # window exists, no session ever appears for its pane.
         self.register = register
+        # What a spawned session reports as its repository: a patch window has none.
+        self.new_repo = new_repo
         self.calls = []
 
     def __call__(self, argv, timeout=None, stdin=None):
@@ -82,7 +167,7 @@ class FakeRun:
             return (0, self.owners[pane]) if pane in self.owners else (1, "")
         if argv[:2] == ["tmux", "new-window"]:
             if self.register:
-                self.sessions.append(session("new", REPO, self.new_pane))
+                self.sessions.append(session("new", self.new_repo, self.new_pane))
             return 0, self.new_pane + "\n"
         if argv[:2] == ["tmux", "set-option"]:
             self.owners[argv[argv.index("-t") + 1]] = argv[-1]
@@ -296,6 +381,53 @@ class TestSucceeds(HunkCase):
         reloads = [c for c in fake.calls if c[:3] == ["hunk", "session", "reload"]]
         self.assertEqual(reloads[0][3], "mine")
         self.assertNotIn("--repo", reloads[0])
+
+
+class TestShowPatch(unittest.TestCase):
+    """review-mr's window: a patch file, found by owner alone since it has no repository."""
+
+    PATCH = SAMPLE_DIFF
+
+    def show(self, fake):
+        with tempfile.NamedTemporaryFile("w", suffix=".patch", delete=False) as fh:
+            fh.write(self.PATCH)
+        self.addCleanup(os.unlink, fh.name)
+        with patch.dict(os.environ, {"TMUX": "/tmp/x", "CLAUDE_CODE_SESSION_ID": "me"}), \
+                patch.object(hunk, "installed", lambda: True), \
+                patch.object(hunk, "_run", fake):
+            return hunk.show_patch(fh.name, "!123", "/w", sleep=lambda _s: None), fh.name
+
+    def loaded(self):
+        return hunk.diff_stat(self.PATCH)
+
+    def test_opens_a_patch_window_when_there_is_none(self):
+        fake = FakeRun(new_repo=None, loaded=self.loaded())
+        shown, path = self.show(fake)
+        self.assertEqual(shown, ("new", "9 (!123)"))
+        spawn = [c for c in fake.calls if c[:2] == ["tmux", "new-window"]][0]
+        self.assertEqual(spawn[-1], f"hunk patch {path}")
+
+    def test_reloads_its_own_patch_window_with_the_new_patch(self):
+        fake = FakeRun([session("mine", repo=None, pane="%4")], owners={"%4": "me"},
+                       reload_files=len(self.loaded()), loaded=self.loaded())
+        shown, path = self.show(fake)
+        self.assertEqual(shown, ("mine", "9 (!123)"))
+        reload = [c for c in fake.calls if c[:3] == ["hunk", "session", "reload"]][0]
+        self.assertEqual(reload[-2:], ["patch", path])
+
+    def test_never_takes_over_a_working_diff_window(self):
+        """rework-mr's window of the same agent has a repository; it is not this one."""
+        fake = FakeRun([session("rework", repo=REPO, pane="%4")], owners={"%4": "me"},
+                       new_repo=None, loaded=self.loaded())
+        self.assertEqual(self.show(fake)[0], ("new", "9 (!123)"))
+
+    def test_a_window_holding_anything_else_is_refused(self):
+        fake = FakeRun(new_repo=None, loaded=[("src/a.ts", 9, 9)])
+        self.assertIsNone(self.show(fake)[0])
+
+    def test_outside_tmux_it_is_inline(self):
+        with patch.dict(os.environ, {}, clear=True):
+            self.assertIsNone(hunk.show_patch("/nonexistent", "!1", "/w"))
 
 
 class TestNotes(unittest.TestCase):

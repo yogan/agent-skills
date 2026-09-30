@@ -30,9 +30,14 @@ The window's life is one topic's fix: opened beside the agent's own window when 
 diff needs showing, reloaded for each further round on that topic, and closed once the push
 lands — at which point the fixup and rebase have left the working tree clean and the viewer
 would otherwise sit there showing a diff that no longer exists.
+
+review-mr's window is a patch window instead (`show_patch`): a topic's server-side diff,
+shown when the user asks to see it in full, and reloaded for the next one. Nothing it shows
+is ever pushed, so nothing closes it; the user does, whenever they like.
 """
 import json
 import os
+import shlex
 import shutil
 import subprocess
 
@@ -142,6 +147,8 @@ def find_session(repo, owner):
     themselves, or one belonging to another agent in the same checkout, must never be
     reloaded out from under them.
 
+    `repo=None` finds a patch window (`show_patch`), which has no repository.
+
     An empty `owner` matches nothing. Without that guard it would match everything: an
     unmarked window — precisely the user's own — reads back as the empty string too, so an
     agent that could not identify itself would adopt the first viewer it found, reload the
@@ -158,8 +165,11 @@ def find_session(repo, owner):
     return None
 
 
-def spawn_session(repo, label, owner, sleep=None):
+def spawn_session(repo, label, owner, sleep=None, cmd="hunk diff"):
     """Open a viewer for `repo` in a new background tmux window and return its session id.
+
+    `cmd` is what the window runs: the working diff by default, or `hunk patch <file>`
+    for a diff that exists only as text (see `show_patch`).
 
     The window is created first and marked before the viewer is looked for, so the mark is
     in place no matter how the startup race resolves, and the new session is identified by
@@ -177,7 +187,7 @@ def spawn_session(repo, label, owner, sleep=None):
     here = _window_of_pane(os.environ.get("TMUX_PANE") or "")
     place = ["-a", "-t", here] if here else []
     rc, out = _run(["tmux", "new-window", "-d", "-P", "-F", "#{pane_id}"] + place
-                   + ["-n", label, "-c", repo, "hunk diff"])
+                   + ["-n", label, "-c", repo, cmd])
     pane = out.strip()
     if rc != 0 or not pane:
         return None
@@ -395,6 +405,52 @@ def drop_note(session_id, note_id):
     return rc == 0
 
 
+def reload_patch(session_id, path):
+    """Swap the session onto the patch at `path`; return how many files it loaded, or None
+    if the reload did not happen."""
+    data = _json(["hunk", "session", "reload", session_id, "--json", "--", "patch", path])
+    if not data:
+        return None
+    return (data.get("result") or {}).get("fileCount")
+
+
+def show_patch(path, label, cwd, owner=None, sleep=None):
+    """Put the patch at `path` in this agent's own window; return (session_id, where) or
+    None to mean "show the diff inline instead".
+
+    For a diff that exists only as text — review-mr's is GitLab's server-side compare, which
+    survives the force-pushes that prune its baseline locally, so there is no working tree
+    or revision range to point the viewer at. The same guarantee as `show_working_diff`
+    holds: the window must come back holding exactly the files and line counts of the
+    patch, or no pointer is given.
+
+    A patch session has no repository, so it is found by the owner mark alone
+    (`find_session(None, …)`): one window per agent, reloaded for each diff it shows.
+    """
+    if not in_tmux() or not installed():
+        return None
+    owner = owner or owner_id()
+    if not owner:
+        return None
+    with open(path) as fh:
+        expect = sorted(tuple(f) for f in diff_stat(fh.read()))
+    if not expect:
+        return None
+    sid = find_session(None, owner)
+    if sid:
+        if reload_patch(sid, path) != len(expect):
+            return None
+    else:
+        sid = spawn_session(cwd, label, owner, sleep=sleep,
+                            cmd=f"hunk patch {shlex.quote(path)}")
+        if not sid:
+            return None
+    if loaded_stat(sid) != expect:
+        return None
+    where = window_of(sid)
+    return (sid, where) if where else None
+
+
 def show_working_diff(repo, label, expect_stat, owner=None, sleep=None):
     """Put the repo's working diff in this agent's own window; return (session_id, where)
     or None to mean "show the diff inline instead".
@@ -428,3 +484,90 @@ def show_working_diff(repo, label, expect_stat, owner=None, sleep=None):
         return None
     where = window_of(sid)
     return (sid, where) if where else None
+
+
+def _header_path(rest):
+    """The file a `diff --git` line is about, given everything after that prefix.
+
+    Always consulted, but only load-bearing for a file whose diff has no `+++`/`---`
+    headers to override it — a BINARY file, which would otherwise appear in the summary
+    with no name at all. The line carries both paths, so the prefixed form is split on its
+    ` b/`, and the prefix-less form (`diff.noprefix`) on the fact that its two halves are
+    the same path twice.
+    """
+    if rest.startswith("a/") and " b/" in rest:
+        return rest.split(" b/", 1)[1]
+    half = len(rest) // 2
+    if rest[:half].strip() == rest[half:].strip():
+        return rest[:half].strip()
+    return rest.rsplit(" ", 1)[-1]
+
+
+# Mirrors skills/review-mr/scripts/findings.py's `_gl_compare` churn count, and stays
+# separate on purpose: that one walks GitLab's already-per-file diff payloads, so it never
+# has to find a file boundary and treats every `+++`/`---` as noise. This one parses one raw
+# stream — `git diff`, or review-mr's `topic_patch` — where those same lines are sometimes a
+# header and sometimes content. Same arithmetic, different problem — a change to either is worth checking against
+# the other.
+def diff_stat(diff):
+    """[(path, added, removed)] for a unified diff, in the order it lists the files.
+
+    Parsed from the text it is given, never re-derived with a second `git` call: the
+    summary the user reads and the diff handed to the viewer then cannot describe two
+    different states of a tree that is still being edited.
+
+    The name is taken from the `+++`/`---` headers wherever they exist, and only from the
+    `diff --git` line when they do not: that line carries BOTH paths, so reading it means
+    guessing where one ends and the other begins (see `_header_path`), while the headers
+    each carry exactly one. `---` arrives first and `+++` overrides it, so a rename lands
+    under its new name and a deletion — whose `+++` is `/dev/null` — keeps its old one.
+    """
+    files, in_body = [], False
+    for line in diff.splitlines():
+        if line.startswith("diff --git "):
+            files.append([_header_path(line[11:].strip()), 0, 0])
+            in_body = False
+        elif line.startswith("diff --cc ") or line.startswith("diff --combined "):
+            # A COMBINED diff — what `git diff` emits for an unmerged path, which
+            # `rebase --autosquash` produces the moment a fixup conflicts, squarely inside
+            # rework-mr's own flow. Without this the stanza is not a file boundary at all:
+            # it vanishes from the summary and its `---`/`+++` headers are charged to the
+            # previous file as a removal and an addition. Its body uses two prefix columns,
+            # so the +/- counts below are approximate — but a named file with rough counts
+            # beats a missing one, and the viewer's own count will disagree and force the
+            # inline shape anyway.
+            files.append([line.split(" ", 2)[2].strip(), 0, 0])
+            in_body = False
+        elif not files:
+            continue
+        elif line.startswith("@@"):
+            # Headers only exist before the first hunk. Past it every `+++`/`---` is
+            # CONTENT: a diffed file whose own line starts with `++` or `--` — a patch
+            # fixture, this repo's own docs — arrives here looking exactly like a header,
+            # and would otherwise rename the file to whatever that line said.
+            in_body = True
+        elif not in_body and (line.startswith("+++ ") or line.startswith("--- ")):
+            path = line[4:].strip()
+            # `---` arrives first and sets the name; `+++` then overrides it, so a rename
+            # is reported under its new path. A deletion's `+++` is /dev/null, skipped,
+            # which is what leaves the `---` name standing.
+            if path != "/dev/null":
+                files[-1][0] = path[2:] if path[:2] in ("a/", "b/") else path
+        elif line.startswith("+"):
+            files[-1][1] += 1
+        elif line.startswith("-"):
+            files[-1][2] += 1
+    return [(p or "?", a, r) for p, a, r in files]
+
+
+def stat_rows(stat):
+    """A diff's per-file counts as `path: +a −r` rows, padded to the longest path.
+
+    Fenced as YAML by the callers: a pasted block's only available colour is whatever the
+    reader's markdown renderer gives the fence language — it travels through a model
+    message, so terminal escapes cannot survive it — and read as YAML each row is a key and
+    a value, which tints the path apart from its counts. The pad is capped so one deeply
+    nested file cannot push every count off the far side of a terminal.
+    """
+    width = min(max((len(p) for p, _, _ in stat), default=0), 60)
+    return [f"{p + ':':<{width + 2}} +{a} −{r}" for p, a, r in stat]

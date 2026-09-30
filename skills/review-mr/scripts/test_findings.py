@@ -835,6 +835,75 @@ class TestRenamedFileDiff(unittest.TestCase):
                       "change_", out)
 
 
+class TestTopicDiff(unittest.TestCase):
+    """`diff <t>` is the agent's input; `diff <t> --show` is what the user asked to see."""
+
+    BIG = "@@ -1,90 +1,90 @@\n" + "".join(f"-old {i}\n+new {i}\n" for i in range(45))
+
+    def render(self, diffs, show=False, viewer=None):
+        state = new_state(threads={"d1": {"body": "x", "file": "a.py", "line": 3,
+                                          "url": "u"}},
+                          last_reviewed_head="OLD1",
+                          mr_web_url="https://gitlab.example.com/g/r/-/merge_requests/1")
+        F.adopt_inbound(state, None, None)
+        with patch.object(F, "mr_head", return_value="NEW1"), \
+             patch.object(F, "versions", return_value=[{"id": 2}]), \
+             patch.object(F, "_compare", return_value=diffs), \
+             patch.object(F.hunk, "show_patch", return_value=viewer), \
+             patch.object(F, "state_file", side_effect=self.scratch), \
+             patch.object(F, "get_worktree", return_value=None):
+            return F.render_topic_diff(state, {"enc": "x", "slug": "s"}, 1, "t1", show)
+
+    def scratch(self, *_parts):
+        fd, path = tempfile.mkstemp(suffix=".patch")
+        os.close(fd)
+        self.addCleanup(os.unlink, path)
+        return path
+
+    def file(self, body):
+        return [{"old_path": "a.py", "new_path": "a.py", "diff": body}]
+
+    def test_the_agents_input_is_the_whole_diff_however_long(self):
+        out = self.render(self.file(self.BIG))
+        self.assertIn("+new 44", out)
+        self.assertNotIn("too big", out)
+
+    def test_shown_without_a_viewer_it_is_inline_when_small(self):
+        out = self.render(self.file("@@ -1 +1 @@\n-a = 1\n+a = 2\n"), show=True)
+        self.assertIn("```diff\n--- a.py\n@@ -1 +1 @@\n-a = 1\n+a = 2\n```", out)
+
+    def test_shown_without_a_viewer_a_big_one_is_just_the_url(self):
+        out = self.render(self.file(self.BIG), show=True)
+        self.assertIn("too big to inline; open the URL", out)
+        self.assertNotIn("+new 44", out)
+
+    def test_shown_in_the_viewer_it_names_the_window_and_the_counts(self):
+        out = self.render(self.file("@@ -1 +1 @@\n-a = 1\n+a = 2\n"), show=True,
+                          viewer=("sid", "9 (◈ !1)"))
+        self.assertIn("_Full diff in tmux window 9 (◈ !1) — 1 file, +1 −1:_", out)
+        self.assertIn("```yaml\na.py:  +1 −1\n```", out)
+        self.assertNotIn("```diff", out)
+
+    def test_the_patch_counts_what_the_diff_holds(self):
+        """The viewer is refused unless it reports these same counts, so they must be the
+        diff's own — a rename under its new name, a new and a deleted file."""
+        patch_text = F.topic_patch([
+            {"old_path": "old.py", "new_path": "new.py", "renamed_file": True,
+             "diff": "@@ -1 +1 @@\n-a\n+b\n"},
+            {"old_path": "add.py", "new_path": "add.py", "new_file": True,
+             "diff": "@@ -0,0 +1,2 @@\n+x\n+y\n"},
+            {"old_path": "gone.py", "new_path": "gone.py", "deleted_file": True,
+             "diff": "@@ -1 +0,0 @@\n-z\n"}])
+        self.assertEqual(F.hunk.diff_stat(patch_text),
+                         [("new.py", 1, 1), ("add.py", 2, 0), ("gone.py", 0, 1)])
+
+    def test_only_the_shown_form_is_a_gated_view(self):
+        with open(os.path.join(HERE, "paste-gates.json")) as fh:
+            gate = next(g for g in json.load(fh)["gates"] if g["key"] == "diff")
+        self.assertNotRegex("python3 $SD/findings.py diff t3 --iid 7", gate["cmd"])
+        self.assertRegex("python3 $SD/findings.py diff t3 --show --iid 7", gate["cmd"])
+
+
 class TestSettledThreads(unittest.TestCase):
     """Someone else's thread already resolved when `sync` first sees it is not taken on.
     Each one used to cost a summary and an ack, and the table refused to render until all

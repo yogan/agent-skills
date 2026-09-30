@@ -714,10 +714,23 @@ class TestCurrentTopic(HookCase):
             user_prompt(),
             bash_call("u1", "python3 $SD/findings.py quote t10 --iid 1"),
             tool_result("u1", with_manifest(self.T10, [], topic="t10", focus="t10")),
-            bash_call("u2", "python3 $SD/findings.py diff t7 --iid 1 | head -80"),
+            bash_call("u2", "python3 $SD/findings.py diff t7 --show --iid 1 | head -80"),
             tool_result("u2", with_manifest(self.T7, ["-  if (a) return null"],
                                             topic="t7", focus="t10")),
             assistant_text(self.T10 + "\n\nt10 is done. Ack?"),
+        ])
+
+
+class TestDiffIsTheAgentsInput(HookCase):
+    def test_a_plain_diff_of_the_current_topic_is_summarised_not_pasted(self):
+        """Only `diff --show` — the user asked to see it — is a gated view."""
+        self.assertAllowed([
+            user_prompt(),
+            bash_call("u1", "python3 $SD/findings.py diff t10 --iid 1"),
+            tool_result("u1", with_manifest(TestCurrentTopic.T7.replace("t7", "t10"),
+                                            ["-  if (a) return null"],
+                                            topic="t10", focus="t10")),
+            assistant_text("t10: push 3 renames the test file, nothing else. Ack?"),
         ])
 
 
@@ -781,12 +794,12 @@ class TestRealViewsPasteClean(HookCase):
                                self.F.render_quote(state, "t1"))
 
     def test_review_mr_diff_of_a_markdown_file(self):
-        """Not rendered: `diff` needs the GitLab API. The shape is the one it prints — an
-        unchanged diff line of a doc that itself holds a suggestion block."""
+        """Not rendered: `diff` needs the GitLab API. The shape is the one `--show` prints
+        inline — an unchanged diff line of a doc that itself holds a suggestion block."""
         block = ("◈ **t1** — rewording of the retry paragraph\nhttp://gl/compare\n\n"
                  "````diff\n--- docs/retries.md\n@@ -20,3 +20,3 @@\n ```suggestion\n"
                  "-old sentence\n+new sentence\n ```\n````")
-        self.assertPastesClean("python3 $SD/findings.py diff t1 --iid 1", block)
+        self.assertPastesClean("python3 $SD/findings.py diff t1 --show --iid 1", block)
 
     def rework_state(self):
         return {"iid": 1, "threads": {"d1": self.thread()},
@@ -834,7 +847,7 @@ class TestRealViewsPasteClean(HookCase):
             user_prompt(),
             bash_call("u1", "python3 $SD/findings.py present --iid 1"),
             tool_result("u1", printed(opener, "t1")),
-            bash_call("u2", "python3 $SD/findings.py diff t2 --iid 1"),
+            bash_call("u2", "python3 $SD/findings.py diff t2 --show --iid 1"),
             tool_result("u2", printed(diff, "t2")),
             assistant_text(opener + "\n\nAck?"),
         ])

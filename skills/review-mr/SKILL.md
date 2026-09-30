@@ -246,8 +246,8 @@ topic's views must be pasted.
 - **Opening a topic** — the next one, or the one the user names ("skip this, do t7 first") — is
   `quote <t> --focus --iid <n>`, pasted verbatim. Re-showing the current one is plain `quote <t>`
   (or `--refine`).
-- **Any other topic is research.** `quote`/`diff` for a topic that is not current prints a
-  `note:` saying so; use it to inform your answer and do not paste it. "Let's stop, I need to
+- **Any other topic is research.** `quote`/`diff --show` for a topic that is not current prints
+  a `note:` saying so; use it to inform your answer and do not paste it. "Let's stop, I need to
   look into X first" needs nothing — the topic stays current until you come back to it.
 - **It moves on by itself** when the topic stops needing the user — acked, `⊘ wontfix`,
   posted and `link`ed — and `set <t> --draft` makes `t` current. `present`/`resume` show it, so
@@ -387,8 +387,8 @@ without that table, you skipped it.
 
 **1 — `updates`.** Paste verbatim, then annotate — don't collapse it into prose. Each push is a
 `- **push N:** <url>` line with a nested `  - ` detail (diffstat + topics touched, or a rebase
-label). Add your **one-line summary as a further `  - ` sub-bullet** — to write it, `diff <t>`
-for the topics a push touches is research (see "The current topic"), not something to paste:
+label). Add your **one-line summary as a further `  - ` sub-bullet** — `diff <t>` for the topics
+a push touches is what to write it from, never something to paste:
 
 ```
 - **push 1:** <url>
@@ -450,16 +450,25 @@ declaring it "not fixed" is wrong. If the thread agreed to defer (a TODO / follo
 and the author did that → recommend **ack** (or `⊘ wontfix` if you want a ticket tracked), not a
 re-litigation.
 
-Use the diff only to **confirm the agreed change landed**:
+Use the diff only to **confirm the agreed change landed** — and it is **your** input, not the
+user's reading:
 
 ```bash
-python3 $SD/findings.py diff <t> --iid <n>  # the author's change for THIS topic (server-side)
+python3 $SD/findings.py diff <t> --iid <n>         # the author's change for THIS topic, for you
+python3 $SD/findings.py diff <t> --show --iid <n>  # only when the user asks to see it
 ```
 
-`diff <t>` shows the topic file's change since you posted it — **inline when small**, else just
-the compare URL to `open`; a file that was only renamed says so. It's server-side
-(force-push-safe), so it works even when the baseline sha is long gone locally. Paste whatever
-it returns for the current topic; for any other topic it is research (see "The current topic"). On the user's word:
+`diff <t>` prints the topic file's change since you posted it, server-side (force-push-safe, so
+it works even when the baseline sha is long gone locally); a file that was only renamed says so.
+**Do not paste it.** Tell the user in 2–4 bullets what changed — which push, what the author
+did, whether it is what the thread agreed — then your recommendation, and offer the full diff.
+**Never assemble a diff yourself** from `glab api`/`git` calls: `diff <t>` is already scoped to
+the topic and survives force-pushes.
+
+When the user asks to see it ("show me the diff"), run `diff <t> --show` and paste its output
+verbatim. It puts the diff in your own viewer window when you run in tmux with `hunk` installed —
+the output then names the window and lists each file's `+/−` counts — and inline otherwise
+(just the compare URL when it is too big). On the user's word:
 
 ```bash
 python3 $SD/findings.py set <t> --state acked --iid <n>               # ● you're satisfied

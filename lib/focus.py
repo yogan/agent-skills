@@ -1,10 +1,10 @@
 """The current topic: the one being decided right now, kept in the state file.
 
 Both MR skills work one topic at a time, and the paste gate needs to know which one that
-is. A command run for any OTHER topic is research — `diff t7` to write a push summary,
-`quote t14` to understand a follow-up that points at it — and the user is not asked to
-see it. A gate that cannot tell the two apart demands the research be pasted, which pulls
-another topic into the middle of the one being decided.
+is. A view run for any OTHER topic is research — `quote t14` to understand a follow-up
+that points at it — and the user is not asked to see it. A gate that cannot tell the two
+apart demands the research be pasted, which pulls another topic into the middle of the one
+being decided.
 
 So the producer states it: every view's block manifest carries the topic it is about and
 the current topic (see lib/critical_manifest.py), and hooks/paste-gate.py enforces a

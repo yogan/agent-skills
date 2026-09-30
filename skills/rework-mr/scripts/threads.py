@@ -62,6 +62,7 @@ if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
 
 from lib import critical_manifest, focus, hunk  # noqa: E402
+from lib.hunk import diff_stat  # noqa: E402
 from lib.gitlab import (
     api,
     context,
@@ -677,80 +678,6 @@ def render_diff_view(tid, diff, notice=""):
     )
 
 
-def _header_path(rest):
-    """The file a `diff --git` line is about, given everything after that prefix.
-
-    Always consulted, but only load-bearing for a file whose diff has no `+++`/`---`
-    headers to override it — a BINARY file, which would otherwise appear in the summary
-    with no name at all. The line carries both paths, so the prefixed form is split on its
-    ` b/`, and the prefix-less form (`diff.noprefix`) on the fact that its two halves are
-    the same path twice.
-    """
-    if rest.startswith("a/") and " b/" in rest:
-        return rest.split(" b/", 1)[1]
-    half = len(rest) // 2
-    if rest[:half].strip() == rest[half:].strip():
-        return rest[:half].strip()
-    return rest.rsplit(" ", 1)[-1]
-
-
-# Mirrors skills/review-mr/scripts/findings.py's `_gl_compare` churn count, and stays
-# separate on purpose: that one walks GitLab's already-per-file diff payloads, so it never
-# has to find a file boundary and treats every `+++`/`---` as noise. This one parses one raw
-# stream from `git diff`, where those same lines are sometimes a header and sometimes
-# content. Same arithmetic, different problem — a change to either is worth checking against
-# the other.
-def diff_stat(diff):
-    """[(path, added, removed)] for a unified diff, in the order it lists the files.
-
-    Parsed from the text that was piped in, never re-derived with a second `git` call: the
-    summary the user reads and the diff handed to the viewer then cannot describe two
-    different states of a tree that is still being edited.
-
-    The name is taken from the `+++`/`---` headers wherever they exist, and only from the
-    `diff --git` line when they do not: that line carries BOTH paths, so reading it means
-    guessing where one ends and the other begins (see `_header_path`), while the headers
-    each carry exactly one. `---` arrives first and `+++` overrides it, so a rename lands
-    under its new name and a deletion — whose `+++` is `/dev/null` — keeps its old one.
-    """
-    files, in_body = [], False
-    for line in diff.splitlines():
-        if line.startswith("diff --git "):
-            files.append([_header_path(line[11:].strip()), 0, 0])
-            in_body = False
-        elif line.startswith("diff --cc ") or line.startswith("diff --combined "):
-            # A COMBINED diff — what `git diff` emits for an unmerged path, which
-            # `rebase --autosquash` produces the moment a fixup conflicts, squarely inside
-            # this skill's own flow. Without this the stanza is not a file boundary at all:
-            # it vanishes from the summary and its `---`/`+++` headers are charged to the
-            # previous file as a removal and an addition. Its body uses two prefix columns,
-            # so the +/- counts below are approximate — but a named file with rough counts
-            # beats a missing one, and the viewer's own count will disagree and force the
-            # inline shape anyway.
-            files.append([line.split(" ", 2)[2].strip(), 0, 0])
-            in_body = False
-        elif not files:
-            continue
-        elif line.startswith("@@"):
-            # Headers only exist before the first hunk. Past it every `+++`/`---` is
-            # CONTENT: a diffed file whose own line starts with `++` or `--` — a patch
-            # fixture, this repo's own docs — arrives here looking exactly like a header,
-            # and would otherwise rename the file to whatever that line said.
-            in_body = True
-        elif not in_body and (line.startswith("+++ ") or line.startswith("--- ")):
-            path = line[4:].strip()
-            # `---` arrives first and sets the name; `+++` then overrides it, so a rename
-            # is reported under its new path. A deletion's `+++` is /dev/null, skipped,
-            # which is what leaves the `---` name standing.
-            if path != "/dev/null":
-                files[-1][0] = path[2:] if path[:2] in ("a/", "b/") else path
-        elif line.startswith("+"):
-            files[-1][1] += 1
-        elif line.startswith("-"):
-            files[-1][2] += 1
-    return [(p or "?", a, r) for p, a, r in files]
-
-
 def render_diff_pointer(tid, stat, where, notice=""):
     """The `diff-view.sh` block when the diff went to a viewer: what changed and how big,
     where to look at it, and the same ACK question.
@@ -762,23 +689,16 @@ def render_diff_pointer(tid, stat, where, notice=""):
     skill has the model state those in its own prose above this block, because only the
     model knows them.
 
-    The rows are `path: +a −r`, fenced as YAML, because a pasted block's only available
-    colour is whatever the reader's markdown renderer gives the fence language — the block
-    travels through a model message, so terminal escapes cannot survive it. Read as YAML
-    each row is a key and a value, which tints the path apart from its counts; the trailing
-    colon is the whole cost of that, and it replaces a column separator that cost as much.
+    The rows are `hunk.stat_rows`, fenced as YAML — see there for why.
     """
     files, adds, dels = (
         len(stat),
         sum(a for _, a, _ in stat),
         sum(r for _, _, r in stat),
     )
-    # Padded to the longest path, capped so one deeply nested file cannot push every count
-    # off the far side of a terminal; a path past the cap simply loses its alignment.
-    width = min(max((len(p) for p, _, _ in stat), default=0), 60)
     # Not marked critical here — `fence` marks every line it wraps, and marking twice puts
     # each row in the manifest twice.
-    rows = [f"{p + ':':<{width + 2}} +{a} −{r}" for p, a, r in stat]
+    rows = hunk.stat_rows(stat)
     head = (
         f"**Diff ({tref(tid)})** — {files} file{'' if files == 1 else 's'}, "
         f"+{adds} −{dels} · {where}"

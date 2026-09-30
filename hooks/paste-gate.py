@@ -684,8 +684,8 @@ def violation(path, specs):
     # --draft` — and each rendering supersedes the previous one. Demanding every one of
     # them be pasted made a correct message (which pasted the newest block) get blocked
     # for omitting a stale one. Per TOPIC, because a later run for a different topic
-    # supersedes nothing: reduced per key alone, `diff t10` followed by `diff t7` let
-    # t10's diff go unshown. dict preserves transcript order, so the last write wins.
+    # supersedes nothing: reduced per key alone, `quote t10` followed by `quote t7` let
+    # t10's view go unshown. dict preserves transcript order, so the last write wins.
     #
     # The current topic is what the LAST producer that knew it declared (see
     # lib/focus.py): a block about any other topic is research, not something the user

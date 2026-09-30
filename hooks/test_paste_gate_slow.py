@@ -329,7 +329,7 @@ class TestCurrentTopicStillRefuses(HookCase):
     def test_the_current_topics_diff_is_still_demanded(self):
         self.assertBlocked([
             user_prompt(),
-            bash_call("u1", "python3 $SD/findings.py diff t10 --iid 1"),
+            bash_call("u1", "python3 $SD/findings.py diff t10 --show --iid 1"),
             tool_result("u1", with_manifest(self.T10_DIFF, ["-def test_old():"],
                                             topic="t10", focus="t10")),
             assistant_text("t10 is fixed. Ack?"),
@@ -340,10 +340,10 @@ class TestCurrentTopicStillRefuses(HookCase):
         research diff satisfied the gate, and t10's own went unshown."""
         self.assertBlocked([
             user_prompt(),
-            bash_call("u1", "python3 $SD/findings.py diff t10 --iid 1"),
+            bash_call("u1", "python3 $SD/findings.py diff t10 --show --iid 1"),
             tool_result("u1", with_manifest(self.T10_DIFF, ["-def test_old():"],
                                             topic="t10", focus="t10")),
-            bash_call("u2", "python3 $SD/findings.py diff t7 --iid 1"),
+            bash_call("u2", "python3 $SD/findings.py diff t7 --show --iid 1"),
             tool_result("u2", with_manifest(self.T7, ["-  if (a) return null"],
                                             topic="t7", focus="t10")),
             assistant_text(self.T7 + "\n\nt10 is fixed. Ack?"),
@@ -363,7 +363,7 @@ class TestCurrentTopicStillRefuses(HookCase):
     def test_with_nothing_current_every_topic_view_is_enforced(self):
         self.assertBlocked([
             user_prompt(),
-            bash_call("u1", "python3 $SD/findings.py diff t7 --iid 1"),
+            bash_call("u1", "python3 $SD/findings.py diff t7 --show --iid 1"),
             tool_result("u1", with_manifest(self.T7, ["-  if (a) return null"],
                                             topic="t7", focus=None)),
             assistant_text("t7 looks fine."),
