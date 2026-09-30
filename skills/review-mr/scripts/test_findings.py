@@ -773,20 +773,24 @@ class TestNeedsTitle(unittest.TestCase):
 class TestCodeStaysCode(unittest.TestCase):
     """A code block the user is asked to judge must render as one — highlighted, whole."""
 
-    def test_a_drafts_plain_snippet_is_fenced_at_line_start(self):
-        """It was blockquoted like prose, so the `> ```python` lost its highlighting."""
-        out = F.render_draft("So:\n\n```python\ny = 2\n```", "python")
-        self.assertIn("\n```python\ny = 2\n```", out)
-        self.assertNotIn("> ```", out)
+    def test_a_draft_is_one_quote_its_code_included(self):
+        """A fence inside a quote still renders highlighted, and the draft reads as one."""
+        out = F.render_draft("So:\n\n```python\ny = 2\n```\n\nOk?", "a.py")
+        self.assertEqual(out, "> So:\n>\n> ```python\n> y = 2\n> ```\n>\n> Ok?")
 
     def test_a_suggestion_indented_under_a_list_item_is_re_fenced(self):
-        out = F.render_draft("- so\n  ```suggestion:-0+0\n  x = 1\n  ```", "python", 20)
-        self.assertIn("```python\n20 | x = 1\n```", out)
+        out = F.render_draft("- so\n  ```suggestion:-0+0\n  x = 1\n  ```", "a.py", 20)
+        self.assertIn("> ```python\n> 20 | x = 1\n> ```", out)
         self.assertNotRegex(out, forbidden_rules()["raw-suggestion-fence"])
 
+    def test_an_untagged_block_is_shown_as_rework_mr_shows_it(self):
+        """Both skills pick the language through lib/fences.py's `block_lang`."""
+        out = F.render_draft("So:\n\n```\n-a = 1\n+a = 2\n```", "a.py")
+        self.assertIn("> ```diff\n", out)
+
     def test_a_suggestions_lines_are_numbered_from_its_range(self):
-        out = F.render_draft("```suggestion:-1+1\na\nb\nc\n```", "python", 20)
-        self.assertIn("19 | a\n20 | b\n21 | c", out)
+        out = F.render_draft("```suggestion:-1+1\na\nb\nc\n```", "a.py", 20)
+        self.assertIn("> 19 | a\n> 20 | b\n> 21 | c", out)
 
     def test_the_diff_of_a_markdown_file_stays_in_one_block(self):
         """Its own ``` closed a bare ```diff early and spilled the rest as prose."""

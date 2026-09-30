@@ -82,11 +82,11 @@ def fence(text, lang=""):
     every line carries a ` `/`+`/`-` prefix, so a fence in a diffed markdown file arrives
     as "` ```"` — indented, still a valid closer, and invisible to a `^```` scan.
 
-    Every code-bearing render in rework-mr, and review-mr's thread notes, route fenced
-    content through here — the code the comment is on, a reviewer's own quoted
-    suggestion, a change illustration, a working diff, a drafted reply's code — so marking
-    each content line as critical HERE, once, covers all of them instead of needing the
-    same call at every site.
+    Every code-bearing render in both skills routes fenced content through here — the code
+    a comment is on, a change illustration, a working or topic diff — so marking each
+    content line as critical HERE, once, covers all of them instead of needing the same
+    call at every site. Code shown inside a quote (a comment's, a draft's) goes through
+    `quoted_fence` instead, which marks the quoted lines the message actually carries.
     """
     runs = []
     for ln in (text or "").splitlines():
@@ -214,20 +214,39 @@ def _indented_runs(seg):
     ]
 
 
-def code_block(content, info, path=None):
-    """One fenced block as it is SHOWN, never as it is posted.
+def block_lang(content, info, path=None):
+    """The language a code block is SHOWN in, never the one it is posted with.
 
     A block's own language is kept. A ```suggestion loses its marker — no highlighter knows
     it as a language, so it would render as grey text — and gets the file's language
     instead. An untagged block gets `diff` when it is one, else the file's language. The
     text that goes to GitLab keeps ```suggestion; that is what makes it one-click-apply.
     """
-    lang = (
-        info
-        if info and not SUGGESTION_INFO.match(info)
-        else ("diff" if looks_like_diff(content) else lang_for(path))
-    )
-    return fence(content, lang)
+    if info and not SUGGESTION_INFO.match(info):
+        return info
+    return "diff" if looks_like_diff(content) else lang_for(path)
+
+
+def code_block(content, info, path=None):
+    """One fenced block as it is shown, in `block_lang`."""
+    return fence(content, block_lang(content, info, path))
+
+
+def quoted_fence(content, lang=""):
+    """`content` fenced (see `fence`) and blockquoted, as lines — a code block that sits
+    inside a quote with the prose around it, and renders highlighted there.
+
+    Marked critical in its QUOTED form: that is what the message carries, and the paste
+    gate compares the message against it. `fence`'s own marks, of the unquoted lines, are
+    discarded.
+    """
+    with critical_manifest.suspended():
+        block = fence(content, lang)
+    lines = [f"> {ln}".rstrip() for ln in block.splitlines()]
+    for ln in lines[1:-1]:                        # the content, not the fence bars
+        if ln != ">":
+            critical_manifest.mark(ln)
+    return lines
 
 
 def note_md(name, body, path=None, anchor=None, source=None):
@@ -239,10 +258,6 @@ def note_md(name, body, path=None, anchor=None, source=None):
     language, inside the quote with the prose around it, so the comment reads as one.
     A suggestion becomes a diff against the lines it replaces when `source` (the file as
     the comment saw it) is given — see `suggestion_diff`.
-
-    The fence goes through `fence` with its marking suspended and the QUOTED lines are
-    marked instead: those are what the message carries, and the paste gate compares
-    against them.
     """
     out = [f"> **{first_name(name)}**"]
 
@@ -259,16 +274,10 @@ def note_md(name, body, path=None, anchor=None, source=None):
         diff = suggestion_diff(content, info, anchor, source)
         if diff is None and not content.strip():  # an empty suggestion, nothing to diff
             return
-        with critical_manifest.suspended():
-            if diff is None:
-                block = code_block(content, info, path)
-            else:
-                block = fence(diff, "diff")
-        quoted = [f"> {ln}".rstrip() for ln in block.splitlines()]
-        for ln in quoted[1:-1]:                   # the content, not the fence bars
-            if ln != ">":
-                critical_manifest.mark(ln)
-        out.extend([">"] + quoted)
+        if diff is None:
+            out.extend([">"] + quoted_fence(content, block_lang(content, info, path)))
+        else:
+            out.extend([">"] + quoted_fence(diff, "diff"))
 
     for kind, info, seg in segments((body or "").strip().splitlines() or [""]):
         if kind == "code":

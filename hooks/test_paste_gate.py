@@ -856,7 +856,7 @@ class TestRealViewsPasteClean(HookCase):
         """Display only: the body that is posted keeps ```suggestion."""
         out = self.T._quote_draft("So:\n\n```suggestion:-0+0\nreturn retry(3)\n```",
                                   "src/client.py")
-        self.assertIn("```python\nreturn retry(3)", out)
+        self.assertIn("> ```python\n> return retry(3)", out)
         self.assertNotRegex(out, r"(?m)^[>\s]*```suggestion")
 
 

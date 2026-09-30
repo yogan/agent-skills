@@ -73,8 +73,8 @@ meaning).
   scratch `reply-<t>.md`: no protected-path write prompt, and the internal-topic-handle
   guard (`t5`…) sits inside `reply`, so the post path cannot skip it.
 - `reply-view <t>` — the one-paste reply block (code + thread + draft + URL + prompt);
-  the draft's prose is blockquoted, its fenced code left at line start so it keeps its
-  highlighting. `--refine` is the same block minus the context, for re-showing a reworded
+  the draft is blockquoted whole, its fenced code inside the quote, where it still renders
+  highlighted. `--refine` is the same block minus the context, for re-showing a reworded
   draft on the topic the user is already looking at — the code and the thread have not
   changed since they were pasted, and repeating them buries the draft. It verifies that
   rather than assuming it: each full render records a digest of the context it showed, and a

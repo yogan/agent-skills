@@ -91,11 +91,13 @@ from lib.mr_common import (
 )
 from lib.fences import (  # noqa: E402
     FENCE_RE,
+    block_lang,
     code_block,
     fence,
     lang_for,
     looks_like_diff,
     note_md,
+    quoted_fence,
     segments,
 )
 from lib.snippet import MAX_BACKTRACK, open_construct  # noqa: E402
@@ -1022,22 +1024,20 @@ def reply_body(state, tid, legacy_dir=None):
 
 
 def _quote_draft(body, path=None):
-    """The draft as it should be DISPLAYED: prose blockquoted so it reads as the artefact
-    being posted, fenced blocks left at line start.
-
-    A fence prefixed with `> ` loses its syntax highlighting in most renderers, and the
-    code is usually the point of the reply — the same failure the change illustration had.
-    (review-mr's render_draft applies the same rule for the same reason.) A ```suggestion
-    in the reply is re-fenced to the file's language for display only; the body that is
-    posted keeps it.
+    """The draft as it should be DISPLAYED: blockquoted whole, so it reads as the one
+    artefact being posted — its fenced blocks inside the quote too, where they still render
+    highlighted. (review-mr's render_draft does the same.) A ```suggestion in the reply is
+    re-fenced to the file's language for display only; the body that is posted keeps it.
     """
     blocks = []
     for kind, info, seg in segments((body or "").rstrip("\n").splitlines()):
         if kind == "code":
-            blocks.append(code_block("\n".join(seg), info, path))
+            content = "\n".join(seg)
+            lang = block_lang(content, info, path)
+            blocks.append("\n".join(quoted_fence(content, lang)))
             continue
-        # Blank lines at a text segment's edges would render as stray `>` markers hugging
-        # the fence; the blank line between blocks below does that job properly.
+        # A blank line at a text segment's edge would double the `>` line the join below
+        # already puts between blocks.
         while seg and not seg[0].strip():
             seg = seg[1:]
         while seg and not seg[-1].strip():
@@ -1046,7 +1046,8 @@ def _quote_draft(body, path=None):
             blocks.append(
                 "\n".join(f"> {ln}".rstrip() if ln.strip() else ">" for ln in seg)
             )
-    return "\n\n".join(blocks)
+    # A `>` line, not a blank one, between blocks: a blank line would end the quote.
+    return "\n>\n".join(blocks)
 
 
 def render_reply_view(state, tid, body, refine=False):

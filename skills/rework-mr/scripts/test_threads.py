@@ -966,10 +966,11 @@ class TestReplyDraft(unittest.TestCase):
     def test_prose_is_blockquoted(self):
         self.assertEqual(T._quote_draft("Kurz.\n"), "> Kurz.")
 
-    def test_fences_stay_at_line_start(self):
-        """`> ```python` loses its highlighting, and the code is the point of the reply."""
+    def test_a_draft_is_one_quote_its_code_included(self):
+        """A fence inside a quote still renders highlighted, and a blank line between the
+        parts would end the quote — they are joined by a `>` line instead."""
         out = T._quote_draft("Danke:\n\n```python\nx = 1\n```\n\nPasst?\n", "src/a.py")
-        self.assertEqual(out, "> Danke:\n\n```python\nx = 1\n```\n\n> Passt?")
+        self.assertEqual(out, "> Danke:\n>\n> ```python\n> x = 1\n> ```\n>\n> Passt?")
 
     def test_untagged_draft_fence_gets_the_files_language(self):
         self.assertIn("```python", T._quote_draft("```\nx = 1\n```\n", "src/a.py"))

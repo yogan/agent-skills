@@ -94,8 +94,8 @@ if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
 
 from lib import critical_manifest, focus, hunk                  # noqa: E402
-from lib.fences import (SUGGESTION_INFO, fence, lang_for, note_md,  # noqa: E402
-                        segments)
+from lib.fences import (SUGGESTION_INFO, block_lang, fence, lang_for,  # noqa: E402
+                        note_md, quoted_fence, segments)
 from lib.gitlab import (api, context, current_user, die, file_at, mr_base,  # noqa: E402
                         mr_head, mr_object, mr_view, versions, web_base)
 from lib.mr_common import (DEFAULT_LANG, MR_LEVEL, TOPIC_ICON, first_name,  # noqa: E402
@@ -563,7 +563,7 @@ def _numbered(content, info, anchor):
                      for k, ln in enumerate(content.splitlines()))
 
 
-def render_draft(body, lang, anchor=None):
+def render_draft(body, path, anchor=None):
     """Display form of a draft. The paste payload (`draft <t>`) is never touched.
 
     Three things happen here, each for a reason:
@@ -574,10 +574,9 @@ def render_draft(body, lang, anchor=None):
     * Its lines are numbered from the range GitLab's own `suggestion:-A+B` syntax implies
       (A lines above the anchor through B below), so the replacement lines up against the
       source shown above it — and it becomes visible when 3 lines are replaced by 2.
-    * PROSE is blockquoted so the draft reads as the artefact being posted rather than as
-      commentary. EVERY fenced block — a suggestion, a snippet, one indented under a list
-      item — is lifted to line start instead: indenting or prefixing a fence (even with
-      "> ") loses the syntax highlighting, which is the single most useful thing here.
+    * The whole draft is blockquoted, so it reads as the one artefact being posted rather
+      than as commentary. Its fenced blocks — a suggestion, a snippet, one indented under
+      a list item — sit inside the quote too, where they still render highlighted.
     """
     if not body:
         return body
@@ -588,9 +587,9 @@ def render_draft(body, lang, anchor=None):
             continue
         content = textwrap.dedent("\n".join(seg))
         if SUGGESTION_INFO.match(info):
-            out.append(fence(_numbered(content, info, anchor), lang))
+            out += quoted_fence(_numbered(content, info, anchor), lang_for(path))
         else:
-            out.append(fence(content, info or lang))
+            out += quoted_fence(content, block_lang(content, info, path))
     return "\n".join(out)
 
 
@@ -795,7 +794,6 @@ def _draft_block(state, t, body, follow_up=False):
     """
     if not body:
         return []
-    lang = lang_for(t.get("file"))
     loc = _loc(state, t, full=True)
     # A topic with no file:line is posted on the MR itself, so "thread on …" would name
     # nothing — say where it goes instead.
@@ -808,7 +806,7 @@ def _draft_block(state, t, body, follow_up=False):
                  else f"{MR_LEVEL}: post it on the MR, not on a diff line")
         kind = "comment"
     return ["", f"_Draft of {kind} to post ({state.get('lang') or DEFAULT_LANG})"
-            f" — {where}:_", "", render_draft(body, lang, t.get("line"))]
+            f" — {where}:_", "", render_draft(body, t.get("file"), t.get("line"))]
 
 
 def _code_context(state, t):
