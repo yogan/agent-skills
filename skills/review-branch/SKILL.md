@@ -1,6 +1,7 @@
 ---
 name: review-branch
-description: Performs a focused code review of all commits on the current git branch since it diverged from the remote default branch (origin/main or origin/master). Handles detached HEAD state. Output is critique-only: a prioritized list of concrete flaws with actionable improvement hints. Use when user wants to review a branch, do a code review, check a PR, or invokes /review-branch.
+description: >-
+  Performs a focused code review of all commits on the current git branch since it diverged from the remote default branch (origin/main or origin/master). Handles detached HEAD state. Output is critique-only: a prioritized list of concrete flaws with actionable improvement hints. Use when user wants to review a branch, do a code review, check a PR, or invokes /review-branch.
 ---
 
 # review-branch
