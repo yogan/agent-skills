@@ -222,6 +222,16 @@ wrote them — author those first (`bodies`, then `set <t> --summary "…"`), re
 that. The hook blocks the table otherwise, and rightly: a status answer whose Summary column
 is somebody else's truncated sentence tells the user nothing.
 
+## Merged MR in a worktree
+
+When the MR is merged and this session runs in a linked worktree on its branch, `present`,
+`sync` and `todo` add a **MR merged** line under the table. Paste it with the table, as always.
+
+- **"can be removed"**: ask the user whether to remove the worktree and its local branch. On
+  yes, run `python3 $SD/threads.py cleanup-worktree` as the session's **last** action: it deletes
+  the directory this session runs in. Then say it is done and that this window can be closed.
+- **"stay for now"**: report the reason it gives; remove nothing.
+
 ## Phase 3 — Implement, strictly ONE topic at a time
 
 As disciplined as the grilling loop. Full mechanics in [REFERENCE.md](REFERENCE.md).

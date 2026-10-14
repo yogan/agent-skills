@@ -69,6 +69,7 @@ from lib.gitlab import (
     current_user,
     die,
     file_at,
+    mr_object,
     mr_view,  # noqa: E402
     project_slug,
     run,
@@ -1139,14 +1140,81 @@ def emit(state, block, topic=None):
     )
 
 
-def render_present(state):
+def linked_worktree():
+    """`{main, path, branch}` when running in a linked worktree, else None. The main
+    checkout is the first entry of `git worktree list`, whichever worktree asks."""
+    git_dir = (_git("rev-parse", "--absolute-git-dir") or "").strip()
+    common = (_git("rev-parse", "--path-format=absolute", "--git-common-dir") or "").strip()
+    if not git_dir or git_dir == common:
+        return None
+    listing = (_git("worktree", "list", "--porcelain") or "").splitlines()
+    main = next((ln[len("worktree "):] for ln in listing if ln.startswith("worktree ")), "")
+    path = (_git("rev-parse", "--show-toplevel") or "").strip()
+    branch = (_git("branch", "--show-current") or "").strip()
+    return {"main": main, "path": path, "branch": branch} if main and path else None
+
+
+def cleanup_facts(ctx, iid):
+    """What decides whether this worktree can go, or None outside a linked worktree.
+    The MR is only fetched inside one, so a main-checkout run pays nothing for this."""
+    wt = linked_worktree()
+    if not wt:
+        return None
+    mr = mr_object(ctx, iid) or {}
+    return dict(wt, state=mr.get("state"), source=mr.get("source_branch"),
+                mr_sha=mr.get("sha"), tip=(_git("rev-parse", "HEAD") or "").strip(),
+                dirty=bool((_git("status", "--porcelain") or "").strip()))
+
+
+def cleanup_blocker(f):
+    """Why the worktree must stay, or None when removing it and its branch loses nothing.
+    `branch -D` is needed because a squash merge leaves the branch unmerged as far as git
+    can tell; the tip matching the MR's last commit is what makes forcing it safe."""
+    if f["dirty"]:
+        return "it has uncommitted or untracked changes"
+    if f["tip"] != f["mr_sha"]:
+        return "the local branch tip differs from the MR's last commit"
+    return None
+
+
+def render_cleanup(f):
+    """The line under the table once the MR is merged; empty when there is nothing to say:
+    not a worktree, not merged yet, or a worktree on some other branch."""
+    if not f or f["state"] != "merged" or f["branch"] != f["source"]:
+        return ""
+    where = f"This worktree (`{f['path']}`) and its local branch `{f['branch']}`"
+    blocker = cleanup_blocker(f)
+    if blocker:
+        return f"**MR merged.** {where} stay for now: {blocker}."
+    return f"**MR merged.** {where} are no longer needed and can be removed."
+
+
+def cleanup_worktree(ctx, iid):
+    """Remove this worktree and its branch from the main checkout, re-checking first.
+    Ignored files (build output, a local `.env`) go with the worktree: git does not count
+    them as changes, so nothing above can hold back for them."""
+    f = cleanup_facts(ctx, iid)
+    if not f or f["state"] != "merged" or f["branch"] != f["source"]:
+        die("not a linked worktree on this MR's branch, or the MR is not merged")
+    blocker = cleanup_blocker(f)
+    if blocker:
+        die(f"keeping {f['path']}: {blocker}")
+    for args in (("worktree", "remove", f["path"]), ("branch", "-D", f["branch"])):
+        r = run(["git", "-C", f["main"], *args])
+        if r.returncode != 0:
+            die(f"git {' '.join(args)}: {r.stderr.strip()}")
+    return f"Removed {f['path']} and branch {f['branch']}."
+
+
+def render_present(state, cleanup=""):
     """The opener the user should see: overview table + the current topic's reviewer
     comment, ready to reproduce in one reply.
 
     Mirrors review-mr's findings.py's `render_present` almost exactly. Which topic is
     current follows each skill's own status vocabulary, so it stays duplicated: see
-    CLAUDE.md's "Sharing vs. duplication"."""
-    parts = [render_table(state, "all")]
+    CLAUDE.md's "Sharing vs. duplication". The `cleanup` line is this skill's alone: a
+    review runs on someone else's branch, so there is never a worktree of ours to remove."""
+    parts = [render_table(state, "all")] + ([f"\n{cleanup}"] if cleanup else [])
     tid = current_topic(state)
     if tid:
         parts += ["\n---\n", render_quote(state, tid)]
@@ -1252,7 +1320,7 @@ def main():
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
     sub = ap.add_subparsers(dest="cmd")
-    for name in ("sync", "todo", "present", "bodies", "plans", "path"):
+    for name in ("sync", "todo", "present", "bodies", "plans", "path", "cleanup-worktree"):
         sub.add_parser(name).add_argument("--iid", type=int)
     sub.add_parser(
         "check-handles",
@@ -1488,10 +1556,13 @@ def main():
         # body only — the payload for the clipboard or `glab api -F body=@-`
         print(reply_body(state, args.topic, os.path.dirname(path)), end="")
     elif cmd == "present":
-        emit(state, render_present(state), current_topic(state))
+        cleanup = render_cleanup(cleanup_facts(ctx, iid))
+        emit(state, render_present(state, cleanup), current_topic(state))
         save(path, state)
     elif cmd == "bodies":
         print(render_bodies(state))
+    elif cmd == "cleanup-worktree":
+        print(cleanup_worktree(ctx, iid))
     elif cmd == "plans":
         print(render_plans(state))
     elif cmd in ("sync", "todo"):
@@ -1500,14 +1571,13 @@ def main():
         # `sync` isn't gated (see paste-gates.json's note), so the manifest it carries
         # is simply never read for that command — harmless, and keeping one code path
         # for both is simpler than branching just to omit it.
-        emit(
+        table = render_table(
             state,
-            render_table(
-                state,
-                "mine" if cmd == "todo" else "all",
-                show_done=getattr(args, "all", False),
-            ),
+            "mine" if cmd == "todo" else "all",
+            show_done=getattr(args, "all", False),
         )
+        cleanup = render_cleanup(cleanup_facts(ctx, iid))
+        emit(state, f"{table}\n\n{cleanup}" if cleanup else table)
     elif cmd == "set":
         t = topic_for(state, args.topic) or die(f"no topic {args.topic}")
         fld = {"start-sha": "start_sha", "diff-url": "diff_url"}

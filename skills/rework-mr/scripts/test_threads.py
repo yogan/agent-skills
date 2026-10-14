@@ -1360,5 +1360,48 @@ class TestSetState(unittest.TestCase):
         self.assertIn("sync", proc.stderr)
 
 
+class TestWorktreeCleanup(unittest.TestCase):
+    """The line under the table once the MR is merged, and when it must hold back."""
+
+    FACTS = {"main": "/r/app", "path": "/r/app.wt/fix-x", "branch": "fix/x", "state": "merged",
+             "source": "fix/x", "mr_sha": "abc", "tip": "abc", "dirty": False}
+
+    def facts(self, **kw):
+        return dict(self.FACTS, **kw)
+
+    def test_merged_and_clean_offers_removal(self):
+        line = T.render_cleanup(self.facts())
+        self.assertIn("can be removed", line)
+        self.assertIn("`/r/app.wt/fix-x`", line)
+        self.assertIn("`fix/x`", line)
+
+    def test_silent_unless_merged_worktree_on_the_mr_branch(self):
+        self.assertEqual(T.render_cleanup(None), "")
+        self.assertEqual(T.render_cleanup(self.facts(state="opened")), "")
+        self.assertEqual(T.render_cleanup(self.facts(branch="fix/other")), "")
+
+    def test_holds_back_what_removal_would_lose(self):
+        self.assertIn("uncommitted", T.render_cleanup(self.facts(dirty=True)))
+        self.assertIn("differs", T.render_cleanup(self.facts(tip="def")))
+
+    def test_linked_worktree_is_told_apart_from_the_main_checkout(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = os.path.realpath(tmp)
+            main = os.path.join(tmp, "app")
+            for args in (("init", "-q", "-b", "main", main),
+                         ("-C", main, "-c", "user.email=t@example.com", "-c", "user.name=t",
+                          "commit", "-q", "--allow-empty", "-m", "one"),
+                         ("-C", main, "worktree", "add", "-q", "-b", "fix/x",
+                          f"{main}.wt/fix-x")):
+                subprocess.run(["git", *args], check=True, capture_output=True)
+            here = os.getcwd()
+            self.addCleanup(os.chdir, here)
+            os.chdir(main)
+            self.assertIsNone(T.linked_worktree())
+            os.chdir(f"{main}.wt/fix-x")
+            self.assertEqual(T.linked_worktree(),
+                             {"main": main, "path": f"{main}.wt/fix-x", "branch": "fix/x"})
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
