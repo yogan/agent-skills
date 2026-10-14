@@ -654,5 +654,92 @@ class TestDegradesQuietly(unittest.TestCase):
             self.assertEqual(hunk.sessions(), [])
 
 
+class TestOwnReview(HunkCase):
+    """`show_review` and the note calls behind self-review, where the author's notes are
+    the review itself and must outlive every reload of the window they are in."""
+
+    def review(self, fake, args=("show", "abc")):
+        with patch.dict(os.environ, {"TMUX": "/tmp/x", "CLAUDE_CODE_SESSION_ID": "me"}), \
+                patch.object(hunk, "installed", lambda: True), \
+                patch.object(hunk, "_run", fake):
+            return hunk.show_review(REPO, "self-review", list(args), stat_of(1),
+                                    sleep=lambda _s: None)
+
+    def test_the_review_command_is_passed_through_to_the_reload(self):
+        fake = FakeRun([session("s1")], owners={"%4": "me"})
+        self.assertEqual(self.review(fake), ("s1", "9 (!123)"))
+        reload = [c for c in fake.calls if c[:3] == ["hunk", "session", "reload"]]
+        self.assertEqual(reload[0][-3:], ["--", "show", "abc"])
+
+    def test_a_reload_clears_no_notes(self):
+        fake = FakeRun([session("s1")], owners={"%4": "me"})
+        self.review(fake)
+        self.assertFalse([c for c in fake.calls if c[3:5] == ["comment", "clear"]])
+
+    def test_a_window_holding_something_else_is_no_pointer(self):
+        fake = FakeRun([session("s1")], owners={"%4": "me"}, loaded=[("other.py", 1, 0)])
+        self.assertIsNone(self.review(fake))
+
+    # Captured from `hunk session comment list --type all --json`: a note typed in the
+    # viewer, and an agent's reply to it.
+    CAPTURED = {"comments": [
+        {"noteId": "user:1792053957009-1", "source": "user", "filePath": "f.txt",
+         "hunkIndex": 0, "newRange": [3, 3], "body": "why uppercase?", "author": "user",
+         "createdAt": "2026-10-15T08:45:57.009Z", "editable": True},
+        {"noteId": "mcp:c8c66a3d", "parentId": "user:1792053957009-1", "source": "agent",
+         "filePath": "f.txt", "hunkIndex": 0, "newRange": [3, 3], "body": "agent reply",
+         "author": "agent", "createdAt": "2026-10-15T08:53:05.339Z", "editable": False}]}
+
+    def test_notes_carry_who_wrote_them_and_what_they_answer(self):
+        with patch.object(hunk, "_run", return_value=(0, json.dumps(self.CAPTURED))):
+            got = hunk.notes("s1")
+        self.assertEqual([(n["id"], n["parent"], n["source"], n["line"]) for n in got],
+                         [("user:1792053957009-1", None, "user", 3),
+                          ("mcp:c8c66a3d", "user:1792053957009-1", "agent", 3)])
+
+    def test_a_viewer_that_does_not_answer_gives_none_not_an_empty_list(self):
+        with patch.object(hunk, "_run", return_value=(1, "")):
+            self.assertIsNone(hunk.notes("s1"))
+
+    def test_clearing_everything_includes_the_users_notes(self):
+        with patch.object(hunk, "_run", return_value=(0, "")) as run:
+            hunk.clear_all_notes("s1")
+        self.assertIn("--all", run.call_args[0][0])
+
+    def test_a_created_note_reports_its_id(self):
+        made = {"result": {"commentId": "mcp:abc"}}
+        with patch.object(hunk, "_run", return_value=(0, json.dumps(made))) as run:
+            self.assertEqual(hunk.add_note("s1", "f.py", 7, "text", "you"), "mcp:abc")
+        argv = run.call_args[0][0]
+        self.assertEqual(argv[argv.index("--new-line") + 1], "7")
+        with patch.object(hunk, "_run", return_value=(0, json.dumps(made))):
+            self.assertEqual(hunk.reply("s1", "user:1", "text"), "mcp:abc")
+
+    def test_a_note_goes_on_the_side_it_is_given(self):
+        with patch.object(hunk, "_run", return_value=(0, "{}")) as run:
+            hunk.add_note("s1", "f.py", 7, "text", "agent", side="old")
+        self.assertIn("--old-line", run.call_args[0][0])
+
+    def test_a_refused_note_has_no_id(self):
+        with patch.object(hunk, "_run", return_value=(1, "")):
+            self.assertIsNone(hunk.add_note("s1", "f.py", 7, "text", "you"))
+            self.assertIsNone(hunk.reply("s1", "user:1", "text"))
+
+    def test_a_mark_lives_on_the_sessions_window(self):
+        fake = FakeRun([session("s1", pane="%4")], owners={})
+        with patch.object(hunk, "_run", fake):
+            self.assertTrue(hunk.set_mark("s1", "@shown", "abc"))
+            self.assertEqual(hunk.mark("s1", "@shown"), "abc")
+            self.assertEqual(hunk.mark("gone", "@shown"), "")
+
+    def test_what_the_window_holds(self):
+        got = {"session": {"inputKind": "show", "review": {"revision": "abc"}}}
+        with patch.object(hunk, "_run", return_value=(0, json.dumps(got))):
+            self.assertEqual(hunk.loaded_input("s1"), ("show", "abc"))
+        with patch.object(hunk, "_run", return_value=(0, json.dumps(
+                {"session": {"inputKind": "vcs"}}))):
+            self.assertEqual(hunk.loaded_input("s1"), ("vcs", None))
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

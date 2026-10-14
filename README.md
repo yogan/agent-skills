@@ -62,6 +62,7 @@ difference is that they also have to fit the article's column.
 |---|---|
 | **review-branch** | A critique-only review of every commit on the current branch since it diverged from the remote default branch (detached HEAD included). A flat, prioritized list of concrete flaws with fix hints — severity-tagged, `file:line`-anchored, no praise, no summary. Local only: no GitLab. |
 | **review-mr** | Reviews a GitLab MR **someone else wrote**, end to end. It can generate an explainer first, seeds its findings from `review-branch`, then works through them with the reviewer one topic at a time and drafts a concise comment for each — in the language configured per repo, German by default — which the reviewer posts in the GitLab UI, so the tone stays human. A re-review loop keeps the MR alive over days: on every check it reconciles author replies, resolutions and new pushes, reports what was addressed, offers the per-topic diff, and closes nothing without an explicit ack. Read-only against GitLab, and all git work happens in a dedicated worktree, so the current checkout is untouched. |
+| **self-review** | The step before an MR exists: **you** review your own change in [Hunk](https://hunk.dev/), a terminal diff viewer, in a tmux window next to the agent's — one commit at a time from where the branch left the default branch, or the uncommitted change. You leave diff notes on its lines; the agent answers each one under it, amends the fixes you agree to straight into the commit under review and shows it again, and moves to the next commit only on your ACK. Author-led: it adds notes of its own only where you ask it to point something out, and never pushes. |
 | **rework-mr** | The mirror image: the reviewer feedback on an MR **you wrote**. It retrieves the open threads, keeps a per-MR plan so a multi-day cycle survives across sessions, and walks the threads one topic at a time — a straight recommendation for trivial points, a longer discussion for the rest. Per topic it drives the fix test-first, fixes it up into the commit it belongs to instead of piling new ones on top, force-pushes, and drafts the thread reply in the thread's own language. Once the MR is merged, it offers to remove the worktree and local branch it ran in. |
 
 Neither merge-request skill needs an MCP server; `glab` alone is enough.
@@ -90,6 +91,7 @@ Every skill is invoked by name, or just by asking for the thing it does.
 
 /review-branch                # local critique of the current branch
 /review-mr 123                # review someone else's MR, then re-review it over days
+/self-review                  # review your own change, commit by commit, before the MR
 /rework-mr                    # work through the feedback on your own MR
 
 /handoff-split the rounding bug in the totals  # spin a side task off into its own session
@@ -205,6 +207,7 @@ skills' own scripts.
 | [D2](https://d2lang.com) — `brew install d2` | every diagram, in `visualize` and the explainers alike |
 | `node` + `puppeteer-core` — `npm i -g puppeteer-core` | measuring a diagram in a real browser: where an annotation fits, and whether anything is cut off |
 | `tmux` | `handoff-split`'s new window; without it, the skill prints the command to start the session yourself |
+| [`hunk`](https://hunk.dev/), inside `tmux` | `self-review`, which needs both; optional for `review-mr` and `rework-mr`, which show a diff in it instead of the chat |
 
 `review-branch` needs none of them. Two things worth knowing about the diagram side:
 
@@ -230,7 +233,7 @@ Just enough to find your way around; the working rules for changing any of it ar
 |---|---|
 | `skills/<name>/` | one skill each — `SKILL.md`, sometimes a `REFERENCE.md`, and its Python in `scripts/` |
 | `lib/diagram/` | the diagram engine: a description in, a checked diagram out. Entry point, rules and change loop in [`lib/diagram/README.md`](lib/diagram/README.md) |
-| `lib/` | Python shared repo-wide — GitLab access, per-MR state, code snippets, and the diff viewer window (`hunk.py`, used by `rework-mr` today and intended for `review-mr`'s re-review loop next) |
+| `lib/` | Python shared repo-wide — GitLab access, per-MR state, code snippets, and the diff viewer window (`hunk.py`, used by `review-mr`, `rework-mr` and `self-review`) |
 | `hooks/` | the paste-enforcement `Stop` hook — [`hooks/README.md`](hooks/README.md) |
 | `e2e/` | a local GitLab rig for exercising `review-mr` / `rework-mr` — [`e2e/README.md`](e2e/README.md) |
 | `docs/` | the diagram at the top of this page, and the spec it is drawn from |

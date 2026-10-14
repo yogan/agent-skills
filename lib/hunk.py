@@ -34,6 +34,11 @@ would otherwise sit there showing a diff that no longer exists.
 review-mr's window is a patch window instead (`show_patch`): a topic's server-side diff,
 shown when the user asks to see it in full, and reloaded for the next one. Nothing it shows
 is ever pushed, so nothing closes it; the user does, whenever they like.
+
+self-review's window (`show_review`) holds the author's own review of their change, one
+commit or the uncommitted change at a time. There the notes are the point: the author's
+and the agent's threaded answers stay across every reload, and are cleared only once the
+author has signed off on what the window shows.
 """
 import json
 import os
@@ -465,25 +470,154 @@ def show_working_diff(repo, label, expect_stat, owner=None, sleep=None):
     what is anchored in there always describes the diff currently loaded, never the one it
     replaced.
     """
-    if not in_tmux() or not installed():
-        return None
-    owner = owner or owner_id()
-    if not owner:
-        return None
-    sid = find_session(repo, owner) or spawn_session(repo, label, owner, sleep=sleep)
+    sid = _own_window(repo, label, owner, sleep)
     if not sid:
         return None
     # Before the reload, not after: clearing is addressed by note id, and a reload can
     # re-anchor or drop a note whose line no longer exists, leaving nothing to clear.
     clear_agent_notes(sid)
-    # The file count first because the reload reports it for free, and it also tells a
-    # reload that did not happen at all (None) from one that loaded something else.
-    if reload_working_diff(sid) != len(expect_stat):
+    return _confirm(sid, reload_working_diff(sid), expect_stat)
+
+
+def show_review(repo, label, args, expect_stat, owner=None, sleep=None):
+    """Put `hunk <args>` — `["show", sha]` for one commit, `["diff", "HEAD"]` for the
+    uncommitted change — in this agent's own window; return (session_id, where), or None
+    when the window could not be made to hold exactly `expect_stat`.
+
+    Unlike `show_working_diff`, every note stays. This is the author's own review: their
+    notes and the agent's threaded answers are the conversation about the change, and a
+    reload after an agreed fix is how they check that fix against what they wrote.
+    """
+    sid = _own_window(repo, label, owner, sleep)
+    if not sid:
+        return None
+    return _confirm(sid, reload_review(sid, args), expect_stat)
+
+
+def _own_window(repo, label, owner, sleep):
+    """This agent's viewer for `repo`, opened beside it if there is none yet, or None."""
+    if not in_tmux() or not installed():
+        return None
+    owner = owner or owner_id()
+    if not owner:
+        return None
+    return find_session(repo, owner) or spawn_session(repo, label, owner, sleep=sleep)
+
+
+def _confirm(sid, file_count, expect_stat):
+    """(sid, where) once the window provably holds `expect_stat`, else None.
+
+    The file count first because the reload reports it for free, and it also tells a
+    reload that did not happen at all (None) from one that loaded something else.
+    """
+    if file_count != len(expect_stat):
         return None
     if loaded_stat(sid) != sorted(tuple(f) for f in expect_stat):
         return None
     where = window_of(sid)
     return (sid, where) if where else None
+
+
+def loaded_input(session_id):
+    """(input kind, revision) of what the window holds — ("show", "<full sha>") for a
+    commit, ("vcs", None) for a working diff — or None if the viewer could not be asked."""
+    data = _json(["hunk", "session", "get", session_id, "--json"])
+    s = (data or {}).get("session")
+    if not s:
+        return None
+    return s.get("inputKind"), (s.get("review") or {}).get("revision")
+
+
+def reload_review(session_id, args):
+    """Swap the session onto `hunk <args>`; return how many files it loaded, or None if
+    the reload did not happen."""
+    data = _json(["hunk", "session", "reload", session_id, "--json", "--", *args])
+    if not data:
+        return None
+    return (data.get("result") or {}).get("fileCount")
+
+
+def notes(session_id):
+    """Every note in the window, the author's and the agent's, oldest first, as dicts of
+    id, parent (the note a reply answers, else None), source ("user" or "agent"), file,
+    side, line and text — or None if the viewer could not be asked.
+
+    None and [] must stay apart for the same reason as in `user_notes`: an empty list lets
+    a review move on, and a daemon that did not answer must not look like an author who
+    has nothing left to say.
+
+    `source`, not `author`, tells who wrote a note: `author` is free text on `comment add`,
+    while a note typed in the viewer is the only kind whose source is "user".
+    """
+    data = _json(["hunk", "session", "comment", "list", session_id,
+                  "--type", "all", "--json"])
+    if data is None or not isinstance(data.get("comments"), list):
+        return None
+    out = []
+    for c in data["comments"]:
+        side = "old" if c.get("oldRange") and not c.get("newRange") else "new"
+        rng = c.get(f"{side}Range") or []
+        out.append({"id": c.get("noteId"), "parent": c.get("parentId"),
+                    "source": c.get("source"), "author": c.get("author") or "",
+                    "file": c.get("filePath") or "", "side": side,
+                    "line": rng[0] if rng else None, "end": rng[-1] if rng else None,
+                    "text": (c.get("body") or "").strip(), "at": c.get("createdAt") or ""})
+    return sorted(out, key=lambda n: n["at"])
+
+
+def _added(argv):
+    """The id of the note a `comment add` created, or None."""
+    data = _json(argv)
+    return ((data or {}).get("result") or {}).get("commentId")
+
+
+def reply(session_id, parent_id, text, author="agent"):
+    """Answer a note in its own thread, under it in the window; the new note's id, or None
+    if it did not land."""
+    return _added(["hunk", "session", "comment", "add", session_id, "--reply-to", parent_id,
+                   "--summary", text, "--author", author, "--json"])
+
+
+def add_note(session_id, path, line, text, author, side="new"):
+    """Start a thread on `line` of `path`, on its new or old side; its id, or None.
+
+    Whatever `author` says, the viewer records the note as the agent's: it has no way to
+    create one as the user's, and only the user can edit or delete it in the window. A
+    line no hunk of the loaded diff shows is refused, so a note can only go where the
+    reader can see it.
+    """
+    return _added(["hunk", "session", "comment", "add", session_id, "--file", path,
+                   f"--{side}-line", str(line), "--summary", text, "--author", author,
+                   "--json"])
+
+
+def mark(session_id, key):
+    """A value recorded on the session's tmux window by `set_mark`, or "".
+
+    On the window for the same reason as the owner mark: what it records is only true for
+    as long as the window exists.
+    """
+    pane = next((_pane_of(s) for s in sessions() if s.get("sessionId") == session_id), None)
+    if not pane:
+        return ""
+    rc, out = _run(["tmux", "show-options", "-w", "-t", pane, "-v", key])
+    return out.strip() if rc == 0 else ""
+
+
+def set_mark(session_id, key, value):
+    pane = next((_pane_of(s) for s in sessions() if s.get("sessionId") == session_id), None)
+    if not pane:
+        return False
+    rc, _ = _run(["tmux", "set-option", "-w", "-t", pane, key, value])
+    return rc == 0
+
+
+def clear_all_notes(session_id):
+    """Drop every note, the user's included. Only for a review the user has signed off:
+    once the window moves on, notes would re-anchor by line number onto unrelated code."""
+    rc, _ = _run(["hunk", "session", "comment", "clear", session_id, "--all", "--yes",
+                  "--json"])
+    return rc == 0
 
 
 def _header_path(rest):

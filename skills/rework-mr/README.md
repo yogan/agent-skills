@@ -11,7 +11,7 @@ reply per topic. See [SKILL.md](SKILL.md) for the full flow and
 - `python3`.
 - Optional: macOS `pbcopy`, which `clip.sh` uses to put a draft on the clipboard. Without it
   the copy step is skipped; the draft is shown in chat and posting is unaffected.
-- Optional: [`hunk`](https://github.com/hunk-dev/hunk) (a terminal diff viewer) running
+- Optional: [`hunk`](https://hunk.dev/) (a terminal diff viewer) running
   inside `tmux`. With both, each topic's working diff opens in a tmux window beside the one
   you are talking in, instead of filling the chat, and you can answer on the diff's own lines
   instead of typing — see `diff-view.sh` below. With neither, the diff is printed inline

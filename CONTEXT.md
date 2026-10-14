@@ -77,7 +77,7 @@ own. They are mirrors of each other, and these words mean the same thing on both
 | **current topic** | focus, active topic, selected topic | The one topic being decided right now, kept in the state file of both skills. The opener shows it; "skip this, do t7 first" moves it (`quote <t> --focus`); it moves on by itself once the topic no longer needs you. A view of any other topic is **research**: it informs the agent and is not shown to you. (`focus` is the code's name for it.) |
 | **summary** | title, headline, the comment | A topic's one-line name, in the tables and every topic heading. **Written by the skill, in English, in both of them** — never the reviewer's own first sentence, which is what the column falls back to while nobody has authored one, and which both skills flag and refuse to show. |
 | **thread** | discussion | The exchange on the merge request that a topic corresponds to. Whether it exists and whether it is resolved is GitLab's answer, never the skill's — both skills only read. GitLab calls the individual comments inside one "notes"; we call those **comments**, so that "note" keeps the two meanings below and gains no third. |
-| **diff note** | comment, annotation, remark | A short note anchored to a line of the working diff in the viewer window, during `rework-mr`. Either direction: the agent pins at most three to flag where a change deviates from the plan, and you answer on the lines themselves instead of typing in the chat. The viewer calls this a note, so we do too. |
+| **diff note** | comment, annotation, remark | A short note anchored to a line of a diff in the viewer window, in `rework-mr` and `self-review`. In `rework-mr` either direction: the agent pins at most three to flag where a change deviates from the plan, and you answer on the lines themselves instead of typing in the chat. In `self-review` you start one and the agent answers under it — or, when you ask it to point something out, the agent starts one and you can answer under that. The viewer calls this a note, so we do too. |
 | **MR-level** | no location, missing file, global | A topic or thread that belongs to the merge request itself — its title, its description, a test nobody's diff adds — so there is no diff line to hang it on. Normal, not missing data: it is posted on the merge request instead of on a file. It is also what the tables print where a `file:line` would go. |
 | **prepared input** | cached seed, frozen explainer, the artifact | An explainer or a review-branch seed recorded against the branch tip it was made at, so opening the same merge request again reuses it instead of spending minutes regenerating it. Say which one you mean — *a prepared explainer*, *a prepared seed*. It stops being one the moment somebody pushes, and is then regenerated rather than reused. |
 | **review worktree** | the checkout, the clone, the copy | The disposable checkout `review-mr` reads the code from, recorded per merge request. The path is remembered; what is checked out in it never is, so it is re-checked-out onto the merge request's tip on every run. |
@@ -93,6 +93,19 @@ tables, prose.
 *done*. Only "open" appears in both, and even there it means "waiting on the other person" —
 which is a different person in each. Never carry a status word from one skill into a sentence
 about the other.
+
+---
+
+## Reviewing your own change
+
+`self-review` takes you through your own change before a merge request exists. It shares the
+viewer window with the merge-request skills, and the **diff note** with them too.
+
+| say this | not this | what it means |
+|---|---|---|
+| **piece** | item, step, chunk | What the viewer window shows for review at one time: one commit of the branch, named by its number (1 = the oldest), or the uncommitted change. |
+| **diff note** | comment, conversation | As above — and here it means the note together with what is written under it: the agent's answer, and anything you reply. It is not a **thread**: that is the merge request's word, and there is no merge request yet. A diff note whose code a fix moved or rewrote is re-created next to that code, labelled `you (moved from …)`. |
+| **ACK** | approval, sign-off, done | You accepting the piece in the window: you said done, and no diff note awaits an answer. Its diff notes are then cleared and the next piece comes up. "Done" alone only means you have finished writing diff notes. |
 
 ---
 
