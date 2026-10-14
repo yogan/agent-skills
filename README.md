@@ -14,6 +14,9 @@ They cover three kinds of work:
 - **Act on review feedback.** Work through the threads on your own GitLab merge request one topic
   at a time: agree on the fix, make it, push it, answer the thread.
 
+And one for keeping work apart: **split a side task off** into its own branch and agent session
+the moment it turns up, instead of letting it creep into the current merge request.
+
 The merge-request skills work against GitLab, through the
 [`glab`](https://gitlab.com/gitlab-org/cli) CLI — no other forge today. Nothing reaches it
 unattended: they prepare the work and draft the words, while posting a comment, pushing a fix
@@ -63,6 +66,12 @@ difference is that they also have to fit the article's column.
 
 Neither merge-request skill needs an MCP server; `glab` alone is enough.
 
+### Splitting work off
+
+| skill | what it does |
+|---|---|
+| **handoff-split** | A bug or a refactoring that turns up mid-session, moved out of the current branch. It writes a handoff for the side task, creates a worktree beside the main checkout on a new branch from the freshly fetched default branch (or stacked on the current one, when the task needs its unmerged commits), and opens the same agent in a new tmux window right after the current one, seeded with the handoff. The current session carries on untouched. Handoffs go to the OS temp dir, or wherever `git config handoff-split.dir` points for that clone. |
+
 ---
 
 ## Usage
@@ -82,6 +91,8 @@ Every skill is invoked by name, or just by asking for the thing it does.
 /review-branch                # local critique of the current branch
 /review-mr 123                # review someone else's MR, then re-review it over days
 /rework-mr                    # work through the feedback on your own MR
+
+/handoff-split the rounding bug in the totals  # spin a side task off into its own session
 ```
 
 `review-mr` and `rework-mr` are resumable: run them again later — a new session, a new day —
@@ -100,7 +111,7 @@ What the diagram at the top of this page means for installing:
   `explain-diff` too). It runs the explainer in the background and `review-branch` in the
   foreground to seed its findings — each only once per branch tip: both results are recorded
   and reused until somebody pushes, so re-opening a review costs neither again.
-- **`visualize`, `review-branch` and `rework-mr` stand alone.**
+- **`visualize`, `review-branch`, `rework-mr` and `handoff-split` stand alone.**
 - **Shared code needs nothing installed.** The diagram engine and the GitLab plumbing live in
   `lib/`, inside the clone every symlink points at, so they are always there — which is why the
   `explain-*` skills draw without `visualize`.
@@ -193,6 +204,7 @@ skills' own scripts.
 | [`glab`](https://gitlab.com/gitlab-org/cli), authenticated | `review-mr` and `rework-mr`, plus `mr:123` targets for the `explain-*` skills |
 | [D2](https://d2lang.com) — `brew install d2` | every diagram, in `visualize` and the explainers alike |
 | `node` + `puppeteer-core` — `npm i -g puppeteer-core` | measuring a diagram in a real browser: where an annotation fits, and whether anything is cut off |
+| `tmux` | `handoff-split`'s new window; without it, the skill prints the command to start the session yourself |
 
 `review-branch` needs none of them. Two things worth knowing about the diagram side:
 
