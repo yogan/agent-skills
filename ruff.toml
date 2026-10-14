@@ -1,0 +1,4 @@
+# Bug-catching rules only: undefined and unused names (pyflakes) and syntax errors.
+# Ruff's own default set also enforces a style this repo does not follow.
+[lint]
+select = ["F", "E9"]

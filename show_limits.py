@@ -362,9 +362,9 @@ def panel(groups):
                        f'{html.escape(label)}</span>'
                        f'<div class="switch-items">{"".join(items)}</div></div>')
     for _label, group in groups:
-        for key, _text, _mark, _call, aside, figure in group:
+        for key, _text, _mark, _call, aside, drawing in group:
             hide = "" if key == first else " hidden"
-            for into, part in ((asides, aside), (figures, figure)):
+            for into, part in ((asides, aside), (figures, drawing)):
                 into.append(f'<div class="variant" data-v="{key}"{hide}>{part}</div>')
     return (f'<div class="panel"><div class="slot">'
             f'<div class="rail rail-left"><div class="switch">{"".join(buttons)}</div></div>'

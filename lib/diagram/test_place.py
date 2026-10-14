@@ -18,7 +18,7 @@ import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
-from lib.diagram import arrows, place
+from lib.diagram import place
 from lib.diagram.examples import ARCHITECTURE, ER, SEQUENCE, STATE
 from lib.diagram.spec import NEAR
 

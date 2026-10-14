@@ -206,6 +206,9 @@ per-skill conditionals inside code meant to be shared.
 
 ## Testing
 
+`.githooks/pre-commit` runs `ruff check` and `python3 run_tests.py --changed` before every
+commit. Enable it once per clone with `git config core.hooksPath .githooks`.
+
 Plain `unittest`, colocated as `test_<module>.py` next to the module it covers. Run one
 directly, e.g.:
 
