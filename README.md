@@ -22,16 +22,6 @@ The merge-request skills work against GitLab, through the
 unattended: they prepare the work and draft the words, while posting a comment, pushing a fix
 and closing a thread each wait for a go-ahead.
 
-The skills also build on each other, and the parts they share come with the clone:
-
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/skills-overview-dark.png">
-  <img alt="How the skills fit together: review-mr runs explain-branch and review-branch; explain-branch renders through explain-diff; explain-diff and visualize draw through the shared diagram engine; review-mr and rework-mr share the GitLab plumbing and the paste-gate Stop hook" src="docs/skills-overview-light.png">
-</picture>
-
-Drawn by `visualize` itself, from [`docs/skills-overview.json`](docs/skills-overview.json) —
-which doubles as a worked example of a diagram spec.
-
 ---
 
 ## The skills
@@ -104,7 +94,18 @@ and they pick the MR's state back up rather than starting over.
 
 ## How they fit together
 
-What the diagram at the top of this page means for installing:
+The review skills build on each other, and the parts they share come with the clone. The diagram
+shows the review-related skills:
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/review-skills-dark.png">
+  <img alt="Review skills: review-mr runs explain-branch and review-branch; explain-branch renders through explain-diff, which draws through the shared diagram engine; review-mr and rework-mr share the GitLab plumbing and the paste-gate Stop hook; review-mr, rework-mr and self-review show diffs in the shared diff viewer window" src="docs/review-skills-light.png">
+</picture>
+
+Drawn by `visualize` itself, from [`docs/review-skills.json`](docs/review-skills.json) — which
+doubles as a worked example of a diagram spec.
+
+What it means for installing:
 
 - **`explain-branch` needs `explain-diff` installed.** It has no scripts of its own: it resolves
   its target and renders its page through `explain-diff`'s, and hands the whole job over to it
@@ -113,10 +114,10 @@ What the diagram at the top of this page means for installing:
   `explain-diff` too). It runs the explainer in the background and `review-branch` in the
   foreground to seed its findings — each only once per branch tip: both results are recorded
   and reused until somebody pushes, so re-opening a review costs neither again.
-- **`visualize`, `review-branch`, `rework-mr` and `handoff-split` stand alone.**
-- **Shared code needs nothing installed.** The diagram engine and the GitLab plumbing live in
-  `lib/`, inside the clone every symlink points at, so they are always there — which is why the
-  `explain-*` skills draw without `visualize`.
+- **`visualize`, `review-branch`, `rework-mr`, `self-review` and `handoff-split` stand alone.**
+- **Shared code needs nothing installed.** The diagram engine, the GitLab plumbing and the diff
+  viewer window live in `lib/`, inside the clone every symlink points at, so they are always
+  there — which is why the `explain-*` skills draw without `visualize`.
 
 ---
 
@@ -236,7 +237,7 @@ Just enough to find your way around; the working rules for changing any of it ar
 | `lib/` | Python shared repo-wide — GitLab access, per-MR state, code snippets, and the diff viewer window (`hunk.py`, used by `review-mr`, `rework-mr` and `self-review`) |
 | `hooks/` | the paste-enforcement `Stop` hook — [`hooks/README.md`](hooks/README.md) |
 | `e2e/` | a local GitLab rig for exercising `review-mr` / `rework-mr` — [`e2e/README.md`](e2e/README.md) |
-| `docs/` | the diagram at the top of this page, and the spec it is drawn from |
+| `docs/` | the review skills diagram under "How they fit together", and the spec it is drawn from |
 
 Tests are plain `unittest`, colocated as `test_<module>.py`. `python3 run_tests.py` runs the
 fast suite; `--changed` runs only what the uncommitted edits can reach.

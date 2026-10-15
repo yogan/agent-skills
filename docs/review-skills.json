@@ -1,7 +1,7 @@
 {
   "kind": "architecture",
-  "title": "How the skills fit together",
-  "slug": "agent-skills-overview",
+  "title": "Review skills",
+  "slug": "review-skills",
   "legend": {
     "svc": "a skill you install",
     "store": "shared code, comes with the clone"
@@ -18,6 +18,12 @@
       "label": "/rework-mr",
       "role": "svc",
       "detail": "your own MR"
+    },
+    {
+      "id": "self_review",
+      "label": "/self-review",
+      "role": "svc",
+      "detail": "before the MR"
     },
     {
       "id": "review_branch",
@@ -38,12 +44,6 @@
       "detail": "one change explained"
     },
     {
-      "id": "visualize",
-      "label": "/visualize",
-      "role": "svc",
-      "detail": "one diagram of the code"
-    },
-    {
       "id": "engine",
       "label": "diagram engine",
       "role": "store",
@@ -54,6 +54,12 @@
       "label": "GitLab plumbing",
       "role": "store",
       "detail": "lib/, per-MR state"
+    },
+    {
+      "id": "viewer",
+      "label": "diff viewer window",
+      "role": "store",
+      "detail": "lib/hunk.py, in tmux"
     },
     {
       "id": "hook",
@@ -84,11 +90,6 @@
       "label": "draws"
     },
     {
-      "from": "visualize",
-      "to": "engine",
-      "label": "draws"
-    },
-    {
       "from": "review_mr",
       "to": "plumbing",
       "label": "threads, diffs"
@@ -97,6 +98,21 @@
       "from": "rework_mr",
       "to": "plumbing",
       "label": "threads, diffs"
+    },
+    {
+      "from": "review_mr",
+      "to": "viewer",
+      "label": "a topic's diff"
+    },
+    {
+      "from": "rework_mr",
+      "to": "viewer",
+      "label": "working diff, notes"
+    },
+    {
+      "from": "self_review",
+      "to": "viewer",
+      "label": "every piece"
     },
     {
       "from": "review_mr",
