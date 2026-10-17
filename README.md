@@ -61,7 +61,7 @@ Neither merge-request skill needs an MCP server; `glab` alone is enough.
 
 | skill | what it does |
 |---|---|
-| **handoff-split** | A bug or a refactoring that turns up mid-session, moved out of the current branch. It writes a handoff for the side task, creates a worktree beside the main checkout on a new branch from the freshly fetched default branch (or stacked on the current one, when the task needs its unmerged commits), and opens the same agent in a new tmux window right after the current one, seeded with the handoff. The current session carries on untouched. Handoffs go to the OS temp dir, or wherever `git config handoff-split.dir` points for that clone. |
+| **handoff-split** | A bug or a refactoring that turns up mid-session, moved out of the current branch. It writes a handoff for the side task, creates a worktree beside the main checkout on a new branch from the freshly fetched default branch (or stacked on the current one, when the task needs its unmerged commits), and opens the same agent in a new tmux window right after the current one, seeded with the handoff. A side task that is no branch of a repo (a chore on the machine, work that moves the checkout) gets the same session in a directory of your choosing, without worktree or branch; so does work on a repo used where it is checked out, like this one or your dotfiles, which happens right on its checked-out branch, once that checkout is clean. The current session carries on untouched. Handoffs go to the OS temp dir, or wherever `git config handoff-split.dir` points for that clone. |
 
 ---
 

@@ -15,14 +15,24 @@ default branch, because spun-off work is meant to become its own merge request.
 `--stacked` starts it from the current HEAD instead, for work that needs the current
 branch's unmerged commits.
 
+`--dir` replaces `--branch` for a side task that gets no branch of its own (an operation
+on the machine, work across repos, moving the current checkout, or a repository that is
+used where it is checked out): no fetch, no branch, no worktree; the session just starts
+in that directory. When the directory is a git checkout, the new session works in it
+directly, so the checkout must be clean: what is uncommitted there belongs to someone else.
+`--commit-pending` hands those changes over instead, for a side task the user explicitly
+asked to commit them.
+
 Paths, all derived rather than configured, except the one personal choice:
 
     worktree  <main checkout>.wt/<name>, beside the main checkout even when this runs
               inside a linked worktree, so spin-offs of spin-offs do not nest
     handoff   <dir>/<name>-handoff.md, where <dir> is `git config handoff-split.dir`
-              (per clone, shared by all its worktrees, never pushed) or the OS temp dir
+              (per clone, shared by all its worktrees, never pushed) or the OS temp dir;
+              with `--dir` always the OS temp dir, since no clone is involved
 
 Run: `python3 spinoff.py plan --name fix-rounding --branch fix/rounding`
+     `python3 spinoff.py plan --name migrate-workspace --dir ~/src`
 """
 import argparse
 import os
@@ -71,9 +81,22 @@ def agent_command(prompt, env=None, model=None):
     return ["claude"] + (["--model", model] if model else []) + [prompt]
 
 
-def plan(name, branch, stacked=False, cwd=None, handoff_written=False):
+def check_name(name):
     if not NAME_RE.match(name):
         die(f"name {name!r}: use lowercase letters, digits and dashes")
+
+
+def handoff_path(directory, name, handoff_written):
+    handoff = os.path.join(directory, f"{name}-handoff.md")
+    if handoff_written and not os.path.isfile(handoff):
+        die(f"write the handoff to {handoff} first")
+    if not handoff_written and os.path.exists(handoff):
+        die(f"{handoff} already exists; pick another name")
+    return handoff
+
+
+def plan(name, branch, stacked=False, cwd=None, handoff_written=False):
+    check_name(name)
     if git("check-ref-format", "--branch", branch, cwd=cwd, check=False) is None:
         die(f"{branch!r} is not a valid branch name")
     if git("rev-parse", "--verify", "--quiet", f"refs/heads/{branch}", cwd=cwd, check=False):
@@ -81,20 +104,57 @@ def plan(name, branch, stacked=False, cwd=None, handoff_written=False):
     worktree = f"{main_checkout(cwd)}.wt/{name}"
     if os.path.exists(worktree):
         die(f"{worktree} already exists")
-    handoff = os.path.join(handoff_dir(cwd), f"{name}-handoff.md")
-    if handoff_written and not os.path.isfile(handoff):
-        die(f"write the handoff to {handoff} first")
-    if not handoff_written and os.path.exists(handoff):
-        die(f"{handoff} already exists; pick another name")
-    base = git("rev-parse", "--short", "HEAD", cwd=cwd) if stacked else default_base(cwd)
+    handoff = handoff_path(handoff_dir(cwd), name, handoff_written)
+    if stacked:
+        base = git("rev-parse", "--short", "HEAD", cwd=cwd)
+    elif git("remote", "get-url", REMOTE, cwd=cwd, check=False) is None:
+        die(f"this repository has no remote {REMOTE!r} to branch from; pass --stacked to "
+            "branch from HEAD, or --dir if the side task is not a branch of it")
+    else:
+        base = default_base(cwd)
     return {"name": name, "branch": branch, "base": base, "worktree": worktree,
             "handoff": handoff}
 
 
+def plan_dir(name, start_dir, handoff_written=False, commit_pending=False):
+    """A side task with no branch: it starts in `start_dir`, and its handoff goes to the
+    temp dir, which is outside the clones and folders such a task tends to move."""
+    check_name(name)
+    start_dir = os.path.realpath(os.path.expanduser(start_dir))
+    if not os.path.isdir(start_dir):
+        die(f"{start_dir} is not a directory")
+    p = {"name": name, "dir": start_dir}
+    if git("rev-parse", "--is-inside-work-tree", cwd=start_dir, check=False) == "true":
+        dirty = git("status", "--short", "--no-renames", "--porcelain=v1", cwd=start_dir)
+        dirty = [line.split(maxsplit=1)[-1] for line in dirty.splitlines()]
+        if dirty and not commit_pending:
+            listed = "".join(f"\n  {path}" for path in dirty)
+            die(f"{start_dir} has uncommitted changes; commit them before handing off, so "
+                "the new session starts clean, or pass --commit-pending if the user asked "
+                f"the side task to commit them:{listed}")
+        p["branch"] = (git("branch", "--show-current", cwd=start_dir)
+                       or git("rev-parse", "--short", "HEAD", cwd=start_dir))
+        if dirty:
+            p["pending"] = " ".join(dirty)
+    elif commit_pending:
+        die(f"--commit-pending: {start_dir} is not a git checkout")
+    p["handoff"] = handoff_path(tempfile.gettempdir(), name, handoff_written)
+    return p
+
+
 def prompt_for(p):
+    if "dir" not in p:
+        where = f"in its own worktree on branch {p['branch']}, started from {p['base']}"
+    elif "branch" in p:
+        where = (f"in the checkout {p['dir']} itself, on branch {p['branch']}, "
+                 "which another session may be working in too")
+        if "pending" in p:
+            where += ("; its uncommitted changes were handed to you to commit, "
+                      "as the handoff describes")
+    else:
+        where = f"in {p['dir']}, with no worktree or branch of its own"
     return (f"Read the handoff at {p['handoff']} and continue the work it describes. "
-            f"This session runs in its own worktree on branch {p['branch']}, "
-            f"started from {p['base']}.")
+            f"This session runs {where}.")
 
 
 def launch(p, env=None, run=subprocess.run, model=None):
@@ -102,8 +162,9 @@ def launch(p, env=None, run=subprocess.run, model=None):
     it. Returns the line to report; outside tmux, the command for the user to run."""
     env = os.environ if env is None else env
     cmd = agent_command(prompt_for(p), env, model)
+    where = p.get("worktree") or p["dir"]
     if not env.get("TMUX"):
-        return f"not in tmux; start it yourself:\n  cd {shlex.quote(p['worktree'])} && {shlex.join(cmd)}"
+        return f"not in tmux; start it yourself:\n  cd {shlex.quote(where)} && {shlex.join(cmd)}"
     place = []
     pane = env.get("TMUX_PANE")
     if pane:
@@ -112,11 +173,11 @@ def launch(p, env=None, run=subprocess.run, model=None):
         if here:
             place = ["-a", "-t", here]
     argv = (["tmux", "new-window", "-d", "-P", "-F", "#{window_index}"] + place
-            + ["-n", p["name"], "-c", p["worktree"], shlex.join(cmd)])
+            + ["-n", p["name"], "-c", where, shlex.join(cmd)])
     proc = run(argv, capture_output=True, text=True)
     if proc.returncode != 0:
         return (f"tmux refused ({proc.stderr.strip()}); start it yourself:\n"
-                f"  cd {shlex.quote(p['worktree'])} && {shlex.join(cmd)}")
+                f"  cd {shlex.quote(where)} && {shlex.join(cmd)}")
     return f"started in tmux window {proc.stdout.strip()} ({p['name']})"
 
 
@@ -131,19 +192,33 @@ def start(name, branch, stacked=False, cwd=None, env=None, run=subprocess.run, m
 
 
 def _print(p):
-    for key in ("name", "branch", "base", "worktree", "handoff"):
-        print(f"{key}={p[key]}")
+    for key, value in p.items():
+        print(f"{key}={value}")
 
 
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("action", choices=["plan", "start"])
     ap.add_argument("--name", required=True, help="slug for the worktree, window and file")
-    ap.add_argument("--branch", required=True, help="new branch, e.g. fix/rounding")
+    kind = ap.add_mutually_exclusive_group(required=True)
+    kind.add_argument("--branch", help="new branch, e.g. fix/rounding")
+    kind.add_argument("--dir", help="start directory of a side task that is no branch")
     ap.add_argument("--stacked", action="store_true", help="start from HEAD, not the default branch")
     ap.add_argument("--repo", help="repository the side task belongs to (default: this one)")
+    ap.add_argument("--commit-pending", action="store_true",
+                    help="with --dir: the side task commits the checkout's uncommitted changes")
     ap.add_argument("--model", help="model for the new Claude Code session, e.g. this one's")
     a = ap.parse_args(argv)
+    if a.commit_pending and not a.dir:
+        ap.error("--commit-pending needs --dir: a new worktree has nothing pending")
+    if a.dir:
+        if a.stacked or a.repo:
+            ap.error("--dir takes no --stacked or --repo: there is no branch")
+        p = plan_dir(a.name, a.dir, a.action == "start", a.commit_pending)
+        _print(p)
+        if a.action == "start":
+            print(launch(p, model=a.model))
+        return
     cwd = os.path.expanduser(a.repo) if a.repo else None
     if cwd and not os.path.isdir(cwd):
         die(f"{a.repo} is not a directory")
