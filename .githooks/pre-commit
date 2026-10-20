@@ -6,10 +6,17 @@ cd "$(git rev-parse --show-toplevel)"
 # Git points a hook at this repo through GIT_INDEX_FILE and friends; tests that build their own
 # throwaway repos must not inherit that.
 unset $(git rev-parse --local-env-vars)
-if command -v ruff >/dev/null 2>&1; then
+# Ruff is pinned so every machine lints with the same release; a bare `ruff` is whatever happens
+# to be installed. Bump RUFF now and then: run the new release over the repo, fix or accept what
+# it reports, and commit the bump on its own. The rules selected in ruff.toml change rarely, so
+# lagging a few releases behind costs little.
+RUFF=0.17.1
+if command -v uvx >/dev/null 2>&1; then
+  uvx --quiet "ruff@$RUFF" check --quiet .
+elif command -v ruff >/dev/null 2>&1; then
   ruff check --quiet .
 else
-  echo "pre-commit: ruff not installed, lint skipped (brew install ruff)" >&2
+  echo "pre-commit: neither uv nor ruff installed, lint skipped (brew install uv)" >&2
 fi
 # Tests reachable from the uncommitted changes; everything when that cannot be told.
 python3 run_tests.py --changed

@@ -209,6 +209,11 @@ per-skill conditionals inside code meant to be shared.
 `.githooks/pre-commit` runs `ruff check` and `python3 run_tests.py --changed` before every
 commit. Enable it once per clone with `git config core.hooksPath .githooks`.
 
+Ruff runs through `uvx` at the version pinned in the hook (`RUFF=`), falling back to an
+installed `ruff`. Run it the same way by hand, e.g. `uvx ruff@0.17.1 check .`. Check now and
+then whether a newer release is worth bumping to: run it over the repo, fix or accept what it
+reports, and commit the bump on its own.
+
 Plain `unittest`, colocated as `test_<module>.py` next to the module it covers. Run one
 directly, e.g.:
 
