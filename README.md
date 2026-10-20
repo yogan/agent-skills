@@ -61,7 +61,7 @@ Neither merge-request skill needs an MCP server; `glab` alone is enough.
 
 | skill | what it does |
 |---|---|
-| **handoff-split** | A bug or a refactoring that turns up mid-session, moved out of the current branch. It writes a handoff for the side task, creates a worktree beside the main checkout on a new branch from the freshly fetched default branch (or stacked on the current one, when the task needs its unmerged commits), and opens the same agent in a new tmux window right after the current one, seeded with the handoff. A side task that is no branch of a repo (a chore on the machine, work that moves the checkout) gets the same session in a directory of your choosing, without worktree or branch; so does work on a repo used where it is checked out, like this one or your dotfiles, which happens right on its checked-out branch, once that checkout is clean. The current session carries on untouched. Handoffs go to the OS temp dir, or wherever `git config handoff-split.dir` points for that clone. |
+| **split-handoff** | A bug or a refactoring that turns up mid-session, moved out of the current branch. It writes a handoff for the side task, creates a worktree in `<main checkout>.wt/` on a new branch from the freshly fetched default branch (or stacked on the current one, when the task needs its unmerged commits), and opens the same agent in a new tmux window right after the current one, seeded with the handoff. A side task that is no branch of a repo (a chore on the machine, work that moves the checkout) gets the same session in a directory of your choosing, without worktree or branch; so does work on a repo used where it is checked out, like this one or your dotfiles, which happens right on its checked-out branch, once that checkout is clean. A worktree is only made where the repo already keeps one in `<main checkout>.wt/`; otherwise it asks you whether the side task works in the checkout itself or starts that folder with a first worktree. The current session carries on untouched. Handoffs go to the OS temp dir, or wherever `git config split-handoff.dir` points for that clone. |
 
 ---
 
@@ -84,7 +84,7 @@ Every skill is invoked by name, or just by asking for the thing it does.
 /self-review                  # review your own change, commit by commit, before the MR
 /rework-mr                    # work through the feedback on your own MR
 
-/handoff-split the rounding bug in the totals  # spin a side task off into its own session
+/split-handoff the rounding bug in the totals  # spin a side task off into its own session
 ```
 
 `review-mr` and `rework-mr` are resumable: run them again later — a new session, a new day —
@@ -114,7 +114,7 @@ What it means for installing:
   `explain-diff` too). It runs the explainer in the background and `review-branch` in the
   foreground to seed its findings — each only once per branch tip: both results are recorded
   and reused until somebody pushes, so re-opening a review costs neither again.
-- **`visualize`, `review-branch`, `rework-mr`, `self-review` and `handoff-split` stand alone.**
+- **`visualize`, `review-branch`, `rework-mr`, `self-review` and `split-handoff` stand alone.**
 - **Shared code needs nothing installed.** The diagram engine, the GitLab plumbing and the diff
   viewer window live in `lib/`, inside the clone every symlink points at, so they are always
   there — which is why the `explain-*` skills draw without `visualize`.
@@ -207,7 +207,7 @@ skills' own scripts.
 | [`glab`](https://gitlab.com/gitlab-org/cli), authenticated | `review-mr` and `rework-mr`, plus `mr:123` targets for the `explain-*` skills |
 | [D2](https://d2lang.com) — `brew install d2` | every diagram, in `visualize` and the explainers alike |
 | `node` + `puppeteer-core` — `npm i -g puppeteer-core` | measuring a diagram in a real browser: where an annotation fits, and whether anything is cut off |
-| `tmux` | `handoff-split`'s new window; without it, the skill prints the command to start the session yourself |
+| `tmux` | `split-handoff`'s new window; without it, the skill prints the command to start the session yourself |
 | [`hunk`](https://hunk.dev/), inside `tmux` | `self-review`, which needs both; optional for `review-mr` and `rework-mr`, which show a diff in it instead of the chat |
 
 `review-branch` needs none of them. Two things worth knowing about the diagram side:

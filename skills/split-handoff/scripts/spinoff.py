@@ -15,6 +15,10 @@ default branch, because spun-off work is meant to become its own merge request.
 `--stacked` starts it from the current HEAD instead, for work that needs the current
 branch's unmerged commits.
 
+A worktree is only made where the repository already keeps its worktrees in
+<main checkout>.wt. Without one there, whether the side task gets a worktree at all is
+the user's call, so `plan` refuses until `--new-worktree-dir` records their yes.
+
 `--dir` replaces `--branch` for a side task that gets no branch of its own (an operation
 on the machine, work across repos, moving the current checkout, or a repository that is
 used where it is checked out): no fetch, no branch, no worktree; the session just starts
@@ -27,7 +31,7 @@ Paths, all derived rather than configured, except the one personal choice:
 
     worktree  <main checkout>.wt/<name>, beside the main checkout even when this runs
               inside a linked worktree, so spin-offs of spin-offs do not nest
-    handoff   <dir>/<name>-handoff.md, where <dir> is `git config handoff-split.dir`
+    handoff   <dir>/<name>-handoff.md, where <dir> is `git config split-handoff.dir`
               (per clone, shared by all its worktrees, never pushed) or the OS temp dir;
               with `--dir` always the OS temp dir, since no clone is involved
 
@@ -51,7 +55,7 @@ if _REPO_ROOT not in sys.path:
 from lib.cli import die  # noqa: E402
 from lib.git import REMOTE, default_base, git  # noqa: E402
 
-CONFIG_KEY = "handoff-split.dir"
+CONFIG_KEY = "split-handoff.dir"
 NAME_RE = re.compile(r"^[a-z0-9][a-z0-9-]*$")
 
 
@@ -63,6 +67,15 @@ def main_checkout(cwd=None):
         if line.startswith("worktree "):
             return line[len("worktree "):]
     die("not inside a git worktree")
+
+
+def keeps_worktrees(main):
+    """Whether `main` already has a linked worktree in <main>.wt. The directory alone does
+    not count: removing a worktree leaves it behind, empty, after the user undid it."""
+    out = git("worktree", "list", "--porcelain", cwd=main)
+    prefix = os.path.realpath(f"{main}.wt") + os.sep
+    return any(os.path.realpath(line[len("worktree "):]).startswith(prefix)
+               for line in out.splitlines() if line.startswith("worktree "))
 
 
 def handoff_dir(cwd=None):
@@ -95,13 +108,19 @@ def handoff_path(directory, name, handoff_written):
     return handoff
 
 
-def plan(name, branch, stacked=False, cwd=None, handoff_written=False):
+def plan(name, branch, stacked=False, cwd=None, handoff_written=False,
+         new_worktree_dir=False):
     check_name(name)
     if git("check-ref-format", "--branch", branch, cwd=cwd, check=False) is None:
         die(f"{branch!r} is not a valid branch name")
     if git("rev-parse", "--verify", "--quiet", f"refs/heads/{branch}", cwd=cwd, check=False):
         die(f"branch {branch} already exists")
-    worktree = f"{main_checkout(cwd)}.wt/{name}"
+    main = main_checkout(cwd)
+    if not new_worktree_dir and not keeps_worktrees(main):
+        die(f"{main} keeps no worktrees in {main}.wt; ask the user whether the side task "
+            f"works in the checkout itself (--dir {main}) or in a new worktree, which "
+            f"starts {main}.wt (--new-worktree-dir)")
+    worktree = f"{main}.wt/{name}"
     if os.path.exists(worktree):
         die(f"{worktree} already exists")
     handoff = handoff_path(handoff_dir(cwd), name, handoff_written)
@@ -181,11 +200,13 @@ def launch(p, env=None, run=subprocess.run, model=None):
     return f"started in tmux window {proc.stdout.strip()} ({p['name']})"
 
 
-def start(name, branch, stacked=False, cwd=None, env=None, run=subprocess.run, model=None):
+def start(name, branch, stacked=False, cwd=None, env=None, run=subprocess.run, model=None,
+          new_worktree_dir=False):
     # Stacked work starts from local HEAD, so nothing needs fetching for it.
     if not stacked:
         git("fetch", "--quiet", REMOTE, cwd=cwd)
-    p = plan(name, branch, stacked, cwd, handoff_written=True)
+    p = plan(name, branch, stacked, cwd, handoff_written=True,
+             new_worktree_dir=new_worktree_dir)
     git("worktree", "add", "--quiet", "--no-track", "-b", branch, p["worktree"], p["base"],
         cwd=cwd)
     return p, launch(p, env, run, model)
@@ -205,6 +226,8 @@ def main(argv=None):
     kind.add_argument("--dir", help="start directory of a side task that is no branch")
     ap.add_argument("--stacked", action="store_true", help="start from HEAD, not the default branch")
     ap.add_argument("--repo", help="repository the side task belongs to (default: this one)")
+    ap.add_argument("--new-worktree-dir", action="store_true",
+                    help="start <main checkout>.wt when the repository keeps no worktrees yet")
     ap.add_argument("--commit-pending", action="store_true",
                     help="with --dir: the side task commits the checkout's uncommitted changes")
     ap.add_argument("--model", help="model for the new Claude Code session, e.g. this one's")
@@ -212,8 +235,8 @@ def main(argv=None):
     if a.commit_pending and not a.dir:
         ap.error("--commit-pending needs --dir: a new worktree has nothing pending")
     if a.dir:
-        if a.stacked or a.repo:
-            ap.error("--dir takes no --stacked or --repo: there is no branch")
+        if a.stacked or a.repo or a.new_worktree_dir:
+            ap.error("--dir takes no --stacked, --repo or --new-worktree-dir: there is no branch")
         p = plan_dir(a.name, a.dir, a.action == "start", a.commit_pending)
         _print(p)
         if a.action == "start":
@@ -223,9 +246,10 @@ def main(argv=None):
     if cwd and not os.path.isdir(cwd):
         die(f"{a.repo} is not a directory")
     if a.action == "plan":
-        _print(plan(a.name, a.branch, a.stacked, cwd))
+        _print(plan(a.name, a.branch, a.stacked, cwd, new_worktree_dir=a.new_worktree_dir))
     else:
-        p, outcome = start(a.name, a.branch, a.stacked, cwd, model=a.model)
+        p, outcome = start(a.name, a.branch, a.stacked, cwd, model=a.model,
+                           new_worktree_dir=a.new_worktree_dir)
         _print(p)
         print(outcome)
 

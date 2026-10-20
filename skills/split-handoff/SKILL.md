@@ -1,17 +1,18 @@
 ---
-name: handoff-split
-description: Spin a side task found mid-session (a bug, a refactoring, a chore on the machine) off into its own agent session in a new tmux window, seeded with a handoff, on its own worktree and branch when it is repo work.
+name: split-handoff
+description: Spin a side task found mid-session (a bug, a refactoring, a chore on the machine) off into its own agent session in a new tmux window, seeded with a handoff, on its own worktree and branch when the repo already keeps worktrees or the user opts in.
 disable-model-invocation: true
 argument-hint: "What is the side task? (optional when the conversation makes it obvious)"
 ---
 
-# handoff-split
+# split-handoff
 
 The current session stays on its branch. The side task gets a handoff and a new agent session
-that starts on it right away. Repo work also gets a fresh worktree on its own branch, so it
-becomes its own merge request.
+that starts on it right away. Repo work gets a fresh worktree on its own branch, so it
+becomes its own merge request, but only where the repository already keeps its worktrees
+beside the main checkout, in `<main checkout>.wt/`, or where the user opts in.
 
-The script lives at `~/.claude/skills/handoff-split/scripts/spinoff.py`; below it is `spinoff.py`.
+The script lives at `~/.claude/skills/split-handoff/scripts/spinoff.py`; below it is `spinoff.py`.
 
 ## Step 1: Scope the side task
 
@@ -33,7 +34,8 @@ e.g. `fix-rounding`.
 
 For **dir**, choose the **dir** the new session starts in: the live checkout itself, or else a
 folder outside everything the task moves or deletes, e.g. the parent of a folder it moves. In
-Steps 2 and 4 pass `--dir <dir>` in place of `--branch`, `--stacked` and `--repo`.
+Steps 2 and 4 pass `--dir <dir>` in place of `--branch`, `--stacked`, `--repo` and
+`--new-worktree-dir`.
 
 For **branch**, choose:
 
@@ -46,15 +48,26 @@ For **branch**, choose:
   this branch's unmerged commits. Then it is **stacked**: say which commits it needs and why,
   and get the user's yes before going on.
 
+A worktree is never the default. When the repository has no worktree in `<main checkout>.wt/`
+yet (an empty folder left by a removed one does not count), Step 2 refuses, and the user
+chooses between:
+
+- **in the checkout itself**: the side task becomes **dir** with `--dir <main checkout>` and
+  works on its checked-out branch, once that checkout is clean.
+- **in a new worktree**: pass `--new-worktree-dir` to Steps 2 and 4, which starts
+  `<main checkout>.wt/`.
+
+Ask, with neither option recommended, unless the user already said which one in this session.
+
 ## Step 2: Plan
 
 ```bash
-python3 ~/.claude/skills/handoff-split/scripts/spinoff.py plan --name <name> --branch <branch> [--stacked] [--repo <path>]
+python3 ~/.claude/skills/split-handoff/scripts/spinoff.py plan --name <name> --branch <branch> [--stacked] [--repo <path>] [--new-worktree-dir]
 ```
 
 It prints `name`, `branch`, `base`, `worktree` and `handoff` (with `--dir`: `name`, `dir` and
 `handoff`, plus `branch` in a checkout and `pending` with `--commit-pending`), or refuses with the reason (taken branch, existing
-worktree or handoff file, no remote, uncommitted changes in a checkout given as `--dir`). On a refusal, follow its hint or pick another name or branch, and re-run. On uncommitted
+worktree or handoff file, no worktrees kept yet, no remote, uncommitted changes in a checkout given as `--dir`). On a refusal, follow its hint or pick another name or branch, and re-run. On uncommitted
 changes, ask the user to commit them first. Only when the user explicitly asked that the side
 task commit them, re-run with `--commit-pending` instead, in Step 4 too, and name the files in
 the handoff's **Task**.
@@ -81,7 +94,7 @@ them. Leave out secrets and personal data.
 ## Step 4: Start
 
 ```bash
-python3 ~/.claude/skills/handoff-split/scripts/spinoff.py start --name <name> --branch <branch> [--stacked] [--repo <path>] --model <your model id>
+python3 ~/.claude/skills/split-handoff/scripts/spinoff.py start --name <name> --branch <branch> [--stacked] [--repo <path>] [--new-worktree-dir] --model <your model id>
 ```
 
 It fetches (unless stacked) and creates the worktree on the new branch (with `--dir`, neither),

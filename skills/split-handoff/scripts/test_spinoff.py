@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Tests for handoff-split's spinoff script, against real throwaway git repositories.
+"""Tests for split-handoff's spinoff script, against real throwaway git repositories.
 
-Run: `python3 skills/handoff-split/scripts/test_spinoff.py` (stdlib only).
+Run: `python3 skills/split-handoff/scripts/test_spinoff.py` (stdlib only).
 
 Each test builds a bare "remote" and a clone of it inside its own TemporaryDirectory, so
 the worktrees the script creates (siblings of the clone) are removed with it. tmux is
@@ -34,7 +34,8 @@ def out(*args, cwd):
 
 class Repo(unittest.TestCase):
     """A clone of a bare remote whose main has one commit more than the clone's feature
-    branch started from, so "from the default branch" and "from HEAD" differ."""
+    branch started from, so "from the default branch" and "from HEAD" differ. It already
+    keeps one worktree in <clone>.wt, so spin-offs may go there without asking."""
 
     def setUp(self):
         tmp = tempfile.TemporaryDirectory()
@@ -60,6 +61,8 @@ class Repo(unittest.TestCase):
         os.mkdir(self.handoffs)
         sh("git", "config", S.CONFIG_KEY, self.handoffs, cwd=self.clone)
         self.remote_main = out("git", "rev-parse", "main", cwd=remote)
+        self.kept = f"{self.clone}.wt/kept"
+        sh("git", "worktree", "add", "-q", "-b", "chore/kept", self.kept, cwd=self.clone)
 
     def write_handoff(self, name):
         with open(os.path.join(self.handoffs, f"{name}-handoff.md"), "w") as fh:
@@ -104,6 +107,48 @@ class TestPlan(Repo):
             S.plan("x", "fix/x", cwd=self.clone)
         self.assertIn("--dir", err.getvalue())
         self.assertTrue(S.plan("x", "fix/x", stacked=True, cwd=self.clone)["base"])
+
+
+class TestWorktreeDir(Repo):
+    """No worktree without one already in <clone>.wt, or the user's explicit yes."""
+
+    def setUp(self):
+        super().setUp()
+        sh("git", "worktree", "remove", self.kept, cwd=self.clone)
+
+    def test_refuses_and_names_both_choices(self):
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err), self.assertRaises(SystemExit):
+            S.plan("x", "fix/x", cwd=self.clone)
+        self.assertIn(f"--dir {self.clone}", err.getvalue())
+        self.assertIn("--new-worktree-dir", err.getvalue())
+
+    def test_an_emptied_worktree_dir_does_not_count(self):
+        """`git worktree remove` leaves <clone>.wt behind; that is no standing choice."""
+        self.assertTrue(os.path.isdir(f"{self.clone}.wt"))
+        with self.assertRaises(SystemExit):
+            S.plan("x", "fix/x", cwd=self.clone)
+
+    def test_a_stray_worktree_elsewhere_does_not_count(self):
+        sh("git", "worktree", "add", "-q", "-b", "chore/elsewhere",
+           os.path.join(self.tmp, "elsewhere"), cwd=self.clone)
+        with self.assertRaises(SystemExit):
+            S.plan("x", "fix/x", cwd=self.clone)
+
+    def test_the_users_yes_starts_the_worktree_dir(self):
+        os.rmdir(f"{self.clone}.wt")
+        self.write_handoff("x")
+        p, _ = S.start("x", "fix/x", cwd=self.clone, env={}, new_worktree_dir=True)
+        self.assertEqual(p["worktree"], f"{self.clone}.wt/x")
+        self.assertEqual(out("git", "branch", "--show-current", cwd=p["worktree"]), "fix/x")
+        self.assertTrue(S.plan("y", "fix/y", cwd=self.clone)["worktree"])
+
+    def test_the_cli_passes_the_yes_through(self):
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            S.main(["plan", "--name", "x", "--branch", "fix/x", "--repo", self.clone,
+                    "--new-worktree-dir"])
+        self.assertIn(f"worktree={self.clone}.wt/x", buf.getvalue())
 
 
 class TestDir(unittest.TestCase):
