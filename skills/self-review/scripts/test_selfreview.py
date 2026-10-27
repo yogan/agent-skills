@@ -349,6 +349,38 @@ class TestChanges(Repo):
         self.assertEqual(out("git", "status", "--porcelain", cwd=self.clone), "?? new.txt")
 
 
+class TestHidden(Repo):
+    """Files of the shown piece missing from the window: what an extension hiding read
+    files leaves behind, measured against what was shown rather than the tree now."""
+
+    def hidden(self, shows, loaded, kind):
+        with patch.object(S.hunk, "mark", lambda sid, key: shows), \
+                patch.object(S.hunk, "loaded_stat", lambda sid: loaded), \
+                patch.object(S.hunk, "loaded_input", lambda sid: kind):
+            return S.hidden("s1", self.clone)
+
+    def test_a_commit_with_a_file_missing_from_the_window_names_it(self):
+        write(self.path("h.txt"), "h\n")
+        sh("git", "add", ".", cwd=self.clone)
+        commit(self.clone, "f.txt", "a\nB\nc\nd\ne\n", "four")
+        sha = S.commits(self.clone)[3][0]
+        self.assertEqual(self.hidden(sha, [("f.txt", 1, 0)], ("show", sha)), ["h.txt"])
+
+    def test_a_commit_shown_whole_hides_nothing(self):
+        sha = S.commits(self.clone)[1][0]
+        self.assertEqual(self.hidden(sha, [("g.txt", 1, 0)], ("show", sha)), [])
+
+    def test_the_uncommitted_change_is_measured_against_its_snapshot(self):
+        write(self.path("f.txt"), "fix\n")
+        write(self.path("new.txt"), "n\n")
+        tree = S.snapshot(self.clone)
+        write(self.path("later.txt"), "a fix made since the window was loaded\n")
+        self.assertEqual(self.hidden(tree, [("new.txt", 1, 0)], ("vcs", None)), ["f.txt"])
+
+    def test_a_window_that_cannot_be_read_hides_nothing(self):
+        self.assertEqual(self.hidden("", None, None), [])
+
+
 class FakeWindow:
     """The viewer's notes, for `move_notes`: adds, replies and removals act on a list."""
 
@@ -494,9 +526,10 @@ class TestGuards(unittest.TestCase):
     """What stands between the author's notes and losing them: moving the window on, and
     clearing or closing it, each refuse while notes are in the way."""
 
-    def run_with(self, fn, *args, notes=(), loaded=("show", "aaa"), notes_ok=True):
+    def run_with(self, fn, *args, notes=(), loaded=("show", "aaa"), notes_ok=True, hidden=()):
         cleared = []
         with patch.object(S.hunk, "installed", lambda: True), \
+                patch.object(S, "hidden", lambda sid, cwd=None: list(hidden)), \
                 patch.object(S.hunk, "find_session", lambda repo, owner: "s1"), \
                 patch.object(S, "root", lambda cwd=None: "/w/app"), \
                 patch.object(S.hunk, "notes", lambda sid: list(notes) if notes_ok else None), \
@@ -542,6 +575,17 @@ class TestGuards(unittest.TestCase):
     def test_close_waits_for_every_answer(self):
         with self.assertRaises(SystemExit):
             self.run_with(S.close, notes=self.OPEN)
+
+    def test_hidden_files_refuse_reading_acking_and_closing(self):
+        for fn in (S.notes, S.ack, S.close):
+            with self.subTest(fn.__name__), self.assertRaises(SystemExit):
+                self.run_with(fn, hidden=["g.txt"])
+
+    def test_an_empty_list_over_hidden_files_is_no_ack(self):
+        cleared = []
+        with self.assertRaises(SystemExit):
+            cleared = self.run_with(S.ack, notes=self.ANSWERED, hidden=["g.txt"])
+        self.assertEqual(cleared, [])
 
 
 if __name__ == "__main__":

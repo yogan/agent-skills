@@ -137,6 +137,9 @@ def show(target, cwd=None, after_amend=False):
     # Taken before the reload: a reload can drop a note whose line no longer exists, and
     # this copy is then all that is left of it.
     sid = hunk.installed() and hunk.find_session(repo, hunk.owner_id())
+    if sid:
+        # Before the reload: notes on hidden files would not be taken along by `move_notes`.
+        require_all_shown(sid, cwd)
     before = (hunk.notes(sid) or []) if sid else []
     shown_before = hunk.mark(sid, SHOWN) if sid else ""
     shown = hunk.show_review(repo, LABEL, args, stat)
@@ -351,8 +354,39 @@ def own_session(cwd=None):
     return sid
 
 
+def hidden(sid, cwd=None):
+    """Files of the shown piece that the window does not hold, sorted.
+
+    An extension can drop files from the loaded review — hunk-mark-read hides files marked
+    read — and the viewer then lists no notes on them: a note there would read as no note
+    at all, and an empty list is the author's ACK. Measured against what was shown (the
+    commit, or the snapshot the mark records), not the tree as it is now, so a fix made
+    since adds nothing here.
+    """
+    shows = hunk.mark(sid, SHOWN)
+    loaded = hunk.loaded_stat(sid)
+    if not shows or loaded is None:
+        return []
+    if hunk.loaded_input(sid) == ("show", shows):
+        stat = commit_stat(shows, cwd)
+    else:
+        stat = hunk.diff_stat(git(*DIFF, "diff", "--no-ext-diff", "HEAD", shows, cwd=cwd)
+                              or "")
+    return sorted({p for p, _, _ in stat} - {p for p, _, _ in loaded})
+
+
+def require_all_shown(sid, cwd=None):
+    gone = hidden(sid, cwd)
+    if gone:
+        die(f"{len(gone)} file(s) of this piece are hidden in the window, likely marked read "
+            f"({', '.join(gone)}); notes on them cannot be read. Ask the author to show "
+            "hidden files again (hunk-mark-read: \"Hide/show read files\") and say done")
+
+
 def notes(cwd=None):
-    got = hunk.notes(own_session(cwd))
+    sid = own_session(cwd)
+    require_all_shown(sid, cwd)
+    got = hunk.notes(sid)
     if got is None:
         die("the Hunk window did not answer; nothing can be concluded about its diff notes")
     waiting = open_threads(got)
@@ -462,6 +496,7 @@ def amend(n, cwd=None):
 
 def ack(cwd=None):
     sid = own_session(cwd)
+    require_all_shown(sid, cwd)
     got = hunk.notes(sid)
     if got is None:
         die("the Hunk window did not answer; nothing was cleared")
@@ -477,6 +512,7 @@ def close(cwd=None):
     """Close the window. Notes exist only inside it, so one still awaiting an answer
     would be lost unseen: that refuses."""
     sid = own_session(cwd)
+    require_all_shown(sid, cwd)
     got = hunk.notes(sid)
     if got and open_threads(got):
         die("diff notes still await an answer; run `notes` first")
