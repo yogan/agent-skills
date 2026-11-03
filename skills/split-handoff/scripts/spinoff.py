@@ -33,7 +33,8 @@ Paths, all derived rather than configured, except the one personal choice:
               inside a linked worktree, so spin-offs of spin-offs do not nest
     handoff   <dir>/<name>-handoff.md, where <dir> is `git config split-handoff.dir`
               (per clone, shared by all its worktrees, never pushed) or the OS temp dir;
-              with `--dir` always the OS temp dir, since no clone is involved
+              with `--dir`, the start directory's clone decides when it is a checkout,
+              else the OS temp dir
 
 Run: `python3 spinoff.py plan --name fix-rounding --branch fix/rounding`
      `python3 spinoff.py plan --name migrate-workspace --dir ~/src`
@@ -136,14 +137,17 @@ def plan(name, branch, stacked=False, cwd=None, handoff_written=False,
 
 
 def plan_dir(name, start_dir, handoff_written=False, commit_pending=False):
-    """A side task with no branch: it starts in `start_dir`, and its handoff goes to the
-    temp dir, which is outside the clones and folders such a task tends to move."""
+    """A side task with no branch: it starts in `start_dir`. Its handoff goes where that
+    checkout's clone keeps them, or, outside a checkout, to the temp dir, which is outside
+    the clones and folders such a task tends to move."""
     check_name(name)
     start_dir = os.path.realpath(os.path.expanduser(start_dir))
     if not os.path.isdir(start_dir):
         die(f"{start_dir} is not a directory")
     p = {"name": name, "dir": start_dir}
+    directory = tempfile.gettempdir()
     if git("rev-parse", "--is-inside-work-tree", cwd=start_dir, check=False) == "true":
+        directory = handoff_dir(cwd=start_dir)
         dirty = git("status", "--short", "--no-renames", "--porcelain=v1", cwd=start_dir)
         dirty = [line.split(maxsplit=1)[-1] for line in dirty.splitlines()]
         if dirty and not commit_pending:
@@ -157,7 +161,7 @@ def plan_dir(name, start_dir, handoff_written=False, commit_pending=False):
             p["pending"] = " ".join(dirty)
     elif commit_pending:
         die(f"--commit-pending: {start_dir} is not a git checkout")
-    p["handoff"] = handoff_path(tempfile.gettempdir(), name, handoff_written)
+    p["handoff"] = handoff_path(directory, name, handoff_written)
     return p
 
 

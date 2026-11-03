@@ -189,6 +189,13 @@ class TestDir(unittest.TestCase):
         printed = self.main("plan", "--name", self.name, "--dir", self.dir)
         self.assertIn("\nbranch=main\n", printed)
 
+    def test_a_checkout_keeps_its_handoff_where_its_clone_says(self):
+        sh("git", "init", "-q", "-b", "main", self.dir, cwd=self.dir)
+        handoffs = os.path.join(self.dir, ".git", "handoffs")
+        sh("git", "config", S.CONFIG_KEY, handoffs, cwd=self.dir)
+        p = S.plan_dir(self.name, self.dir)
+        self.assertEqual(p["handoff"], os.path.join(handoffs, f"{self.name}-handoff.md"))
+
     def test_refuses_a_checkout_with_uncommitted_changes(self):
         sh("git", "init", "-q", "-b", "main", self.dir, cwd=self.dir)
         with open(os.path.join(self.dir, "wip.txt"), "w") as fh:
