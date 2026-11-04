@@ -1,0 +1,11 @@
+{
+  "name": "yogan-agent-skills",
+  "owner": { "name": "Frank Blendinger" },
+  "plugins": [
+    {
+      "name": "review-ui",
+      "source": "./mods/review-ui",
+      "description": "Draws the review-mr and rework-mr views in Claude Code, so the model never has to paste them"
+    }
+  ]
+}

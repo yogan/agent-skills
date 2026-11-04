@@ -13,6 +13,12 @@ Reworking **your own** MR against reviewer feedback. glab-only. `SD=~/.claude/sk
 on its own: the user must not have to expand or reveal a tool call to see the table, code,
 comment, diff, or question they are being asked to act on. So:
 
+**A card is a paste already made.** When a view's output ends with the line
+`[review-ui] Shown to the user as a card.`, the user sees that view whole, drawn under the
+tool call: running the command was the paste. Your reply then carries only your judgment and
+the question, at most 3 lines per topic, longer only when the user asks why. Every other rule
+here stands. Output without that line is pasted as below.
+
 1. When a `threads.py` command prints something, **paste that output verbatim into your
    reply** — markdown table, blockquote and all. Do **not** summarize it, shorten it,
    re-type it, or wrap it in a code fence. Reproduce it exactly.

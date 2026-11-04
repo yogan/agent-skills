@@ -156,6 +156,19 @@ done
 Restart Claude Code or OpenCode (or start a new session) afterwards, so it picks the new skills
 up.
 
+### Recommended on Claude Code for `review-mr` and `rework-mr`: the review-ui mod
+
+[`mods/review-ui`](mods/review-ui/README.md) draws every view the two skills show (the
+overview table, a topic with its code, a drafted comment, a diff) as a card under the tool call
+that printed it, so the model no longer pastes them and its replies stay short. From the clone:
+
+```bash
+claude plugin marketplace add ~/src/agent-skills
+claude plugin install review-ui@yogan-agent-skills
+```
+
+Where the mod is loaded, the `Stop` hook below stands down by itself.
+
 ### Required on Claude Code for `review-mr` and `rework-mr`: a `Stop` hook
 
 Both skills work by showing things — an overview table, a quoted topic with its code, a drafted

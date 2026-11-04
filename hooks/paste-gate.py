@@ -353,6 +353,29 @@ def _manifest_meta(result):
     return {k: payload[k] for k in ("topic", "focus") if k in payload}
 
 
+# The line the review-ui mod (mods/review-ui) puts at the end of a view's output once the
+# user has that view as a card under the tool call. Where it is loaded, the skills tell the
+# model a card is a paste already made, so this gate demanding the paste would fight the
+# card: the session's gates stand down. It must END a tool result, so grepping the mod's
+# source or this file is never mistaken for a card. Mirrors mods/review-ui/hooks/views.ts's
+# NOTE.
+CARD_LINE = "[review-ui] Shown to the user as a card."
+
+
+def _cards_drawn(rows):
+    """Whether the mod drew a view as a card anywhere in this session."""
+    for r in rows:
+        content = (r.get("message") or {}).get("content") if isinstance(r, dict) else None
+        if not isinstance(content, list):
+            continue
+        for b in content:
+            if isinstance(b, dict) and b.get("type") == "tool_result":
+                text = _strip_tool_noise(_result_text(b.get("content", "")))
+                if text.rstrip().endswith(CARD_LINE):
+                    return True
+    return False
+
+
 def _load(path):
     try:
         with open(path) as f:
@@ -395,12 +418,40 @@ def _invocation_text(cmd):
     them cannot hand a quoted separator the power to start a new segment.
     """
     kept = []
-    for seg in _SEGMENTS_RE.split(cmd):
+    for seg in _SEGMENTS_RE.split(_without_heredocs(cmd)):
         lead = _LEAD_WORD_RE.match(seg)
-        if lead and lead.group(1).strip("'\"").rsplit("/", 1)[-1] in _READERS:
+        if not lead or lead.group(1).strip("'\"").rsplit("/", 1)[-1] in _READERS:
             continue
-        kept.append(seg)
-    return _QUOTES_RE.sub("", "\n".join(kept))
+        kept.append(_program(seg[lead.start(1):]))
+    return _QUOTES_RE.sub("", "\n".join(k for k in kept if k))
+
+
+_INTERPRETERS = frozenset("python python3 sh bash zsh".split())
+_HEREDOC_RE = re.compile(r"<<-?\s*(['\"]?)(\w+)\1[^\n]*\n.*?^\s*\2\s*$", re.S | re.M)
+
+
+def _without_heredocs(cmd):
+    """`cmd` with every heredoc's body taken out: it is what a program reads, never a
+    command, and a line of it that begins with a script's name read as running it."""
+    return _HEREDOC_RE.sub(lambda m: m.group(0).split("\n", 1)[0], cmd)
+
+
+def _program(seg):
+    """A command segment from the program it runs onwards, the program by its file name:
+    `python3 $SD/findings.py present` becomes `findings.py present`. A gate matches only at
+    the start of that, so a script named in an argument (`probe.py --prompt "... findings.py
+    present"`), an `echo` or a heredoc's line is not an invocation of it."""
+    words = _QUOTES_RE.sub("", seg).split(None, 1)
+    # `python3 -u x.py`, `bash -c "python3 x.py"`: through every interpreter and its flags.
+    while words and words[0].rsplit("/", 1)[-1] in _INTERPRETERS:
+        rest = words[1] if len(words) > 1 else ""
+        while rest.startswith("-"):
+            rest = rest.split(None, 1)[1] if len(rest.split(None, 1)) > 1 else ""
+        words = rest.split(None, 1)
+    if not words:
+        return ""
+    name = words[0].rsplit("/", 1)[-1]
+    return name + (" " + words[1] if len(words) > 1 else "")
 
 
 def _scan_turn(rows, gates):
@@ -447,7 +498,7 @@ def _scan_turn(rows, gates):
             if t == "tool_use" and b.get("name") == "Bash":
                 cmd = _invocation_text((b.get("input") or {}).get("command", "") or "")
                 for gate in gates:
-                    if gate["cmd_re"].search(cmd):
+                    if any(gate["cmd_re"].match(ran) for ran in cmd.split("\n")):
                         matched[b.get("id")] = gate
                         break
             elif t == "tool_result":
@@ -772,6 +823,10 @@ def main(argv):
 
     path = data.get("transcript_path")
     if not path:
+        _allow()
+
+    rows = _load(path)
+    if rows and _cards_drawn(rows):        # the mod shows the views: nothing to paste
         _allow()
 
     # These two run BEFORE the stop_hook_active gate below, and without requiring any

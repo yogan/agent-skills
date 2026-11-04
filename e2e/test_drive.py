@@ -120,9 +120,10 @@ class StepTest(unittest.TestCase):
         self.assertIn("--model haiku", cmd)
 
     def test_a_showcase_keeps_the_users_settings_and_model(self):
-        sc = drive.Scenario("x", "x", cwd=None, steps=[])
+        sc = drive.Scenario("x", "x", cwd=None, steps=[], mods=["~/m"])
         cmd = drive.claude_command(sc, None, verify=False)
         self.assertNotIn("--setting-sources", cmd)
+        self.assertNotIn("--plugin-dir", cmd)
         self.assertNotIn("--model", cmd)
 
 

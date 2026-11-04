@@ -321,6 +321,34 @@ class TestGates(HookCase):
             assistant_text("`resume` is mentioned once, at SKILL.md:344."),
         ])
 
+    def test_a_script_named_in_an_argument_or_a_comment_allows(self):
+        """Only the program a segment runs is an invocation. A driver whose prompt names the
+        command, an `echo` or a comment, printing output that happens to look like a view,
+        used to be held to pasting it: the gate blocked such a turn for real, and asked for
+        a screen capture to be pasted verbatim."""
+        for command in ('python3 e2e/drive.py run --prompt "run python3 $SD/findings.py resume"',
+                        "echo hi # findings.py resume",
+                        "cat > notes.md <<'EOF'\nfindings.py resume prints the table\nEOF"):
+            with self.subTest(command=command):
+                self.assertAllowed([
+                    user_prompt(),
+                    bash_call("u1", command),
+                    tool_result("u1", RESUME_OUT),
+                    assistant_text("Done."),
+                ])
+
+    def test_a_script_run_through_an_interpreter_or_its_flags_still_gates(self):
+        for command in ("python3 -u $SD/findings.py resume --iid 4",
+                        'bash -c "python3 \"$SD/findings.py\" resume --iid 4"',
+                        "cd /wt && SD=x time python3 $SD/findings.py resume"):
+            with self.subTest(command=command):
+                self.assertBlocked([
+                    user_prompt(),
+                    bash_call("u1", command),
+                    tool_result("u1", RESUME_OUT),
+                    assistant_text("Here is where the review stands."),
+                ])
+
     def test_reading_the_source_allows(self):
         """A Read of the spec itself: not a Bash tool_use at all."""
         self.assertAllowed([
@@ -391,6 +419,63 @@ class TestGates(HookCase):
             tool_result("u1", RESUME_OUT),
             assistant_text("Synced. Nothing new."),
         ])
+
+
+CARD_LINE = "[review-ui] Shown to the user as a card."
+
+
+class TestCardsStandTheGateDown(HookCase):
+    """Where the review-ui mod draws a view as a card, it ends the view's output with
+    CARD_LINE, and the skills say a card is a paste already made: nothing to enforce."""
+
+    def test_an_unpasted_view_drawn_as_a_card_allows(self):
+        self.assertAllowed([
+            user_prompt(),
+            bash_call("u1", "python3 $SD/findings.py resume --iid 123"),
+            tool_result("u1", with_manifest(RESUME_OUT, RESUME_CRITICAL) + "\n\n" + CARD_LINE + "\n"),
+            assistant_text("t1 is a real bug. I'd draft it."),
+        ])
+
+    def test_a_card_earlier_in_the_session_still_counts(self):
+        self.assertAllowed([
+            user_prompt(),
+            bash_call("u0", "python3 $SD/findings.py present --iid 123"),
+            tool_result("u0", RESUME_OUT + "\n\n" + CARD_LINE + "\nShell cwd was reset to /x"),
+            assistant_text("Opened."),
+            user_prompt("next"),
+            bash_call("u1", "python3 $SD/threads.py quote t7"),
+            tool_result("u1", with_manifest(REWORK_QUOTE_OUT, [])),
+            assistant_text("t7: agreed."),
+        ])
+
+    def test_the_line_inside_a_result_is_not_a_card(self):
+        # Reading the mod's source puts the line in a result, but never at its end.
+        hook = _load_hook()
+        rows = [tool_result("u1", f"views.ts:77: export const NOTE = '{CARD_LINE}'\nviews.ts:78: ...")]
+        self.assertFalse(hook._cards_drawn(rows))
+        self.assertTrue(hook._cards_drawn([tool_result("u1", "view\n\n" + CARD_LINE)]))
+
+
+class TestCardLineAgrees(unittest.TestCase):
+    """The card line lives in four places: the mod writes it, this hook and both skills read
+    it. One drifting apart silently re-arms the gate against the cards, or leaves the model
+    pasting what is already on screen."""
+
+    def test_every_copy_is_the_same_line(self):
+        self.assertEqual(_load_hook().CARD_LINE, CARD_LINE)
+        with open(os.path.join(REPO, "mods/review-ui/hooks/views.ts")) as fh:
+            self.assertIn(f"export const NOTE = '{CARD_LINE}'", fh.read())
+        for skill in ("review-mr", "rework-mr"):
+            with open(os.path.join(REPO, f"skills/{skill}/SKILL.md")) as fh:
+                self.assertIn(f"`{CARD_LINE}`", fh.read(), skill)
+
+
+def _load_hook():
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("paste_gate", HOOK)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
 
 
 class TestBlockBoundaries(HookCase):

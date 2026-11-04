@@ -8,7 +8,19 @@ An expectation names what a person would look for on the screen, not how the ski
 a check on wording the model chooses breaks whenever the model words it differently, and then
 the run says nothing about the skill.
 """
+from pathlib import Path
+
 from drive import Expect, Handover, Prompt, Scenario, Type
+
+# What the mod's cards look like on screen, against what a pasted view looks like: a card is
+# a rounded box at the screen's left edge; a table the model pasted is drawn in the reply,
+# indented under its `⏺`, outside any box.
+CARD = Expect(r"^╭─")
+NOT_PASTED = Expect(r"^  [┌├└]─", absent=True)
+
+# The mod, from this checkout. A verify run loads it with --plugin-dir; a showcase runs on
+# what the person has installed, so it is given no mods.
+MOD = str(Path(__file__).resolve().parent.parent / "mods" / "review-ui")
 
 REVIEW1 = "~/src/agent-skills-demo-review-mr1"
 REVIEW2 = "~/src/agent-skills-demo-review-mr2"
@@ -24,24 +36,27 @@ SCENARIOS = [
 
     Scenario(
         "review-1", "MR !1, first pass: explainer link, five topics imported", REVIEW1,
-        needs_rig=True, steps=[
+        needs_rig=True, mods=[MOD], steps=[
             Prompt("/review-mr !1", timeout=600),
             Expect(r"explainer-mr1\.html"),
             Expect(r"\bt5\b"),
+            CARD, NOT_PASTED,
         ]),
     Scenario(
         "rereview-2", "MR !2, re-review: the topics that need your ack", REVIEW2,
-        needs_rig=True, steps=[
+        needs_rig=True, mods=[MOD], steps=[
             Prompt("/review-mr !2", timeout=600),
             Expect(r"\bt1\b"),
             Expect(r"\bt4\b"),
+            CARD, NOT_PASTED,
         ]),
     Scenario(
         "rework-3", "MR !3, rework: three reviewer threads", WORK,
-        needs_rig=True, steps=[
+        needs_rig=True, mods=[MOD], steps=[
             Prompt("/rework-mr !3", timeout=600),
             Expect(r"\bt1\b"),
             Expect(r"\bt3\b"),
+            CARD, NOT_PASTED,
         ]),
 
     # Talk day. Model and effort are per-session flags so the demo runs small and fast

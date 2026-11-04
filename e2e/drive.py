@@ -118,7 +118,9 @@ class Expect(Step):
     """The screen shows `pattern` (a regex), or with `absent=True` does not."""
     pattern: str
     absent: bool = False
-    region: str = "screen"      # screen | panel | main (the screen left of the panel)
+    # transcript: the whole conversation, paged through · screen: what is visible now ·
+    # panel / main: the visible screen right / left of the panel's divider
+    region: str = "transcript"
 
     def label(self):
         return f"expect {'no ' if self.absent else ''}{self.pattern!r} in {self.region}"
@@ -153,7 +155,7 @@ class Scenario:
     about: str
     cwd: str | None             # may start with ~; None: a fresh empty folder, removed after
     steps: list
-    mods: list = dataclasses.field(default_factory=list)       # plugin folders, ~ allowed
+    mods: list = dataclasses.field(default_factory=list)       # plugin folders (verify only)
     window: str = ""            # showcase window name; defaults to the scenario's name
     args: list = dataclasses.field(default_factory=list)       # extra claude arguments
     allow: tuple = VERIFY_ALLOW
@@ -270,6 +272,25 @@ class Pane:
         return tmux("capture-pane", "-p", "-J", "-S", "-2000", "-t", self.target,
                     *(["-e"] if ansi else []))
 
+    def transcript(self, pages=80):
+        """The whole conversation as drawn, cards included, top to bottom.
+
+        In fullscreen claude keeps its transcript out of tmux's scrollback, so it is paged
+        through instead: PageUp until the screen stops changing, then back to the bottom.
+        The pages overlap, which a search does not mind.
+        """
+        seen = [self.screen()]
+        for _ in range(pages):
+            self.keys("PageUp")
+            time.sleep(0.25)
+            now = self.screen()
+            if now == seen[-1]:
+                break
+            seen.append(now)
+        self.keys("C-End")
+        time.sleep(0.3)
+        return "\n".join(reversed(seen))
+
     def keys(self, *names):
         tmux("send-keys", "-t", self.target, *names)
 
@@ -361,7 +382,9 @@ def skills_plugin(out):
 
 def claude_command(sc, model, verify, plugins=()):
     argv = ["claude"]
-    for m in [*plugins, *sc.mods]:
+    # A showcase runs on what the person has installed: their mods are already loaded, and
+    # the same one loaded twice would draw every card twice.
+    for m in [*plugins, *(sc.mods if verify else [])]:
         argv += ["--plugin-dir", expand(m)]
     if model:
         argv += ["--model", model]
@@ -397,7 +420,10 @@ def run_step(pane, step, verify):
         time.sleep(0.5)
         pane.settle()
     elif isinstance(step, Expect):
-        text = region_of(pane.screen(), step.region)
+        if step.region == "transcript":
+            text = pane.transcript()
+        else:
+            text = region_of(pane.screen(), step.region)
         hit = re.search(step.pattern, text, re.M)
         if bool(hit) == step.absent:
             raise StepFailed(f"{'found' if hit else 'did not find'} {step.pattern!r} in the {step.region}")

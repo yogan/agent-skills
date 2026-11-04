@@ -15,6 +15,12 @@ Reviewing **someone else's** GitLab MR. glab-only, **read-only** against GitLab.
 on its own: the user must not have to expand or reveal a tool call to see the table, code,
 comment, or question they are being asked to act on. So:
 
+**A card is a paste already made.** When a view's output ends with the line
+`[review-ui] Shown to the user as a card.`, the user sees that view whole, drawn under the
+tool call: running the command was the paste. Your reply then carries only your judgment and
+the question, at most 3 lines per topic, longer only when the user asks why. Every other rule
+here stands. Output without that line is pasted as below.
+
 0. **Your first reply in a session is an opener, pasted whole.** Before anything else —
    no "picking up where we left off", no summary of what is left, no question:
 

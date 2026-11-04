@@ -1,0 +1,7 @@
+{
+  "name": "review-ui",
+  "version": "0.1.0",
+  "description": "Draws the review-mr and rework-mr views in Claude Code, so the model never has to paste them",
+  "author": { "name": "Frank Blendinger" },
+  "license": "MIT"
+}

@@ -62,6 +62,11 @@ the hook loads.
 
 ## How it behaves
 
+- **Off where the review-ui mod draws the views:** once a tool result in the session ends
+  with `[review-ui] Shown to the user as a card.`, the mod
+  ([`mods/review-ui`](../mods/review-ui/README.md)) has shown that view to the user and the
+  skills treat the card as the paste, so the hook allows every stop of that session. The
+  line has to end a result: reading the mod's source or this file is never taken for a card.
 - **Scoped:** only acts on a turn where a gated command actually ran and produced real
   output, or where a `forbidden`/`required` pattern hits. Every other turn — and every
   session that never touches these skills — passes straight through.
