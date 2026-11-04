@@ -182,99 +182,23 @@ if tmux has-session -t "$SESSION" 2>/dev/null; then
   exit 0
 fi
 
-# Windows are addressed by name, so a non-zero base-index in .tmux.conf is fine.
-tmux new-session -d -s "$SESSION" -n review   -c "$REVIEW1" || die "tmux new-session failed"
-tmux new-window  -t "$SESSION"    -n rereview -c "$REVIEW2"
-tmux new-window  -t "$SESSION"    -n rework   -c "$WORK"
-
-# One line per window, naming the segment — nothing else. This is on a projector: beats
-# and prompts belong in the presenter pane and RUNBOOK.md, not on the demo screen.
-tmux send-keys -t "$SESSION:review" 'clear; echo ""; echo "  /review-mr !1   —   first pass (standalone mock server)"; echo ""' C-m
-
-tmux send-keys -t "$SESSION:rereview" 'clear; echo ""; echo "  /review-mr !2   —   re-review (a review I started last week)"; echo ""' C-m
-
-tmux send-keys -t "$SESSION:rework" 'clear; echo ""; echo "  /rework-mr !3   —   author hat (query-key factories)"; echo ""' C-m
-
-# Model and effort are per-session flags, so the demo runs small and fast without
-# touching the settings real work uses. A talk is not the place to pay for deep
-# reasoning: every expensive judgement call has been lifted out of the segments —
-# MR !1's explainer and seed are prepared, !2 and !3 are seeded — so what is left is
-# the skills driving their own CLIs, which is what the audience is here to see.
-CLAUDE_ARGS="--model sonnet --effort low"
-
-# !3 gets more, because it is the only segment that still does generative work: it
-# reasons out the cache-key fix, writes it, and walks a longer chain of gated steps
-# than the review segments do. At low effort it ran `present` and then a second gated
-# command before writing its message, which drops the first block — the Stop hook
-# catches that and the retry is correct, but a hook error on a projector is not.
-# Raising effort reduces the chance; it cannot remove it, and the guard is what makes
-# the outcome safe either way.
-REWORK_ARGS="--model sonnet --effort medium"
-
-claude_args_for() {
-  case "$1" in
-    rework) printf '%s' "$REWORK_ARGS" ;;
-    *)      printf '%s' "$CLAUDE_ARGS" ;;
-  esac
-}
-
-# Pre-heat: claude is STARTED here (its cold start is dead air on stage), but the line
-# below it is only typed, never submitted. Nothing a skill does may happen before the
-# show — a segment that has already run is a segment the audience watches you scroll.
-for w in review rereview rework; do
-  tmux send-keys -t "$SESSION:$w" "claude $(claude_args_for "$w")" C-m
-done
-
-# Keystrokes sent at a TUI that is still booting land nowhere, and the failure is
-# invisible: you arrive to an empty prompt and type the whole line yourself under the
-# lights. So wait for each one's input box to actually be drawn rather than guessing a
-# sleep — box-drawing characters appear only once claude is at its prompt.
+# The windows are built by the driver's `stage-*` scenarios (scenarios.py): each starts claude
+# in its checkout, answers the trust-this-folder question a fresh clone always raises (its
+# default is "No, exit", so the Enter pressed on stage would quit claude), waits until the
+# prompt box is drawn — keys sent at a TUI still booting land nowhere — and types the bare
+# command, unsent. Nothing a skill does may happen before the show.
 #
-# Before that box there is usually a "do you trust this folder?" question, because a
-# reset re-clones both checkouts and claude has never seen the directory that results.
-# It must be answered HERE, and this is the sharp edge the whole pre-heat removes: its
-# default option is "No, exit", so the Enter you press on stage to start a segment would
-# have quit claude instead. Second option = trust, then carry on waiting for the box.
-wait_for_claude() {
-  waited=0
-  answered=0
-  while [ "$waited" -lt 60 ]; do
-    pane=$(tmux capture-pane -p -t "$SESSION:$1" 2>/dev/null)
-    case "$pane" in
-      *"trust this folder"*)
-        if [ "$answered" = 0 ]; then
-          tmux send-keys -t "$SESSION:$1" Down
-          tmux send-keys -t "$SESSION:$1" C-m
-          answered=1
-        fi
-        ;;
-      *)
-        case "$pane" in *"│"*) return 0 ;; esac
-        ;;
-    esac
-    sleep 1
-    waited=$((waited + 1))
-  done
-  return 1
-}
-
-# The bare command, in all three. MR !1 used to need a paragraph of instructions after
-# it, and every one of them has since been answered by the rig instead: the explainer
-# and the seed are prepared, and the review worktree is registered, so there is nothing
-# left for the skill to decide or ask. Telling it to "stop after the overview" was in
-# fact harmful — it dropped the first topic out of a pasted block that has to go in
-# whole, and the Stop hook caught that on stage.
-send_prompt() {
-  wait_for_claude "$1" || { warn "claude in '$1' did not reach its prompt — type the line yourself"; return; }
-  tmux send-keys -t "$SESSION:$1" "$2"
-}
-
-send_prompt review   '/review-mr !1'
-send_prompt rereview '/review-mr !2'
-send_prompt rework   '/rework-mr !3'
+# Model and effort are per-session flags, so the demo runs small and fast without touching
+# the settings real work uses. Every expensive judgement call has been lifted out of the
+# segments (MR !1's explainer and seed are prepared, !2 and !3 are seeded), so what is left
+# is the skills driving their own CLIs. The scenarios add the effort: low for the reviews,
+# medium for !3, the one segment that still reasons out and writes a fix.
+MODEL=sonnet
+python3 "$E2E/drive.py" showcase stage-review stage-rereview stage-rework \
+  --session "$SESSION" --model "$MODEL" --pace 0 || die "the driver could not build the windows"
 
 tmux select-window -t "$SESSION:review"
 
-ok "three windows created, claude running (reviews: $CLAUDE_ARGS · rework: $REWORK_ARGS), each prompt typed but NOT submitted"
+ok "three windows created, claude running on $MODEL, each prompt typed but NOT submitted"
 tmux list-windows -t "$SESSION" -F '         #{window_index} #{window_name}  #{pane_current_path}'
 printf '\n   attach:  tmux attach -t %s\n   then:    nothing — press Enter in a window when its segment starts\n' "$SESSION"

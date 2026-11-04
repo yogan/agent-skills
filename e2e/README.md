@@ -13,6 +13,10 @@ Talk-day checklist and run of show: [RUNBOOK.md](RUNBOOK.md).
 | `bootstrap.py` | one-time: users, deterministic tokens, group, project, `glab` auth |
 | `fixture.py` | resettable: branches, the three MRs, seeded threads, skill state |
 | `tmux-demo.sh` | talk day: verify the rig, reset it only if needed, build the demo tmux session |
+| `drive.py` | drives a real claude in tmux through a scenario: `verify` checks it, `showcase` shows it |
+| `scenarios.py` | the scenarios `drive.py` runs |
+| `news.py` | MR !1 changes while its review waits: `reply`, `push`, `both` or `fix`, as its author (the review-ui mod's inbox); MR !3 as a whole: `approve` (its reviewer), `merge` |
+| `.runs/` | `drive.py verify` captures, one folder per run (gitignored) |
 | `patches/` | the frozen MR diffs (`mr1-flaws.patch`, `mr2/`, `mr3/`) |
 | `artifacts/` | MR !1's frozen explainer and review-branch seed — tracked, so the live first pass generates neither |
 | `.env.local` | generated token/host values (gitignored) |
@@ -124,6 +128,34 @@ python3 ~/.claude/skills/rework-mr/scripts/threads.py sync --iid 3
 
 `glab api user` must run **inside a demo checkout** — glab resolves its host from the git
 remote, so from `e2e/` (a GitHub remote) it returns `401`, not `frank`.
+
+## Driving a real session
+
+`drive.py` starts claude in tmux, sends it prompts and keys, and reads its screen. Two modes
+run the same scenarios (`python3 drive.py list`):
+
+```sh
+python3 drive.py verify rework-3          # detached, Haiku, exits non-zero naming the failed step
+python3 drive.py verify smoke --keep      # leave the tmux session up to look at
+python3 drive.py showcase rework-3        # a window in your tmux, your model; Enter steps it
+python3 drive.py showcase rework-3 --pace 4    # or unattended, 4 s between steps
+```
+
+**verify** runs at a fixed 160×50, on Haiku unless `--model` says otherwise, and leaves your
+own settings out, so your Stop hooks, skills, CLAUDE.md and permission rules play no part: the
+repo's skills come back in as a plugin, and the scenario carries its own allow list. A
+scenario marked `rig` resets the fixture first (~30 s), because the run before it wrote skill
+state and posted to the merge request; `--no-reset` skips that. After every step the screen is
+saved as text and with colours under `.runs/<time>-<scenario>/`. A run costs a few cents and
+well under a minute; the model is only needed where the skill judges, drafts or fixes.
+
+**showcase** opens a window in the tmux session you are in (or `--session NAME`), with your
+settings and your model, and waits for Enter before each step. A scenario that ends in a
+handover leaves claude running with its line typed: `tmux-demo.sh` builds the talk-day windows
+that way, from the `stage-*` scenarios.
+
+A path to a `.py` file that defines `SCENARIOS` runs that file instead, for a one-off probe
+that does not belong in the repo.
 
 ## Why it is built this way
 
