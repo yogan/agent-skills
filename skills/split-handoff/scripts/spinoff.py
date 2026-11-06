@@ -53,6 +53,7 @@ _REPO_ROOT = os.path.dirname(
 if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
 
+from lib import tmux  # noqa: E402
 from lib.cli import die  # noqa: E402
 from lib.git import REMOTE, default_base, git  # noqa: E402
 
@@ -186,10 +187,19 @@ def launch(p, env=None, run=subprocess.run, model=None):
     env = os.environ if env is None else env
     cmd = agent_command(prompt_for(p), env, model)
     where = p.get("worktree") or p["dir"]
-    if not env.get("TMUX"):
-        return f"not in tmux; start it yourself:\n  cd {shlex.quote(where)} && {shlex.join(cmd)}"
+    # A Claude Code background session has lost both variables; `own_pane` finds the pane
+    # it is shown in, where there is one (see lib/tmux.py).
+    def lookup(argv):
+        try:
+            proc = run(argv, capture_output=True, text=True)
+        except (OSError, subprocess.SubprocessError):
+            return 1, ""
+        return proc.returncode, proc.stdout
+    pane = tmux.own_pane(env, lookup)
+    if not env.get("TMUX") and not pane:
+        why = tmux.background_hint(env) if tmux.in_background(env) else "not in tmux"
+        return f"{why}; start it yourself:\n  cd {shlex.quote(where)} && {shlex.join(cmd)}"
     place = []
-    pane = env.get("TMUX_PANE")
     if pane:
         here = run(["tmux", "display-message", "-p", "-t", pane, "#{window_id}"],
                    capture_output=True, text=True).stdout.strip()

@@ -32,12 +32,21 @@ def out(*args, cwd):
                           text=True).stdout.strip()
 
 
+def no_real_pane(case):
+    """Tests that run the real `start` would otherwise find the pane of whoever runs the
+    suite through the process tree, and open a real window in their tmux."""
+    stub = unittest.mock.patch.object(S.tmux, "own_pane", lambda *a, **k: "")
+    stub.start()
+    case.addCleanup(stub.stop)
+
+
 class Repo(unittest.TestCase):
     """A clone of a bare remote whose main has one commit more than the clone's feature
     branch started from, so "from the default branch" and "from HEAD" differ. It already
     keeps one worktree in <clone>.wt, so spin-offs may go there without asking."""
 
     def setUp(self):
+        no_real_pane(self)
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         self.tmp = os.path.realpath(tmp.name)
@@ -155,6 +164,7 @@ class TestDir(unittest.TestCase):
     """A side task that is no branch: the session starts in a directory, nothing in git."""
 
     def setUp(self):
+        no_real_pane(self)
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         self.dir = os.path.realpath(tmp.name)
@@ -309,10 +319,31 @@ class TestLaunch(unittest.TestCase):
 
     def test_outside_tmux_hands_the_command_over(self):
         calls = []
-        outcome = S.launch(self.P, {}, self.runner(calls))
-        self.assertEqual(calls, [])
+        outcome = S.launch(self.P, {}, self.runner(calls, stdout=""))
+        self.assertNotIn(["tmux", "new-window"], [c[:2] for c in calls])
         self.assertIn("cd /w/app.wt/x && claude", outcome)
 
+    def test_a_background_session_opens_beside_the_pane_it_is_shown_in(self):
+        """Claude Code's background sessions lose TMUX and TMUX_PANE; lib/tmux.py finds
+        the pane from Claude Code's session records (tested there)."""
+        calls = []
+        with unittest.mock.patch.object(S.tmux, "own_pane", lambda *a, **k: "%1"):
+            outcome = S.launch(self.P, {}, self.runner(calls))
+        argv = calls[-1]
+        self.assertEqual(argv[:3], ["tmux", "new-window", "-d"])
+        self.assertEqual(argv[argv.index("-a") + 2], "@7")
+        self.assertEqual(outcome, "started in tmux window 3 (x)")
+
+    def test_a_background_session_no_pane_shows_says_why(self):
+        calls = []
+        env = {"CLAUDE_PID": "800"}
+        with unittest.mock.patch.object(S.tmux, "own_pane", lambda *a, **k: ""), \
+                unittest.mock.patch.object(S.tmux, "_records", lambda: [{"pid": 800, "kind": "bg", "jobId": "8b2c5945", "sessionId": "abc"}]):
+            outcome = S.launch(self.P, env, self.runner(calls))
+        self.assertNotIn(["tmux", "new-window"], [c[:2] for c in calls])
+        self.assertIn("runs in the background", outcome)
+        self.assertIn("`claude stop 8b2c5945`", outcome)
+        self.assertIn("cd /w/app.wt/x && claude", outcome)
 
 if __name__ == "__main__":
     unittest.main()

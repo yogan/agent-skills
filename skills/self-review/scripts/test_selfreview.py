@@ -146,6 +146,22 @@ class TestShow(Repo):
         write(self.path("new.txt"), "n\n")
         self.assertEqual(self.show("work"), [(["diff", "HEAD"], [("new.txt", 1, 0)])])
 
+    def test_a_background_session_without_a_pane_is_told_how_to_get_one(self):
+        """Not the generic Hunk failure: the author needs to know the session left its
+        pane, and how to bring it back (see lib/tmux.py)."""
+        err = io.StringIO()
+        with patch.object(S.hunk, "show_review", lambda *a: None), \
+                patch.object(S, "guard_switch", lambda *a, **k: None), \
+                patch.object(S.hunk, "installed", lambda: False), \
+                patch.object(S.hunk, "in_tmux", lambda: False), \
+                patch.object(S.tmux, "_records", lambda: [{"pid": 800, "kind": "bg", "jobId": "8b2c5945", "sessionId": "abc"}]), \
+                patch.dict(os.environ, {"CLAUDE_PID": "800"}), \
+                contextlib.redirect_stderr(err), self.assertRaises(SystemExit):
+            S.show("1", self.clone)
+        self.assertIn("runs in the background", err.getvalue())
+        self.assertIn("`claude stop 8b2c5945`", err.getvalue())
+        self.assertIn("claude --resume", err.getvalue())
+
     def test_there_is_no_uncommitted_change_to_show_in_a_clean_tree(self):
         with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
             self.show("work")

@@ -33,7 +33,7 @@ _REPO_ROOT = os.path.dirname(
 if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
 
-from lib import hunk  # noqa: E402
+from lib import hunk, tmux  # noqa: E402
 from lib.cli import die  # noqa: E402
 from lib.git import default_base, git  # noqa: E402
 
@@ -144,6 +144,8 @@ def show(target, cwd=None, after_amend=False):
     shown_before = hunk.mark(sid, SHOWN) if sid else ""
     shown = hunk.show_review(repo, LABEL, args, stat)
     if not shown:
+        if tmux.in_background() and not hunk.in_tmux():
+            die(tmux.background_hint())
         die("the Hunk window could not be made to show exactly this diff (needs tmux and "
             "hunk; check `hunk session list`)")
     hunk.set_mark(shown[0], SHOWN, shows)

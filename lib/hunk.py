@@ -46,6 +46,8 @@ import shlex
 import shutil
 import subprocess
 
+from lib import tmux
+
 # Marks a tmux window as belonging to one agent session. See the module docstring for why
 # this lives on the window rather than in a file.
 OWNER_OPT = "@agent-skills-owner"
@@ -100,8 +102,14 @@ def installed():
     return bool(shutil.which("hunk") and shutil.which("tmux"))
 
 
+def _own_pane():
+    """The pane this agent runs in, also in a session that lost `TMUX_PANE` (see
+    lib/tmux.py), looked up through `_run` like every other tmux call."""
+    return tmux.own_pane(run=_run)
+
+
 def in_tmux():
-    return bool(os.environ.get("TMUX"))
+    return bool(os.environ.get("TMUX")) or bool(_own_pane())
 
 
 def owner_id():
@@ -110,7 +118,7 @@ def owner_id():
     Falls back to the pane the agent itself runs in: two agents cannot share a pane, so
     that is still a genuine per-agent identity where the session id is not exported.
     """
-    return os.environ.get("CLAUDE_CODE_SESSION_ID") or os.environ.get("TMUX_PANE") or ""
+    return os.environ.get("CLAUDE_CODE_SESSION_ID") or _own_pane()
 
 
 def sessions():
@@ -189,7 +197,7 @@ def spawn_session(repo, label, owner, sleep=None, cmd="hunk diff"):
     # read together constantly — switch over, read the diff, switch back — and on a busy
     # tmux the far end can be six windows away. Dropped when the window cannot be
     # identified, which only leaves the placement to tmux's default.
-    here = _window_of_pane(os.environ.get("TMUX_PANE") or "")
+    here = _window_of_pane(_own_pane())
     place = ["-a", "-t", here] if here else []
     rc, out = _run(["tmux", "new-window", "-d", "-P", "-F", "#{pane_id}"] + place
                    + ["-n", label, "-c", repo, cmd])
@@ -432,7 +440,7 @@ def show_patch(path, label, cwd, owner=None, sleep=None):
     A patch session has no repository, so it is found by the owner mark alone
     (`find_session(None, …)`): one window per agent, reloaded for each diff it shows.
     """
-    if not in_tmux() or not installed():
+    if not installed() or not in_tmux():
         return None
     owner = owner or owner_id()
     if not owner:
@@ -496,7 +504,7 @@ def show_review(repo, label, args, expect_stat, owner=None, sleep=None):
 
 def _own_window(repo, label, owner, sleep):
     """This agent's viewer for `repo`, opened beside it if there is none yet, or None."""
-    if not in_tmux() or not installed():
+    if not installed() or not in_tmux():
         return None
     owner = owner or owner_id()
     if not owner:

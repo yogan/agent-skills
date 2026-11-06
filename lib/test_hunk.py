@@ -24,6 +24,14 @@ from lib import hunk                                   # noqa: E402
 REPO = "/w/acme-api"
 
 
+def setUpModule():
+    """Never read the machine's own Claude Code session records: in a background session
+    they would decide which pane these tests see."""
+    stub = patch.object(hunk.tmux, "_records", lambda: [])
+    stub.start()
+    unittest.addModuleCleanup(stub.stop)
+
+
 def stat_of(n):
     """A caller's [(path, added, removed)] for a diff of `n` files — the shape
     `show_working_diff` now compares against, rather than a bare count."""
@@ -610,6 +618,35 @@ class TestWindowPlacement(unittest.TestCase):
         fake = FakeRun(new_pane="%9", window_ids={})
         self.spawn(fake, TMUX_PANE="%2")
         self.assertNotIn("-a", self.new_window(fake))
+
+
+class TestBackgroundSession(unittest.TestCase):
+    """A Claude Code background session has no `TMUX` or `TMUX_PANE`. `lib/tmux.py` finds
+    the pane it is shown in when there is one; these pin what this module does with that
+    answer, either way."""
+
+    def show(self, fake, pane, **env):
+        with patch.dict(os.environ, env, clear=True), \
+                patch.object(hunk.tmux, "own_pane", lambda *a, **k: pane), \
+                patch.object(hunk, "installed", lambda: True), \
+                patch.object(hunk, "_run", fake):
+            return hunk.show_working_diff(REPO, "!123", stat_of(1), sleep=lambda _s: None)
+
+    def test_the_window_opens_beside_the_pane_the_session_is_shown_in(self):
+        fake = FakeRun(new_pane="%9", window_ids={"%2": "@7"})
+        self.assertIsNotNone(self.show(fake, "%2", CLAUDE_CODE_SESSION_ID="me"))
+        argv = next(c for c in fake.calls if c[:2] == ["tmux", "new-window"])
+        self.assertEqual(argv[argv.index("-a") + 1:argv.index("-a") + 3], ["-t", "@7"])
+
+    def test_the_pane_is_the_identity_when_the_session_id_is_missing(self):
+        fake = FakeRun(new_pane="%9", window_ids={"%2": "@7"})
+        self.assertIsNotNone(self.show(fake, "%2"))
+        self.assertEqual(fake.owners["%9"], "%2")
+
+    def test_no_pane_is_outside_tmux(self):
+        fake = FakeRun()
+        self.assertIsNone(self.show(fake, "", CLAUDE_CODE_SESSION_ID="me"))
+        self.assertEqual(fake.calls, [])
 
 
 class TestClosing(unittest.TestCase):
