@@ -16,7 +16,8 @@ else is consulted, so a session the mod never saw renders as before. `REVIEW_UI_
 or `0`) overrides the answer, for tests and unusual launchers.
 
 The icons are Nerd Fonts v3 Material Design glyphs, chosen by name and written here as their
-codepoints as `glyphnames.json` (v3.5.1) gives them. Look a new one up by name there; a
+codepoints as `glyphnames.json` (v3.5.1) gives them. Look a new one up by name there
+(`python3 lib/glyphs.py <name>`, or `--search <word>`); a
 codepoint typed from memory is the wrong glyph more often than not.
 """
 import json
