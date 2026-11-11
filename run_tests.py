@@ -43,6 +43,7 @@ covers. Not in a loop. Ever.
 import ast
 import hashlib
 import json
+import os
 import re
 import subprocess
 import sys
@@ -81,11 +82,18 @@ def find_test_files(include_slow, patterns):
         yield path
 
 
+# What the session running the suite says about itself, which no test may read by accident:
+# whether the review-ui mod draws here comes from the session id and a mark file (lib/ui.py),
+# so a suite run from a marked session once failed five files nowhere else.
+SESSION_ENV = re.compile(r"^(?:CLAUDE_CODE_SESSION_ID|REVIEW_UI_\w+)$")
+
+
 def run_one(job):
     path, klass = job
     argv = [sys.executable, str(path)] + ([klass] if klass else [])
+    env = {k: v for k, v in os.environ.items() if not SESSION_ENV.match(k)}
     started = time.monotonic()
-    proc = subprocess.run(argv, capture_output=True, text=True)
+    proc = subprocess.run(argv, capture_output=True, text=True, env=env)
     return job, proc, time.monotonic() - started
 
 
@@ -315,12 +323,37 @@ def changed_files():
     return out
 
 
+def _readers(rel, files):
+    """The Python files a changed non-Python file reaches: every one that names it (a skill's
+    SKILL.md, a script's JSON spec, a shell view the tests run), and for a file of a mod, the
+    bridge that runs the mod's own tests. The names are read from the source, so a reader
+    added later is found without anyone listing it here; a file nothing names is read by no
+    test this selector can see, and declines. A name matches whole, so `SKILL.md` is found and
+    over-selects, which costs seconds; no test here reaches a file by a glob of its kind,
+    which would read it without naming it."""
+    parts = Path(rel).parts
+    out = set()
+    if len(parts) > 2 and parts[0] == "mods":
+        bridge = REPO_ROOT / "mods" / "test_mods.py"
+        if bridge in files:
+            out.add(bridge)
+    name = re.compile(r"(?<![\w.-])" + re.escape(Path(rel).name) + r"(?![\w-])")
+    for path in files:
+        try:
+            if name.search(path.read_text(encoding="utf-8", errors="replace")):
+                out.add(path)
+        except OSError:
+            continue
+    return out
+
+
 def select_changed(files):
     """(test files to run, note) for `--changed`, or (None, why) to fall back to everything.
 
     Deliberately conservative: this is a way to make the edit loop cheap, NOT a substitute for
-    the full suite before you commit. Anything it cannot reason about — a changed non-Python
-    file, a changed file it cannot resolve — makes it decline and run everything, because a
+    the full suite before you commit. A non-Python file counts as a change to every Python
+    file that names it (`_readers`); anything it cannot reason about — a file nothing names,
+    a changed file it cannot resolve — makes it decline and run everything, because a
     selector that quietly skips the test that would have failed is worse than a slow one.
     """
     raw = changed_files()
@@ -342,10 +375,30 @@ def select_changed(files):
             if browser in files:
                 changed.add(browser)
         else:
-            unknown.append(rel)
+            readers = _readers(rel, files)
+            if not readers:
+                unknown.append(rel)
+            changed |= readers
     if unknown:
         return None, f"{len(unknown)} changed file(s) it cannot map ({unknown[0]}, ...)"
     return _dependents(changed, files), f"{len(changed)} changed module(s)"
+
+
+FAILED_RE = re.compile(r"^(FAIL|ERROR): (\S+) \(([^)]*)\)", re.M)
+
+
+def failed_tests(output):
+    """Each failed test in unittest's output, with the first line of what it raised."""
+    out = []
+    blocks = re.split(r"^={50,}\n", output, flags=re.M)
+    for block in blocks:
+        m = FAILED_RE.match(block)
+        if not m:
+            continue
+        raised = [ln for ln in block.splitlines() if re.match(r"^\w+(?:\.\w+)*(?:Error|Exception|Exit)\b", ln)]
+        what = raised[-1].strip() if raised else ""
+        out.append(f"{m.group(1)} {'.'.join(m.group(3).split('.')[-2:])}" + (f" — {what[:160]}" if what else ""))
+    return out
 
 
 def main():
@@ -372,19 +425,7 @@ def main():
         print(f"no test_*.py files matched {patterns or 'anything'}", file=sys.stderr)
         return 1
 
-    # Only a WHOLE run is cached, and only a passing one. A filtered or `--changed` run proves
-    # less than it looks like it does, and caching it would let a green from four files stand
-    # in for the suite.
-    whole = not patterns and not only_changed
-    fingerprint = _fingerprint("slow" if include_slow else "fast") if whole else None
-    if not force:
-        record = _cached_pass(fingerprint)
-        if record:
-            print(f"skipped: {record['files']} file(s), {record['tests']} tests passed at "
-                  f"{record['at']} today, and nothing has changed since — not source, not d2, "
-                  f"not node.\nrun `python3 run_tests.py --force` to run them anyway.")
-            return 0
-
+    selected = None
     if only_changed:
         every = [p for p in REPO_ROOT.rglob("*.py") if "__pycache__" not in p.parts]
         selected, note = select_changed(set(every))
@@ -397,6 +438,20 @@ def main():
             if not files:
                 print("nothing to run — but run the full suite before you commit")
                 return 0
+
+    # Only a WHOLE run is cached, and only a passing one. A filtered or narrowed `--changed`
+    # run proves less than it looks like it does, and caching it would let a green from four
+    # files stand in for the suite. A `--changed` run that declined IS the whole run, so it
+    # reads and writes the record too: the hook's run after a full pass is then free.
+    whole = not patterns and selected is None
+    fingerprint = _fingerprint("slow" if include_slow else "fast") if whole else None
+    if not force:
+        record = _cached_pass(fingerprint)
+        if record:
+            print(f"skipped: {record['files']} file(s), {record['tests']} tests passed at "
+                  f"{record['at']} today, and nothing has changed since — not source, not d2, "
+                  f"not node.\nrun `python3 run_tests.py --force` to run them anyway.")
+            return 0
 
     # Threads, not processes: each one only waits on a subprocess, so the GIL is never the
     # constraint. Serial, the fast suite is the sum of 26 files; in parallel it is the longest
@@ -453,6 +508,11 @@ def main():
         for rel, stdout, stderr in failures:
             print(f"=== {rel} ===")
             print(stdout + stderr)
+        # Last, so a `tail` of the run says which tests failed and how, without a second run.
+        print("failed:")
+        for rel, stdout, stderr in failures:
+            for line in failed_tests(stdout + stderr) or ["(no test named: the file itself failed)"]:
+                print(f"  {rel}: {line}")
         print(f"FAILED: {len(failures)}/{len(jobs)} job(s), {total_tests} tests attempted "
               f"in {wall:.0f}s")
         return 1

@@ -10,12 +10,15 @@ something had. Over-selection only costs seconds.
 Run: `python3 test_run_tests.py`
 """
 import importlib.util
+import io
 import os
 import subprocess
 import sys
 import tempfile
 import unittest
+from contextlib import redirect_stdout
 from pathlib import Path
+from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
@@ -72,6 +75,10 @@ class TestSelectionCoversTheObviousCase(unittest.TestCase):
         self.assertIn(rt.REPO_ROOT / "skills/visualize/scripts/test_visualize.py", picked)
 
 
+# A file nothing names, this test included: written in pieces so its source does not name it.
+UNNAMED = "docs/no-" + "reader" + ".txt"
+
+
 class TestItDeclinesRatherThanGuess(unittest.TestCase):
     """Anything the selector cannot reason about must fall back to the whole suite."""
 
@@ -86,14 +93,46 @@ class TestItDeclinesRatherThanGuess(unittest.TestCase):
         return rt.select_changed(EVERY)
 
     def test_an_unmappable_file_forces_the_full_run(self):
-        selected, note = self._changed("skills/visualize/SKILL.md")
+        """A file no Python file names is read by no test the selector can see."""
+        selected, note = self._changed(UNNAMED)
         self.assertIsNone(selected)
         self.assertIn("cannot map", note)
 
     def test_one_unmappable_file_poisons_an_otherwise_clean_set(self):
         """It must not run "the tests for the .py part" and call that a pass."""
-        selected, _ = self._changed("lib/gitlab.py", "README.md")
+        selected, _ = self._changed("lib/gitlab.py", UNNAMED)
         self.assertIsNone(selected)
+
+    def test_a_non_python_file_selects_every_test_reaching_a_file_that_names_it(self):
+        """A skill's SKILL.md, a script's JSON spec: whatever names it, and whatever reaches
+        that, runs. It used to decline on every one of them, so each commit touching a
+        SKILL.md ran the whole suite in the hook."""
+        selected, _ = self._changed("skills/rework-mr/scripts/paste-gates.json")
+        self.assertIsNotNone(selected)
+        self.assertIn(rt.REPO_ROOT / "hooks/test_paste_gate.py", selected)
+        self.assertIn(rt.REPO_ROOT / "skills/rework-mr/scripts/test_threads.py", selected)
+
+    def test_a_mod_file_selects_the_mods_bridge_and_the_python_mirroring_it(self):
+        """A mod's TypeScript is tested by the engine, through `mods/test_mods.py`; a Python
+        test that reads one of its files (the icon tables) runs too."""
+        selected, _ = self._changed("mods/review-ui/hooks/panel.ts")
+        self.assertIn(rt.REPO_ROOT / "mods/test_mods.py", selected)
+        self.assertIn(rt.REPO_ROOT / "lib/test_ui.py", selected)
+        selected, _ = self._changed("mods/review-ui/hooks/register.tsx")
+        self.assertIn(rt.REPO_ROOT / "mods/test_mods.py", selected)
+
+    def test_a_declined_run_is_the_whole_run_and_uses_the_days_record(self):
+        """The hook's `--changed` after a full pass used to run everything again, on a tree
+        that had just passed, because a declined run skipped the record."""
+        out = io.StringIO()
+        with mock.patch.object(rt, "select_changed", return_value=(None, "x")), \
+                mock.patch.object(rt, "_fingerprint", return_value="F") as fp, \
+                mock.patch.object(rt, "_cached_pass", return_value={"files": 1, "tests": 2, "at": "10:00"}), \
+                mock.patch.object(sys, "argv", ["run_tests.py", "--changed"]), redirect_stdout(out):
+            self.assertEqual(rt.main(), 0)
+        fp.assert_called_once_with("fast")
+        self.assertIn("skipped", out.getvalue())
+
 
     def test_measure_js_is_attributed_to_the_module_that_shells_out_to_it(self):
         """Nothing imports it, so without this a browser-side change selects nothing."""
@@ -110,6 +149,36 @@ class TestItDeclinesRatherThanGuess(unittest.TestCase):
         selected, note = self._changed()
         self.assertEqual(selected, set())
         self.assertIn("nothing changed", note)
+
+
+class TestIsolation(unittest.TestCase):
+    def test_no_test_sees_the_session_that_runs_the_suite(self):
+        seen = {}
+
+        def fake_run(argv, **kw):
+            seen.update(kw["env"])
+            return subprocess.CompletedProcess(argv, 0, "", "")
+        with mock.patch.dict(os.environ, {"CLAUDE_CODE_SESSION_ID": "s", "REVIEW_UI_DRAWN": "1",
+                                          "HOME": os.environ.get("HOME", "/")}), \
+                mock.patch.object(rt.subprocess, "run", side_effect=fake_run):
+            rt.run_one((Path("x.py"), None))
+        self.assertNotIn("CLAUDE_CODE_SESSION_ID", seen)
+        self.assertNotIn("REVIEW_UI_DRAWN", seen)
+        self.assertIn("HOME", seen)
+
+
+class TestFailureSummary(unittest.TestCase):
+    def test_each_failed_test_is_named_with_what_it_raised(self):
+        """Last in the run, so a `tail` names them: the bare count used to send sessions
+        back for a second full run just to learn which file failed."""
+        output = ("..F\n" + "=" * 70 + "\nFAIL: test_b (test_x.TestThing.test_b)\n" + "-" * 70
+                  + "\nTraceback (most recent call last):\n  File \"x\", line 1\n"
+                  "AssertionError: 1 != 2\n\n" + "=" * 70
+                  + "\nERROR: test_c (test_x.TestOther.test_c)\n" + "-" * 70
+                  + "\nKeyError: 'topics'\n")
+        self.assertEqual(rt.failed_tests(output), [
+            "FAIL TestThing.test_b — AssertionError: 1 != 2",
+            "ERROR TestOther.test_c — KeyError: 'topics'"])
 
 
 class TestDiscovery(unittest.TestCase):
