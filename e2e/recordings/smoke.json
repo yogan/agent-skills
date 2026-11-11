@@ -1,0 +1,25 @@
+{
+ "recorded_from": {
+  "model": null,
+  "session": "written by hand: the driver's own check needs no model"
+ },
+ "streams": [
+  {
+   "name": "main",
+   "first": "Reply with exactly the word PONG and nothing else.",
+   "replies": [
+    {
+     "prompts": [
+      "Reply with exactly the word PONG and nothing else."
+     ],
+     "content": [
+      {
+       "type": "text",
+       "text": "PONG"
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}

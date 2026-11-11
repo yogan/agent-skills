@@ -29,6 +29,7 @@ import re
 import sys
 import unittest
 from pathlib import Path
+os.environ["REVIEW_UI_DRAWN"] = "0"   # the views as without the review-ui mod, whatever session runs this (lib/ui.py)
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
@@ -37,6 +38,23 @@ TESTS = [p for p in REPO_ROOT.rglob("test_*.py") if "__pycache__" not in p.parts
 
 # Any of these means the file has taken responsibility for what it created.
 CLEANS_UP = ("addCleanup", "rmtree", "tearDown", ".cleanup()", "os.unlink", "os.remove")
+
+
+class TestEveryTestRuns(unittest.TestCase):
+    def test_the_main_guard_is_the_last_thing_in_a_test_file(self):
+        """A test class appended after `if __name__ == "__main__": unittest.main()` is
+        defined only after the run that should have found it, so it never runs, and nothing
+        says so: a file once gained a class that way, and later edits kept anchoring new ones
+        on the guard."""
+        import ast
+        guilty = []
+        for path in TESTS:
+            body = ast.parse(path.read_text(encoding="utf-8")).body
+            guards = [i for i, node in enumerate(body) if isinstance(node, ast.If)
+                      and "__main__" in ast.unparse(node.test)]
+            if guards and guards[-1] != len(body) - 1:
+                guilty.append(str(path.relative_to(REPO_ROOT)))
+        self.assertEqual(guilty, [], "code after the __main__ guard never runs under the runner")
 
 
 class TestTemporaryFilesAreCleanedUp(unittest.TestCase):

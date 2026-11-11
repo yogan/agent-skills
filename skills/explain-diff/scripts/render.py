@@ -259,6 +259,7 @@ if _REPO_ROOT not in sys.path:
 # Three names, and the boundary is visible in them: `figure` draws (and knows what a gate is,
 # so this file does not), while `palette` and `render` supply the CSS a HOST PAGE has to ship
 # for a diagram to render in it at all — which is this file's business and nothing else's.
+from lib import diffsize                                     # noqa: E402
 from lib.diagram import figure as _diagram_figure          # noqa: E402
 from lib.diagram import palette as _diagram_palette        # noqa: E402
 from lib.diagram import render as _diagram_render          # noqa: E402
@@ -1008,9 +1009,9 @@ def format_meta(text: str) -> str:
 
 def format_diffstat(diffstat: dict) -> str:
     """Render a {"files", "insertions", "deletions"} diffstat as a small GitLab-style
-    summary: file count plus colored +insertions/-deletions, reusing the page's existing
+    summary: lib/diffsize.py's icon, file count plus colored +insertions/-deletions, reusing the page's existing
     diff-highlight palette. A zero count omits its span, matching GitLab's own behavior."""
-    parts = [f'{diffstat["files"]} file{"s" if diffstat["files"] != 1 else ""}']
+    parts = [f'{diffsize.ICON_SVG} {diffstat["files"]} file{"s" if diffstat["files"] != 1 else ""}']
     if diffstat.get("insertions"):
         parts.append(f'<span style="color:var(--diff-add-fg)">+{diffstat["insertions"]}</span>')
     if diffstat.get("deletions"):

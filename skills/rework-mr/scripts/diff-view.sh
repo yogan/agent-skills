@@ -18,7 +18,7 @@
 # shape: the viewer reloads from the working tree rather than from what is piped here, so
 # a narrowed diff and the window would be showing two different things.
 set -euo pipefail
-t="${1:?usage: diff-view.sh <t> [--note FILE:LINE:TEXT]... [-- git-diff-args...]}"
+t="${1:?usage: diff-view.sh <t> [--note FILE:LINE:TEXT]... [--did TEXT] [--as-agreed | --differs TEXT] [--fixup SHA_SUBJECT]... [--new-commit SUBJECT]... [--iid N] [-- git-diff-args...]}"
 shift
 # Anything before a lone `--` is ours (notes for the viewer); anything after belongs to
 # git. Collected rather than forwarded blindly so the two cannot be confused — and an
@@ -32,6 +32,10 @@ while [ "$#" -gt 0 ] && [ "$1" != "--" ]; do
       [ "$#" -ge 2 ] || { echo "diff-view.sh: --note needs FILE:LINE:TEXT" >&2; exit 2; }
       mine+=("$1" "$2"); shift 2 ;;
     --note=*) mine+=("--note" "${1#--note=}"); shift ;;
+    --as-agreed) mine+=("$1"); shift ;;
+    --did|--differs|--fixup|--new-commit|--iid)
+      [ "$#" -ge 2 ] || { echo "diff-view.sh: $1 needs a value" >&2; exit 2; }
+      mine+=("$1" "$2"); shift 2 ;;
     *)
       echo "diff-view.sh: unknown option '$1'. Arguments for git go after a lone '--':" >&2
       echo "  diff-view.sh $t -- $*" >&2
@@ -45,5 +49,5 @@ SD="$(cd "$(dirname "$0")" && pwd)"
 if [ "$#" -gt 0 ]; then
   git diff "$@" | python3 "$SD/threads.py" diff-view "$t" --plain ${mine[@]+"${mine[@]}"}
 else
-  git diff | python3 "$SD/threads.py" diff-view "$t" ${mine[@]+"${mine[@]}"}
+  git diff HEAD | python3 "$SD/threads.py" diff-view "$t" ${mine[@]+"${mine[@]}"}
 fi

@@ -1,0 +1,78 @@
+{
+ "recorded_from": {
+  "model": "claude-sonnet-5-5",
+  "session": "01ad9af4-98e5-4076-a116-8600c1f6e442.jsonl"
+ },
+ "streams": [
+  {
+   "name": "main",
+   "first": "<command-message>agent-skills:review-mr</command-message> <command-name>/agent-skills:review-mr</command-name> <command-args>!2</command-args>",
+   "replies": [
+    {
+     "content": [
+      {
+       "type": "tool_use",
+       "id": "toolu_01WT3r95Mp6eue3AGrRLpKEr",
+       "name": "Bash",
+       "input": {
+        "command": "SD=~/.claude/skills/review-mr/scripts; ls $SD >/dev/null 2>&1 && echo ok-sd; python3 $SD/findings.py prune --iid 2; python3 $SD/findings.py worktree --iid 2; git worktree list",
+        "description": "Prune old worktrees and find this MR's worktree"
+       }
+      }
+     ],
+     "prompts": [
+      "<command-message>agent-skills:review-mr</command-message> <command-name>/agent-skills:review-mr</command-name> <command-args>!2</command-args>",
+      "Base directory for this skill: {SRC}/agent-skills/e2e/.runs/20261111-184438-rereview-2/skills-plugin/skills/review-mr # Review MR Reviewing **someone else's** GitLab MR. glab-only; nothing reaches Git"
+     ]
+    },
+    {
+     "content": [
+      {
+       "type": "tool_use",
+       "id": "toolu_011NRakAEFymgx9AfRK2m2FM",
+       "name": "Bash",
+       "input": {
+        "command": "SD=~/.claude/skills/review-mr/scripts; cd {SRC}/agent-skills-demo-review-mr2 && git fetch origin && git checkout -f --detach \"origin/$(python3 $SD/findings.py branch --iid 2)\" && python3 $SD/findings.py begun --iid 2",
+        "description": "Fetch, check out MR tip, check review state"
+       }
+      }
+     ]
+    },
+    {
+     "content": [
+      {
+       "type": "tool_use",
+       "id": "toolu_01Jb5DiCd3QwHoWjH93sTFHN",
+       "name": "Bash",
+       "input": {
+        "command": "SD=~/.claude/skills/review-mr/scripts; cd {SRC}/agent-skills-demo-review-mr2 && python3 $SD/findings.py resume --iid 2",
+        "description": "Show resume opener for MR 2"
+       }
+      }
+     ]
+    },
+    {
+     "content": [
+      {
+       "type": "text",
+       "text": "Resumed MR !2. What's new since the last review is in the sidebar inbox, so there's nothing to show or offer here."
+      }
+     ]
+    }
+   ],
+   "ids": {
+    "toolu_01WT3r95Mp6eue3AGrRLpKEr": [
+     "814d73d",
+     "4b562a8",
+     "1d4d7cf"
+    ],
+    "toolu_011NRakAEFymgx9AfRK2m2FM": [
+     "1d4d7cf",
+     "c8c9913",
+     "1d4d7cf",
+     "c8c9913"
+    ]
+   }
+  }
+ ]
+}

@@ -1,7 +1,7 @@
 # Review MR — reference
 
 Draft rules and the re-review loop in full. `SD=~/.claude/skills/review-mr/scripts`.
-The skill is **read-only against GitLab** — you draft, the user posts and resolves.
+Nothing reaches GitLab but what the user posts — you draft; they post (in the UI, or with the review-ui mod's Post button) and resolve.
 
 ## Comments you posted yourself
 
@@ -108,7 +108,7 @@ A review spans days; the state file persists across sessions. Each check:
    python3 $SD/findings.py sync --iid <n>  # overview table + a one-line push banner; paste verbatim
    ```
    `sync` reconciles toward GitLab (the source of truth for a thread's existence and its
-   resolved flag). The local file only overlays *your* ack/wontfix. A thread the author
+   resolved flag). The local file only overlays *your* ack. A thread the author
    resolved shows `◐ needs-ack`, not closed — your ack is the only close. `sync` also adopts
    threads you didn't open (see *Inbound threads* below).
 
@@ -117,7 +117,7 @@ A review spans days; the state file persists across sessions. Each check:
    ```bash
    python3 $SD/findings.py updates --iid <n>  # each push since your baseline; paste verbatim
    ```
-   Each push is a `- **push N:** <url>` bullet with a nested `  - ` detail line — either a
+   Each push is a `- **[push N](<url>):**` bullet with a nested `  - ` detail line — either a
    **diffstat** (`` `+33/−23` · 2 files ``) + **topics touched**, or — when the branch was rebased
    (its base SHA moved) — a rebase classification. Content is checked FIRST: not a raw
    old-head-vs-new-head compare (that also contains whatever the rebase pulled in from the new
@@ -164,20 +164,19 @@ A review spans days; the state file persists across sessions. Each check:
    the original defect. Re-deriving the original problem from the code and calling it "not
    fixed" is a classic mistake — read the notes first.
    - **Agreed & done** — the author did what the thread converged on (the fix, or the agreed
-     TODO/defer, or a clean answer to a question) → say so plainly so the user can ack fast, or
-     `⊘ wontfix --ticket` for a tracked defer. **Confirm via `diff <t>`** and say in 2–4 bullets
+     TODO/defer, or a clean answer to a question) → say so plainly so the user can ack fast.
+     **Confirm via `diff <t>`** and say in 2–4 bullets
      what changed — server-side, so it survives the force-pushes that prune the baseline sha
      locally; the user sees the diff itself only when they ask (`diff <t> --show`). Use the
      diff to *confirm the agreed change landed*, not to reopen a settled scope.
    - **Author replied without a code change** (pushed back, or asked *you* something) → this is
      **not** a "fixed" case. Surface their point; it needs *your reply* (draft one) or your
-     agreement (→ wontfix), never a silent ack.
+     agreement (→ ack), never a silent ack.
    - **Diverged / partial / subtle** → walk it carefully, show the diff, don't rush.
 
    On the user's decision:
    ```bash
    python3 $SD/findings.py set <t> --state acked --iid <n>                   # ● satisfied
-   python3 $SD/findings.py set <t> --state wontfix --ticket ABC-1 --iid <n>  # ⊘ agreed not to fix / deferred
    python3 $SD/findings.py set <t> --state reset --iid <n>                   # clear an overlay (re-open)
    ```
    Not satisfied → draft a follow-up reply (draft rules above) with `set <t> --draft`, whose

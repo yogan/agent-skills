@@ -8,22 +8,27 @@ is in flight. **Never batch several topics into one diff/push unless the user ex
 one push and one `Fixed: <url>` per topic by default. Two ACK stops per topic: after the diff
 (before any commit/push) and after the reply draft (before posting).
 
-A topic whose plan is reply-only / push-back / question skips steps 1–9 — just draft and send
-the reply (step 10).
+A topic whose plan is reply-only / push-back / question skips steps 1–6 — just draft and send
+the reply (step 7).
 
 1. **Bug/problem pointed out → write a failing test first** (use the `tdd` skill), then fix.
    For non-bug changes, make the change directly.
 2. Keep the code clean for the *merged* result: no "changed from before" / "we no longer do X"
    comments, no leftovers of earlier iterations.
-3. **Light QA while iterating** (unit tests, linter/formatter — partial is fine). You know the
-   project's commands; this skill doesn't hardcode them.
+3. **The checks**: `python3 $SD/threads.py verify <t>` runs the repository's commit and push
+   hooks ahead of time and the fast local checks of the parts of the repository it touches (no
+   end-to-end tests: those are CI's), and stores that they passed, so the push
+   runs none of them again on the same files. Iterate until it passes. The commands come from
+   a reading of the repository's hooks and test setup you store once (`checks`).
 4. **Silently, determine the fixup target(s)** — blame the changed hunks, group by the branch
    commit that introduced them (a single topic's change may touch **several** original commits).
    **Exception:** if a hunk fixes/refactors code the branch did *not* add (blame older than the
    branch point), that's a separate real commit made *before* the fixups — never fold
    pre-existing-code changes into MR commits; flag such splits to the user. Do this *before*
    showing the diff — blaming *after* is the bug (see below).
-5. Only THEN, as your **final** action before replying, run `diff-view.sh <t>` and **paste its
+5. Only THEN, as your **final** action before replying, run `diff-view.sh <t> --fixup "<sha>
+   <subject>"` (one `--fixup` per target, one `--new-commit "<subject>"` per new commit: the
+   push makes the commits these name) and **paste its
    ENTIRE output verbatim as the rest of your message, then STOP**: first a short summary —
    what the reviewer asked for, by name, and what you did about it ("Robin asked for X; rewrote
    `Foo.bar()` to … and added two tests") — then the fixup target(s), one per commit,
@@ -52,35 +57,20 @@ the reply (step 10).
    the window**, so that output is your only copy — address every line of it in this turn.
    Your own notes are cleared each time a diff goes up, so the window never shows an
    annotation belonging to a diff that has been replaced.
-   Then **fixup — not a new commit** (the target(s) were already determined in step 4). A
-   `fix(...)`/`refactor(...)` commit for code this MR branch introduced is almost always wrong
-   (keep history clean for merge):
+   Then push — **a fixup, not a new commit** (the target was determined in step 4):
    ```bash
-   git commit --fixup=<sha>          # repeat per target commit
+   python3 $SD/threads.py push <t>
    ```
-7. **Capture the diff baseline before the first push** of this topic:
-   ```bash
-   python3 $SD/diff-url.py baseline
-   python3 $SD/threads.py set <t> --start-sha <sha>
-   ```
-8. `git rebase --autosquash` onto the base (non-interactive), then **full QA** (the hard gate —
-   always run the complete check suite before any push), then:
-   ```bash
-   git push --force-with-lease --force-if-includes
-   python3 $SD/threads.py hunk-close
-   ```
-   The rebase left the working tree clean, so the viewer would otherwise sit there showing a
-   diff that no longer exists while the conversation moves to the next topic. `hunk-close` is
-   silent when it closes the window and when there was none; it speaks only if a note arrived
-   after the last read, and then it leaves the window alone — that note is a further change on
-   this topic, to be read with `hunk-notes` and worked from step 1.
-9. Build the topic's diff URL (spans every push for this topic via the stored baseline):
-   ```bash
-   python3 $SD/diff-url.py url --start-sha <stored-start-sha>
-   python3 $SD/threads.py set <t> --diff-url <url>
-   ```
-   Never a commit URL — fixup + force-push rewrites commit hashes and rots the link.
-10. Reply — thread + draft + URL are shown via **one** command so none can be dropped:
+   It captures the diff baseline on the topic's first push, commits the staged fix as
+   `fixup!` of the one target named on `diff-view`'s `--fixup`, squashes it in, and
+   force-pushes (`--force-with-lease --force-if-includes`). The hooks run ahead of time are
+   skipped only where the files committed are exactly the ones checked; a hook with no early
+   run, and every hook on a record's first push, runs for real. Then it stores the topic's diff
+   URL (spanning every push of the topic; never a commit URL, which force-push rots) and closes
+   the viewer window. Exit 3 means it stopped and printed what to do instead: verify again
+   after a change, answer notes in the viewer, or, for a fix that goes into several commits
+   or makes a new one, the commits it lists and then `push <t> --committed --token <token>`.
+7. Reply — thread + draft + URL are shown via **one** command so none can be dropped:
    a. Store the reply **body only** (raw, no `>` prefixes) in the state file with a **quoted
       heredoc** — `<<'REPLY_EOF'`, so backticks and `$` in the body are not expanded by the
       shell. Draft rules (SKILL.md): body in the thread's language, **everything else —

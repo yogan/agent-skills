@@ -9,6 +9,7 @@ tail as prose, and a code anchor read against the wrong version shows unrelated 
 """
 
 import argparse
+import io
 import json
 import os
 import re
@@ -16,6 +17,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from contextlib import redirect_stdout
 from unittest import mock
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -23,6 +25,7 @@ sys.path.insert(0, HERE)
 
 import threads as T  # noqa: E402
 from lib import critical_manifest  # noqa: E402
+os.environ["REVIEW_UI_DRAWN"] = "0"   # the views as without the review-ui mod, whatever session runs this (lib/ui.py)
 
 
 def _spec():
@@ -235,7 +238,7 @@ class TestDiffViewRouting(unittest.TestCase):
             T.hunk, "show_working_diff", return_value=("sid", "9 (◈!123)")
         ):
             out = T.diff_view_block("t3", SAMPLE_DIFF)
-        self.assertIn("3 files, +3 −4", out)
+        self.assertIn("\uf4d2 3 files +3 −4", out)
         self.assertIn("tmux window 9 (◈!123)", out)
         self.assertNotIn("```diff", out)
         self.assertTrue(out.rstrip().endswith("notes on the diff in that window."))
@@ -1024,6 +1027,17 @@ class TestReplyDraft(unittest.TestCase):
         ):
             self.assertIn(kept, out)
 
+    def test_refine_of_a_drawn_reply_is_not_set_off_by_the_draft_it_rewords(self):
+        """Where the mod draws, the topic's card carries its draft. A reworded draft is no
+        change of context: the refined card is the draft alone."""
+        with mock.patch.dict(os.environ, {"REVIEW_UI_DRAWN": "1"}), \
+                mock.patch.object(T, "step_of", return_value="reply"):
+            state = self._shown("Gefixt, und noch viel mehr.\n")
+            T.topic_for(state, "t1")["reply"] = "Kürzer.\n"
+            out = T.render_reply_view(state, "t1", "Kürzer.\n", refine=True)
+        self.assertNotIn("changed since this was last shown", out)
+        self.assertNotIn("unbounded retry", out)
+
     def test_refine_falls_back_when_the_context_was_never_shown(self):
         """The short render must not be a topic's first reply view — the user would be
         asked about a comment they have not seen. Nothing recorded, nothing to leave out."""
@@ -1151,12 +1165,64 @@ class TestCodeContext(unittest.TestCase):
         try:
             out = T.render_code_context(self.thread())
             self.assertIn("► 10 | const line10 = 10", out)  # not line9, as reviewed
-            self.assertIn("working tree differs", out)
+            # The edit only moved the commented line: nothing to say about it.
+            self.assertNotIn("Changed since the comment", out)
         finally:
             self._write("\n".join(f"const line{i} = {i}" for i in range(1, 31)) + "\n")
 
-    def test_no_drift_note_when_the_tree_matches(self):
-        self.assertNotIn("working tree differs", T.render_code_context(self.thread()))
+    def test_a_change_on_the_commented_lines_follows_as_a_diff(self):
+        lines = [f"const line{i} = {i}" for i in range(1, 31)]
+        lines[9] = "const line10 = 100"
+        self._write("\n".join(lines) + "\n")
+        try:
+            out = T.render_code_context(self.thread())
+            self.assertIn("► 10 | const line10 = 10", out)
+            after = out.split("Changed since the comment", 1)[1]
+            self.assertIn("-const line10 = 10", after)
+            self.assertIn("+const line10 = 100", after)
+        finally:
+            self._write("\n".join(f"const line{i} = {i}" for i in range(1, 31)) + "\n")
+
+    def test_the_change_s_heading_says_working_tree_only_while_it_is_there(self):
+        lines = [f"const line{i} = {i}" for i in range(1, 31)]
+        lines[9] = "const line10 = 100"
+        self._write("\n".join(lines) + "\n")
+        try:
+            self.assertIn("Changed since the comment, in your working tree:", T.render_code_context(self.thread()))
+            self._git("commit", "-qam", "fix")         # committed, as once pushed
+            out = T.render_code_context(self.thread())
+            self.assertIn("_Changed since the comment:_", out)
+            self.assertNotIn("working tree", out)
+        finally:
+            self._git("reset", "-q", "--hard", self.sha)
+
+    def test_the_reply_card_shows_the_pushed_fix_under_its_own_heading_after_the_plan(self):
+        lines = [f"const line{i} = {i}" for i in range(1, 31)]
+        lines[9] = "const line10 = 100"
+        self._write("\n".join(lines) + "\n")
+        state = {"topics": [{"id": "t1", "summary": "x", "thread_ids": ["d1"], "decision": "y",
+                             "plan": "Make it 100.", "outcome": "fix", "diff_url": "http://gl/d"}],
+                 "threads": {"d1": {**self.thread(), "resolved": False, "notes": [{"author": "Robin", "body": "100?"}]}}}
+        try:
+            self._git("commit", "-qam", "fix")
+            with mock.patch.dict(os.environ, {"REVIEW_UI_DRAWN": "1"}), \
+                    mock.patch.object(T, "step_of", return_value="reply"):
+                out = T.render_quote(state, "t1")
+        finally:
+            self._git("reset", "-q", "--hard", self.sha)
+        self.assertNotIn("Changed since the comment", out)
+        plan, fix = out.index("Agreed plan"), out.index(f"{T.ui.PUSHED_ICON} Your fix, pushed")
+        self.assertLess(plan, fix)
+        self.assertIn("+const line10 = 100", out[fix:])
+
+    def test_a_change_elsewhere_in_the_file_says_nothing(self):
+        lines = [f"const line{i} = {i}" for i in range(1, 31)]
+        lines[27] = "const line28 = 0"
+        self._write("\n".join(lines) + "\n")
+        try:
+            self.assertNotIn("Changed since", T.render_code_context(self.thread()))
+        finally:
+            self._write("\n".join(f"const line{i} = {i}" for i in range(1, 31)) + "\n")
 
     def test_falls_back_to_the_working_tree_without_shas(self):
         """Threads stored before the shas were recorded still get code."""
@@ -1401,6 +1467,969 @@ class TestWorktreeCleanup(unittest.TestCase):
             os.chdir(f"{main}.wt/fix-x")
             self.assertEqual(T.linked_worktree(),
                              {"main": main, "path": f"{main}.wt/fix-x", "branch": "fix/x"})
+
+
+class TestWhereTheModDraws(unittest.TestCase):
+    """lib/ui.py, rework-mr's side: the shared state words, the opener without the table,
+    and the state the review-ui panel reads."""
+
+    def setUp(self):
+        me_note = {"author": "Frank", "body": "Done, see the push.", "mine": True}
+        them = {"author": "Haas, Miriam - EF13579", "body": "Naming:\nplease.", "mine": False}
+        self.state = {"iid": 3, "title": "Extract keys", "topics": [
+            {"id": "t1", "thread_ids": ["d1"], "summary": "Rename the factory"},
+            {"id": "t2", "thread_ids": ["d2"], "summary": "Fix the detail key"},
+        ], "threads": {
+            "d1": {"resolved": False, "awaiting": "you", "file": "a.ts", "line": 1,
+                   "notes": [them]},
+            "d2": {"resolved": False, "awaiting": "you", "file": "b.ts", "line": 2,
+                   "notes": [them, me_note, them]},
+        }, "mr_comments": [{"author": "Haas, Miriam - EF13579", "body": "LGTM otherwise"}]}
+
+    def test_your_move_is_new_until_you_have_replied_then_answered(self):
+        self.assertEqual(T.ui_state(self.state, self.state["topics"][0]), "new")
+        self.assertEqual(T.ui_state(self.state, self.state["topics"][1]), "answered")
+
+    def test_the_panel_state_holds_the_whole_current_thread_and_the_mr_comments(self):
+        got = T.state_json(self.state)
+        self.assertEqual(got["current"], "t1")
+        self.assertEqual([n["author"] for n in got["thread"][0]["notes"]], ["Miriam"])
+        self.assertEqual(got["mr_comments"][0]["author"], "Miriam")
+        self.assertEqual([t["state"] for t in got["topics"]], ["new", "answered"])
+
+    def test_a_drawn_quote_heads_each_comment_with_its_link_and_time_and_no_bare_url(self):
+        """The card's form of a comment, as review-mr's: the mod reads it to leave the
+        thread out where the sidebar shows it, and the link glyph already links it."""
+        url = "http://gitlab.test/g/p/-/merge_requests/3#note_7"
+        self.state["threads"]["d1"]["url"] = url
+        self.state["threads"]["d1"]["notes"] = [
+            {"author": "Ana Lund", "body": "Naming:\nplease.", "url": url, "at": "2026-11-05T10:38:00Z"}]
+        with mock.patch.dict(os.environ, {"REVIEW_UI_DRAWN": "1"}):
+            drawn = T.render_quote(self.state, "t1")
+        with mock.patch.dict(os.environ, {"REVIEW_UI_DRAWN": "0"}):
+            plain = T.render_quote(self.state, "t1")
+        self.assertNotIn(f"\n{url}\n", drawn)
+        self.assertRegex(drawn, r"> \[\U000f03cc\]\(" + re.escape(url) + r"\) \*\*Ana\*\* _Nov 5, \d\d:38_")
+        self.assertIn("> Naming: please.", drawn)
+        self.assertIn(f"\n{url}\n", plain)
+
+    def test_the_table_takes_the_shared_words_only_where_the_mod_draws(self):
+        with mock.patch.dict(os.environ, {"REVIEW_UI_DRAWN": "1"}):
+            drawn = T.render_table(self.state)
+        with mock.patch.dict(os.environ, {"REVIEW_UI_DRAWN": "0"}):
+            plain = T.render_table(self.state)
+        self.assertIn("answered", drawn)
+        self.assertNotIn("◈", drawn)
+        self.assertIn("○ open | ◈ **t1**", plain)
+
+
+class TestResolveState(unittest.TestCase):
+    def test_a_fresh_state_by_iid_never_asks_about_the_checked_out_branch(self):
+        """`--iid` on a detached HEAD (mid-rebase) with no state file yet: the MR is
+        fetched by its number, since `glab mr view` has no branch to ask about there."""
+        with tempfile.TemporaryDirectory() as root, \
+                mock.patch.object(T, "STATE_ROOT", root), \
+                mock.patch.object(T, "context", return_value={"slug": "acme-api", "path": "acme/api", "enc": "acme%2Fapi", "web": "https://gl"}), \
+                mock.patch.object(T, "mr_view", side_effect=AssertionError("asked the branch")), \
+                mock.patch.object(T, "mr_object", return_value={"iid": 7, "title": "x", "web_url": "https://gl/acme/api/-/merge_requests/7"}) as by_iid:
+            _, iid, _, state = T.resolve_state(argparse.Namespace(iid=7, cmd="state"))
+        by_iid.assert_called_once()
+        self.assertEqual((iid, state["iid"]), (7, 7))
+
+
+class TestRounds(unittest.TestCase):
+    """Where the mod draws: the plan pass, then the fix pass, inside rounds."""
+
+    def setUp(self):
+        self.env = mock.patch.dict(os.environ, {"REVIEW_UI_DRAWN": "1"})
+        self.env.start()
+        self.addCleanup(self.env.stop)
+        T._WORKING.clear()
+        self.addCleanup(T._WORKING.clear)
+
+    @staticmethod
+    def state(n=3):
+        def th(i):
+            return {"author": "Robin", "file": "a.py", "line": i, "resolved": False,
+                    "awaiting": "you", "notes": [{"author": "Robin", "body": f"b{i}",
+                                                  "at": f"2026-01-0{i}T00:00:00Z", "mine": False}]}
+        return {"iid": 1, "threads": {f"d{i}": th(i) for i in range(1, n + 1)},
+                "topics": [{"id": f"t{i}", "summary": f"point {i}", "thread_ids": [f"d{i}"],
+                            "state": None} for i in range(1, n + 1)]}
+
+    @staticmethod
+    def agree(state, tid, outcome="fix"):
+        t = T.topic_for(state, tid)
+        t.update(decision="d", plan="p", outcome=outcome, plan_on=T.reviewer_mark(state, t))
+
+    def test_every_plan_comes_before_any_fix(self):
+        state = self.state()
+        T.start_round(state)
+        self.assertEqual(T.current_topic(state), "t1")
+        self.agree(state, "t1")
+        self.assertEqual(T.current_topic(state), "t2")     # not t1's fix
+        self.agree(state, "t2")
+        self.assertEqual(T.current_topic(state), "t3")
+        self.agree(state, "t3")
+        self.assertEqual(T.current_topic(state), "t1")     # the fix pass, from the top
+        self.assertEqual(state["pass"], "fix")
+
+    def test_a_thread_arriving_in_the_fix_pass_waits_until_it_is_through(self):
+        state = self.state()
+        T.start_round(state)
+        for t in ("t1", "t2", "t3"):
+            self.agree(state, t)
+            T.current_topic(state)
+        self.assertEqual(T.current_topic(state), "t1")
+        state["threads"]["d4"] = {**state["threads"]["d1"], "line": 4}
+        state["topics"].append({"id": "t4", "summary": "new", "thread_ids": ["d4"], "state": None})
+        for t, nxt in (("t1", "t2"), ("t2", "t3"), ("t3", "t4")):
+            T.topic_for(state, t)["state"] = "waiting"     # fixed, pushed, replied
+            state["threads"][f"d{t[1]}"]["awaiting"] = "reviewer"
+            self.assertEqual(T.current_topic(state), nxt)
+        self.assertEqual(state["pass"], "plan")
+
+    def test_a_fix_keeps_its_topic_current_through_push_and_reply(self):
+        state = self.state(1)
+        T.start_round(state)
+        self.agree(state, "t1")
+        self.assertEqual(T.current_topic(state), "t1")
+        self.assertEqual(T.step_of(state, state["topics"][0]), "fix")
+        state["topics"][0]["diff_url"] = "http://gl/diff"
+        self.assertEqual(T.step_of(state, state["topics"][0]), "reply")
+        self.assertEqual(T.current_topic(state), "t1")
+
+    def test_a_reply_instead_of_a_plan_keeps_its_topic_current_until_it_is_posted(self):
+        """The user answers a topic with a reply (a push-back, say) in the plan pass: its
+        draft is shown at once and stays the step until posted, then the plan pass goes on."""
+        state = self.state()
+        T.start_round(state)
+        self.agree(state, "t1", outcome="push-back")
+        state["topics"][0]["reply"] = "Nicht in diesem MR.\n"
+        T.CURRENT.jump(state, "t1")                       # reply-view
+        self.assertEqual(T.step_of(state, state["topics"][0]), "reply")
+        self.assertEqual(T.current_topic(state), "t1")
+        state["topics"][0]["state"] = "waiting"           # posted
+        state["threads"]["d1"]["awaiting"] = "reviewer"
+        self.assertEqual(T.current_topic(state), "t2")
+        self.assertEqual(state["pass"], "plan")
+
+    def test_a_reviewer_writing_again_reopens_the_plan(self):
+        state = self.state(1)
+        self.agree(state, "t1")
+        state["topics"][0]["diff_url"] = "http://gl/diff"
+        state["threads"]["d1"]["notes"].append({"author": "Robin", "body": "still wrong",
+                                               "at": "2026-02-01T00:00:00Z", "mine": False})
+        self.assertEqual(T.step_of(state, state["topics"][0]), "plan")
+
+    def test_your_own_reply_changes_nothing_the_plan_is_on(self):
+        state = self.state(1)
+        self.agree(state, "t1", outcome="reply")
+        state["threads"]["d1"]["notes"].append({"author": "Me", "body": "ok",
+                                               "at": "2026-02-01T00:00:00Z", "mine": True})
+        self.assertEqual(T.step_of(state, state["topics"][0]), "reply")
+
+    def test_waiting_on_the_reviewers_mark_survives_a_sync(self):
+        state = self.state(1)
+        t = state["topics"][0]
+        t.update(state="waiting", waiting_on=T.reviewer_mark(state, t))
+        live = {"d1": dict(state["threads"]["d1"])}
+        T.sync(state, live)
+        self.assertEqual(T.topic_status(state, t), "waiting")
+        live["d1"]["notes"] = live["d1"]["notes"] + [{"author": "Robin", "body": "more",
+                                                       "at": "2026-03-01T00:00:00Z", "mine": False}]
+        T.sync(state, live)
+        self.assertEqual(T.topic_status(state, t), "open")
+
+    def test_the_inbox_and_the_judge_list(self):
+        state = self.state(2)
+        T.start_round(state)
+        topics = T.state_json(state)["topics"]
+        self.assertEqual([x["news"] for x in topics], [["thread"], ["thread"]])
+        # The current topic is the chat's, once the model opened it; the rest the
+        # background agent's.
+        T.chat_opens(state, "t1")
+        self.assertEqual(T.judge_list(state)["topics"], ["t2"])
+        t2 = state["topics"][1]
+        t2["proposal"] = {"says": "needs", "outcome": "fix", "plan": "p", "why": "w",
+                          "on": T.reviewer_mark(state, t2)}
+        self.assertEqual(T.judge_list(state)["topics"], [])
+        self.assertEqual(T.state_json(state)["topics"][1]["proposal"]["outcome"], "fix")
+
+    def test_a_topic_shown_without_a_proposal_says_to_store_one(self):
+        state = self.state(1)
+        self.assertIn("propose t1", T.proposal_note(state, "t1"))
+        t1 = state["topics"][0]
+        t1["proposal"] = {"says": "needs", "outcome": "fix", "plan": "p", "why": "w",
+                          "on": T.reviewer_mark(state, t1)}
+        self.assertIsNone(T.proposal_note(state, "t1"))
+        self.agree(state, "t1")
+        t1.pop("proposal")
+        self.assertIsNone(T.proposal_note(state, "t1"))     # past the plan step
+        with mock.patch.dict(os.environ, {"REVIEW_UI_DRAWN": "0"}):
+            self.assertIsNone(T.proposal_note(self.state(1), "t1"))
+
+    def test_a_topic_a_press_brought_up_is_the_background_agents(self):
+        # A press moved on before the background agent started: nobody else prepares it.
+        state = self.state(3)
+        T.start_round(state)
+        T.chat_opens(state, "t1")
+        self.agree(state, "t1")
+        self.assertEqual(T.current_topic(state), "t2")
+        with mock.patch.dict(os.environ, {T.MOD_ENV: "1"}):
+            T.chat_opens(state, "t2")     # the mod's own quote of the next card
+        self.assertEqual(T.judge_list(state)["topics"], ["t2", "t3"])
+
+    def test_without_the_mod_nothing_changes(self):
+        with mock.patch.dict(os.environ, {"REVIEW_UI_DRAWN": "0"}):
+            state = self.state()
+            self.agree(state, "t1")
+            self.assertEqual(T.current_topic(state), "t1")     # as before: open work first
+
+
+class TestChecksCommand(unittest.TestCase):
+    def test_storing_a_reading_says_what_was_stored(self):
+        rec = {"hooks": [{"event": "pre-commit", "early": "git hook run pre-commit"}],
+               "tests": [{"name": "frontend", "run": "npm test"}, {"name": "backend", "run": "pytest"}]}
+        out = io.StringIO()
+        with mock.patch.object(T, "repo_root", return_value="/repo"), \
+                mock.patch.object(T.checks, "store", return_value=rec), \
+                mock.patch.object(sys, "argv", ["threads.py", "checks", "--set", "-"]), \
+                mock.patch.object(sys, "stdin", io.StringIO("{}")), redirect_stdout(out):
+            T.main()
+        self.assertEqual(out.getvalue().strip(),
+                         "stored: pre-commit: run ahead; tests: frontend, backend")
+
+
+class TestHeldFix(unittest.TestCase):
+    """A fix made and not pushed holds its topic: no command moves away from it."""
+
+    def run_cmd(self, *argv):
+        state = {"topics": [{"id": "t1", "fix": {"summary": "x"}, "thread_ids": []}, {"id": "t2", "thread_ids": []}], "threads": {}}
+        for p in (mock.patch.object(T, "resolve_state", return_value=({}, 3, "/s", state)),
+                  mock.patch.object(T, "step_of", side_effect=lambda st, t, *a: "fixed" if t.get("fix") else "fix"),
+                  mock.patch.object(T, "save"), mock.patch.object(T, "emit"),
+                  mock.patch.object(T, "render_quote", return_value=""), mock.patch.object(T, "state_json", return_value={}),
+                  mock.patch.object(sys, "argv", ["threads.py", *argv])):
+            p.start()
+        self.addCleanup(mock.patch.stopall)
+        err = io.StringIO()
+        with redirect_stdout(io.StringIO()), mock.patch("sys.stderr", err):
+            try:
+                T.main()
+            except SystemExit:
+                return err.getvalue()
+        return None
+
+    def test_leaving_or_opening_another_topic_is_refused(self):
+        for argv in (("leave",), ("open", "t2"), ("open",), ("quote", "t2", "--focus")):
+            with self.subTest(argv=argv):
+                self.assertIn("t1", self.run_cmd(*argv) or "")
+
+    def test_the_held_topic_itself_still_opens(self):
+        self.assertIsNone(self.run_cmd("open", "t1"))
+        self.assertIsNone(self.run_cmd("quote", "t2"))     # looked at, not opened
+
+
+class TestViewStep(unittest.TestCase):
+    def test_a_view_names_the_step_it_shows_its_topic_at(self):
+        """The mod places a new card when a turn moved the topic past the step its card
+        shows: a push the model finished, with no view of its own."""
+        state = {"iid": 3, "topics": [{"id": "t1", "thread_ids": []}], "threads": {}}
+        with mock.patch.object(T, "step_of", return_value="fixed"), \
+                mock.patch.object(T.ui, "record"), \
+                mock.patch.object(T.critical_manifest, "with_manifest", return_value="") as wm, \
+                redirect_stdout(io.StringIO()):
+            T.emit(state, "card", "t1")
+        self.assertEqual(wm.call_args.kwargs["extra"]["step"], "fixed")
+
+
+class TestHandedOverPush(unittest.TestCase):
+    """The model's `push --committed` finishing a press that handed it the commits."""
+
+    def run_push(self, t1, *argv):
+        state = {"topics": [t1], "threads": {}}
+        patches = [mock.patch.dict(os.environ, {"REVIEW_UI_DRAWN": "1", T.PRESS_ENV: ""}),
+                   mock.patch.object(T, "resolve_state", return_value=({}, 3, "/s", state)),
+                   mock.patch.object(T, "push_fix", return_value=(state, "http://gl/diff")),
+                   mock.patch.object(T, "post_reply", return_value="posted"),
+                   mock.patch.object(T, "load", return_value=state),
+                   mock.patch.object(T, "save"), mock.patch.object(T, "hold"),
+                   mock.patch.object(T, "sync"), mock.patch.object(T, "fetch_threads"),
+                   mock.patch.object(T, "current_user"),
+                   mock.patch.object(sys, "argv", ["threads.py", "push", "t1", *argv])]
+        for p in patches:
+            p.start()
+        self.addCleanup(mock.patch.stopall)
+        self.out = io.StringIO()
+        with redirect_stdout(self.out):
+            T.main()
+        return T.post_reply
+
+    def test_push_handed_over_posts_nothing_and_leaves_the_card_to_the_user(self):
+        post = self.run_push({"id": "t1", "push_token": "abcd1234"},
+                             "--committed", "--token", "abcd1234")
+        post.assert_not_called()
+        self.assertIn("end the turn here", self.out.getvalue())
+        self.assertIn("never post or resolve", self.out.getvalue())
+
+    def test_push_takes_no_resolve(self):
+        with mock.patch("sys.stderr", new_callable=io.StringIO), self.assertRaises(SystemExit):
+            self.run_push({"id": "t1", "push_token": "abcd1234"}, "--resolve")
+
+
+class TestReplyAfterTheFix(unittest.TestCase):
+    """A longer reply after the fix explains it, ends on the line that links the fix, and
+    never resolves: the reviewer reads it and resolves the thread."""
+
+    def setUp(self):
+        mock.patch.dict(os.environ, {"REVIEW_UI_DRAWN": "1", T.PRESS_ENV: "1"}).start()
+        self.addCleanup(mock.patch.stopall)
+        T._WORKING.clear()
+        self.addCleanup(T._WORKING.clear)
+        self.state = TestRounds.state(2)
+        T.start_round(self.state)
+        TestRounds.agree(self.state, "t1")
+        self.t1 = T.topic_for(self.state, "t1")
+        self.t1.update(diff_url="https://gl/g/p/-/merge_requests/1/diffs?diff_id=7")
+        self.post = mock.patch.object(T, "api_post", return_value={"id": 9}).start()
+        mock.patch.object(T, "working_diff", return_value="").start()
+
+    def set_reply(self, body):
+        argv = ["threads.py", "set", "t1", "--reply", "-", "--iid", "1"]
+        with mock.patch.object(sys, "argv", argv), mock.patch.object(T, "load", return_value=self.state), \
+                mock.patch.object(T, "resolve_state", return_value=({}, 1, "/s", self.state)), \
+                mock.patch.object(T, "save"), mock.patch.object(T, "hold"), \
+                mock.patch("sys.stdin", io.StringIO(body)):
+            T.main()
+
+    def test_it_ends_on_the_fixed_line(self):
+        self.set_reply("Took option B, since it keeps the cache warm.\n")
+        self.assertTrue(self.t1["reply"].endswith(f"Fixed: {self.t1['diff_url']}\n"))
+
+    def test_the_fixed_line_is_drawn_as_a_short_link_and_posted_whole(self):
+        self.set_reply("Took option B.\n")
+        shown = T._quote_draft(self.t1["reply"])
+        self.assertIn(f"> Fixed: [the diff ↗]({self.t1['diff_url']})", shown)
+        self.assertIn(f"Fixed: {self.t1['diff_url']}", self.t1["reply"])
+
+    def test_a_reply_that_links_the_fix_already_gets_no_second_line(self):
+        self.set_reply(f"Done in {self.t1['diff_url']}\n")
+        self.assertEqual(self.t1["reply"].count(self.t1["diff_url"]), 1)
+
+    def test_it_cannot_be_posted_with_resolve(self):
+        self.t1["reply"] = "Took option B.\n"
+        with mock.patch("sys.stderr", new_callable=io.StringIO), self.assertRaises(SystemExit):
+            T.post_reply(self.state, {"enc": "g%2Fp", "web": "https://gl/g/p"}, 1, "t1", None, resolve=True)
+        self.post.assert_not_called()
+
+    def test_fixed_alone_still_resolves(self):
+        T.post_reply(self.state, {"enc": "g%2Fp", "web": "https://gl/g/p"}, 1, "t1", None, fixed=True, resolve=True)
+        self.assertEqual(self.post.call_count, 2)                     # the note, the resolve
+
+
+class TestPostedByHandDiffers(unittest.TestCase):
+    """A reply the user posted by hand that no longer holds: the agent stores its verdict and
+    a corrected version, shown as a card; the user's press alone edits the note on GitLab."""
+
+    def setUp(self):
+        mock.patch.dict(os.environ, {"REVIEW_UI_DRAWN": "1", T.PRESS_ENV: ""}).start()
+        self.addCleanup(mock.patch.stopall)
+        T._WORKING.clear()
+        self.addCleanup(T._WORKING.clear)
+        self.state = TestRounds.state(2)
+        self.state["threads"]["d1"]["notes"].append(
+            {"author": "Me", "body": "Option A.", "mine": True, "url": "https://gl/g/p/-/merge_requests/1#note_8"})
+        self.t1 = T.topic_for(self.state, "t1")
+        self.t1["reply"] = "Option B, since it keeps the cache warm.\n"
+        self.api = mock.patch.object(T, "api_post", return_value={}).start()
+
+    def run_posted(self, *argv, stdin=""):
+        argv = ["threads.py", "posted", "t1", *argv, "--iid", "1"]
+        with mock.patch.object(sys, "argv", argv), \
+                mock.patch.object(T, "resolve_state", return_value=({"enc": "g%2Fp", "web": "https://gl/g/p"}, 1, "/s", self.state)), \
+                mock.patch.object(T, "save"), mock.patch.object(T, "hold"), \
+                mock.patch("sys.stdin", io.StringIO(stdin)), \
+                mock.patch("sys.stdout", new_callable=io.StringIO) as out:
+            T.main()
+        return out.getvalue()
+
+    def test_differs_stores_the_correction_and_shows_it_word_by_word(self):
+        out = self.run_posted("--differs", "It drops which option.", "--fix", "-", stdin="Option B.\n")
+        self.assertEqual(self.t1["post_differs"]["note"], "8")
+        self.assertIn("```worddiff\nOption [-A-]{+B+}.\n```", out)
+        self.assertTrue(T.state_json(self.state)["topics"][0]["post_differs"])
+
+    def test_the_card_is_the_correction_s_while_it_waits(self):
+        self.run_posted("--differs", "It drops the reason.", "--fix", "-", stdin="Option B.\n")
+        self.assertIn("Your posted reply differs", "\n".join(T._step_parts(self.state, self.t1)))
+
+    def test_a_correction_ends_once_its_draft_is_posted_from_the_card(self):
+        self.run_posted("--differs", "v", "--fix", "-", stdin="Option B.\n")
+        os.environ[T.PRESS_ENV] = "1"
+        with mock.patch.object(T, "working_diff", return_value=""):
+            T.post_reply(self.state, {"enc": "g%2Fp", "web": "https://gl/g/p"}, 1, "t1", None)
+        self.assertNotIn("post_differs", self.t1)
+        self.assertFalse(T.state_json(self.state)["topics"][0]["post_differs"])
+
+    def test_a_correction_whose_draft_is_gone_no_longer_counts(self):
+        self.run_posted("--differs", "v", "--fix", "-", stdin="Option B.\n")
+        self.t1.pop("reply")                       # stored before a fix that dropped it
+        self.assertFalse(T.state_json(self.state)["topics"][0]["post_differs"])
+
+    def test_apply_is_the_user_s_press_alone(self):
+        self.run_posted("--differs", "v", "--fix", "-", stdin="Option B.\n")
+        with mock.patch("sys.stderr", new_callable=io.StringIO), self.assertRaises(SystemExit):
+            self.run_posted("--apply")
+        self.api.assert_not_called()
+
+    def test_apply_edits_the_note_and_records_the_reply_posted(self):
+        self.run_posted("--differs", "v", "--fix", "-", stdin="Option B.\n")
+        os.environ[T.PRESS_ENV] = "1"
+        self.run_posted("--apply")
+        self.api.assert_called_once_with("projects/g%2Fp/merge_requests/1/discussions/d1/notes/8",
+                                         {"body": "Option B.\n"}, method="PUT")
+        self.assertNotIn("post_differs", self.t1)
+        self.assertEqual(self.t1["state"], "waiting")
+
+
+class TestReplyAheadOfTheFix(unittest.TestCase):
+    """A reply posted before the fix (which option the plan took, that the fix follows):
+    the plan stands, the topic stays the user's, and the round goes on."""
+
+    def setUp(self):
+        mock.patch.dict(os.environ, {"REVIEW_UI_DRAWN": "1", T.PRESS_ENV: "1"}).start()
+        self.addCleanup(mock.patch.stopall)
+        T._WORKING.clear()
+        self.addCleanup(T._WORKING.clear)
+        self.state = TestRounds.state(2)
+        T.start_round(self.state)
+        TestRounds.agree(self.state, "t1")
+        self.t1 = T.topic_for(self.state, "t1")
+        self.t1.update(reply="Wir nehmen Option 1, der Fix folgt.\n", reply_early=True)
+        self.post = mock.patch.object(T, "api_post", return_value={"id": 9}).start()
+        mock.patch.object(T, "working_diff", return_value="").start()
+
+    def test_posting_it_keeps_the_plan_and_resolves_nothing(self):
+        T.post_reply(self.state, {"enc": "g%2Fp", "web": "https://gl/g/p"}, 1, "t1", None)
+        self.assertEqual(self.post.call_count, 1)                     # the note, no resolve
+        self.assertNotIn("reply", self.t1)
+        self.assertTrue(self.t1["early_posted"])
+        self.assertEqual(T.step_of(self.state, self.t1), "fix")
+
+    def test_it_cannot_be_posted_with_resolve(self):
+        with mock.patch("sys.stderr", new_callable=io.StringIO), self.assertRaises(SystemExit):
+            T.post_reply(self.state, {"enc": "g%2Fp", "web": "https://gl/g/p"}, 1, "t1", None, resolve=True)
+        self.post.assert_not_called()
+
+    def test_a_reply_ahead_of_the_fix_posted_by_hand_keeps_the_plan_too(self):
+        argv = ["threads.py", "posted", "t1", "--ok", "--iid", "1"]
+        with mock.patch.object(sys, "argv", argv), mock.patch.object(T, "load", return_value=self.state), \
+                mock.patch.object(T, "save"), mock.patch.object(T, "hold"), \
+                mock.patch.object(T, "state_file", return_value="/state"), \
+                mock.patch.object(T, "context", return_value={"slug": "g-p", "enc": "g%2Fp", "web": "https://gl/g/p"}), \
+                mock.patch("sys.stdout", new_callable=io.StringIO):
+            T.main()
+        self.assertTrue(self.t1["early_posted"])
+        self.assertNotIn("reply", self.t1)
+        self.assertEqual(T.step_of(self.state, self.t1), "fix")
+
+    def test_a_reply_stored_without_early_is_the_ordinary_one(self):
+        argv = ["threads.py", "set", "t1", "--reply", "Fixed.", "--iid", "1"]
+        with mock.patch.object(sys, "argv", argv), mock.patch.object(T, "load", return_value=self.state), \
+                mock.patch.object(T, "save"), mock.patch.object(T, "hold"), \
+                mock.patch.object(T, "state_file", return_value="/state"), \
+                mock.patch.object(T, "context", return_value={"slug": "g-p", "enc": "g%2Fp", "web": "https://gl/g/p"}):
+            T.main()
+        self.assertEqual(self.t1["reply"], "Fixed.\n")
+        self.assertNotIn("reply_early", self.t1)
+
+
+class TestKeepPlan(unittest.TestCase):
+    """A reviewer's answer to an agreed plan ("sounds good") is judged in the background:
+    one that only acknowledges it keeps the plan, so the topic is not planned again."""
+
+    def setUp(self):
+        mock.patch.dict(os.environ, {"REVIEW_UI_DRAWN": "1"}).start()
+        self.addCleanup(mock.patch.stopall)
+        T._WORKING.clear()
+        self.addCleanup(T._WORKING.clear)
+        self.state = TestRounds.state(1)
+        TestRounds.agree(self.state, "t1")
+        self.t1 = T.topic_for(self.state, "t1")
+        self.t1["plan"] = "Refetch the detail key."
+        self.state["threads"]["d1"]["notes"].append(
+            {"author": "Robin", "body": "Sounds good!", "at": "2026-02-01T00:00:00Z", "mine": False})
+        mock.patch.object(T, "working_diff", return_value="").start()
+
+    def run_cli(self, *argv):
+        with mock.patch.object(sys, "argv", ["threads.py", *argv, "--iid", "1"]), \
+                mock.patch.object(T, "load", return_value=self.state), mock.patch.object(T, "save"), \
+                mock.patch.object(T, "hold"), mock.patch.object(T, "state_file", return_value="/state"), \
+                mock.patch.object(T, "context", return_value={"slug": "g-p", "enc": "g%2Fp", "web": "https://gl/g/p"}), \
+                mock.patch("sys.stdout", new_callable=io.StringIO):
+            T.main()
+
+    def test_an_acknowledgement_keeps_the_plan_and_the_card_says_so(self):
+        self.assertEqual(T.step_of(self.state, self.t1), "plan")            # the reviewer wrote
+        self.assertEqual(T.judge_list(self.state)["topics"], ["t1"])
+        self.assertIn("t1 (plan agreed)", T.judge_brief(self.state, 1))
+        self.assertIn("keep-plan <t>", T.judge_brief(self.state, 1))
+        self.assertEqual(T.judge_brief(self.state, 1, skip=["t1"]), "")   # an agent failed on it
+        self.run_cli("keep-plan", "t1", "--why", "Robin agreed with the plan.")
+        self.assertEqual(T.step_of(self.state, self.t1), "fix")
+        self.assertEqual(T.judge_list(self.state)["topics"], [])
+        self.assertIn("_Robin agreed with the plan: the plan holds._", T.render_quote(self.state, "t1"))
+
+    def test_a_topic_with_no_agreed_plan_cannot_be_kept(self):
+        del self.t1["decision"]
+        with mock.patch("sys.stderr", new_callable=io.StringIO), self.assertRaises(SystemExit):
+            self.run_cli("keep-plan", "t1", "--why", "x")
+
+
+class TestFixAgainstThePlan(unittest.TestCase):
+    """Whether a fix carries out the plan agreed is the agent's judgment, stated when it shows
+    the fix: the card says it, and a fix that differs is reviewed before Push."""
+
+    def setUp(self):
+        mock.patch.dict(os.environ, {"REVIEW_UI_DRAWN": "1"}).start()
+        self.addCleanup(mock.patch.stopall)
+        T._WORKING.clear()
+        self.addCleanup(T._WORKING.clear)
+        self.state = TestRounds.state(1)
+        TestRounds.agree(self.state, "t1")
+        mock.patch.object(T, "local_state", return_value=("/state", self.state)).start()
+        mock.patch.object(T, "load", return_value=self.state).start()
+        for name in ("save", "hold"):
+            mock.patch.object(T, name).start()
+        mock.patch.object(T, "working_diff", return_value="@@ -1 +1 @@\n-a\n+b\n").start()
+        # No viewer open, unless a test opens one: nothing here reaches a real hunk.
+        self.hunk = mock.patch.object(T, "hunk").start()
+        self.hunk.find_session.return_value = None
+        self.hunk.MAX_NOTES = 3
+
+    def show(self, *flags):
+        argv = ["threads.py", "diff-view", "t1", "--did", "Renamed it.", *flags]
+        with mock.patch.object(sys, "argv", argv), \
+                mock.patch.object(sys, "stdin", io.StringIO("@@ -1 +1 @@\n-a\n+b\n")), \
+                mock.patch("sys.stdout", new_callable=io.StringIO) as out:
+            T.main()
+        return out.getvalue()
+
+    def test_a_fix_as_agreed_says_so(self):
+        out = self.show("--as-agreed")
+        self.assertRegex(out, r"Changes\*\*  \S+ \d+ files? \+\d+ −\d+\n\nRenamed it\.\n\nChecks")
+        self.assertNotIn("Differs", out)
+        self.assertFalse(T.state_json(self.state)["topics"][0]["differs"])
+
+    def test_a_fix_that_differs_says_how_and_the_reply_after_it_explains(self):
+        out = self.show("--differs", "It also drops the cache.")
+        self.assertIn("Differs from the plan you agreed**\n\nIt also drops the cache.", out)
+        self.assertLess(out.index("Differs from the plan"), out.index("Changes**"))
+        self.assertTrue(T.state_json(self.state)["topics"][0]["differs"])
+
+    def test_the_summary_names_its_commits_and_leaves_passed_checks_unsaid(self):
+        """The plan is above it and the thread in the sidebar: the card says what changed,
+        how big, and which commits it rewrites or adds; checks only where they did not pass."""
+        argv = ["--as-agreed", "--fixup", "455d841 extract keys", "--new-commit", "test: cover the keys"]
+        out = self.show(*argv)
+        # The heading says how many, dim on the card; the commits follow the summary, apart.
+        self.assertIn("  (1 new commit, 1 commit rewritten)\n", out)
+        self.assertIn(f"Renamed it.\n\n{T.ui.REWRITTEN_ICON} `455d841` extract keys", out)
+        self.assertIn(f"{T.ui.NEW_COMMIT_ICON} test: cover the keys", out)
+        self.assertNotIn("asked", out.split("Changes**")[1])
+        with mock.patch.object(T, "checks_of", return_value="passed"):
+            self.assertNotIn("Checks", T.render_fix(self.state, "t1"))
+        with mock.patch.object(T, "checks_of", return_value="failed"):
+            self.assertIn("Checks failed", T.render_fix(self.state, "t1"))
+
+    def test_a_fix_shown_again_reloads_the_open_viewer_with_this_showing_s_notes(self):
+        """A fix changed after the user's notes in the viewer is shown again: the window
+        must show the fix the card is about, not the one before it."""
+        self.hunk.find_session.return_value = "sid"
+        self.hunk.reload_working_diff.return_value = 1
+        self.show("--as-agreed", "--note", "src/a.ts:3:why")
+        self.hunk.clear_agent_notes.assert_called_once_with("sid")
+        self.hunk.reload_working_diff.assert_called_once_with("sid")
+        self.hunk.add_notes.assert_called_once_with("sid", [{"filePath": "src/a.ts", "newLine": 3, "summary": "why"}])
+        self.hunk.focus_window.assert_not_called()          # moved to only on a press
+
+    def test_the_viewer_opened_on_a_press_gets_the_notes_the_fix_was_shown_with(self):
+        self.show("--as-agreed", "--note", "src/a.ts:3:why")
+        self.hunk.show_working_diff.return_value = ("sid", "9 (x)")
+        with mock.patch.object(sys, "argv", ["threads.py", "hunk-show", "t1"]), redirect_stdout(io.StringIO()), \
+                mock.patch.object(T, "resolve_state", return_value=({}, 1, "/state", self.state)):
+            T.main()
+        self.hunk.add_notes.assert_called_once_with("sid", [{"filePath": "src/a.ts", "newLine": 3, "summary": "why"}])
+
+    def test_a_fix_shown_with_no_viewer_open_opens_none(self):
+        self.show("--as-agreed")
+        self.hunk.reload_working_diff.assert_not_called()
+        self.hunk.show_working_diff.assert_not_called()
+
+    def test_a_fix_shown_without_the_judgment_is_refused(self):
+        with mock.patch("sys.stderr", new_callable=io.StringIO) as err, self.assertRaises(SystemExit):
+            self.show()
+        self.assertIn("--as-agreed", err.getvalue())
+
+    def test_plans_shows_the_change_agreed_to_judge_against(self):
+        self.state["topics"][0]["agreed_change"] = "```diff\n-a\n+b\n```"
+        self.assertIn("change agreed:\n    -a\n    +b", T.render_plans(self.state))
+
+
+class TestFixInTheSidebar(unittest.TestCase):
+    """A fix in several files: the sidebar gets the comment's own file, and the others with
+    their sizes, never a file of the user's picking to page through."""
+
+    def test_the_comment_s_file_and_the_others_sized(self):
+        state = TestRounds.state(1)
+        state["threads"]["d1"].update(file="b.ts", line=2)
+        stat = [("a.ts", 4, 4), ("b.ts", 1, 1), ("c.ts", 12, 3)]
+        seen = {}
+
+        def view(root, path, *a, **k):
+            seen["path"] = path
+            return {"file": path, "rows": [["+", None, 1, "x"]], "at": [1, 1]}
+        with mock.patch.object(sys, "argv", ["threads.py", "code", "t1", "--fix", "--iid", "1"]), \
+                mock.patch.object(T, "load", return_value=state), mock.patch.object(T, "save"), \
+                mock.patch.object(T, "state_file", return_value="/state"), \
+                mock.patch.object(T, "context", return_value={"slug": "g-p", "enc": "g%2Fp", "web": "https://gl/g/p"}), \
+                mock.patch.object(T, "working_diff", return_value="diff"), \
+                mock.patch.object(T, "diff_stat", return_value=stat), \
+                mock.patch.object(T.code_view, "view", side_effect=view), \
+                mock.patch("sys.stdout", new_callable=io.StringIO) as out:
+            T.main()
+        got = json.loads(out.getvalue())
+        self.assertEqual(seen["path"], "b.ts")
+        self.assertEqual(got["others"], [["a.ts", 4, 4], ["c.ts", 12, 3]])
+        self.assertNotIn("files", got)
+
+
+class TestChangeBlocks(unittest.TestCase):
+    """A proposal's change on its card: one block per file the mod heads with its place."""
+
+    DIFF = ("diff --git a/src/x.ts b/src/x.ts\nindex 1..2 100644\n--- a/src/x.ts\n+++ b/src/x.ts\n"
+            "@@ -60,2 +60,2 @@\n a\n-b\n+B\n--- a/src/y.ts\n+++ b/src/y.ts\n@@ -3 +3 @@\n-c\n+C\n")
+
+    def test_drawn_each_file_is_a_block_of_its_own_without_its_headers(self):
+        with mock.patch.dict(os.environ, {"REVIEW_UI_DRAWN": "1"}):
+            out = "\n".join(T._change_blocks(self.DIFF))
+        self.assertEqual(out, "```diff path=src/x.ts loc\n@@ -60,2 +60,2 @@\n a\n-b\n+B\n```\n\n"
+                              "```diff path=src/y.ts loc\n@@ -3 +3 @@\n-c\n+C\n```")
+
+    def test_without_the_mod_or_without_file_headers_the_diff_stays_as_it_is(self):
+        with mock.patch.dict(os.environ, {"REVIEW_UI_DRAWN": "0"}):
+            self.assertIn("+++ b/src/x.ts", "\n".join(T._change_blocks(self.DIFF)))
+        with mock.patch.dict(os.environ, {"REVIEW_UI_DRAWN": "1"}):
+            self.assertEqual(T._change_blocks("@@ -1 +1 @@\n-a\n+b\n"), ["```diff\n@@ -1 +1 @@\n-a\n+b\n```"])
+
+
+class TestPushFix(unittest.TestCase):
+    """`push` and `verify` around lib/checks.py: what is the script's to finish, and what
+    goes back to the agent."""
+
+    def setUp(self):
+        T._WORKING.clear()
+        self.addCleanup(T._WORKING.clear)
+        self.state = TestRounds.state(2)
+        for tid in ("t1", "t2"):
+            TestRounds.agree(self.state, tid)
+        self.t1 = T.topic_for(self.state, "t1")
+        self.t1["fix"] = {"did": "d", "fixup": ["abc123 feat: a"], "stat": [], "compare": {}}
+        self.t1["checked"] = {"ok": True, "tree": "T1", "record": "R", "ran": ["frontend checks"], "new": []}
+        for target, kw in (("load", {"side_effect": lambda p: self.state}),
+                           ("save", {}), ("hold", {}),
+                           ("repo_root", {"return_value": "/repo"}),
+                           ("versions", {"return_value": [{"id": 7, "head_commit_sha": "NEW"}]}),
+                           ("working_diff", {"return_value": "diff"})):
+            patcher = mock.patch.object(T, target, **kw)
+            setattr(self, target, patcher.start())
+            self.addCleanup(patcher.stop)
+        self.checks = mock.patch.object(T, "checks").start()
+        self.addCleanup(mock.patch.stopall)
+        self.checks.status.return_value = ({"hooks": []}, None)
+        self.checks.digest.return_value = "R"
+        self.checks.snapshot.return_value = "T1"
+        self.checks._out.side_effect = lambda root, *a: "HEADTREE" if a[-1] == "HEAD^{tree}" else "NEW"
+        self.checks.Stop = type("Stop", (Exception,), {})
+        mock.patch.object(T.hunk, "installed", return_value=False).start()
+        # The push waits for GitLab's new version a second at a time; a mock that never shows
+        # it would make a test sit the whole wait out.
+        mock.patch.object(T.time, "sleep").start()
+        self.ctx = {"web": "https://gitlab.example/g/p"}
+
+    def push(self, tid="t1", committed=False):
+        return T.push_fix(self.ctx, 1, "/state", tid, committed)
+
+    def test_a_checked_fix_is_committed_squashed_pushed_and_linked(self):
+        _, url = self.push()
+        self.checks.commit_fixup.assert_called_once()
+        self.assertEqual(self.checks.commit_fixup.call_args.args[3], "abc123")
+        self.checks.autosquash.assert_called_once_with("/repo", "abc123", "T1")
+        self.checks.push.assert_called_once()
+        self.checks.trust.assert_called_once_with("/repo")
+        self.assertEqual(url, "https://gitlab.example/g/p/-/merge_requests/1/diffs?diff_id=7&start_sha=NEW")
+        self.assertEqual(self.t1["diff_url"], url)
+        self.assertEqual(T.step_of(self.state, self.t1), "reply")
+
+    def test_a_fix_without_passed_checks_goes_back_to_the_agent(self):
+        self.t1["checked"] = {"ok": False, "failed": "frontend checks"}
+        with self.assertRaisesRegex(T.Handoff, "verify t1"):
+            self.push()
+        self.checks.commit_fixup.assert_not_called()
+
+    def test_files_changed_since_the_checks_go_back_to_the_agent(self):
+        self.checks.snapshot.return_value = "OTHER"
+        with self.assertRaisesRegex(T.Handoff, "Files changed since the checks ran"):
+            self.push()
+        self.checks.commit_fixup.assert_not_called()
+
+    def test_changed_checks_go_back_to_the_agent(self):
+        self.checks.status.return_value = ({"hooks": []}, "lefthook.yml changed")
+        with self.assertRaisesRegex(T.Handoff, "lefthook.yml changed"):
+            self.push()
+
+    def test_a_fix_for_two_commits_is_the_agent_s_to_commit(self):
+        self.t1["fix"]["fixup"] = ["abc123 feat: a", "def456 feat: b"]
+        with self.assertRaisesRegex(T.Handoff, "--committed --token [0-9a-f]{8}"):
+            self.push()
+        self.checks.commit_fixup.assert_not_called()
+        # The token the press handed over is the one stored, and new checks drop it.
+        self.assertRegex(self.t1["push_token"], "^[0-9a-f]{8}$")
+
+    def test_the_hand_off_names_the_button_pressed(self):
+        self.t1["fix"]["fixup"] = ["abc123 feat: a", "def456 feat: b"]
+        with self.assertRaisesRegex(T.Handoff, "pressed Ack and push for t1"):
+            self.push()
+
+    def test_a_push_cut_short_after_its_commit_goes_on_from_there(self):
+        self.checks._out.side_effect = lambda root, *a: "T1" if a[-1] == "HEAD^{tree}" else "NEW"
+        self.push()
+        self.checks.commit_fixup.assert_not_called()
+        self.checks.autosquash.assert_called_once_with("/repo", "abc123", "T1")
+        self.checks.push.assert_called_once()
+
+    def test_a_push_retried_checks_the_remote_against_the_branch_before_the_first_try(self):
+        self.checks.push.side_effect = self.checks.Stop("rejected")
+        with self.assertRaises(T.Handoff):
+            self.push()
+        self.assertEqual(self.t1["push_from"], "NEW")
+        self.checks._out.side_effect = lambda root, *a: "T1" if a[-1] == "HEAD^{tree}" else "REWRITTEN"
+        self.checks.push.side_effect = None
+        self.push()
+        self.assertEqual(self.checks.push.call_args.args[2], "NEW")
+        self.assertNotIn("push_from", self.t1)
+
+    def test_a_stop_while_pushing_goes_back_to_the_agent_in_its_words(self):
+        self.checks.autosquash.side_effect = self.checks.Stop("squashing conflicts")
+        with self.assertRaisesRegex(T.Handoff, "squashing conflicts"):
+            self.push()
+        self.checks.push.assert_not_called()
+
+    def test_checks_are_refused_while_another_fix_waits_unpushed(self):
+        mock.patch.object(T, "local_state", return_value=("/state", self.state)).start()
+        with self.assertRaises(SystemExit), mock.patch("sys.stderr"):
+            T.run_checks("/repo", "t2", [], 1)
+        self.checks.run.assert_not_called()
+
+    def test_unreadable_viewer_notes_stop_the_push(self):
+        """`user_notes` is None when it cannot read them: a note left there may be the
+        reason not to push."""
+        mock.patch.object(T.hunk, "installed", return_value=True).start()
+        mock.patch.object(T.hunk, "find_session", return_value="sid").start()
+        mock.patch.object(T.hunk, "owner_id", return_value="me").start()
+        notes = mock.patch.object(T.hunk, "user_notes", return_value=None).start()
+        with self.assertRaisesRegex(T.Handoff, "could not be read"):
+            self.push()
+        self.checks.commit_fixup.assert_not_called()
+        notes.return_value = [{"body": "why?"}]
+        with self.assertRaisesRegex(T.Handoff, "answer them"):
+            self.push()
+        self.checks.commit_fixup.assert_not_called()
+        notes.return_value = []
+        mock.patch.object(T, "hunk_close_decision", return_value=("", False)).start()
+        self.push()
+        self.checks.commit_fixup.assert_called_once()
+
+    def test_a_new_commit_on_the_card_is_the_agent_s_to_make_first(self):
+        self.t1["fix"]["new"] = ["fix: guard the old helper"]
+        with self.assertRaises(T.Handoff) as e:
+            self.push()
+        self.checks.commit_fixup.assert_not_called()
+        msg = str(e.exception)
+        self.assertLess(msg.index('-m "fix: guard the old helper"'), msg.index("--fixup=abc123"))
+
+    def test_a_fix_asked_for_after_a_push_is_made_and_pushed_again(self):
+        """The reviewer answers the pushed fix with more to do: the next fix agreed is made,
+        checked and pushed, and its link spans both pushes."""
+        self.t1.update(diff_url="https://gitlab.example/g/p/-/merge_requests/1/diffs?diff_id=3&start_sha=S0",
+                       start_sha="S0", reply="Fixed.")
+        self.state["threads"]["d1"]["awaiting"] = "reviewer"
+        self.assertEqual(T.step_of(self.state, self.t1), "reply")
+        self.state["threads"]["d1"].update(awaiting="you", notes=self.state["threads"]["d1"]["notes"] + [
+            {"author": "Robin", "body": "also the other call", "at": "2026-01-09T00:00:00Z", "mine": False}])
+        self.assertEqual(T.step_of(self.state, self.t1), "plan")
+        self.t1["proposal"] = {"on": T.reviewer_mark(self.state, self.t1), "says": "needs",
+                               "why": "w", "plan": "fix the other call", "outcome": "fix"}
+        with mock.patch.object(sys, "argv", ["threads.py", "agree", "t1"]), redirect_stdout(io.StringIO()), \
+                mock.patch.object(T, "resolve_state", return_value=(self.ctx, 1, "/state", self.state)):
+            T.main()
+        self.assertEqual(T.step_of(self.state, self.t1), "fix")
+        for gone in ("diff_url", "fix", "checked", "reply"):
+            self.assertNotIn(gone, self.t1)
+        self.t1["fix"] = {"did": "d", "fixup": ["abc123 feat: a"], "stat": [], "compare": {}}
+        self.t1["checked"] = {"ok": True, "tree": "T1", "record": "R", "ran": [], "new": []}
+        _, url = self.push()
+        self.assertTrue(url.endswith("start_sha=S0"))
+        self.assertEqual(T.step_of(self.state, self.t1), "reply")
+
+    def test_the_card_says_where_the_checks_stand(self):
+        self.assertEqual(T.checks_line(self.t1), ["Checks passed: frontend checks."])
+        T._WORKING.clear()
+        self.checks.snapshot.return_value = "OTHER"
+        self.assertEqual(T.checks_line(self.t1), ["Files or checks changed since the checks ran."])
+        self.t1["checked"] = {"ok": False, "failed": "frontend checks", "output": "boom"}
+        self.assertEqual(T.checks_line(self.t1)[0], "Checks failed: frontend checks.")
+        self.assertIn("boom", T.checks_line(self.t1))
+
+
+
+class TestPushFixGit(unittest.TestCase):
+    """`push` on a throwaway clone of a bare repository: the commits the card names are the
+    commits the remote ends up with, and the hooks the record stands for are not skipped."""
+
+    @classmethod
+    def setUpClass(cls):
+        from lib.test_checks import Repo
+        cls.Repo = Repo
+        cls._template = tempfile.TemporaryDirectory()
+        Repo.build(cls._template.name)
+
+    @classmethod
+    def tearDownClass(cls):
+        cls._template.cleanup()
+
+    def setUp(self):
+        from lib.test_checks import MSG, sh
+        self.sh, self.MSG = sh, MSG
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.r = self.Repo(self._tmp.name, self._template.name)
+        self.state = TestRounds.state(1)
+        TestRounds.agree(self.state, "t1")
+        self.t1 = T.topic_for(self.state, "t1")
+        for target, kw in (("load", {"side_effect": lambda p: self.state}), ("save", {}), ("hold", {}),
+                           ("repo_root", {"return_value": self.r.root}),
+                           ("versions", {"return_value": [{"id": 7, "head_commit_sha": "S"}]}),
+                           ("diff_url_for", {"return_value": "URL"})):
+            mock.patch.object(T, target, **kw).start()
+        mock.patch.object(T.hunk, "installed", return_value=False).start()
+        self.addCleanup(mock.patch.stopall)
+
+    def fix(self, fixup=(), new=(), files=("a.txt", "c.txt")):
+        for f in files:
+            self.r.write(f, "fixed\n")
+        rec = T.checks.load(self.r.root) or self.r.record()
+        stamp = T.checks.run(self.r.root, rec)
+        self.assertTrue(stamp["ok"], stamp)
+        self.t1["fix"] = {"did": "d", "fixup": list(fixup), "new": list(new), "stat": [], "compare": {}}
+        self.t1["checked"] = stamp
+        return stamp
+
+    def push(self, committed=False):
+        return T.push_fix({"web": "https://gitlab.example/g/p"}, 1, "/state", "t1", committed)
+
+    def git(self, *a):
+        return self.sh(self.r.root, "git", *a)
+
+    def log(self, ref="origin/main"):
+        return self.git("log", "--format=%s", ref).splitlines()
+
+    def test_one_fixup_is_squashed_into_its_commit(self):
+        stamp = self.fix(fixup=[f"{self.r.target} feat: a and b"], files=["a.txt"])
+        self.push()
+        self.assertEqual(self.log(), ["feat: c", "feat: a and b"])
+        self.assertEqual(self.git("rev-parse", "origin/main^{tree}"), stamp["tree"])
+
+    def test_a_new_commit_alone_is_pushed_as_one(self):
+        stamp = self.fix(new=["fix: the old helper"])
+        with self.assertRaisesRegex(T.Handoff, 'git commit -m "fix: the old helper"'):
+            self.push()
+        self.git("reset", "-q")
+        self.git("add", "a.txt", "c.txt")
+        self.git("commit", "-q", "-m", "fix: the old helper")
+        self.push(committed=True)
+        self.assertEqual(self.log(), ["fix: the old helper", "feat: c", "feat: a and b"])
+        self.assertEqual(self.git("rev-parse", "origin/main^{tree}"), stamp["tree"])
+        # The agent's commits are not the push that tells whether the record stands.
+        self.assertFalse(T.checks.load(self.r.root).get("trusted"))
+
+    def test_a_new_commit_and_a_fixup_keep_the_new_one(self):
+        stamp = self.fix(fixup=[f"{self.r.target} feat: a and b"], new=["fix: the old helper"])
+        with self.assertRaises(T.Handoff):
+            self.push()
+        self.git("reset", "-q")
+        self.git("add", "c.txt")
+        self.git("commit", "-q", "-m", "fix: the old helper")
+        self.git("add", "a.txt")
+        self.git("commit", "-q", f"--fixup={self.r.target}")
+        self.push(committed=True)
+        self.assertEqual(self.log(), ["fix: the old helper", "feat: c", "feat: a and b"])
+        self.assertEqual(self.git("show", "origin/main~2:a.txt"), "fixed")
+        self.assertEqual(self.git("rev-parse", "origin/main^{tree}"), stamp["tree"])
+
+    def test_a_new_commit_the_agent_did_not_make_stops_the_push(self):
+        self.fix(fixup=[f"{self.r.target} feat: a and b"], new=["fix: the old helper"])
+        with self.assertRaises(T.Handoff):
+            self.push()
+        self.git("commit", "-q", f"--fixup={self.r.target}")
+        with self.assertRaisesRegex(T.Handoff, 'not on the branch: "fix: the old helper"'):
+            self.push(committed=True)
+        self.assertEqual(self.log(), ["feat: c", "feat: a and b"])
+
+    def test_the_agent_s_commits_meet_the_commit_msg_hook(self):
+        """An untrusted record: the hand-off has git run the hooks, and a message the hook
+        refuses stops the push even where the agent skipped them."""
+        self.r.hook("commit-msg", self.MSG)               # accepts `fixup!` messages only
+        self.fix(new=["fix: the old helper"])
+        with self.assertRaises(T.Handoff) as e:
+            self.push()
+        self.assertNotIn("--no-verify", str(e.exception))
+        self.git("commit", "-q", "--no-verify", "-m", "fix: the old helper")
+        with self.assertRaisesRegex(T.Handoff, "commit-msg hook refused"):
+            self.push(committed=True)
+        self.assertEqual(self.log(), ["feat: c", "feat: a and b"])
+        self.assertFalse(T.checks.load(self.r.root).get("trusted"))
+
+
+class TestFixStoredWithoutTheMod(unittest.TestCase):
+    """`diff-view` stores the fix (its commits above all) card or no card, from the state as
+    it is once held."""
+
+    def run_view(self, stale, fresh):
+        argv = ["threads.py", "diff-view", "t1", "--fixup", "abc123 feat: a", "--new-commit", "fix: b"]
+        saved = []
+        with mock.patch.dict(os.environ, {"REVIEW_UI_DRAWN": "0"}), \
+                mock.patch.object(T, "local_state", return_value=("/state", stale)), \
+                mock.patch.object(T, "load", return_value=fresh), mock.patch.object(T, "hold"), \
+                mock.patch.object(T, "save", side_effect=lambda p, st: saved.append(json.loads(json.dumps(st)))), \
+                mock.patch.object(T, "hunk") as hunk, mock.patch.object(sys, "argv", argv), \
+                mock.patch.object(sys, "stdin", io.StringIO("@@ -1 +1 @@\n-a\n+b\n")), \
+                redirect_stdout(io.StringIO()):
+            hunk.MAX_NOTES = 3
+            hunk.installed.return_value = False
+            T.main()
+        return saved
+
+    def test_the_fix_s_commits_are_stored_and_a_write_since_the_read_survives(self):
+        stale = TestRounds.state(1)
+        fresh = TestRounds.state(1)
+        fresh["topics"][0]["proposal"] = {"on": "x", "why": "judged meanwhile"}
+        saved = self.run_view(stale, fresh)
+        self.assertEqual(len(saved), 1)
+        t = saved[0]["topics"][0]
+        self.assertEqual((t["fix"]["fixup"], t["fix"]["new"]), (["abc123 feat: a"], ["fix: b"]))
+        self.assertEqual(t["proposal"]["why"], "judged meanwhile")
 
 
 if __name__ == "__main__":

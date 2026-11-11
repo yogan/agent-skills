@@ -15,9 +15,30 @@ comment, diff, or question they are being asked to act on. So:
 
 **A card is a paste already made.** When a view's output ends with the line
 `[review-ui] Shown to the user as a card.`, the user sees that view whole, drawn under the
-tool call: running the command was the paste. Your reply then carries only your judgment and
-the question, at most 3 lines per topic, longer only when the user asks why. Every other rule
-here stands. Output without that line is pasted as below.
+tool call: running the command was the paste. Wherever the rules below say *paste*, read
+*run*. Your reply then carries only your judgment and the question, at most 3 lines per
+topic, longer only when the user asks why: no view, and no part of one, in your message.
+The overview table lives in the user's sidebar then, so an opener without one is the
+expected opener; it is what the rules below mean by a pasted table. Output without that line
+is pasted as below.
+
+**Buttons answer your question.** Where cards are drawn, the newest card carries the buttons
+of the current step. A press reaches you as a `[review-ui] The user pressed a button: …` note,
+or as a prompt in the user's name: that is their decision, made. Carry on from it. **Never
+mention the buttons**: not that there are any, not what they are called, not what one does,
+not where they sit. Where you would ask the question a button answers, end on your
+recommendation instead, or on what you just did. The passes run as rounds there: see
+*Rounds (where cards are drawn)*.
+
+**Card text is markdown.** Whatever you store for a card to show (`--why`, `--plan`, `--did`)
+has every identifier, path, value and `file:line` in backticks, so the card draws it as code.
+
+**A card ends your reply.** The user decides on the card, so it is the last thing they read.
+Whatever you have to say (the answer to the user's question, what you did and why) goes
+before the call that shows the card, and the turn ends on the card. Text after it lands below
+the user's decision, and a retelling of the card there only makes them scroll. Where a rule
+below orders a pasted view first and your reasoning after it, a card turns that round: your
+reasoning, then the card.
 
 1. When a `threads.py` command prints something, **paste that output verbatim into your
    reply** — markdown table, blockquote and all. Do **not** summarize it, shorten it,
@@ -98,7 +119,8 @@ Your reply is built in this exact order:
    Nothing precedes it.
 2. Then, for that one topic only: **2–4 lines** of research (what the code does + the real
    trade-off, citing `file:line`; plain prose, no "Code (…):" prefix).
-3. Then: **trivial** → illustrate the change (**not applying it**) via `change-view`, same
+3. Where cards are drawn, the topic's proposal is this step, stored before `present` runs
+   (see *Rounds*). Otherwise: **trivial** → illustrate the change (**not applying it**) via `change-view`, same
    one-paste discipline as `present`/`quote`/`reply-view` (the repeated bug here was saying
    "Trivial. Change:" and then never actually showing it — a Read or other tool call in between
    pushed it out of mind):
@@ -151,8 +173,8 @@ and go **straight to Phase 3**, one topic at a time. Grill only the open topics 
 
 **Route each planned topic by its status — don't blindly re-implement.** `plans` (and the
 overview) mark a topic `✎ reply-pending` when its code was already fixed **and pushed** (a
-`diff_url` is stored). **A `reply-pending` topic is DONE code-wise** — skip Phase 3 steps 1–5
-and go straight to the **reply step (6)** for it: show the thread, draft the reply, show the
+`diff_url` is stored). **A `reply-pending` topic is DONE code-wise** — skip Phase 3 steps 1–4
+and go straight to the **reply step (5)** for it: show the thread, draft the reply, show the
 URL. **Never re-implement it** (you'd duplicate a pushed change). Only `○ open` planned topics
 (no `diff_url`) get implemented from step 1. If a `reply-pending` topic's diff looks wrong or
 the reviewer re-commented asking for more, confirm with the user before touching code.
@@ -172,6 +194,89 @@ current topic's views must be pasted.
   the reviewer — and `reply-view <t>` makes `t` current. `present` shows it, so a jump also
   survives into the next session. `change-view`/`diff-view` always belong to the topic you are
   on and are always enforced.
+
+## Rounds (where cards are drawn)
+
+The two passes stay: a plan for every open topic, then the fixes one topic at a time. The user
+runs them as **rounds** from the sidebar: agreeing a plan moves on to the next topic without
+one; once every open topic has a plan, the fix pass runs; a thread that arrives during the fix
+pass waits until that pass is through, then its plan comes up. A reviewer's new thread or reply
+lands in the sidebar's inbox, and a background agent of the mod's prepares a plan for it
+(`judge-brief`), so its card carries one by the time the user opens it.
+
+- **A topic you researched gets a proposal before it is shown.** Store your analysis and plan,
+  then show the topic: the card carries both, and the user agrees with a press.
+  ```bash
+  python3 $SD/threads.py propose <t> --says needs --why "<what is asked, what the code does, the trade-off; ends on a **Recommendation:** sentence>" \
+    --outcome fix|reply|push-back|question --plan "<one sentence: what to do>" [--answer-now] [--change - <<'CHANGE_EOF'
+  @@ <path>:<first>-<last>
+  <for a small fix: the new lines that replace those lines; one such block per range>
+  CHANGE_EOF]
+  python3 $SD/threads.py quote <t> --focus
+  ```
+  `--says fyi` (no outcome, no plan) for a comment that asks nothing of you. `--answer-now` on
+  a fix whose plan answers the reviewer ahead of it (they asked a question, or offered options
+  and the plan picks one): the card then recommends agreeing with a reply up front. The `--change` is
+  the change the user agrees to: the fix is compared with it once made, so it takes the place
+  of `change-view` here. It carries the idea and its main change, at its origin (the rename
+  where the name is defined, the new parameter in the signature), and leaves the call sites it
+  adapts to the fix: the card draws it whole, so it stays a glance. Never write a diff by
+  hand: the script builds it from the file, from the lines you name (paths from the
+  repository's root, line numbers as the file has them now). A plan agreed in the chat instead is stored with `set <t> --decision
+  "…" --plan "…" --outcome <outcome>`.
+- **A reply in place of a plan.** "Reply to <t> instead: <gist>" is the user's answer to the
+  topic: a question back, a push-back, a different suggestion, in their words. Draft the reply
+  from that gist in the thread's language (*Reply draft rules*), store it as the topic's plan
+  and draft in one call, then show it:
+  ```bash
+  python3 $SD/threads.py set <t> --decision "<the user's gist, in English>" --plan "<one sentence: what the reply says>" \
+    --outcome question|push-back|reply --reply - <<'REPLY_EOF'
+  <the reply body>
+  REPLY_EOF
+  python3 $SD/threads.py reply-view <t>
+  ```
+  The topic is then at its reply: the user posts it from the card.
+- **"Fix <t> instead: <gist>"** answers a proposal of replying (declining, pushing back):
+  the user wants what was asked done after all. Research the fix and store it as the new
+  proposal (`propose <t> --says needs --outcome fix --plan "…"`, with its `--change`), then
+  show the topic.
+- **A reply ahead of the fix.** Asked for one on an agreed plan, draft it from that plan in
+  the thread's language: what you will do (the option taken, where the reviewer offered
+  several) and that the fix follows. Store it with `set <t> --reply - --early` (a quoted
+  heredoc, as every reply) and show it with `reply-view <t>`. Posted, it resolves nothing and
+  the plan stands; after the push the thread gets a short `Fixed: <link>`.
+- **A reviewer wrote again on an agreed plan.** Where their comment only acknowledges it
+  ("sounds good", a thank-you) and changes nothing, the plan stands:
+  `keep-plan <t> --why "<what they said>"`. Anything else is a new proposal.
+- **A reply the user posted by hand** (often reworded) is checked against your draft:
+  `posted <t>` shows both. Where it still says what it should, say so and run
+  `posted <t> --ok`. Where not, store your verdict (a line or two) with a corrected version
+  of what they posted, as close to their wording as it can be: `posted <t> --differs
+  "<verdict>" --fix -` with the text in a quoted heredoc. It shows its card; editing the reply
+  on GitLab is the user's press there, never yours.
+- **"Change the plan for <t>: <what>"** is the user's word on an agreed plan: rework it
+  with them and store the new one (`set <t> --decision "…" --plan "…" --outcome <outcome>`).
+- **Making the fix** (Phase 3 steps 1–2): run its checks (step 2, `verify`) until
+  they pass, then show it with
+  `diff-view.sh <t> --did "<one short sentence: the change in summary>" --fixup "<sha> <subject>" --as-agreed`,
+  one `--fixup` per commit it rewrites, one `--new-commit "<subject>"` per commit it adds.
+  The card shows the plan above the summary and the thread in the sidebar, so `--did` is the
+  change alone ("Changes applied as planned.", or what it does beyond that). `--as-agreed` is your judgment of the fix against the plan and
+  change agreed (`plans`): it carries out the idea, with no surprise in it, no change of
+  direction, and not significantly more or less. The call sites a new parameter adapts are part
+  of the idea. Whatever you changed from the plan while making the fix (a wall you hit,
+  something the plan missed) is a difference: pass `--differs "<one sentence: what, and why>"`
+  instead. The card says it, and the user reviews the fix before pushing. The card is the whole step: the
+  diff is in the sidebar, and the diff viewer opens only when the user asks for it.
+- **Pushing is the user's press** on the fix's card: the script commits, squashes and pushes,
+  and does nothing else. What it cannot finish comes back to you as a prompt that says what to
+  do. Never offer to push ("say ack and I'll push"): once the user's notes from the diff
+  viewer are answered, show the fix again and leave the push to its card.
+- **After the push** the card offers a short `Fixed: <link>` or a longer reply. Asked for the
+  longer one, draft what the reviewer needs to know (how the fix differs from what they
+  asked, the answer to their question); `set --reply` ends it on the `Fixed: <link>` line,
+  and it never resolves the thread: the reviewer reads it and resolves.
+- **Posting is the user's**: they post from the card. `threads.py post` refuses anything else.
 
 ## Next topics
 
@@ -200,8 +305,9 @@ the user is actually looking at. It follows the reviewer's own selection: a mult
 ("lines +12 to +22") shows that whole span marked `┃`, a single-line one shows `►` on the line with
 a wider window around it. Code inside the reviewer's note — a ```suggestion block or an indented
 snippet — stays in their quote, fenced so it is highlighted; a suggestion shows as a diff against
-the lines it replaces, which is the offer you are accepting or declining. If it says the working tree has since diverged, the lines shown are the
-reviewer's version, not the current file — say so rather than reasoning past it.
+the lines it replaces, which is the offer you are accepting or declining. The lines shown are
+always the reviewer's version; where your working tree has since changed them, the change on
+them follows as a diff.
 
 Outcomes: **fix** · **reply-only** (reviewer wrong / no improvement) · **push-back** ·
 **question** (just answer, with a snippet / concrete example). Keep a TODO item per topic.
@@ -257,14 +363,24 @@ As disciplined as the grilling loop. Full mechanics in [REFERENCE.md](REFERENCE.
 Per topic:
 
 1. Bug/problem → **failing test first** (`tdd` skill), then fix. (reply-only / push-back /
-   question → skip to 6.) Clean code for the *merged* result — no "changed from before"
+   question → skip to 5.) Clean code for the *merged* result — no "changed from before"
    comments, no iteration leftovers.
-2. Light QA (unit/lint) — silently. **Then, silently, blame the changed hunks** and name the
+2. Run the checks, silently: `python3 $SD/threads.py verify <t>` (`--new <path>` for each file
+   the fix adds). It runs the repository's commit and push hooks ahead of time and the fast
+   local checks of the parts of the repository the fix touches (end-to-end tests are CI's), on
+   the fix as it will be committed, and stores that they passed; the push runs none of them
+   again on the same files. Fix what fails and run it again: a fix is shown only once its
+   checks pass. Where it says this repository's checks are not worked out yet, read the hooks
+   and files it lists and store your reading as it shows: once per repository, kept until one
+   of those files changes.
+   **Then, silently, blame the changed hunks** and name the
    target(s) — `→ fixup into <sha> ("<subject>")`, one per introducing commit (several if the
    change spans commits). **Fixup is the default; a new commit is the rare exception** — only
    for a fix/refactor to code the branch did *not* add (blame older than the branch point), as
    a separate real commit *before* the fixups; call that out explicitly. Only THEN, as your
-   **final** action before replying, run `diff-view.sh <t>` and **paste its ENTIRE output
+   **final** action before replying, run `diff-view.sh <t> --fixup "<sha> <subject>"`, one
+   `--fixup` per target and one `--new-commit "<subject>"` per new commit (the push makes the
+   commits these name), and **paste its ENTIRE output
    verbatim as the rest of your message, then STOP**: first a short summary — **what the
    reviewer asked for, by name, and what you did about it** ("Robin asked for X; rewrote
    `Foo.bar()` to … and added two tests") — then the fixup target(s) in 1–2 lines, then the
@@ -299,16 +415,11 @@ Per topic:
    it on a line the fix has since moved. So **that output is your only copy**: address every
    line of it in this turn. The window is likewise cleared of *your* notes each time a diff
    goes up, so what is anchored in it always belongs to the diff currently loaded.
-   Then capture the pre-push baseline (`diff-url.py baseline` → `set <t> --start-sha`),
-   and `git commit --fixup=<sha>` for each named target.
-4. `git rebase --autosquash`, **full QA** (hard gate), `git push --force-with-lease --force-if-includes`.
-   Then `python3 $SD/threads.py hunk-close` — the rebase left the tree clean, so the viewer
-   window is now showing a diff that no longer exists while the conversation moves on. It
-   closes itself silently; the only time it says anything is when a note arrived in the
-   meantime, and then the window stays open and that note is the next thing to deal with.
-5. Topic diff URL: `diff-url.py url --start-sha <stored>` (never a commit URL — force-push
-   rots it) → `set <t> --diff-url`.
-6. Reply — **one topic at a time; the `c`/`p`/`n` prompt is a hard STOP.** Do all
+4. `python3 $SD/threads.py push <t>`: it commits the fixup, squashes it into its commit and
+   force-pushes, with no check run again where the files are the ones checked, then stores the
+   topic's diff URL and closes the viewer window. Exit 3 prints what to do instead (files
+   changed since the checks, a fix that goes into several commits or makes a new one); do that.
+5. Reply — **one topic at a time; the `c`/`p`/`n` prompt is a hard STOP.** Do all
    of this for the current topic before touching the next. The thread + draft + URL + prompt are
    shown via **one** script command (`reply-view`) whose output you paste as your whole message —
    so none of them can be dropped. The repeated bug was hand-assembling these and forgetting the
@@ -393,14 +504,15 @@ Per topic:
   gets nothing), and `clip.sh` runs `guard-reply.sh` — so an un-reworded draft cannot be
   copied or posted.
 - GitLab markdown, code in fences, identifiers in `backticks`, **no headings**, bullets only if they help. Short but concrete.
-- Fixes: lead with `Fixed: <diff-url>`; explain only when needed (didn't follow exactly / did more / was complex).
+- Fixes: `Fixed: <diff-url>` alone; explain only when needed (didn't follow exactly / did more / was complex), and then the explanation comes first and the `Fixed:` line last (`set --reply` adds it).
 - reply-only / push-back: explain the reasoning. question: answer with a snippet or concrete example.
 
 ## Prerequisites
 
 `glab` authenticated; run on (or pass `--iid N` for) the MR branch. `python3`. (`clip.sh` copies to the clipboard via macOS `pbcopy`; where that is missing the
 copy is skipped — the draft is in the chat message and `p` posts through `glab` regardless.)
-`threads.py` subcommands: sync·todo·present·bodies·plans·quote·url·reply·reply-view [--refine]·set·merge·path·hunk-notes·hunk-close
+`threads.py` subcommands: sync·todo·present·bodies·plans·quote·url·reply·reply-view [--refine]·set·merge·path·hunk-notes·hunk-close·checks·verify·push
+(where cards are drawn also propose·judge-brief, and the mod's own refresh·state·code·open·leave·agree·wait·post·hunk-show, and push on the person's press)
 (plus `change-view`/`diff-view`, the bodies of the two .sh views below).
 **Optional: `hunk` (a terminal diff viewer) inside `tmux`.** With both, a topic's working
 diff opens in a tmux window of its own — placed directly right of the one you are talking

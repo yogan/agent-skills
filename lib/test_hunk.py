@@ -382,6 +382,14 @@ class TestSucceeds(HunkCase):
         reload = [c for c in fake.calls if c[:3] == ["hunk", "session", "reload"]][0]
         self.assertIn("--exclude-untracked", reload)
 
+    def test_the_viewer_loads_the_change_against_head_staged_or_not(self):
+        """The callers count `git diff HEAD`. A plain `hunk diff` is the unstaged changes
+        alone: a fix the agent had staged loaded as no file at all."""
+        fake = FakeRun([session("mine", pane="%4")], owners={"%4": "me"})
+        self.show(fake)
+        reload = [c for c in fake.calls if c[:3] == ["hunk", "session", "reload"]][0]
+        self.assertEqual(reload[reload.index("--") + 1:reload.index("--") + 3], ["diff", "HEAD"])
+
     def test_addresses_the_session_by_id_never_by_repo(self):
         """Two agents in one repo is the whole reason: `--repo` cannot tell them apart."""
         fake = FakeRun([session("mine", pane="%4")], owners={"%4": "me"})

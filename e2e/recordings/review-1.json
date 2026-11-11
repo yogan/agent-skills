@@ -1,0 +1,106 @@
+{
+ "recorded_from": {
+  "model": "claude-sonnet-5-5",
+  "session": "6fbc96ba-c7d5-41f4-ae69-666032079761.jsonl"
+ },
+ "streams": [
+  {
+   "name": "main",
+   "first": "<command-message>agent-skills:review-mr</command-message> <command-name>/agent-skills:review-mr</command-name> <command-args>!1</command-args>",
+   "replies": [
+    {
+     "content": [
+      {
+       "type": "tool_use",
+       "id": "toolu_01S544dacaNy6xhwtgPjmkBK",
+       "name": "Bash",
+       "input": {
+        "command": "SD=~/.claude/skills/review-mr/scripts; ls $SD | head; python3 $SD/findings.py prune --iid 1; python3 $SD/findings.py worktree --iid 1; git worktree list; pwd"
+       }
+      }
+     ],
+     "prompts": [
+      "<command-message>agent-skills:review-mr</command-message> <command-name>/agent-skills:review-mr</command-name> <command-args>!1</command-args>",
+      "Base directory for this skill: {SRC}/agent-skills/e2e/.runs/20261111-184323-review-1/skills-plugin/skills/review-mr # Review MR Reviewing **someone else's** GitLab MR. glab-only; nothing reaches GitLa"
+     ]
+    },
+    {
+     "content": [
+      {
+       "type": "tool_use",
+       "id": "toolu_013WbAbsodGZFKWXg9XTWrXN",
+       "name": "Bash",
+       "input": {
+        "command": "SD=~/.claude/skills/review-mr/scripts; cd {SRC}/agent-skills-demo-review-mr1 && python3 $SD/findings.py worktree --iid 1 --set $PWD && git fetch origin && git checkout -f --detach \"origin/$(python3 $SD/findings.py branch --iid 1)\" && python3 $SD/findings.py begun --iid 1"
+       }
+      }
+     ]
+    },
+    {
+     "content": [
+      {
+       "type": "tool_use",
+       "id": "toolu_01NC6BQ31mErMTyc8Wn9p2a3",
+       "name": "Bash",
+       "input": {
+        "command": "SD=~/.claude/skills/review-mr/scripts; cd {SRC}/agent-skills-demo-review-mr1 && python3 $SD/findings.py set-head --iid 1 && python3 $SD/findings.py explainer --iid 1; python3 $SD/findings.py explainer --iid 1 --assess; python3 $SD/findings.py seed --iid 1; git log --oneline -5; git diff --stat \"$(python3 $SD/findings.py base --iid 1)\" HEAD | tail -20"
+       }
+      }
+     ]
+    },
+    {
+     "content": [
+      {
+       "type": "text",
+       "text": "Explainer and seed already exist; import the seed."
+      },
+      {
+       "type": "tool_use",
+       "id": "toolu_01DqTbNGH9BUcQZKQqg83hPt",
+       "name": "Bash",
+       "input": {
+        "command": "SD=~/.claude/skills/review-mr/scripts; cd {SRC}/agent-skills-demo-review-mr1 && python3 $SD/findings.py import \"$(python3 $SD/findings.py seed --iid 1)\" --iid 1"
+       }
+      },
+      {
+       "type": "tool_use",
+       "id": "toolu_01NngrKDkW2Tv9hFZrNpqHeS",
+       "name": "Bash",
+       "input": {
+        "command": "SD=~/.claude/skills/review-mr/scripts; cd {SRC}/agent-skills-demo-review-mr1 && python3 $SD/findings.py present --iid 1"
+       }
+      }
+     ]
+    },
+    {
+     "content": [
+      {
+       "type": "text",
+       "text": "📖 **Explainer:** [explainer-mr1.html](file://{SRC}/agent-skills/e2e/artifacts/explainer-mr1.html)\n\n**Agent review done.** This is a good time for your own review in GitLab; the agent's topics wait until you say you are done."
+      }
+     ]
+    }
+   ],
+   "ids": {
+    "toolu_01S544dacaNy6xhwtgPjmkBK": [
+     "814d73d",
+     "4b562a8",
+     "1d4d7cf"
+    ],
+    "toolu_013WbAbsodGZFKWXg9XTWrXN": [
+     "1d4d7cf",
+     "c8c9913",
+     "4b562a8"
+    ],
+    "toolu_01NC6BQ31mErMTyc8Wn9p2a3": [
+     "4b562a812ee0",
+     "4b562a8",
+     "18987b6",
+     "e8181b4",
+     "0ec4251",
+     "d8cb1f3"
+    ]
+   }
+  }
+ ]
+}

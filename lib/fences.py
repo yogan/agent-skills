@@ -7,6 +7,7 @@ a copy per skill drifts: one learns to re-fence a ```suggestion and the other go
 printing it raw. Nothing here knows either skill's state shape.
 """
 
+import datetime
 import difflib
 import os
 import re
@@ -69,6 +70,44 @@ def looks_like_diff(text):
     return any(ln[:1] in "+-" for ln in lines)
 
 
+HUNK_HEAD = re.compile(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@(.*)$")
+
+
+def recount(diff):
+    """`diff` with every hunk header's line counts taken from the hunk itself.
+
+    A diff written by hand (an agent's proposed change) often miscounts them, and a viewer
+    that holds a hunk to its header then refuses the whole diff: the review-ui mod's engine
+    draws one whose counts do not add up as plain code, uncoloured. The start lines are
+    kept, as only the writer knows where the change is, and a header that holds is left as it
+    was written."""
+    lines = (diff or "").split("\n")
+    out, head, old, new = [], None, 0, 0
+
+    def close():
+        if head is not None:
+            m = HUNK_HEAD.match(out[head])
+            said = (int(m.group(2) or 1), int(m.group(4) or 1))
+            if said != (old, new):     # a header that holds is left as it was written
+                out[head] = f"@@ -{m.group(1)},{old} +{m.group(3)},{new} @@{m.group(5)}"
+
+    for ln in lines:
+        if HUNK_HEAD.match(ln):
+            close()
+            out.append(ln)
+            head, old, new = len(out) - 1, 0, 0
+            continue
+        if head is not None and ln[:1] in (" ", "-", "+") and not ln.startswith(("--- ", "+++ ")):
+            old += ln[:1] != "+"
+            new += ln[:1] != "-"
+        elif head is not None and ln.startswith(("--- ", "diff ")):
+            close()
+            head = None
+        out.append(ln)
+    close()
+    return "\n".join(out)
+
+
 def fence(text, lang=""):
     """`text` in a fence long enough that nothing inside can close it early.
 
@@ -119,8 +158,12 @@ def segments(lines):
         bars, info = m.group(2), m.group(3)
         body, i = [], i + 1
         close = re.compile(r"^\s*`{%d,}\s*$" % len(bars))
+        # A fence set in (under a list item, say) sets its lines in by as much: that much
+        # comes off, as CommonMark reads it, and the code's own indentation stays.
+        lead = len(m.group(1))
         while i < len(lines) and not close.match(lines[i]):
-            body.append(lines[i])
+            ln = lines[i]
+            body.append(ln[min(lead, len(ln) - len(ln.lstrip(" "))):])
             i += 1
         i += 1  # skip the closing fence, if any
         segs.append(("code", info.strip(), body))
@@ -135,6 +178,12 @@ DEDENT = re.compile(r"^(?: {4}|\t)")
 LIST_ITEM = re.compile(r"^\s*([-*+]|\d+[.)])\s")
 
 
+def diff_info(path):
+    """The info string of a ```diff block of `path`'s lines, as lib/code_view.py's
+    `diff_fence` writes it: the file, so the review-ui mod highlights it as that file."""
+    return f"diff path={path}" if path else "diff"
+
+
 def suggestion_diff(content, info, anchor, source):
     """A GitLab ```suggestion as a diff against the lines it replaces, the way GitLab shows
     it — or None when those lines are not known, and the block is shown as plain code.
@@ -144,6 +193,9 @@ def suggestion_diff(content, info, anchor, source):
     the lines the offsets count from; the working tree may have moved on. Lines the
     suggestion keeps show as context, so a one-line change inside a three-line range reads
     as one. An empty suggestion — "delete these lines" — is all removals.
+
+    It is one hunk with its `@@` line, so it carries the line numbers it applies to, and
+    the review-ui mod draws it as it draws every other diff (`diff_info`).
     """
     m = SUGGESTION_INFO.match(info or "")
     if not m or source is None or anchor is None:
@@ -154,9 +206,10 @@ def suggestion_diff(content, info, anchor, source):
         return None
     if not 1 <= n <= len(source):
         return None
-    old = source[max(1, n - above) - 1:min(len(source), n + below)]
+    first = max(1, n - above)
+    old = source[first - 1:min(len(source), n + below)]
     new = content.splitlines() if content.strip() else []
-    out = []
+    out = [f"@@ -{first},{len(old)} +{first if new else first - 1},{len(new)} @@"]
     ops = difflib.SequenceMatcher(None, old, new, autojunk=False).get_opcodes()
     for tag, i1, i2, j1, j2 in ops:
         if tag == "equal":
@@ -164,6 +217,53 @@ def suggestion_diff(content, info, anchor, source):
         else:
             out += ["-" + ln for ln in old[i1:i2]] + ["+" + ln for ln in new[j1:j2]]
     return "\n".join(out)
+
+
+# How alike a line beside a suggestion's range and a line of its replacement must be for the
+# replacement to read as a rewrite of it: a heading reworded, a sentence corrected.
+REWRITE_RATIO = 0.6
+# How far beyond the range such a line is looked for.
+REWRITE_REACH = 4
+
+
+def suggestion_reach(content, info, anchor, source):
+    """The range a GitLab ```suggestion should replace where the one it names falls short,
+    as `(first, last, info)` in the file's line numbers; None where it holds or cannot be
+    told.
+
+    A suggestion replaces exactly the lines its range names (the comment's line alone, with
+    no `:-A+B`), and everything else stays. A range that misses a line its replacement
+    rewrites leaves the old line standing beside the new one, and a range of blank lines
+    only rewrites nothing. Both read fine in the draft and break the file once applied.
+    A line beside the range counts as rewritten where it is much like a line of the
+    replacement; blank lines between it and the range are taken in with it."""
+    m = SUGGESTION_INFO.match(info or "")
+    if not m or source is None or anchor is None or not content.strip():
+        return None
+    try:
+        n, above, below = int(anchor), int(m.group(1) or 0), int(m.group(2) or 0)
+    except (TypeError, ValueError):
+        return None
+    if not 1 <= n <= len(source):
+        return None
+    first, last = max(1, n - above), min(len(source), n + below)
+    new = [ln.strip() for ln in content.splitlines() if ln.strip()]
+
+    def rewritten(ln):
+        return ln.strip() and any(difflib.SequenceMatcher(None, ln.strip(), x).ratio() >= REWRITE_RATIO
+                                  for x in new)
+
+    lo, hi = first, last
+    for k in range(1, REWRITE_REACH + 1):
+        if first - k >= 1 and rewritten(source[first - k - 1]):
+            lo = first - k
+        if last + k <= len(source) and rewritten(source[last + k - 1]):
+            hi = last + k
+    if (lo, hi) == (first, last) and any(ln.strip() for ln in source[first - 1:last]):
+        return None
+    if (lo, hi) == (first, last):
+        return None        # blank lines only, and nothing beside them it rewrites: unknown
+    return lo, hi, f"suggestion:-{n - lo}+{hi - n}"
 
 
 def _indented_runs(seg):
@@ -249,7 +349,52 @@ def quoted_fence(content, lang=""):
     return lines
 
 
-def note_md(name, body, path=None, anchor=None, source=None):
+# The link to a comment on GitLab, as a glyph rather than the URL: one cell, drawn as a link
+# by the card, so each comment can be opened without a row of blue addresses
+# (Nerd Fonts md-open_in_new).
+LINK_ICON = "\U000f03cc"
+
+
+# What a comment of the user's own is signed with where the review-ui mod draws: the same word
+# everywhere, so their own comments can be picked out at a glance (the mod colours it).
+YOU = "You"
+
+
+# A line a markdown paragraph keeps on a line of its own: a list item, a quote, a heading,
+# a table row, or the line after a hard break (two trailing spaces or a backslash).
+_KEEPS_LINE = re.compile(r"^\s*(?:[-*+]\s|\d+[.)]\s|>|#|\|)")
+
+
+def unwrap(lines):
+    """A comment's prose with the author's own line wrapping undone: the lines of one
+    paragraph joined, so the card wraps them to its own width. Blank lines, list items,
+    quotes, headings and table rows keep their breaks."""
+    out = []
+    for ln in lines:
+        prev = out[-1] if out else ""
+        if (prev.strip() and ln.strip() and not _KEEPS_LINE.match(ln)
+                and not prev.endswith(("  ", "\\"))):
+            out[-1] = f"{prev.rstrip()} {ln.strip()}"
+        else:
+            out.append(ln)
+    return out
+
+
+def when_of(value):
+    """A comment's time as a card heads it, in local time: `Nov 5, 11:38`, as the sidebar
+    writes it; None where it is not known."""
+    try:
+        t = datetime.datetime.fromisoformat(str(value).replace("Z", "+00:00")) if value else None
+    except ValueError:
+        t = None
+    if not t:
+        return None
+    t = t.astimezone()
+    return f"{t.strftime('%b')} {t.day}, {t.strftime('%H:%M')}"
+
+
+def note_md(name, body, path=None, anchor=None, source=None, compact=False, url=None, mine=False,
+            when=None):
     """One thread comment, blockquoted whole — its code included, re-fenced so it renders.
 
     Reviewers paste code — a ```suggestion block, or an indented snippet — and both come
@@ -259,7 +404,13 @@ def note_md(name, body, path=None, anchor=None, source=None):
     A suggestion becomes a diff against the lines it replaces when `source` (the file as
     the comment saw it) is given — see `suggestion_diff`.
     """
-    out = [f"> **{first_name(name)}**"]
+    # The link leads, the name after it: every comment reads the same way, the glyph first.
+    head = (f"[{LINK_ICON}]({url}) " if url else "") + f"**{YOU if mine else first_name(name)}**"
+    # `compact`, for a card (the review-ui mod's): the head carries the comment's time and
+    # the text follows it directly, its author's own line wrapping undone so the card
+    # wraps it to its width.
+    out = [f"> {head}" + (f" _{when}_" if compact and when else "")]
+    pending = [compact]
 
     def quote(lines):
         while lines and not lines[0].strip():
@@ -267,7 +418,11 @@ def note_md(name, body, path=None, anchor=None, source=None):
         while lines and not lines[-1].strip():
             lines = lines[:-1]
         if lines:
-            out.append(">")
+            if compact:
+                lines = unwrap(lines)
+            if not pending[0]:
+                out.append(">")
+            pending[0] = False
             out.extend(f"> {ln}".rstrip() if ln.strip() else ">" for ln in lines)
 
     def code(content, info):
@@ -277,7 +432,7 @@ def note_md(name, body, path=None, anchor=None, source=None):
         if diff is None:
             out.extend([">"] + quoted_fence(content, block_lang(content, info, path)))
         else:
-            out.extend([">"] + quoted_fence(diff, "diff"))
+            out.extend([">"] + quoted_fence(diff, diff_info(path)))
 
     for kind, info, seg in segments((body or "").strip().splitlines() or [""]):
         if kind == "code":

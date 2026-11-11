@@ -79,6 +79,20 @@ class TestJump(unittest.TestCase):
         self.assertEqual(RULES.get(state), "t1")      # back to what needs you
 
 
+class TestLeave(unittest.TestCase):
+    def test_leaving_a_topic_opened_to_look_at_goes_back_to_what_needs_you(self):
+        state = state_of(t1="mine", t2="theirs")
+        RULES.jump(state, "t2")
+        self.assertEqual(RULES.leave(state), "t1")
+        self.assertEqual(RULES.get(state), "t1")
+
+    def test_with_nothing_needing_you_leaving_leaves_none_current(self):
+        state = state_of(t1="theirs", t2="theirs")
+        RULES.jump(state, "t2")
+        self.assertIsNone(RULES.leave(state))
+        self.assertIsNone(RULES.get(state))
+
+
 class TestView(unittest.TestCase):
     JUMP = "quote t2 --focus"
 

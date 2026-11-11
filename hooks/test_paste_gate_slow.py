@@ -16,6 +16,7 @@ process to fake time.sleep.
 """
 import json
 import os
+os.environ["REVIEW_UI_DRAWN"] = "0"   # the views as without the review-ui mod, whatever session runs this (lib/ui.py)
 import subprocess
 import sys
 import tempfile

@@ -97,6 +97,22 @@ def api(endpoint, paginate=False):
         return json.loads(out.replace("][", ","))
 
 
+def api_post(endpoint, body, method="POST"):
+    """Send `body` (a dict, nested as the API takes it) to `endpoint` as JSON, the parsed
+    answer back. Dies on failure.
+
+    The only writes these skills make, and each one is a person's press: posting a drafted
+    comment, a reply, a resolve. Nothing calls this unasked.
+    """
+    cmd = ["glab", "api", "-X", method, "-H", "Content-Type: application/json",
+           endpoint, "--input", "-"]
+    r = subprocess.run(cmd, input=json.dumps(body), capture_output=True, text=True)
+    if r.returncode != 0:
+        die(f"glab api {method} {endpoint} failed: {r.stderr.strip() or r.stdout.strip()}")
+    out = r.stdout.strip()
+    return json.loads(out) if out else {}
+
+
 @functools.lru_cache(maxsize=64)
 def file_at(project, sha, path):
     """The text of `path` at commit `sha` as GitLab holds it, or None — never fatal.
@@ -127,6 +143,30 @@ def mr_object(ctx, iid):
     against a stored last-reviewed head). Fetching by iid never misfires on the
     ambient branch the way `glab mr view` can."""
     return api(f"projects/{ctx['enc']}/merge_requests/{iid}")
+
+
+def mr_status(ctx, iid, me=None, mr=None):
+    """Where the MR stands as a whole, for the review-ui mod's heading and inbox: open,
+    merged or closed (with who and when), whether auto-merge is set, and who approved it
+    (`me` marks the user's own approval). Approvals are read where the instance has them;
+    without, the list is empty rather than the check failing."""
+    mr = mr or mr_object(ctx, iid)
+    r = run(["glab", "api", f"projects/{ctx['enc']}/merge_requests/{iid}/approvals"])
+    try:
+        ap = json.loads(r.stdout) if r.returncode == 0 and r.stdout.strip() else {}
+    except json.JSONDecodeError:
+        ap = {}
+    users = [x.get("user") or {} for x in ap.get("approved_by") or []]
+    return {
+        "state": mr.get("state"),
+        "merged_at": mr.get("merged_at"),
+        "merged_by": (mr.get("merged_by") or mr.get("merge_user") or {}).get("name"),
+        "closed_at": mr.get("closed_at"),
+        "closed_by": (mr.get("closed_by") or {}).get("name"),
+        "auto_merge": bool(mr.get("merge_when_pipeline_succeeds") or mr.get("auto_merge_enabled")),
+        "approved_by": [{"name": u.get("name"), "me": bool(me) and u.get("username") == me} for u in users],
+        "approvals_left": ap.get("approvals_left"),
+    }
 
 
 def mr_head(ctx, iid):

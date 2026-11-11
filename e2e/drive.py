@@ -2,12 +2,18 @@
 """Drive a real Claude Code session in tmux through a scenario, to check it or to show it.
 
     python3 drive.py list
-    python3 drive.py verify   <scenario|file.py> [--model haiku] [--out DIR] [--keep]
+    python3 drive.py verify   <scenario|file.py> [--model M [--record]] [--out DIR] [--keep]
     python3 drive.py showcase <scenario> [...]   [--model M] [--pace SECONDS] [--session NAME]
 
-**verify** runs each scenario in a detached tmux session of a fixed size, on Haiku unless told
-otherwise, with the user's own settings left out (`--setting-sources project,local`) so a Stop
-hook of theirs cannot change what is measured. After every step it saves the screen as text and
+**The model is a recording by default** (`mock_model.py`): everything else runs for real, the
+model's replies are the ones it gave in a recorded run, and a run costs nothing and comes out
+the same every time. `--model haiku` (or any model) runs on the real one instead, which costs
+money and minutes: it is the only test of whether a model follows the skills' wording, so it
+runs with the owner's go, and `--record` keeps a passing run as the scenario's recording.
+
+**verify** runs each scenario in a detached tmux session of a fixed size, with the user's own
+settings left out (`--setting-sources project,local`) so a Stop hook of theirs cannot change
+what is measured. After every step it saves the screen as text and
 with colours, checks what the step expects, and on the first miss exits non-zero naming the
 scenario and the step. The captures land in `.runs/<time>-<scenario>/`.
 
@@ -36,6 +42,7 @@ import argparse
 import dataclasses
 import datetime
 import importlib.util
+import json
 import os
 import re
 import shlex
@@ -47,14 +54,28 @@ import time
 import unicodedata
 from pathlib import Path
 
+import mock_model
+import transcript
+
 E2E = Path(__file__).resolve().parent
 RUNS = E2E / ".runs"
 BUSY = "esc to interrupt"
 VERIFY_SIZE = (160, 50)
 
-# What a verify run may do without a permission prompt. Wide enough for both skills to run
-# their scripts and glab, and nothing else; a call outside it stops at the prompt, and the
-# next expectation fails with the prompt in its capture, which names the missing rule.
+# The engine's own questions that can come up mid-run, and the key a person would answer each
+# with. They take the band above the prompt, where the mod yields to them, so the cards'
+# buttons vanish until one is answered: four real-model runs failed on the first of these.
+ENGINE_PROMPTS = {
+    "Teach auto mode about your environment?": "2",      # Not now
+}
+
+# What a run on a real model may do without a permission prompt: both skills' scripts and
+# glab. It allows; it does not fence. Whatever the session's permission mode lets through runs
+# too, and a run that came up in auto mode once installed a package globally. A fence needs a
+# fixed permission mode, which stops at the skills' own calls: they set a shell variable
+# (`SD=…; python3 $SD/threads.py …`), and a command that sets one "can't be checked before it
+# runs". So a real-model run lists afterwards what it ran besides these (`improvised`), and a
+# run on the recording is fenced to exactly the tools the recording uses.
 VERIFY_ALLOW = (
     "Bash(python3 *)", "Bash(glab *)", "Bash(git *)", "Bash(cd *)", "Bash(ls *)",
     "Read", "Grep", "Glob", "Skill",
@@ -108,6 +129,8 @@ class Click(Step):
     """Click the first place on screen showing `text` (a mouse press and release there)."""
     text: str
     offset: int = 0     # columns right of where `text` starts, to hit one glyph of it
+    turn: bool = False  # the press starts a turn: wait it out, as `Keys` does
+    timeout: int = 300
 
     def label(self):
         return f"click {self.text!r}"
@@ -121,6 +144,10 @@ class Expect(Step):
     # transcript: the whole conversation, paged through · screen: what is visible now ·
     # panel / main: the visible screen right / left of the panel's divider
     region: str = "transcript"
+    # Seconds to keep looking for it on screen: for what arrives without a turn of the
+    # model's, a background agent's result or the update check's. Not for the transcript,
+    # which is paged through on every look.
+    wait: int = 0
 
     def label(self):
         return f"expect {'no ' if self.absent else ''}{self.pattern!r} in {self.region}"
@@ -133,6 +160,17 @@ class Panel(Step):
 
     def label(self):
         return f"panel {'open' if self.open else 'closed'}"
+
+
+@dataclasses.dataclass
+class Check(Step):
+    """A shell command's output matches `pattern`: for what the screen cannot show, such
+    as whether a comment really reached GitLab. Runs in the scenario's folder."""
+    command: str
+    pattern: str
+
+    def label(self):
+        return f"check {self.command[:40]!r}"
 
 
 @dataclasses.dataclass
@@ -260,13 +298,23 @@ def tmux(*args, check=True):
 class Pane:
     """One claude, in a tmux pane addressed by `target`."""
 
-    def __init__(self, target, log=print):
+    def __init__(self, target, log=print, cwd=None):
         self.target = target
         self.log = log
+        self.cwd = cwd
 
     def screen(self, ansi=False):
-        """The visible screen only: what the person sees, and what a step judges."""
-        return tmux("capture-pane", "-p", "-t", self.target, *(["-e"] if ansi else []))
+        """The visible screen only: what the person sees, and what a step judges. One of the
+        engine's own questions on it is answered first, as a person would."""
+        for _ in range(3):
+            now = tmux("capture-pane", "-p", "-t", self.target, *(["-e"] if ansi else []))
+            asked = next((q for q in ENGINE_PROMPTS if q in now), None)
+            if not asked:
+                return now
+            self.log(f"   (answered the engine's {asked!r})")
+            self.keys(ENGINE_PROMPTS[asked])
+            time.sleep(0.5)
+        return now
 
     def history(self, ansi=False):
         return tmux("capture-pane", "-p", "-J", "-S", "-2000", "-t", self.target,
@@ -380,20 +428,124 @@ def skills_plugin(out):
     return d
 
 
-def claude_command(sc, model, verify, plugins=()):
+def claude_command(sc, model, verify, plugins=(), mock=None):
+    """`mock`: (its environment, the tools the recording uses) for a run on a recording."""
     argv = ["claude"]
     # A showcase runs on what the person has installed: their mods are already loaded, and
     # the same one loaded twice would draw every card twice.
     for m in [*plugins, *(sc.mods if verify else [])]:
         argv += ["--plugin-dir", expand(m)]
-    if model:
+    if model and not mock:
         argv += ["--model", model]
     if verify:
         argv += ["--setting-sources", "project,local"]
-        if sc.allow:
-            argv += ["--allowedTools", ",".join(sc.allow)]
+    if mock:
+        # Exactly what the recording calls, and nothing asks: anything else is refused. Auto
+        # mode would ask the model about each call, and the recording has no answer for that.
+        argv += ["--permission-mode", "dontAsk", "--allowedTools", ",".join(mock[1])]
+    elif verify and sc.allow:
+        argv += ["--allowedTools", ",".join(sc.allow)]
     argv += sc.args
-    return shlex.join(argv)
+    env = dict(mock[0]) if mock else {}
+    if verify:
+        env["REVIEW_UI_NO_OPEN"] = "1"   # a verify run opens nothing: no explainer in a browser
+    prefix = "env " + " ".join(f"{k}={shlex.quote(v)}" for k, v in env.items()) + " " if env else ""
+    return prefix + shlex.join(argv)
+
+
+def recorded_tools(rec):
+    """Every tool a recording calls, in the form `--allowedTools` takes."""
+    return sorted({b["name"] for s in rec["streams"] for r in s["replies"]
+                   for b in r["content"] if b["type"] == "tool_use"})
+
+
+def start_mock(sc, log):
+    """The recording's stand-in for the model, answering; None with the reason when there is
+    no recording for `sc`."""
+    path = mock_model.recording_path(sc.name)
+    if not os.path.isfile(path) and any(isinstance(s, Handover) for s in sc.steps):
+        rec = {"streams": []}     # it hands over before any model is asked: nothing to play
+    elif not os.path.isfile(path):
+        return None, (f"no recording of {sc.name} ({os.path.relpath(path, E2E)}). Make one with "
+                      f"`drive.py verify {sc.name} --model haiku --record`: a real model, so with "
+                      "the owner's go")
+    else:
+        rec = mock_model.load(path)
+    mock = mock_model.Mock(rec, log=log)
+    mock.server = mock_model.serve(mock)
+    mock.command = (mock_model.environment(mock.server.server_port), recorded_tools(rec))
+    return mock, None
+
+
+def off_script(mock):
+    if mock and mock.misses:
+        raise StepFailed(f"the recording has no answer: {mock.misses[0]}")
+
+
+# A real-model run's commands that are the skills' own work: their scripts (also through a
+# variable holding one, `T="python3 $SD/threads.py"; $T …`), git, glab, and looking around. Anything else is listed after the run, since the model improvised it.
+OWN = re.compile(r"(?:(?:do|then|else)\s+)?(?:for|while|if|done|fi|pwd|python3?\s+\S*(?:\$SD|/skills/)\S*\.py|(?:python3?\s+)?\$\w+\s|glab|git|cd|ls|cat|head|tail|sed -n|"
+                 r"grep|rg|find|wc|echo|printf|sleep|true|test)\b")
+
+
+# Mirrors hooks/paste-gate.py's _HEREDOC_RE: a heredoc's body is what a program reads.
+HEREDOC = re.compile(r"<<-?\s*(['\"]?)(\w+)\1[^\n]*\n.*?^\s*\2\s*$", re.S | re.M)
+ASSIGNMENTS = re.compile(r"""^\s*(?:\w+=(?:"[^"]*"|'[^']*'|\S*)\s*)*""")
+
+
+def segments(cmd):
+    """The commands a shell line runs, each on its own: split at `;`, `&&`, `||`, `|` and
+    line ends outside quotes, each `$(…)` a command of its own (`$(…)` where it stood),
+    heredoc bodies left out."""
+    cmd = HEREDOC.sub(lambda m: m.group(0).split("\n", 1)[0], cmd)
+    out, cur, quote, outer, i = [], "", None, [], 0
+    while i < len(cmd):
+        c, two = cmd[i], cmd[i:i + 2]
+        if quote == "'":
+            quote = None if c == "'" else quote
+        elif two == "$(":
+            outer.append((cur, quote))
+            cur, quote, i = "", None, i + 2
+            continue
+        elif c == ")" and outer and not quote:
+            out.append(cur)
+            cur, quote = outer.pop()
+            cur, i = cur + "$(…)", i + 1
+            continue
+        elif quote == '"':
+            quote = None if c == '"' else quote
+        elif c in "'\"":
+            quote = c
+        elif not quote and two in ("&&", "||"):
+            out.append(cur)
+            cur, i = "", i + 2
+            continue
+        elif not quote and c in ";|\n":
+            out.append(cur)
+            cur, i = "", i + 1
+            continue
+        cur += c
+        i += 1
+    out.append(cur)
+    parts = (ASSIGNMENTS.sub("", x).strip().lstrip("({").strip() for x in out)
+    return [p for p in parts if re.search(r"\w", p)]
+
+
+def improvised(session):
+    """The shell commands a session ran besides the skills' own work, each once, in order."""
+    seen = []
+    with open(session, encoding="utf-8") as fh:
+        lines = [json.loads(line) for line in fh if line.strip()]
+    for d in lines:
+        if d.get("type") != "assistant":
+            continue
+        for b in d["message"].get("content") or []:
+            if b.get("type") != "tool_use" or b.get("name") != "Bash":
+                continue
+            for part in segments(b["input"].get("command", "")):
+                if not OWN.match(part) and part not in seen:
+                    seen.append(part)
+    return seen
 
 
 def run_step(pane, step, verify):
@@ -413,24 +565,42 @@ def run_step(pane, step, verify):
             time.sleep(0.5)
             pane.settle()
     elif isinstance(step, Click):
+        # A button that has only just appeared may still be redrawn (a background agent's
+        # result filling its card): a click into that is lost. Let it stand first.
+        time.sleep(2)
         at = find_text(pane.screen(), step.text)
         if at is None:
             raise StepFailed(f"nothing on screen reads {step.text!r}")
         pane.click(at[0], at[1] + step.offset)
-        time.sleep(0.5)
-        pane.settle()
-    elif isinstance(step, Expect):
-        if step.region == "transcript":
-            text = pane.transcript()
+        if step.turn:
+            pane.wait_turn(step.timeout)
         else:
-            text = region_of(pane.screen(), step.region)
-        hit = re.search(step.pattern, text, re.M)
+            # Not settled: a background agent's line ticks on while the press is long done.
+            # What the press brings is the next Expect's to wait for.
+            time.sleep(1.5)
+    elif isinstance(step, Expect):
+        end = time.time() + step.wait
+        while True:
+            if step.region == "transcript":
+                text = pane.transcript()
+            else:
+                text = region_of(pane.screen(), step.region)
+            hit = re.search(step.pattern, text, re.M)
+            if bool(hit) != step.absent or time.time() >= end:
+                break
+            time.sleep(1)
         if bool(hit) == step.absent:
             raise StepFailed(f"{'found' if hit else 'did not find'} {step.pattern!r} in the {step.region}")
     elif isinstance(step, Panel):
         col = divider_column(pane.screen())
         if (col is not None) != step.open:
             raise StepFailed(f"the panel is {'open' if col is not None else 'closed'}")
+    elif isinstance(step, Check):
+        r = subprocess.run(step.command, shell=True, capture_output=True, text=True,
+                           cwd=pane.cwd, timeout=120)
+        if not re.search(step.pattern, r.stdout + r.stderr, re.M):
+            raise StepFailed(f"{step.pattern!r} not in the output of {step.command!r}: "
+                             f"{(r.stdout + r.stderr).strip()[-300:]}")
     elif isinstance(step, Say):
         pane.log(f"   ·  {step.text}")
     else:
@@ -441,6 +611,16 @@ def save(pane, out, n, step):
     stem = out / f"{n:02d}-{re.sub(r'[^a-z0-9]+', '-', step.label().lower()).strip('-')[:50]}"
     stem.with_suffix(".txt").write_text(pane.screen())
     stem.with_suffix(".ansi").write_text(pane.screen(ansi=True))
+
+
+# tmux-demo.sh's session. Its windows work in the rig's checkouts, so a reset under them pulls
+# the floor away mid-review: a press lands in a folder that was just re-cloned.
+DEMO_SESSION = "agentic-review-skills-demo"
+
+
+def demo_is_open():
+    return subprocess.run(["tmux", "has-session", "-t", DEMO_SESSION],
+                          capture_output=True).returncode == 0
 
 
 def reset_rig(out):
@@ -454,9 +634,20 @@ def reset_rig(out):
         raise StepFailed(f"fixture.py failed, see {out / 'reset.log'}")
 
 
-def verify(sc, model, out_root, keep, reset):
+def verify(sc, model, out_root, keep, reset, record=False):
     out = out_root / f"{datetime.datetime.now():%Y%m%d-%H%M%S}-{sc.name}"
     out.mkdir(parents=True)
+    mock = None
+    if model == "mock":
+        mock, why = start_mock(sc, log=str(out / "mock.log"))
+        if not mock:
+            print(f"── {sc.name}\n   FAIL {why}")
+            return False
+    if sc.needs_rig and reset and demo_is_open():
+        print(f"── {sc.name}\n   FAIL reset: the demo session '{DEMO_SESSION}' is open, and a reset "
+              "re-clones the checkouts its windows work in. Close it first "
+              f"(tmux kill-session -t {DEMO_SESSION}), or run with --no-reset.")
+        return False
     if sc.needs_rig and reset:
         try:
             reset_rig(out)
@@ -468,10 +659,12 @@ def verify(sc, model, out_root, keep, reset):
     w, h = VERIFY_SIZE
     cwd, cleanup = workdir(sc)
     tmux("new-session", "-d", "-s", session, "-x", str(w), "-y", str(h), "-c", cwd,
-         claude_command(sc, model, verify=True, plugins=[skills_plugin(out)]))
-    pane = Pane(session)
-    print(f"── {sc.name}: {sc.about}")
+         claude_command(sc, model, verify=True, plugins=[skills_plugin(out)],
+                        mock=mock.command if mock else None))
+    pane = Pane(session, cwd=cwd)
+    print(f"── {sc.name}: {sc.about}" + ("" if mock else f"  (real model: {model})"))
     n, step, t0 = 0, None, time.time()
+    ran = None
     try:
         pane.wait_ready()
         for n, step in enumerate(sc.steps, 1):
@@ -480,14 +673,30 @@ def verify(sc, model, out_root, keep, reset):
             t = time.time()
             run_step(pane, step, verify=True)
             save(pane, out, n, step)
+            off_script(mock)
             print(f"   ok  {n:2d} {step.label()}  ({time.time() - t:.1f}s)")
+        ran = transcript.session_file(cwd)
+        if not mock and ran:
+            for cmd in improvised(ran):
+                print(f"   improvised: {cmd[:120]}")
+        if record and ran:
+            path = mock_model.recording_path(sc.name)
+            mock_model.save(mock_model.record(ran), path)
+            print(f"   recorded: {os.path.relpath(path, E2E)}")
     except (StepFailed, RuntimeError) as err:
         save(pane, out, n, step or Say("start"))
         (out / "history.txt").write_text(pane.history())
+        # What the session ran, beside what it drew: the screens say the one, this the other.
+        ran = transcript.session_file(cwd)
+        if ran:
+            (out / "transcript.txt").write_text("\n".join(transcript.lines(ran)) + "\n")
         print(f"   FAIL {n:2d} {step.label() if step else 'start'}: {err}")
         print(f"        captures: {out}")
         return False
     finally:
+        if mock:
+            mock.server.shutdown()
+            mock.server.server_close()
         if not (out / "history.txt").exists():
             (out / "history.txt").write_text(pane.history())
         if keep:
@@ -500,8 +709,19 @@ def verify(sc, model, out_root, keep, reset):
 
 
 def showcase(sc, model, session, pace):
-    """One window in `session` (created when missing), steps paced by Enter or `pace`."""
+    """One window in `session` (created when missing), steps paced by Enter or `pace`.
+
+    On the recording unless `model` names one; a scenario that hands over to a person runs on
+    their own model, since what they type next was never recorded."""
     window = sc.window or sc.name
+    if model is None and not any(isinstance(s, Handover) for s in sc.steps):
+        model = "mock"
+    mock = None
+    if model == "mock":
+        mock, why = start_mock(sc, log=None)
+        if not mock:
+            print(f"── {sc.name}: {why}")
+            return False
     cwd, _ = workdir(sc)        # a showcase folder outlives the driver: claude stays in it
     # claude runs inside the window's shell, so the window survives claude exiting and the
     # person can start it again where it was.
@@ -509,8 +729,11 @@ def showcase(sc, model, session, pace):
         tmux("new-session", "-d", "-s", session, "-n", window, "-c", cwd)
     else:
         tmux("new-window", "-d", "-t", f"{session}:", "-n", window, "-c", cwd)
-    pane = Pane(f"{session}:{window}")
-    pane.type("clear; " + claude_command(sc, model, verify=False))
+    pane = Pane(f"{session}:{window}", cwd=cwd)
+    # `env -u`: a caller may have switched the mod's rendering off for its own checks
+    # (tmux-demo.sh does), and a tmux server it started hands that on to every window.
+    pane.type("clear; env -u REVIEW_UI_DRAWN " + claude_command(
+        sc, model, verify=False, mock=mock.command if mock else None))
     pane.keys("Enter")
     print(f"── {sc.name}: {sc.about}  (window {session}:{window})")
     pane.wait_ready()
@@ -526,8 +749,12 @@ def showcase(sc, model, session, pace):
                 time.sleep(pace)
         try:
             run_step(pane, step, verify=False)
+            off_script(mock)
         except StepFailed as err:
             print(f"   !! {n:2d} {step.label()}: {err}")
+    if mock:
+        print("   done; the recording stops answering when the driver exits")
+        mock.server.shutdown()
     return True
 
 
@@ -554,14 +781,18 @@ def main(argv=None):
     sub.add_parser("list")
     v = sub.add_parser("verify")
     v.add_argument("scenarios", nargs="+")
-    v.add_argument("--model", default="haiku")
+    v.add_argument("--model", default="mock",
+                   help="default: the scenario's recording; a real model costs money (owner's go)")
+    v.add_argument("--record", action="store_true",
+                   help="with a real --model: keep a passing run as the scenario's recording")
     v.add_argument("--out", type=Path, default=RUNS)
     v.add_argument("--keep", action="store_true", help="leave the tmux session up afterwards")
     v.add_argument("--no-reset", dest="reset", action="store_false",
                    help="run a rig scenario on the rig as it is, without fixture.py first")
     s = sub.add_parser("showcase")
     s.add_argument("scenarios", nargs="+")
-    s.add_argument("--model", default=None, help="default: your own")
+    s.add_argument("--model", default=None,
+                   help="default: the recording; your own model for a scenario that hands over")
     s.add_argument("--pace", type=float, default=None, help="seconds between steps; default: Enter")
     s.add_argument("--session", default=None, help="default: the tmux session you are in")
     a = ap.parse_args(argv)
@@ -575,7 +806,9 @@ def main(argv=None):
 
     picked = [sc for name in a.scenarios for sc in load_scenarios(name)]
     if a.mode == "verify":
-        ok = all([verify(sc, a.model, a.out, a.keep, a.reset) for sc in picked])
+        if a.record and a.model == "mock":
+            raise SystemExit("--record needs a real --model: a recording is made from one")
+        ok = all([verify(sc, a.model, a.out, a.keep, a.reset, a.record) for sc in picked])
         return 0 if ok else 1
 
     session = a.session or (tmux("display-message", "-p", "#S").strip() if os.environ.get("TMUX") else None)

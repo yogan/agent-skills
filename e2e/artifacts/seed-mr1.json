@@ -5,7 +5,8 @@
     "source": "llm",
     "file": "mock-server.ts",
     "line": 15,
-    "summary": "CORS origin '*' plus credentials:true is rejected by browsers now that api-client sets withCredentials"
+    "summary": "CORS origin '*' plus credentials:true is rejected by browsers now that api-client sets withCredentials",
+    "why": "`api-client.ts:11` now sends every request with `withCredentials`, and a browser rejects a credentialed response whose `Access-Control-Allow-Origin` is `*`. With `origin: '*'` and `credentials: true` (`mock-server.ts:15`), every call from the app to the standalone mock server fails its CORS check, so the e2e run this MR adds cannot pass.\n\n**Recommendation:** raise it. Reflect the request's origin with `origin: true`."
   },
   {
     "kind": "issue",
@@ -13,7 +14,8 @@
     "source": "llm",
     "file": "src/testing/mocks/db.ts",
     "line": 59,
-    "summary": "loadDb returns null on a read error, and both callers dereference it unconditionally"
+    "summary": "loadDb returns null on a read error, and both callers dereference it unconditionally",
+    "why": "When `mocked-db.json` exists but cannot be read or parsed, `loadDb` logs the error and returns `null` (`db.ts:59`). Both callers then index into it without a check: `persistDb` sets `data[model]` (`db.ts:83`) and `initializeDb` reads `database[key]` (`db.ts:90`). A corrupt file crashes the mock server at startup with a `TypeError` instead of the logged error.\n\n**Recommendation:** raise it. Rethrow, or return an empty DB as the `ENOENT` branch does."
   },
   {
     "kind": "issue",
@@ -21,7 +23,8 @@
     "source": "llm",
     "file": "src/testing/mocks/handlers/comments.ts",
     "line": 100,
-    "summary": "the one persistDb call left un-awaited after the async conversion"
+    "summary": "the one persistDb call left un-awaited after the async conversion",
+    "why": "`persistDb` became async in this MR, and every other handler now awaits it; the comment-delete handler still calls it bare (`comments.ts:100`). The response goes out before the write finishes, and a failed write becomes an unhandled rejection rather than the handler's 500.\n\n**Recommendation:** raise it. A one-word fix: `await persistDb('comment')`."
   },
   {
     "kind": "issue",
@@ -29,7 +32,8 @@
     "source": "llm",
     "file": "src/testing/mocks/handlers/auth.ts",
     "line": 156,
-    "summary": "/auth/me is the only handler still returning 200 null instead of 401, and its catch block is now dead"
+    "summary": "/auth/me is the only handler still returning 200 null instead of 401, and its catch block is now dead",
+    "why": "`requireAuth` now returns `{ user: null }` instead of throwing, so `/auth/me` answers an unauthenticated request with 200 and a `null` body while every other handler answers 401 (`auth.ts:156`). Its `catch` block can no longer be reached.\n\n**Recommendation:** raise it as a consistency fix. It only matters to code that tells a logged-out user apart by status."
   },
   {
     "kind": "issue",
@@ -37,6 +41,7 @@
     "source": "llm",
     "file": "src/testing/mocks/handlers/index.ts",
     "line": 19,
-    "summary": "the /healthcheck handler has no caller and adds a random networkDelay to a health probe"
+    "summary": "the /healthcheck handler has no caller and adds a random networkDelay to a health probe",
+    "why": "Nothing in the app or the e2e setup requests `/healthcheck` (`handlers/index.ts:19`), and the handler waits a random `networkDelay()` before answering, which makes a readiness probe slow and uneven if one is added later.\n\n**Recommendation:** drop it, or raise it as a nit at most."
   }
 ]

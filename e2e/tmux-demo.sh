@@ -11,6 +11,10 @@
 
 set -u
 
+# Its checks read the scripts' plain views. Run from a session the review-ui mod draws (a
+# `! ./tmux-demo.sh` in Claude Code), they would render the mod's words instead (lib/ui.py).
+export REVIEW_UI_DRAWN=0
+
 SESSION=agentic-review-skills-demo
 E2E=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 # One review worktree per MR, as the skill records them and as a real review uses them.

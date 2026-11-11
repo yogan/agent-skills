@@ -37,7 +37,12 @@ _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
 if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
 
+from lib import checks  # noqa: E402
 from lib.cli import die  # noqa: E402
+
+# The rig is built by scripts, never in a session the review-ui mod draws: a fixture run from
+# such a session would otherwise seed MR !2 waiting for an own review nobody will do (lib/ui.py).
+os.environ["REVIEW_UI_DRAWN"] = "0"
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ENV_FILE = os.path.join(HERE, ".env.local")
@@ -271,9 +276,27 @@ def fresh_build():
     return BUILD
 
 
+# `main` as the demo has it: the pinned upstream base and the demo's own commits on top
+# (patches/main/: a quick source check, the one check /rework-mr runs on a fix). Built as a
+# branch of its own, since the build clone's `main` is upstream's.
+MAIN = "demo-main"
+
+
+def build_main():
+    """The demo's main in the build clone, made once per build; its branch name."""
+    if git("rev-parse", "--verify", "--quiet", f"refs/heads/{MAIN}", cwd=BUILD,
+           check=False).returncode == 0:
+        return MAIN
+    git("checkout", "--quiet", "-B", MAIN, BASE, cwd=BUILD)
+    series = sorted(os.listdir(os.path.join(PATCHES, "main")))
+    git("am", "--quiet", "--committer-date-is-author-date",
+        *[os.path.join(PATCHES, "main", p) for p in series], cwd=BUILD)
+    return MAIN
+
+
 def push_main():
-    step(f"pushing main @ {BASE}")
-    git("checkout", "--quiet", "-B", "main", BASE, cwd=BUILD)
+    step(f"pushing main @ {BASE} + the demo's own commits")
+    git("checkout", "--quiet", "-B", "main", build_main(), cwd=BUILD)
     # As frank: main is a protected branch, and a Developer (the bots) may not push the
     # initial commit to one. frank is Maintainer, and it is the realistic attribution.
     git("push", "--quiet", "--force", push_url("frank"), "main:main", cwd=BUILD)
@@ -467,7 +490,7 @@ def build_mr3():
     """Authored on the pinned base (see README, "Why it is built this way"), two commits
     so /rework-mr has something to fixup into. Pushed as frank — *your* MR in the demo."""
     step("MR !3 — query-key factories (your own MR, for /rework-mr)")
-    git("checkout", "--quiet", "-B", MR3_BRANCH, BASE, cwd=BUILD)
+    git("checkout", "--quiet", "-B", MR3_BRANCH, build_main(), cwd=BUILD)
     series = sorted(os.listdir(os.path.join(PATCHES, "mr3")))
     git("am", "--quiet", "--committer-date-is-author-date",
         *[os.path.join(PATCHES, "mr3", p) for p in series], cwd=BUILD)
@@ -594,7 +617,7 @@ def build_mr2():
     """Only the FIRST version is pushed here. The fix commits land later, after the
     threads and the local baseline exist — see seed_mr2()."""
     step("MR !2 — route-level prefetch (pre-seeded re-review target)")
-    git("checkout", "--quiet", "-B", MR2_BRANCH, BASE, cwd=BUILD)
+    git("checkout", "--quiet", "-B", MR2_BRANCH, build_main(), cwd=BUILD)
     git("am", "--quiet", "--committer-date-is-author-date", mr2_patch(0), cwd=BUILD)
     push_branch("author-bot", MR2_BRANCH)
     return create_mr("author-bot", MR2_BRANCH, MR2_TITLE, MR2_DESC, expect_iid=2)
@@ -762,14 +785,14 @@ I see two ways out and I'm not sure which we want:
 
 What do you think?"""),
 
-    # small, real asymmetry — gives the overview a third topic cheaply
+    # scope creep → the author declines it for this MR, with a reply and no code. Worded so
+    # declining is the plain answer: optional, out of this MR's scope, fine as a follow-up.
     ("src/features/discussions/api/query-keys.ts", "export const discussionKeys = {",
-     """Asymmetry with the comments factory: that one has a `list()` helper, this one
-only has `all`. `getDiscussions` uses `all` directly as the list key, which works,
-but it means "all discussions data" and "the discussions list" are the same key —
-so a future detail-invalidation can't help but hit the list too.
+     """Nice, this reads much better than the inline arrays.
 
-Worth adding `list()` here for symmetry?"""),
+Out of scope for this MR, so feel free to say no: while you're at it, could you move the
+`users` and `teams` features to key factories too? `getUsers` and `getTeams` still build
+their keys inline. A follow-up MR would be just as fine."""),
 ]
 
 
@@ -801,6 +824,25 @@ def reclone_workdir():
     git("branch", f"--set-upstream-to=origin/{MR3_BRANCH}", MR3_BRANCH, cwd=WORKDIR,
         check=False)
     info(f"cloned, on {MR3_BRANCH}")
+    record_checks()
+
+
+def record_checks():
+    """Tell rework-mr which checks a fix runs here: the quick source check, nothing else.
+
+    Recorded here rather than worked out by the agent, so a fix on stage shows within
+    seconds, with no reading of hooks and no wait on lint or tests. The skill's own rule
+    elsewhere is the opposite, record what a project defines, installed or not; here
+    husky's hook is never installed into git and nothing is installed for yarn, so eslint,
+    tsc and vitest could only fail. The source check needs plain node."""
+    checks.store(WORKDIR, {
+        "hooks": [],
+        "tests": [{"name": "source", "paths": ["src/**", "scripts/**"],
+                   "run": "node scripts/check-source.mjs",
+                   "does": "no console.log, debugger or .only( left in src/"}],
+        "based_on": [".husky", "package.json", "scripts/check-source.mjs"]})
+    checks.trust(WORKDIR)
+    info("recorded the source check for rework-mr (demo only)")
 
 
 ARTIFACTS = os.path.join(HERE, "artifacts")

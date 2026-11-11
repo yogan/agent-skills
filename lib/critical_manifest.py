@@ -73,7 +73,7 @@ def current():
 _UNSET = object()
 
 
-def with_manifest(block, topic=None, focus=_UNSET):
+def with_manifest(block, topic=None, focus=_UNSET, extra=None):
     """`block`, plus its trailing manifest when Claude Code's paste gate needs it.
 
     Every gated command goes through here rather than concatenating a payload of its own,
@@ -101,6 +101,10 @@ def with_manifest(block, topic=None, focus=_UNSET):
     stateless view), which is different from a declared `None` (nothing is current), and
     the hook enforces such a block as before.
 
+    `extra` — further fields for the review-ui mod (mods/review-ui): which review the view
+    belongs to and the version of a draft it shows, so a button pressed under the card acts
+    on exactly what the card drew. The gate ignores them.
+
     Emitted even when nothing was marked critical, unlike the older payload this replaces:
     `first` alone earns it, and a block with no critical lines is exactly as prone to
     being preceded by somebody else's output as any other.
@@ -113,4 +117,5 @@ def with_manifest(block, topic=None, focus=_UNSET):
         payload["topic"] = topic
     if focus is not _UNSET:
         payload["focus"] = focus
+    payload.update(extra or {})
     return block + "\n\n<!-- paste-gate:critical\n" + json.dumps(payload) + "\n-->"

@@ -19,6 +19,10 @@ How it moves, deterministically:
 - A jump (`quote <t> --focus`, or drafting for a topic) moves it to that topic, which
   then holds until its status changes to one that does not need you — so a jump to a
   topic that is only waiting on the other side still holds while you discuss it.
+- Leaving (`leave`, the sidebar's close) hands it back to the skill's own next topic.
+- With none current, a view of a topic claims it, unless the skill says that state is
+  idle on purpose (`claims_idle`): review-mr between two rounds, where only the user's
+  own opening starts the next one.
 
 The skills differ only in which statuses need you and which topic comes next, so those
 are the parameters; everything else is identical, which is why it lives here.
@@ -31,11 +35,14 @@ class Current:
     """One skill's rules for the current topic.
 
     `status(state, t)` is the skill's topic status, `needs_you` the statuses that are the
-    user's to act on, and `pick_next(state)` the topic the skill's opener would show.
+    user's to act on, and `pick_next(state)` the topic the skill's opener would show (it may
+    read `state["focus"]`, still the topic being left, to say what comes after it).
+    `claims_idle(state)` says whether a view claims the slot while none is current.
     """
 
-    def __init__(self, status, needs_you, pick_next):
+    def __init__(self, status, needs_you, pick_next, claims_idle=lambda state: True):
         self.status, self.needs_you, self.pick_next = status, needs_you, pick_next
+        self.claims_idle = claims_idle
 
     def get(self, state):
         """The current topic's id, or None when nothing needs you — resolved and stored
@@ -52,13 +59,21 @@ class Current:
         """Make `tid` current, whatever its status."""
         self._set(state, topic_for(state, tid))
 
+    def leave(self, state):
+        """Close a topic the user opened to look at: the current topic becomes the skill's
+        own next one, or none when nothing needs them. Returns it."""
+        self._set(state, self.pick_next(state))
+        return state["focus"]
+
     def view(self, state, tid, want_focus, jump_cmd):
         """Before a topic view renders `tid`: make it current when asked to (or when
         nothing is), and otherwise return the note that says it is research — for the
         agent's stderr, never the user's screen. None when there is nothing to say."""
         cur = self.get(state)
-        if want_focus or cur is None:
+        if want_focus or (cur is None and self.claims_idle(state)):
             self.jump(state, tid)
+            return None
+        if cur is None:
             return None
         if cur == tid:
             return None

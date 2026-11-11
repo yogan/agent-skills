@@ -12,8 +12,9 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
-from contextlib import redirect_stderr
+from contextlib import redirect_stderr, redirect_stdout
 from unittest.mock import patch
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -21,6 +22,7 @@ sys.path.insert(0, HERE)
 
 import findings as F                                  # noqa: E402
 from lib import critical_manifest                      # noqa: E402
+os.environ["REVIEW_UI_DRAWN"] = "0"   # the views as without the review-ui mod, whatever session runs this (lib/ui.py)
 
 
 def gate_signature(key):
@@ -167,7 +169,7 @@ class TestAnchorWarning(Throwaway, unittest.TestCase):
         "  if (gate === 'staff' && !me?.staff) return null",  # 4
         "  return label",                               # 5
         "}",                                            # 6
-    ] + [f"const filler{i} = {i}" for i in range(7, 30)])
+    ] + [f"const filler{i} = {i}" for i in range(7, 80)])
 
     def setUp(self):
         wt = self._throwaway_dir()
@@ -185,10 +187,33 @@ class TestAnchorWarning(Throwaway, unittest.TestCase):
     def test_name_a_few_lines_above_the_mark_is_in_view(self):
         self.assertIsNone(self._warn(4))
 
-    def test_name_only_outside_the_snippet_warns(self):
-        out = self._warn(20)
+    def test_name_far_from_the_snippet_warns(self):
+        out = self._warn(70)
         self.assertIn("anchor check", out)
         self.assertIn("**2**", out)
+
+    def test_name_some_way_above_is_brought_into_view(self):
+        # A finding deep inside the function it names: the snippet reaches back to the
+        # name, every line between included, and there is nothing to warn about.
+        self.assertIsNone(self._warn(20))
+        snip = F.code_snippet(new_state(slug="x"), {
+            "file": "Shelf.tsx", "line": 20,
+            "summary": "Gating moved into generic ShelfEntry (useViewer per entry)"})
+        numbers = [int(m) for m in re.findall(r"^[ ►] +(\d+) \|", snip, re.M)]
+        self.assertEqual(numbers, list(range(2, 25)))
+
+    def test_drawn_the_check_goes_to_the_agent_and_never_onto_the_card(self):
+        state = new_state(slug="x")
+        F.add_topic(state, summary="Gating moved into generic ShelfEntry", file="Shelf.tsx",
+                    line=70)
+        with patch.dict(os.environ, {"REVIEW_UI_DRAWN": "1"}):
+            card = F.render_quote(state, "t1")
+            err = io.StringIO()
+            with redirect_stderr(err):
+                F.anchor_notes(state, state["topics"])
+        self.assertNotIn("anchor check", card)
+        self.assertIn("anchor check", err.getvalue())
+        self.assertIn("set t1 --line 1", err.getvalue())
 
 
 class TestRefineRender(Throwaway, unittest.TestCase):
@@ -419,7 +444,7 @@ class TestSuggestionInThreadNotes(unittest.TestCase):
             state = self._state(head_sha=sha, side="new")
             with patch.object(F, "get_worktree", return_value=wt):
                 out = F.render_quote(state, "t1")
-        self.assertIn("> ```diff\n> -Old budget.\n> +Retries share one budget", out)
+        self.assertIn("> ```diff path=docs/retries.md\n> @@ -21,1 +21,1 @@\n> -Old budget.\n> +Retries share one budget", out)
 
     def test_a_commit_gone_from_the_worktree_is_read_from_gitlab(self):
         """A force-push drops the version the comment was on; GitLab still has it."""
@@ -430,7 +455,7 @@ class TestSuggestionInThreadNotes(unittest.TestCase):
                  f"line {i}\n" for i in range(1, 21)) + "Old budget.\n") as api:
             out = F.render_quote(state, "t1")
         api.assert_called_with("g/r", "GONE", "docs/retries.md")
-        self.assertIn("> ```diff\n> -Old budget.\n> +Retries share one budget", out)
+        self.assertIn("> ```diff path=docs/retries.md\n> @@ -21,1 +21,1 @@\n> -Old budget.\n> +Retries share one budget", out)
 
     def test_the_last_note_is_re_fenced_too(self):
         out = F.render_quote(self._state(
@@ -914,7 +939,7 @@ class TestTopicDiff(unittest.TestCase):
     def test_shown_in_the_viewer_it_names_the_window_and_the_counts(self):
         out = self.render(self.file("@@ -1 +1 @@\n-a = 1\n+a = 2\n"), show=True,
                           viewer=("sid", "9 (◈ !1)"))
-        self.assertIn("_Full diff in tmux window 9 (◈ !1) — 1 file, +1 −1:_", out)
+        self.assertIn("_Full diff in tmux window 9 (◈ !1):_ \uf4d2 1 file +1 −1", out)
         self.assertIn("```yaml\na.py:  +1 −1\n```", out)
         self.assertNotIn("```diff", out)
 
@@ -1246,6 +1271,8 @@ class TestPruneWorktrees(Throwaway, unittest.TestCase):
         findings_path = F.state_file(F.STATE_ROOT, slug, 42, "findings.json")
         with open(findings_path, "w") as f:
             f.write("{}")
+        old = time.time() - F.KEEP_WORKTREE_S - 60
+        os.utime(findings_path, (old, old))
         with patch.object(F, "mr_object", return_value={"state": "merged"}), \
              patch("subprocess.run"):
             removed = F.prune_worktrees(self._ctx(slug))
@@ -1255,6 +1282,18 @@ class TestPruneWorktrees(Throwaway, unittest.TestCase):
         self.assertFalse(os.path.isdir(wt))
         self.assertIsNone(F.get_worktree(slug, 42))
         self.assertTrue(os.path.exists(findings_path))
+
+    def test_a_merged_mr_reviewed_lately_keeps_its_worktree(self):
+        """Its review may still be open in another session, whose sidebar reads its code
+        from the worktree: a review of another MR once removed it from under it."""
+        slug = "acme-repo"
+        wt = self._with_worktree(slug, 44)
+        with open(F.state_file(F.STATE_ROOT, slug, 44, "findings.json"), "w") as f:
+            f.write("{}")
+        with patch.object(F, "mr_object", return_value={"state": "merged"}), \
+             patch("subprocess.run"):
+            self.assertEqual(F.prune_worktrees(self._ctx(slug)), [])
+        self.assertEqual(F.get_worktree(slug, 44), wt)
 
     def test_closed_mr_is_also_pruned(self):
         slug = "acme-repo"
@@ -1460,27 +1499,1140 @@ class TestExplainerLine(Throwaway, unittest.TestCase):
         F.set_prepared(self.ctx["slug"], 1, "explainer", path, sha)
         return path
 
+    def _line(self, opened=False):
+        return F.explainer_line(F.explainer_path(self.ctx, 1), opened)
+
     def test_renders_a_clickable_file_url_and_marks_it_critical(self):
         path = self._record()
         with patch.object(F, "mr_head", return_value="abc123def456"):
-            line = F.explainer_line(self.ctx, 1)
+            line = self._line()
         self.assertIn(f"file://{path}", line)
         self.assertIn(line, critical_manifest.current())
+
+    def test_drawn_it_is_a_named_link_that_says_it_opened(self):
+        # A card draws markdown, so the link reads as the file's name rather than a
+        # path, and the person learns the browser already has it.
+        path = self._record()
+        with patch.object(F, "mr_head", return_value="abc123def456"), \
+                patch.dict(os.environ, {"REVIEW_UI_DRAWN": "1"}):
+            line = self._line(opened=True)
+            again = self._line()
+        self.assertIn(f"[explainer.html](file://{path})", line)
+        self.assertIn("opened in your browser", line)
+        self.assertNotIn("opened", again)
 
     def test_no_record_means_no_line_and_no_call_to_gitlab(self):
         # present/resume run on every check; an MR with no explainer must not pay a
         # round trip to discover that.
         with patch.object(F, "mr_head", side_effect=AssertionError("asked GitLab")) as h:
-            self.assertIsNone(F.explainer_line(self.ctx, 1))
+            self.assertIsNone(self._line())
             h.assert_not_called()
         self.assertEqual(critical_manifest.current(), [])
 
     def test_a_stale_record_yields_no_line(self):
         self._record(sha="000000000000")
         with patch.object(F, "mr_head", return_value="abc123def456"):
-            self.assertIsNone(F.explainer_line(self.ctx, 1))
+            self.assertIsNone(self._line())
         self.assertEqual(critical_manifest.current(), [])
 
+
+class TestResumeWithNothingToShow(unittest.TestCase):
+    def test_the_review_is_still_recorded_for_the_mod(self):
+        # Nothing current and no explainer: no view to print, but the mod's sidebar, where
+        # the inbox is, still needs to know whose review this is.
+        state = {"iid": 2, "topics": [], "threads": {}}
+        with patch.dict(os.environ, {"REVIEW_UI_DRAWN": "1"}), \
+                patch.object(F, "resolve_state", return_value=(CTX, 2, "/s", state)), \
+                patch.object(F, "current_user"), patch.object(F, "sync"), \
+                patch.object(F, "fetch_threads"), patch.object(F, "save"), \
+                patch.object(F, "explainer_path"), patch.object(F, "explainer_line", return_value=""), \
+                patch.object(F, "render_present", return_value=""), \
+                patch.object(F, "view_context", return_value={"review": {"iid": 2}}), \
+                patch.object(F.ui, "record") as record, \
+                patch.object(sys, "argv", ["findings.py", "resume", "--iid", "2"]), \
+                redirect_stdout(io.StringIO()):
+            F.main()
+        self.assertEqual(record.call_args.args[0]["review"], {"iid": 2})
+
+
+CTX = {"enc": "g%2Fp", "web": "http://gl/g/p"}
+
+DIFF = """@@ -10,4 +10,5 @@ app.use(
+ app.use(
+   cors({
+-    origin: 'http://localhost',
++    origin: '*',
++    credentials: true,
+   }),
+"""
+
+
+class TestReviewBegun(unittest.TestCase):
+    """Fresh or resumed: by whether the first pass got as far as the findings."""
+
+    def test_a_first_pass_stopped_before_its_findings_starts_over(self):
+        state = new_state()
+        state["explainer_choice"] = {"recommend": "skip", "why": "x", "chosen": "generate"}
+        state["last_reviewed_head"] = "abc"           # written before the findings
+        self.assertFalse(F.review_begun(state))
+        self.assertFalse(F.review_begun(None))
+
+    def test_findings_imported_make_it_a_review_to_resume_even_none(self):
+        state = new_state()
+        with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as f:
+            f.write("[]")
+        self.addCleanup(os.remove, f.name)
+        with patch.object(F, "resolve_state", return_value=({"slug": "x"}, 1, "/s", state)), \
+                patch.object(F, "save"), patch.object(F, "wrong_checkout_warning", return_value=None), \
+                patch.object(sys, "argv", ["findings.py", "import", f.name, "--iid", "1"]), \
+                redirect_stdout(io.StringIO()):
+            F.main()
+        self.assertTrue(F.review_begun(state))
+
+    def test_importing_closes_an_explainer_question_answered_in_words(self):
+        """Typed, not pressed, the answer was never recorded, and the question's buttons
+        stayed on every card after it: the review moving on closes it."""
+        state = new_state()
+        state["explainer_choice"] = {"recommend": "skip", "why": "x", "chosen": None}
+        with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as f:
+            f.write("[]")
+        self.addCleanup(os.remove, f.name)
+        with patch.object(F, "resolve_state", return_value=({"slug": "x"}, 1, "/s", state)), \
+                patch.object(F, "save"), patch.object(F, "wrong_checkout_warning", return_value=None), \
+                patch.object(sys, "argv", ["findings.py", "import", f.name, "--iid", "1"]), \
+                redirect_stdout(io.StringIO()):
+            F.main()
+        self.assertIsNotNone(state["explainer_choice"]["chosen"])
+        self.assertIsNone(F.state_json(state)["explainer"])     # no question left to ask
+
+    def test_topics_threads_or_an_own_review_from_before_the_mark_count_too(self):
+        state = new_state()
+        F.add_topic(state, summary="a")
+        self.assertTrue(F.review_begun(state))
+        self.assertTrue(F.review_begun({**new_state(), "threads": {"d1": {}}}))
+        self.assertTrue(F.review_begun({**new_state(), "own_review": "pending"}))
+
+
+class TestStateForTheMod(unittest.TestCase):
+    def test_each_topic_with_its_status_and_draft_version(self):
+        state = new_state()
+        F.add_topic(state, summary="a", file="a.ts", line=3, draft="Text")
+        F.add_topic(state, summary="b")
+        got = F.state_json(state)
+        self.assertEqual(got["current"], "t1")
+        self.assertEqual([t["id"] for t in got["topics"]], ["t1", "t2"])
+        self.assertEqual(got["topics"][0]["draft"], F.draft_version("Text"))
+        self.assertIsNone(got["topics"][1]["draft"])
+        self.assertEqual(got["topics"][0]["status"], "draft")
+        self.assertIsNone(got["topics"][0]["thread_url"])        # not posted: no thread yet
+
+    def test_a_posted_topic_names_its_thread_on_gitlab(self):
+        state = new_state()
+        F.add_topic(state, summary="a", file="a.ts", line=3)
+        state["topics"][0]["thread_ids"] = ["d1"]
+        state["threads"] = {"d1": {"url": "https://gl/x#note_1", "notes": []}}
+        self.assertEqual(F.state_json(state)["topics"][0]["thread_url"], "https://gl/x#note_1")
+
+    def test_a_view_names_its_review_and_the_draft_it_shows(self):
+        state = new_state()
+        F.add_topic(state, summary="a", draft="Text")
+        extra = F.view_context(state, "t1")
+        self.assertEqual(extra["review"]["iid"], 1)
+        self.assertTrue(extra["review"]["script"].endswith("findings.py"))
+        self.assertEqual(extra["draft"], F.draft_version("Text"))
+        self.assertNotIn("draft", F.view_context(state))
+
+
+class TestDiffPosition(unittest.TestCase):
+    def position(self, line):
+        with patch.object(F, "mr_object", return_value={"diff_refs": {
+                "base_sha": "b", "start_sha": "s", "head_sha": "h"}}), \
+             patch.object(F, "api", return_value=[{"new_path": "srv.ts", "old_path": "srv.ts",
+                                                  "diff": DIFF}]):
+            return F.diff_position(CTX, 1, "srv.ts", line)
+
+    def test_an_added_line_takes_the_new_line_alone(self):
+        pos = self.position(12)
+        self.assertEqual(pos["new_line"], 12)
+        self.assertNotIn("old_line", pos)
+        self.assertEqual((pos["base_sha"], pos["head_sha"]), ("b", "h"))
+
+    def test_an_unchanged_line_takes_both(self):
+        pos = self.position(11)
+        self.assertEqual((pos["old_line"], pos["new_line"]), (11, 11))
+        pos = self.position(14)          # after one removal and two additions
+        self.assertEqual((pos["old_line"], pos["new_line"]), (13, 14))
+
+    def test_an_unchanged_line_outside_every_hunk_takes_both_shifted_by_the_hunks_above(self):
+        pos = self.position(40)
+        self.assertEqual(pos["new_line"], 40)
+        self.assertEqual(pos["old_line"], 40 - 1)      # the hunk above added one line net
+
+    def test_a_file_the_mr_does_not_change_has_none(self):
+        with patch.object(F, "mr_object", return_value={"diff_refs": {}}), \
+             patch.object(F, "api", return_value=[{"new_path": "other.ts", "diff": DIFF}]):
+            self.assertIsNone(F.diff_position(CTX, 1, "srv.ts", 3))
+
+
+class TestPost(unittest.TestCase):
+    def setUp(self):
+        self.state = new_state(threads={})
+        F.add_topic(self.state, summary="a", file="srv.ts", line=12, draft="Bitte fixen.")
+        patcher = patch.dict(os.environ, {F.PRESS_ENV: "1"})
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def post(self, expect=None, tid="t1"):
+        with patch.object(F, "diff_position", return_value={"new_line": 12}), \
+             patch.object(F, "mr_head", return_value="h"), \
+             patch.object(F, "api_post", return_value={"id": "d1", "notes": [{"id": 7}]}) as p:
+            url = F.post_draft(self.state, CTX, 1, tid, expect)
+        return url, p
+
+    def test_a_new_thread_is_posted_at_the_line_and_linked(self):
+        url, p = self.post(F.draft_version("Bitte fixen."))
+        endpoint, body = p.call_args[0]
+        self.assertTrue(endpoint.endswith("/merge_requests/1/discussions"))
+        self.assertEqual(body["body"], "Bitte fixen.")
+        self.assertEqual(body["position"], {"new_line": 12})
+        self.assertEqual(self.state["topics"][0]["thread_ids"], ["d1"])
+        self.assertTrue(url.endswith("#note_7"))
+
+    def test_a_posted_topic_gets_a_reply_in_its_thread(self):
+        t = self.state["topics"][0]
+        t["thread_ids"] = ["d9"]
+        self.state["threads"]["d9"] = {"awaiting": "you"}
+        _, p = self.post()
+        self.assertTrue(p.call_args[0][0].endswith("/discussions/d9/notes"))
+        self.assertIsNone(t["draft"])
+
+    def test_a_changed_draft_is_refused(self):
+        with self.assertRaises(SystemExit), redirect_stderr(io.StringIO()) as err:
+            self.post("000000000000")
+        self.assertIn("changed", err.getvalue())
+
+    def test_a_topic_handle_in_the_body_is_refused(self):
+        self.state["topics"][0]["draft"] = "Siehe t3."
+        with self.assertRaises(SystemExit), redirect_stderr(io.StringIO()):
+            self.post()
+
+    def test_only_a_press_posts(self):
+        with patch.dict(os.environ, {F.PRESS_ENV: ""}), self.assertRaises(SystemExit), \
+             redirect_stderr(io.StringIO()) as err:
+            self.post()
+        self.assertIn("press", err.getvalue())
+
+
+class TestWhereTheModDraws(unittest.TestCase):
+    """lib/ui.py: in a session the review-ui mod draws, the views change for the person;
+    everywhere else they stay byte for byte as they were."""
+
+    def setUp(self):
+        self.state = new_state(title="Add a widget cache")
+        F.add_topic(self.state, summary="Cache key ignores locale", file="a.ts", line=3,
+                    severity="high")
+        F.add_topic(self.state, summary="Eviction never runs", draft="Bitte.", severity="low")
+        F.add_topic(self.state, summary="Typo")["state"] = "dropped"
+
+    def drawn(self, value):
+        return patch.dict(os.environ, {"REVIEW_UI_DRAWN": value})
+
+    def test_the_table_takes_the_shared_words_and_icons(self):
+        with self.drawn("1"):
+            table = F.render_table(self.state)
+        self.assertIn(f"{F.ui.STATE_ICON['new']} new", table)
+        self.assertIn(f"{F.ui.STATE_ICON['draft']} draft", table)
+        self.assertIn(F.ui.SEVERITY_ICON["high"], table)
+        self.assertNotIn("◈", table)
+        self.assertNotIn("🟠", table)
+
+    def test_without_the_mod_the_table_is_as_it_was(self):
+        with self.drawn("0"):
+            table = F.render_table(self.state)
+        self.assertIn("✎ draft | ◈ **t1**", table)
+        self.assertIn("🟠", table)
+
+    def test_the_opener_is_the_current_topic_alone(self):
+        with self.drawn("1"), patch.object(F, "_code_context", return_value=[]):
+            opener = F.render_present(self.state)
+        self.assertNotIn("| State |", opener)
+        self.assertIn(f"**t1** {F.ui.SEVERITY_ICON['high']} **Cache key ignores locale**", opener)
+
+    def test_a_card_carries_the_analysis_and_the_whole_title(self):
+        # A press brings a card up with no model turn, so what the person decides on is
+        # stored with the finding; and a card wraps a long title instead of cutting it.
+        long = "Cache key ignores locale, so two shoppers in different markets share " \
+               "one cached widget and each sees the other's prices"
+        t = self.state["topics"][0]
+        t.update(summary=long, why="Two markets share one entry. Raise it.")
+        with self.drawn("1"), patch.object(F, "_code_context", return_value=[]):
+            card = F.render_quote(self.state, "t1")
+        self.assertIn(long, card)
+        self.assertIn("Analysis**\n\nTwo markets share one entry. Raise it.", card)
+        self.assertNotIn("not yet on GitLab", card)
+
+    def test_a_follow_up_suggestion_counts_from_the_thread_it_replies_into(self):
+        # The user's own comment on line 17 became the topic's thread; the topic's own
+        # seeded line was 15. The reply's suggestion sits under line 17.
+        state = new_state(threads={"d1": {"file": "a.ts", "line": 17, "body": "odd"}})
+        add_linked_topic(state, "d1", summary="x", file="a.ts", line=15,
+                         draft="Try:\n\n```suggestion:-0+0\norigin: true,\n```")
+        with self.drawn("1"), patch.object(F, "_thread_context", return_value=[]):
+            card = F.render_quote(state, "t1")
+        self.assertIn("17 | origin: true,", card)
+        self.assertNotIn("15 | origin", card)
+
+    def test_a_dropped_topic_is_kept_counted_and_not_listed(self):
+        dropped = self.state["topics"][2]
+        self.assertEqual(F.topic_status(self.state, dropped), "dropped")
+        with self.drawn("0"):
+            table = F.render_table(self.state)
+        self.assertNotIn("Typo", table)
+        self.assertIn("1/3 acked/closed", table)
+        self.assertNotEqual(F.current_topic(self.state), "t3")
+        self.assertEqual(F.state_json(self.state)["topics"][2]["state"], "dropped")
+
+
+class TestOwnReviewFirst(unittest.TestCase):
+    """Where the mod draws, a fresh review waits for the user's own review: no topic is
+    current, the opener says so, and their own comments are matched before the topics."""
+
+    def setUp(self):
+        self.state = new_state(threads={
+            "d7": {"mine": True, "file": "a.ts", "line": 4, "body": "Same as the cache point"},
+        })
+        F.add_topic(self.state, summary="Cache key ignores locale", file="a.ts", line=3)
+        F.add_topic(self.state, summary="Eviction never runs", file="b.ts", line=9)
+        self.state["own_review"] = "pending"
+
+    def test_no_topic_is_current_and_the_opener_shows_none(self):
+        self.assertIsNone(F.current_topic(self.state))
+        with patch.dict(os.environ, {"REVIEW_UI_DRAWN": "1"}):
+            opener = F.render_present(self.state)
+        self.assertIn("Agent review done", opener)
+        self.assertNotIn("Cache key", opener)
+        self.assertNotRegex(opener, r"\b\d+ topics?\b")
+
+    def test_your_own_comments_wait_for_the_matching_instead_of_being_adopted(self):
+        F.adopt_inbound(self.state, None, None)
+        self.assertEqual(len(self.state["topics"]), 2)
+
+    def test_a_merge_proposal_holds_the_topics_until_it_is_settled(self):
+        self.state["own_review"] = "done"
+        self.state["proposals"] = [{"thread": "d7", "into": "t1", "summary": "x"}]
+        self.assertIsNone(F.current_topic(self.state))
+        got = F.state_json(self.state)["proposals"][0]
+        self.assertEqual((got["where"], got["comment"]), ("a.ts:4", "Same as the cache point"))
+        self.state["proposals"] = []
+        self.assertEqual(F.current_topic(self.state), "t1")
+
+    def test_a_merged_comment_brings_its_topic_back_for_a_follow_up(self):
+        t = self.state["topics"][0]
+        t["thread_ids"] = ["d7"]
+        t["follow_up"] = "offer"
+        self.state["own_review"] = "done"
+        self.assertEqual(F.topic_status(self.state, t), "needs_ack")
+        self.assertEqual(F.current_topic(self.state), "t1")
+        self.assertEqual(F.ui_state(self.state, t), "new")
+        t.pop("follow_up")
+        self.assertEqual(F.topic_status(self.state, t), "open")
+
+    def test_with_no_comments_of_yours_the_first_topic_comes_up_saying_so(self):
+        state = new_state()
+        F.add_topic(state, summary="Cache key ignores locale", file="a.ts", line=3)
+        state["own_review"] = "matching"
+        with self.drawn("1"), patch.object(F, "anchor_notes"):
+            out = F.close_own_review(state, "done")
+        lead, card = out.split("\n\n", 1)
+        self.assertEqual(lead, "_No comments of yours on !1 to match: on to the agent's topics._")
+        self.assertIn("**t1**", card.split("\n")[0])
+        self.assertIn("Cache key ignores locale", card)
+        self.assertEqual((state["own_review"], F.current_topic(state)), ("done", "t1"))
+
+    def test_with_your_comments_all_on_topics_it_says_that_instead(self):
+        self.state["own_review"] = "matching"
+        self.state["topics"][0]["thread_ids"] = ["d7"]
+        with self.drawn("1"), patch.object(F, "anchor_notes"):
+            out = F.close_own_review(self.state, "done")
+        self.assertTrue(out.startswith("_Every comment of yours is on a topic already"))
+
+    def drawn(self, value):
+        return patch.dict(os.environ, {"REVIEW_UI_DRAWN": value})
+
+    def test_a_review_seeded_without_the_mod_never_waits(self):
+        state = new_state()
+        F.add_topic(state, summary="a")
+        self.assertEqual(F.current_topic(state), "t1")
+
+
+class TestPostedByHand(unittest.TestCase):
+    """A draft the user posted by their own hand, often reworded, is checked before the
+    round moves on: the topic stays current until the check holds."""
+
+    def test_the_topic_stays_current_until_its_posting_is_found_sound(self):
+        state = new_state(threads={"d1": {"file": "a.ts", "line": 3, "mine": True, "awaiting": "author",
+                                          "body": "Reworded by hand."}})
+        with patch.dict(os.environ, {"REVIEW_UI_DRAWN": "1"}):
+            for s in ("a", "b"):
+                F.add_topic(state, summary=s)
+            for t in state["topics"]:
+                t["draft"] = f"draft of {t['id']}"
+            state["own_review"] = "done"
+            F.start_round(state)
+            self.assertEqual(F.current_topic(state), "t1")
+            t1 = state["topics"][0]
+            t1["post_check"] = {"draft": t1["draft"]}
+            F.attach_thread(state, t1, "d1", None, 1, start_sha="abc")
+            self.assertEqual(F.current_topic(state), "t1")
+            self.assertTrue(next(x for x in F.state_json(state)["topics"] if x["id"] == "t1")["post_check"])
+            t1.pop("post_check")
+            self.assertEqual(F.current_topic(state), "t2")
+
+
+class TestMergedBeforeTheReviewIsThrough(unittest.TestCase):
+    """An MR merged (or closed) mid-review: what still matters stays the user's, the rest
+    closes, and the MR's own news reaches the inbox."""
+
+    def state(self):
+        threads = {f"d{i}": {"file": "a.ts", "line": i, "mine": True, "awaiting": "author",
+                             "body": f"b{i}"} for i in (1, 2)}
+        state = new_state(threads=threads, own_review="done")
+        add_linked_topic(state, "d1", summary="posted, high", severity="high")
+        add_linked_topic(state, "d2", summary="posted, low", severity="low")
+        F.add_topic(state, summary="never posted, critical", severity="critical", draft="x")
+        F.add_topic(state, summary="never posted, medium", severity="medium", draft="y")
+        state["mr_status"] = {"state": "merged", "merged_at": "2026-11-09T15:20:00Z", "merged_by": "Doe, Jan"}
+        return state
+
+    def test_what_still_matters_is_the_round_and_the_rest_closes(self):
+        state = self.state()
+        self.assertEqual(F.merge_left(state), {"left": ["t1", "t3"], "drafts": ["t4"], "quiet": 1})
+        with patch.dict(os.environ, {"REVIEW_UI_DRAWN": "1"}):
+            F.start_round(state)
+            self.assertEqual(F.current_topic(state), "t1")
+            topics = {x["id"]: x for x in F.state_json(state)["topics"]}
+            self.assertTrue(topics["t1"]["left"])
+            self.assertFalse(topics["t2"]["left"])
+            state["topics"][0]["state"] = "dropped"
+            self.assertEqual(F.current_topic(state), "t3")
+            state["topics"][2]["state"] = "dropped"
+            self.assertIsNone(F.current_topic(state))
+            self.assertEqual(F.state_json(state)["mr"]["merged_by"], "Jan")
+
+    def test_a_closed_topic_opened_from_the_sidebar_lets_go_once_a_press_closes_it(self):
+        """Every topic a merge closed reads the same, so the one the user opened held on
+        through an ack, with nothing left on it to press and no way to the inbox."""
+        state = self.state()
+        with patch.dict(os.environ, {"REVIEW_UI_DRAWN": "1"}):
+            for t in ("t1", "t3"):
+                F.topic_for(state, t)["state"] = "dropped"
+            self.assertIsNone(F.current_topic(state))
+            F.focus_on(state, "t2")                       # a click on its row
+            self.assertEqual(F.current_topic(state), "t2")
+            F.topic_for(state, "t2")["state"] = "acked"   # Accept
+            self.assertIsNone(F.current_topic(state))
+
+    def test_news_that_still_asks_the_user_is_opened_from_the_box_after_a_merge(self):
+        state = self.state()
+        rec = [{"id": t["id"], "inbox": "yours" if t["id"] == "t2" else None, "news": ["resolved"],
+                "news_at": "2026-11-09T15:00:00Z", "status": "open"} for t in state["topics"]]
+        status = {"t2": "needs_ack"}
+        with patch.dict(os.environ, {"REVIEW_UI_DRAWN": "1"}), \
+                patch.object(F, "topic_status", side_effect=lambda st, t: status.get(t["id"], "acked")):
+            self.assertEqual(F.inbox_json(state, rec)["first"], "t2")
+            status["t2"] = "acked"
+            self.assertIsNone(F.inbox_json(state, rec)["first"])
+
+    def test_the_mr_s_own_news(self):
+        at = "2026-11-09T15:00:00Z"
+        opened = {"state": "opened", "auto_merge": False, "approved_by": []}
+        self.assertEqual(F.mr_news(opened, {**opened, "auto_merge": True}, at),
+                         [{"kind": "auto-merge", "at": at, "by": None}])
+        approved = {**opened, "approved_by": [{"name": "Doe, Jan", "me": False}, {"name": "x", "me": True}]}
+        self.assertEqual(F.mr_news(opened, approved, at)[0]["by"], "Jan, You")
+        merged = {**opened, "state": "merged", "merged_at": "2026-11-09T15:20:00Z", "merged_by": "Doe, Jan"}
+        # Merged is news even to a review that never checked before; nothing else is.
+        self.assertEqual(F.mr_news(None, {**merged, "auto_merge": True}, at),
+                         [{"kind": "merged", "at": "2026-11-09T15:20:00Z", "by": "Jan"}])
+        self.assertEqual(F.mr_news(merged, merged, at), [])
+
+    def test_the_mr_s_own_news_counts_for_since_when(self):
+        state = new_state(mr_news=[{"kind": "approved", "at": "2026-11-09T12:11:00Z", "by": "You"}])
+        self.assertEqual(F.inbox_json(state, [])["since"], "2026-11-09T12:11:00Z")
+
+    def test_each_push_links_to_what_it_changed(self):
+        state = new_state(pushes=[{"at": "t", "head": "H2", "from": "H0"}, {"at": "t", "head": "H3"}])
+        vs = [{"id": 30, "head_commit_sha": "H3"}, {"id": 20, "head_commit_sha": "H2"}, {"id": 10, "head_commit_sha": "H1"}]
+        with patch.object(F, "versions", return_value=vs):
+            F.link_pushes(state, {"web": "https://gl/g/r"}, 5)
+        self.assertEqual([p["url"] for p in state["pushes"]], [
+            "https://gl/g/r/-/merge_requests/5/diffs?diff_id=20&start_sha=H0",
+            "https://gl/g/r/-/merge_requests/5/diffs?diff_id=30&start_sha=H2"])
+
+
+class TestVerdict(unittest.TestCase):
+    """The agent's judgment of an author's answer is stored, so every card of an answered
+    topic carries it, also one a press brings up; a new answer makes it stale."""
+
+    def setUp(self):
+        self.state = new_state(threads={"d1": {"file": "a.ts", "line": 3, "awaiting": "you",
+                                               "last_at": "2026-11-04T10:00:00Z", "body": "b"}})
+        add_linked_topic(self.state, "d1", summary="Cache key ignores locale")
+        self.t = self.state["topics"][0]
+
+    def drawn(self):
+        return patch.dict(os.environ, {"REVIEW_UI_DRAWN": "1"})
+
+    def _judge(self, says="more", text="Fixed for reads, not for writes. Ask for writes."):
+        self.t["verdict"] = {"says": says, "text": text, "asked": "Asked for locale in the key.",
+                             "on": F.answer_mark(self.state, self.t)}
+
+    def test_the_background_agent_never_overwrites_a_verdict_stored_since_it_started(self):
+        self.assertTrue(F.store_verdict(self.state, self.t, "more", "Push back.", asked="A."))
+        self.assertFalse(F.store_verdict(self.state, self.t, "settled", "Fine.", unless_judged=True))
+        self.assertEqual(self.t["verdict"]["says"], "more")
+        self.state["threads"]["d1"]["last_at"] = "2026-11-04T11:00:00Z"     # a new answer
+        self.assertTrue(F.store_verdict(self.state, self.t, "settled", "Fine.", unless_judged=True))
+
+    def test_a_changed_verdict_shows_the_change_alone(self):
+        F.store_verdict(self.state, self.t, "more", "Writes still skip it.", case="partly-fixed")
+        before = F.verdict_of(self.state, self.t)
+        F.store_verdict(self.state, self.t, "settled", "Holds on a deeper read.")
+        card = F.render_verdict_change(self.state, self.t, before)
+        self.assertIn("Verdict: Settled", card)
+        self.assertIn("_was: Partly fixed_", card)
+        self.assertNotIn("What you asked", card)
+
+    def test_the_verdict_heading_names_what_is_wrong(self):
+        F.store_verdict(self.state, self.t, "more", "Restore the 200.", case="comment-wrong")
+        with self.drawn():
+            self.assertIn("Verdict: The comment was wrong", F.render_quote(self.state, "t1"))
+            self.state["threads"]["d1"]["mine"] = True
+            self.assertIn("Verdict: Your comment was wrong", F.render_quote(self.state, "t1"))
+        F.store_verdict(self.state, self.t, "settled", "Fine.", case="comment-wrong")
+        self.assertNotIn("case", self.t["verdict"])
+
+    def test_the_recap_stays_with_the_topic_across_verdicts(self):
+        with self.drawn():
+            self.assertIn("--asked", F.judge_brief(self.state, 1))
+        F.store_verdict(self.state, self.t, "more", "x", asked="Asked for locale in the key.")
+        F.store_verdict(self.state, self.t, "settled", "y")
+        with self.drawn():
+            self.assertIn("Asked for locale in the key.", F.render_quote(self.state, "t1"))
+        self.state["threads"]["d1"]["last_at"] = "2026-11-04T11:00:00Z"
+        with self.drawn():
+            self.assertNotIn("--asked", F.judge_brief(self.state, 1))  # given once
+
+    def test_an_unjudged_answer_is_the_background_agent_s_to_judge(self):
+        with self.drawn():
+            self.assertEqual(F.needs_verdict(self.state), ["t1"])
+            brief = F.judge_brief(self.state, 1)
+        self.assertIn("- t1 (Cache key ignores locale): the author answered.", brief)
+        self.assertIn("`verdict t1 settled|more|wait --unless-judged --asked", brief)
+        self._judge()
+        with self.drawn():
+            self.assertEqual(F.needs_verdict(self.state), [])
+            self.assertEqual(F.judge_brief(self.state, 1), "")
+
+    def test_the_judgment_reads_what_was_agreed_halfway_through_the_thread(self):
+        """The first comment asks for more than was agreed later; the last says done. A
+        verdict judged from those two alone would call the fix short."""
+        self.state["threads"]["d1"]["notes"] = [
+            {"author": "Ann", "body": "Implement the locale handling in full.", "mine": True},
+            {"author": "Bob", "body": "Can a TODO do for now?", "mine": False},
+            {"author": "Ann", "body": "Yes, a TODO with the ticket is enough.", "mine": True},
+            {"author": "Bob", "body": "Done.", "mine": False}]
+        with self.drawn():
+            brief = F.judge_brief(self.state, 1)
+        self.assertIn("`bodies t1`", brief)
+        self.assertIn("a TODO with the ticket is enough", F.render_bodies(self.state, ["t1"]))
+
+    def test_what_an_agent_failed_on_is_left_out_of_the_next_brief(self):
+        with self.drawn():
+            self.assertEqual(F.judge_brief(self.state, 1, skip=["t1"]), "")
+            self.assertIn("- t1 ", F.judge_brief(self.state, 1))
+
+    def test_the_card_carries_the_verdict(self):
+        self._judge()
+        with self.drawn(), patch.object(F, "_thread_context", return_value=[]):
+            card = F.render_quote(self.state, "t1")
+        self.assertIn("Verdict: Not settled", card)         # a verdict without its case
+        self.assertIn("Fixed for reads, not for writes.", card)
+        self.assertEqual(F.state_json(self.state)["topics"][0]["verdict"], "more")
+
+    def test_an_answered_card_recaps_the_ask_then_what_was_done_then_the_verdict(self):
+        self.t["why"] = "The old analysis. **Recommendation:** Raise it."
+        self.state["author"] = "Alex Novak"
+        self.state["threads"]["d1"].update(body="Missing await here.", mine=True)
+        self.t["verdict"] = {"says": "settled", "text": "The write is awaited now.",
+                             "asked": "The write was not awaited; asked for an await.",
+                             "did": "Pushed the await; no reply.", "on": F.answer_mark(self.state, self.t)}
+        with self.drawn():
+            card = F.render_quote(self.state, "t1")
+        order = [card.index(x) for x in ("What you asked", "asked for an await", "What Alex did",
+                                         "Pushed the await; no reply.", "Verdict: Settled",
+                                         "The write is awaited now.")]
+        self.assertEqual(order, sorted(order))
+        self.assertNotIn("Missing await here.", card)   # the thread is the sidebar's
+        self.assertNotIn("Raise it", card)            # the finding's own advice is history now
+
+    def test_a_verdict_without_a_recap_goes_straight_to_what_was_done(self):
+        self.t["verdict"] = {"says": "settled", "text": "Done.", "did": "Pushed it.",
+                             "on": F.answer_mark(self.state, self.t)}
+        with self.drawn():
+            card = F.render_quote(self.state, "t1")
+        self.assertNotIn("asked", card)
+        self.assertIn("Pushed it.", card)
+
+    def test_waiting_on_the_author_takes_the_topic_out_until_they_answer_again(self):
+        self.t["verdict"] = {"says": "wait", "text": "Agreed; the fix is to come.",
+                             "on": F.answer_mark(self.state, self.t)}
+        with self.drawn():
+            self.assertEqual(F.topic_status(self.state, self.t), "open")
+            self.assertIsNone(F.inbox_of(self.state, self.t))
+            self.assertEqual(F.needs_verdict(self.state), [])
+            self.state["threads"]["d1"]["last_at"] = "2026-11-05T11:00:00Z"
+            self.assertEqual(F.topic_status(self.state, self.t), "needs_ack")
+
+    def test_a_new_answer_makes_the_verdict_stale(self):
+        self._judge("settled", "Fixed.")
+        self.state["threads"]["d1"]["last_at"] = "2026-11-04T11:00:00Z"
+        self.assertIsNone(F.verdict_of(self.state, self.t))
+        self.assertIsNone(F.state_json(self.state)["topics"][0]["verdict"])
+
+
+class TestDraftLanguage(unittest.TestCase):
+    def test_a_draft_in_another_language_than_the_draft_language_is_named(self):
+        state = new_state(lang="en")
+        self.assertIn("reads as de", F.draft_language_warning(
+            state, "Die Tests sind damit sauber, aber der Client bleibt ein Singleton."))
+        self.assertIsNone(F.draft_language_warning(state, "The tests are clean now, thanks."))
+        state["lang"] = "de"
+        self.assertIsNone(F.draft_language_warning(
+            state, "Die Tests sind damit sauber, aber der Client bleibt ein Singleton."))
+
+
+class TestStaleDrafts(unittest.TestCase):
+    """A follow-up draft answers the thread as it stood when it was written: a newer answer,
+    or choosing to wait, leaves it nothing to say, and its Post would contradict the verdict."""
+
+    def setUp(self):
+        self.state = new_state(threads={"d1": {"file": "a.ts", "line": 3, "awaiting": "you",
+                                               "last_at": "2026-11-04T10:00:00Z", "body": "b"}})
+        add_linked_topic(self.state, "d1", summary="Cache key ignores locale")
+        self.t = self.state["topics"][0]
+
+    def _draft(self, on=True):
+        self.t["draft"] = "Please also cover writes."
+        if on:
+            self.t["draft_on"] = F.answer_mark(self.state, self.t)
+
+    def test_a_draft_on_the_standing_answer_stays(self):
+        self._draft()
+        F.drop_stale_drafts(self.state)
+        self.assertEqual(self.t["draft"], "Please also cover writes.")
+
+    def test_a_newer_answer_drops_the_draft(self):
+        self._draft()
+        self.state["threads"]["d1"]["last_at"] = "2026-11-04T11:00:00Z"
+        F.drop_stale_drafts(self.state)
+        self.assertIsNone(self.t["draft"])
+        self.assertNotIn("draft_on", self.t)
+
+    def test_an_unmarked_draft_goes_where_the_verdict_leaves_nothing_to_ask(self):
+        for says, kept in (("more", True), ("settled", False), ("wait", False)):
+            self._draft(on=False)
+            self.t["verdict"] = {"says": says, "text": "x", "on": F.answer_mark(self.state, self.t)}
+            F.drop_stale_drafts(self.state)
+            self.assertEqual(bool(self.t["draft"]), kept, says)
+
+
+class TestRounds(unittest.TestCase):
+    """Where the mod draws, news waits in the inbox until the user opens it; a round then
+    runs through everything that needs them, in list order from where they started."""
+
+    def setUp(self):
+        env = patch.dict(os.environ, {"REVIEW_UI_DRAWN": "1"})
+        env.start()
+        self.addCleanup(env.stop)
+        threads = {f"d{i}": {"file": "a.ts", "line": i, "side": "new", "awaiting": "author",
+                             "last_at": "2026-11-04T10:00:00Z", "body": "b", "head_sha": "c0"}
+                   for i in range(1, 5)}
+        self.state = new_state(threads=threads, own_review="done")
+        for i in range(1, 5):
+            add_linked_topic(self.state, f"d{i}", summary=f"topic {i}")
+
+    def answer(self, i, at="2026-11-05T09:00:00Z"):
+        self.state["threads"][f"d{i}"].update(awaiting="you", last_at=at)
+
+    def ack(self, tid):
+        t = F.topic_for(self.state, tid)
+        t.update(state="acked", acked_at="2026-11-05T12:00:00Z")
+        F.settle(self.state)
+
+    def test_news_between_rounds_is_marked_and_never_becomes_current(self):
+        self.answer(2)
+        F.settle(self.state)
+        self.assertIsNone(F.current_topic(self.state))
+        j = F.state_json(self.state)
+        self.assertEqual(j["topics"][1]["inbox"], "new")
+        self.assertEqual(j["topics"][1]["news"], ["reply"])
+        self.assertEqual(j["inbox"]["replies"], ["t2"])
+        self.assertEqual(j["inbox"]["first"], "t2")
+
+    def test_a_round_runs_on_from_the_topic_opened_and_wraps_round(self):
+        for i in (1, 2, 4):
+            self.answer(i)
+        F.focus_on(self.state, "t2")
+        F.settle(self.state)
+        self.assertEqual(F.state_json(self.state)["topics"][1]["inbox"], "yours")
+        self.ack("t2")
+        self.assertEqual(F.current_topic(self.state), "t4")
+        self.ack("t4")
+        self.assertEqual(F.current_topic(self.state), "t1")
+        self.ack("t1")
+        self.assertIsNone(F.current_topic(self.state))
+        self.assertFalse(self.state["in_round"])
+
+    def test_news_after_a_round_ended_waits_for_the_next(self):
+        self.answer(1)
+        F.start_round(self.state)
+        self.ack("t1")
+        self.answer(3)
+        F.settle(self.state)
+        self.assertIsNone(F.current_topic(self.state))
+
+    def test_news_during_a_round_joins_it(self):
+        self.answer(1)
+        F.start_round(self.state)
+        self.answer(3)
+        self.ack("t1")
+        self.assertEqual(F.current_topic(self.state), "t3")
+
+    def test_the_round_s_order_is_what_comes_next(self):
+        for i in (1, 2, 3):
+            self.answer(i)
+        F.start_round(self.state, "t2")
+        # From the current one on in list order, round to the top again.
+        self.assertEqual(F.round_order(self.state), ["t2", "t3", "t1"])
+
+    def test_a_view_between_rounds_is_research_and_claims_nothing(self):
+        self.answer(1)
+        self.assertIsNone(F.CURRENT.view(self.state, "t1", False, "quote t1 --focus"))
+        self.assertIsNone(F.current_topic(self.state))
+
+
+class TestSaveBesideTheState(unittest.TestCase):
+    """The records written beside the review's state (a prepared seed, the explainer) have no
+    topics, and are saved as they are where the mod draws, too."""
+
+    def test_a_prepared_record_is_saved_where_the_mod_draws(self):
+        d = tempfile.mkdtemp(prefix="test-findings-save-")
+        self.addCleanup(shutil.rmtree, d)
+        with patch.dict(os.environ, {"REVIEW_UI_DRAWN": "1"}), \
+                patch.object(F, "prepared_path", return_value=os.path.join(d, "seed.json")):
+            F.set_prepared("slug", 1, "seed", "/tmp/seed.json", "abc")
+        self.assertEqual(json.load(open(os.path.join(d, "seed.json")))["sha"], "abc")
+
+
+class TestAnswersInCode(unittest.TestCase):
+    """A push that changes the lines a waiting comment is on makes the topic the user's,
+    with no reply in the thread; one that only moves them keeps it waiting."""
+
+    def setUp(self):
+        env = patch.dict(os.environ, {"REVIEW_UI_DRAWN": "1"})
+        env.start()
+        self.addCleanup(env.stop)
+        self.state = new_state(threads={"d1": {"file": "a.ts", "line": 11, "side": "new",
+                                               "awaiting": "author", "head_sha": "c0",
+                                               "last_at": "2026-11-04T10:00:00Z"}},
+                               own_review="done", seen_head="c0", diff_base="b0")
+        self.t = add_linked_topic(self.state, "d1", summary="Cache key")
+
+    def push(self, diff, head="c1"):
+        files = [{"new_path": "a.ts", "old_path": "a.ts", "diff": diff}]
+        with patch.object(F, "mr_head", return_value=head), \
+                patch.object(F, "_compare", return_value=files), \
+                patch.object(F, "_gl_compare", return_value={"stat": "`+2/−1` · 1 file"}):
+            F.check_pushes(self.state, None, 1, "b0")
+
+    def test_a_push_on_the_comment_s_lines_is_news(self):
+        self.push(TestTouchedDiff.REWRITE)
+        self.assertEqual(F.topic_status(self.state, self.t), "needs_ack")
+        self.assertEqual(F.news_of(self.state, self.t)[0], ["push"])
+        self.assertEqual(F.needs_verdict(self.state), ["t1"])
+        self.assertEqual(self.state["pushes"][0]["topics"], ["t1"])
+        self.assertIn("pushed a change to the lines", F.judge_brief(self.state, 1))
+
+    def test_a_push_is_noted_once_however_often_the_check_runs(self):
+        self.push(TestTouchedDiff.REWRITE)
+        at = self.t["pushed"]["at"]
+        with patch.object(F, "now_iso", return_value="2099-01-01T00:00:00+00:00"):
+            self.push(TestTouchedDiff.REWRITE)
+        self.assertEqual(self.t["pushed"]["at"], at)
+
+    def test_a_review_the_check_never_saw_compares_from_the_last_review(self):
+        del self.state["seen_head"]
+        self.state["last_reviewed_head"] = "c0"
+        self.push(TestTouchedDiff.REWRITE)
+        self.assertEqual(len(self.state["pushes"]), 1)
+        self.assertEqual(self.state["pushes"][0]["topics"], ["t1"])
+
+    def test_a_decision_after_seeing_the_code_answers_the_push_up_to_it(self):
+        # The round showed c1; the user replied after it; c1's change to the lines is not
+        # news again, though the check never noted it as a push of its own.
+        self.state["seen_head"] = "c1"
+        self.t["code_seen"] = {"sha": "c1", "mark": F.decision_mark(self.state, self.t)}
+        self.state["threads"]["d1"]["last_at"] = "2026-11-05T10:00:00Z"     # their reply
+        self.push(TestTouchedDiff.REWRITE)
+        self.assertEqual(F.topic_status(self.state, self.t), "open")
+        self.assertEqual(self.t["watch"]["sha"], "c1")
+        self.assertNotIn("pushed", self.t)
+
+    def test_a_push_that_only_moves_the_lines_keeps_the_topic_waiting(self):
+        self.push("@@ -2,0 +3,2 @@\n+x\n+y\n")
+        self.assertEqual(F.topic_status(self.state, self.t), "open")
+        self.assertEqual(self.t["watch"], {"sha": "c1", "first": 13, "last": 13})
+        self.assertEqual(self.state["pushes"][0]["topics"], [])
+
+    def test_a_rebase_that_moved_the_lines_without_the_author_is_no_news(self):
+        own = [{"new_path": "a.ts", "old_path": "a.ts", "diff": "@@ -1 +1 @@\n-x\n+y\n"}]
+        moved = [{"new_path": "a.ts", "old_path": "a.ts", "diff": TestTouchedDiff.REWRITE}]
+
+        def compare(ctx, frm, to):
+            return own if (frm, to) in (("b0", "c0"), ("b1", "c1")) else moved
+        with patch.object(F, "mr_head", return_value="c1"), patch.object(F, "_compare", compare), \
+                patch.object(F, "_gl_compare", return_value=None):
+            F.check_pushes(self.state, None, 1, "b1")
+        self.assertEqual(F.topic_status(self.state, self.t), "open")
+        self.assertEqual(self.state["pushes"][0], {**self.state["pushes"][0], "rebase": True, "topics": []})
+
+    def test_a_push_that_left_the_code_as_it_was_is_said_as_such(self):
+        """Squashed or reworded, the code as before: GitLab's diff of it is empty. The inbox
+        says so, dim, as it explains the new commits GitLab shows while nothing moved."""
+        with patch.object(F, "mr_head", return_value="c1"), patch.object(F, "_compare", return_value=[]), \
+                patch.object(F, "_gl_compare", return_value={"paths": [], "stat": None}):
+            F.check_pushes(self.state, None, 1, "b0")
+        self.assertEqual([(p["same"], p["topics"]) for p in self.state["pushes"]], [(True, [])])
+        self.assertEqual(self.state["seen_head"], "c1")
+
+    def test_an_ack_answers_the_push_and_the_next_one_is_checked_from_it(self):
+        self.push(TestTouchedDiff.REWRITE)
+        self.t.update(state="acked", acked_at="2026-11-05T12:00:00Z")
+        self.assertEqual(F.topic_status(self.state, self.t), "acked")
+        self.push("", head="c2")
+        self.assertNotIn("pushed", self.t)
+        self.assertEqual(self.t["watch"]["sha"], "c1")
+
+
+class TestTouchedDiff:
+    REWRITE = "@@ -8,7 +8,8 @@\n a8\n a9\n a10\n-a11\n+b11\n+b12\n a12\n a13\n a14\n"
+
+
+class TestPeerThreads(unittest.TestCase):
+    """Another reviewer's thread waits on you where the mod draws, until you say something."""
+
+    def test_waits_on_you_until_you_speak(self):
+        state = new_state(threads={"d1": {"author": "Kim", "awaiting": "author", "body": "b"}})
+        add_linked_topic(state, "d1", source="peer", summary="x")
+        t = state["topics"][0]
+        with patch.dict(os.environ, {"REVIEW_UI_DRAWN": "1"}):
+            self.assertEqual(F.topic_status(state, t), "needs_ack")
+            self.assertTrue(F.state_json(state)["topics"][0]["peer"])
+            state["threads"]["d1"]["you_spoke"] = True
+            self.assertEqual(F.topic_status(state, t), "open")
+        state["threads"]["d1"]["you_spoke"] = False
+        with patch.dict(os.environ, {"REVIEW_UI_DRAWN": "0"}):
+            self.assertEqual(F.topic_status(state, t), "open")      # without the mod, as before
+
+
+class TestWatchedThreads(unittest.TestCase):
+    """Another reviewer's thread is theirs to settle: the user watches it, and it joins their
+    round only where the agent judged it needs them."""
+
+    def setUp(self):
+        env = patch.dict(os.environ, {"REVIEW_UI_DRAWN": "1"})
+        env.start()
+        self.addCleanup(env.stop)
+        self.state = new_state(threads={"d1": {"author": "Kim", "awaiting": "author", "body": "b",
+                                               "last_at": "2026-11-05T09:00:00Z"}},
+                               own_review="done")
+        self.t = add_linked_topic(self.state, "d1", source="peer", summary="x")
+
+    def view(self, says, **kw):
+        self.t["peer_view"] = {"says": says, "advice": kw.get("advice", "seen"),
+                               "into": kw.get("into"), "on": F.answer_mark(self.state, self.t)}
+
+    def test_unjudged_it_is_news_for_the_background_agent(self):
+        self.assertEqual(F.needs_verdict(self.state), ["t1"])
+        self.assertIn("`peer t1 fyi|needs --unless-judged", F.judge_brief(self.state, 1))
+
+    def test_for_your_information_it_is_listed_but_never_in_a_round(self):
+        self.view("fyi")
+        self.assertEqual(F.topic_status(self.state, self.t), "acked")
+        self.assertEqual(F.inbox_of(self.state, self.t), "fyi")
+        self.assertIsNone(F.round_pick(self.state))
+        self.assertEqual(F.needs_verdict(self.state), [])
+        thr = F.state_json(self.state)["inbox"]["threads"]
+        self.assertEqual(thr, [{"id": "t1", "by": None, "fyi": True}])
+        self.t["seen"] = F.answer_mark(self.state, self.t)          # opened once
+        self.assertIsNone(F.inbox_of(self.state, self.t))
+
+    def test_needs_you_joins_the_round_until_seen(self):
+        self.view("needs", advice="merge", into="t9")
+        self.assertEqual(F.topic_status(self.state, self.t), "needs_ack")
+        self.assertEqual(F.state_json(self.state)["topics"][0]["peer_view"],
+                         {"says": "needs", "advice": "merge", "into": "t9"})
+        self.t["state"] = "acked"
+        self.assertEqual(F.topic_status(self.state, self.t), "acked")
+
+    def test_one_closed_before_views_existed_stays_closed_until_someone_writes(self):
+        self.t.update(state="acked", acked_at="2026-11-05T09:30:00Z")
+        self.assertEqual(F.topic_status(self.state, self.t), "acked")
+        self.assertEqual(F.needs_verdict(self.state), [])
+        self.assertIsNone(F.inbox_of(self.state, self.t))
+        self.state["threads"]["d1"]["last_at"] = "2026-11-05T10:00:00Z"
+        self.assertEqual(F.needs_verdict(self.state), ["t1"])
+
+    def test_a_new_comment_asks_for_a_new_view(self):
+        self.view("fyi")
+        self.t["state"] = "acked"
+        self.state["threads"]["d1"]["last_at"] = "2026-11-05T10:00:00Z"
+        self.assertEqual(F.needs_verdict(self.state), ["t1"])
+
+
+class TestOwnThreads(unittest.TestCase):
+    def test_every_own_thread_needs_settling(self):
+        state = new_state(threads={"d1": {"mine": True, "file": "a.ts", "line": 3, "body": "odd"},
+                                   "d2": {"mine": True, "file": "b.ts", "line": 1, "body": "x"},
+                                   "d3": {"mine": False, "body": "theirs"}})
+        add_linked_topic(state, "d2", summary="x")
+        state["proposals"] = []
+        self.assertEqual(F.unsettled_own(state), ["d1"])
+        state["proposals"] = [{"thread": "d1", "into": "t1", "summary": "s"}]
+        self.assertEqual(F.unsettled_own(state), [])
+        own = {x["id"]: x for x in F.own_threads(state)}
+        self.assertEqual((own["d1"]["proposal"], own["d2"]["topic"]), ("t1", "t1"))
+
+
+class TestProposalCard(unittest.TestCase):
+    def test_the_card_shows_the_comment_the_topic_the_reason_and_the_advice(self):
+        state = new_state(threads={"d1": {"mine": True, "file": "a.ts", "line": 3,
+                                          "body": "this is not secure!", "url": "http://gl/n1"}})
+        F.add_topic(state, summary="CORS origin is rejected", severity="critical")
+        state["proposals"] = [{"thread": "d1", "into": "t1", "summary": "s",
+                               "why": "Both flag `cors()`.", "recommend": "merge"}]
+        with patch.dict(os.environ, {"REVIEW_UI_DRAWN": "1"}):
+            card = F.render_proposal(state)
+        self.assertIn("**Your comment** · `a.ts:3`", card)
+        self.assertNotIn("**You**", card)              # nobody else answered: no signature
+        self.assertIn(") this is not secure!", card)
+        self.assertIn("**Possible match:** t1 — “CORS origin is rejected”", card)
+        self.assertIn("Both flag `cors()`.", card)
+        self.assertIn("Recommendation**\n\nMerge it into t1.", card)
+
+    def test_signed_where_someone_else_answered(self):
+        state = new_state(threads={"d1": {"mine": True, "file": "a.ts", "line": 3, "body": "odd",
+                                          "notes": [{"author": "Sam Rivers", "body": "odd", "mine": True},
+                                                    {"author": "Kim Lee", "body": "fixed", "mine": False}]}})
+        F.add_topic(state, summary="CORS")
+        state["proposals"] = [{"thread": "d1", "into": "t1", "summary": "s", "recommend": "separate"}]
+        with patch.dict(os.environ, {"REVIEW_UI_DRAWN": "1"}):
+            card = F.render_proposal(state)
+        self.assertIn("> **You**\n> odd", card)
+        self.assertIn("> **Kim**\n> fixed", card)
+        self.assertIn("Recommendation**\n\nKeep it apart from t1, as a topic of its own.", card)
+
+
+class TestDraftSuggestion(unittest.TestCase):
+    def test_a_draft_s_suggestion_is_a_diff_against_the_lines_it_replaces(self):
+        out = F.render_draft("Use this:\n\n```suggestion\nnew\n```", "a.ts", 2, ["l1", "old", "l3"])
+        self.assertIn("> ```diff path=a.ts\n> @@ -2,1 +2,1 @@\n> -old\n> +new\n> ```", out)
+
+    def test_a_suggestion_keeps_its_indentation(self):
+        out = F.render_draft("```suggestion\n    await x();\n```", "a.ts", 2, ["l1", "    x();", "l3"])
+        self.assertIn("> +    await x();", out)
+
+    def test_without_the_file_its_lines_are_numbered(self):
+        out = F.render_draft("```suggestion\nnew\n```", "a.ts", 2)
+        self.assertIn("> 2 | new", out)
+
+
+class TestExplainerAssessment(unittest.TestCase):
+    """Whether an explainer is worth it is the agent's call; this measures what it decides
+    on, so a refactor that only moves code reads as one however large it is."""
+
+    def repo(self, d):
+        def git(*a):
+            subprocess.run(["git", "-C", d, *a], check=True, capture_output=True)
+        git("init", "-q")
+        git("config", "user.email", "t@example.com")
+        git("config", "user.name", "T")
+        body = "".join(f"export function f{i}(x: number): number {{\n  return x * {i} + {i};\n}}\n\n"
+                       for i in range(20))
+        with open(os.path.join(d, "a.ts"), "w") as fh:
+            fh.write(body)
+        with open(os.path.join(d, "a.test.ts"), "w") as fh:
+            fh.write("test('x', () => {});\n")
+        git("add", ".")
+        git("commit", "-qm", "base")
+        return git, body
+
+    def test_code_that_only_moved_reads_as_moved(self):
+        with tempfile.TemporaryDirectory() as d:
+            git, body = self.repo(d)
+            os.remove(os.path.join(d, "a.ts"))
+            with open(os.path.join(d, "b.ts"), "w") as fh:
+                fh.write("// moved\n" + body)
+            with open(os.path.join(d, "a.test.ts"), "a") as fh:
+                fh.write("test('y', () => {});\n")
+            git("add", "-A")
+            git("commit", "-qm", "move")
+            a = F.assess_diff(d, "HEAD~1")
+        self.assertEqual(a["files"], 2)                           # the test file left out
+        self.assertGreater(a["moved"], 0.9 * (a["added"] + a["removed"]))
+        self.assertIn("only moved", F.assess_line(a))
+        self.assertTrue(F.assess_line(a).startswith("\uf4d2 2 files +"))
+
+    def test_a_share_that_moved_too_little_to_matter_goes_unsaid(self):
+        self.assertNotIn("moved", F.assess_line({"files": 43, "added": 182, "removed": 3, "moved": 0}))
+        self.assertNotIn("moved", F.assess_line({"files": 3, "added": 90, "removed": 10, "moved": 19}))
+        self.assertIn("20% of those lines only moved", F.assess_line({"files": 3, "added": 90, "removed": 10, "moved": 20}))
+
+    def test_new_code_reads_as_changed(self):
+        with tempfile.TemporaryDirectory() as d:
+            git, _ = self.repo(d)
+            with open(os.path.join(d, "c.ts"), "w") as fh:
+                fh.write("".join(f"export const k{i} = fetch('/x/{i}');\n" for i in range(30)))
+            git("add", "-A")
+            git("commit", "-qm", "new")
+            a = F.assess_diff(d, "HEAD~1")
+        self.assertEqual((a["added"], a["moved"]), (30, 0))
+
+    def test_the_choice_is_asked_until_answered(self):
+        state = new_state()
+        state["explainer_choice"] = {"recommend": "skip", "why": "A refactor that moves code.",
+                                     "stats": {"files": 3, "added": 10, "removed": 10, "moved": 18},
+                                     "chosen": None}
+        self.assertEqual(F.state_json(state)["explainer"],
+                         {"recommend": "skip", "why": "A refactor that moves code."})
+        card = F.render_explainer_choice(state)
+        self.assertIn("90% of those lines only moved", card)
+        self.assertIn("Skip it. A refactor that moves code.", card)
+        state["explainer_choice"]["chosen"] = "skip"
+        self.assertIsNone(F.state_json(state)["explainer"])
+
+
+
+class TestSuggestionWarning(unittest.TestCase):
+    """A suggestion that replaces too little leaves the old lines beside the new once
+    applied: storing the draft says so, with the lines around it to pick the range from."""
+
+    SRC = ["## Decision", "", "### No auth on the socket", "", "The socket needs no auth.", "", "## Next"]
+
+    def warn(self, body):
+        t = {"file": "docs/a.md", "line": 4, "thread_ids": []}
+        with patch.object(F, "_suggestion_source", return_value=self.SRC):
+            return F.suggestion_warning({"threads": {}}, t, body)
+
+    def test_a_blank_line_replaced_by_the_section_s_rewrite_is_flagged_with_its_lines(self):
+        w = self.warn("Nit:\n\n```suggestion\n### Auth on the socket\n\nThe socket needs a token.\n```")
+        self.assertIn("lines 3–5 at least", w)
+        self.assertIn("    7 | ## Next", w)
+
+    def test_a_range_that_covers_it_says_nothing(self):
+        self.assertIsNone(self.warn("```suggestion:-1+1\n### Auth on the socket\n\nThe socket needs a token.\n```"))
+
+
+class TestFollowUpPostedByHand(unittest.TestCase):
+    """A follow-up the user posted by hand is checked against its draft like a comment: the
+    note it compares and corrects is the user's newest in the thread, not the first."""
+
+    def setUp(self):
+        url = "http://gl/g/p/-/merge_requests/2#note_"
+        self.state = {"iid": 2, "topics": [{"id": "t1", "thread_ids": ["d1"], "draft": "Still null on a read error?"}],
+                      "threads": {"d1": {"notes": [{"body": "loadDb returns null.", "mine": True, "url": url + "1"},
+                                                   {"body": "Fixed.", "mine": False, "url": url + "2"},
+                                                   {"body": "Still null?", "mine": True, "url": url + "3"}]}}}
+        self.t1 = self.state["topics"][0]
+
+    def run_posted(self, *argv, stdin=""):
+        with patch.dict(os.environ, {"REVIEW_UI_DRAWN": "1"}), \
+                patch.object(F, "resolve_state", return_value=(CTX, 2, "/s", self.state)), \
+                patch.object(F, "current_user"), patch.object(F, "sync"), \
+                patch.object(F, "fetch_threads"), patch.object(F, "save"), patch.object(F.ui, "record"), \
+                patch.object(sys, "argv", ["findings.py", "posted", "t1", *argv, "--iid", "2"]), \
+                patch("sys.stdin", io.StringIO(stdin)), redirect_stdout(io.StringIO()) as out:
+            F.main()
+        return out.getvalue()
+
+    def test_the_check_compares_the_newest_note_with_the_draft(self):
+        out = self.run_posted()
+        self.assertIn("Drafted:\n\nStill null on a read error?", out)
+        self.assertIn("Posted:\n\nStill null?", out)
+        self.assertTrue(self.t1["post_check"]["follow_up"])
+
+    def test_its_correction_edits_the_newest_note(self):
+        self.run_posted()
+        self.run_posted("--differs", "It drops the case.", "--fix", "-", stdin="Still null on a read error?\n")
+        self.assertEqual(self.t1["post_differs"]["note"], "3")
+
+    def test_kept_as_posted_leaves_no_draft(self):
+        self.run_posted()
+        with patch.object(F, "CURRENT") as cur:
+            cur.get.return_value = None
+            self.run_posted("--ok")
+        self.assertIsNone(self.t1["draft"])
+
+
+class TestDraftHeading(unittest.TestCase):
+    """Where the mod draws, a draft is headed by what it is alone, as in rework-mr, its Copy
+    beside it; the language stays with the heading only where no mod draws."""
+
+    def test_drawn_it_names_the_draft_alone(self):
+        t = {"id": "t1", "thread_ids": [], "file": "a.ts", "line": 2}
+        with patch.dict(os.environ, {"REVIEW_UI_DRAWN": "1"}), \
+                patch.object(F, "_suggestion_source", return_value=None):
+            out = "\n".join(F._draft_block({"threads": {}, "lang": "de"}, t, "Nit: x"))
+        self.assertIn(f"**{F.ui.DRAFT_ICON} Draft comment**", out)
+        self.assertNotIn("(de)", out)
+
+
+class TestFollowUpReopens(unittest.TestCase):
+    def test_a_follow_up_into_a_resolved_thread_reopens_it(self):
+        state = {"iid": 2, "threads": {"d1": {"mine": True, "resolved": True, "notes": []}},
+                 "topics": [{"id": "t2", "thread_ids": ["d1"], "draft": "Did you forget the ADR?"}]}
+        with patch.dict(os.environ, {F.PRESS_ENV: "1"}), \
+                patch.object(F, "api_post", return_value={"id": 9}) as api, \
+                patch.object(F, "_reply_thread", return_value="d1"):
+            F.post_draft(state, CTX, 2, "t2", None)
+        self.assertEqual([c.args[0] for c in api.call_args_list],
+                         ["projects/g%2Fp/merge_requests/2/discussions/d1/notes",
+                          "projects/g%2Fp/merge_requests/2/discussions/d1?resolved=false"])
+        self.assertFalse(state["threads"]["d1"]["resolved"])
+
+
+class TestPostedCommentCard(unittest.TestCase):
+    """Where the mod draws, a comment of the user's own already posted ends its card on that,
+    then on who resolved its thread; the advice that led to it is not given again."""
+
+    def test_it_ends_on_the_posting_and_the_resolve_without_the_recommendation(self):
+        url = "http://gl/g/p/-/merge_requests/2#note_1"
+        state = {"iid": 2, "threads": {"d1": {"mine": True, "resolved": True, "resolved_by": "Jonas Keller",
+                                              "file": "a.md", "line": 3, "url": url,
+                                              "notes": [{"body": "Nit: stale.", "mine": True, "url": url,
+                                                         "at": "2026-11-10T16:39:00Z"}]}},
+                 "topics": [{"id": "t2", "thread_ids": ["d1"], "summary": "stale section", "state": None,
+                             "why": "The section is stale. **Recommendation:** raise it."}]}
+        with patch.dict(os.environ, {"REVIEW_UI_DRAWN": "1"}), patch.object(F, "_thread_context", return_value=[]), \
+                patch.object(F, "verdict_of", return_value=None), patch.object(F, "topic_status", return_value="open"):
+            out = F._render_quote(state, "t2")
+        self.assertNotIn("Recommendation", out)
+        self.assertIn("The section is stale.", out)
+        posted, resolved = out.index("Your comment is posted"), out.index("Resolved on GitLab by Jonas")
+        self.assertLess(out.index("The section is stale."), posted)
+        self.assertLess(posted, resolved)
+        self.assertIn(f"[its thread ↗]({url})", out)
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

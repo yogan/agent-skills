@@ -1,0 +1,70 @@
+From 2b82bdef796ca6f438c2f4718d40ba38f9560d19 Mon Sep 17 00:00:00 2001
+From: "Blendinger, Frank - AB12345" <frank@e2e.test>
+Date: Sat, 4 May 2024 09:00:00 +0200
+Subject: [PATCH] add a quick source check
+
+No console.log, debugger or .only( left in src/: plain node, so it runs before a
+commit even where node_modules is not installed. `yarn check:source`.
+---
+ package.json             |  1 +
+ scripts/check-source.mjs | 36 ++++++++++++++++++++++++++++++++++++
+ 2 files changed, 37 insertions(+)
+ create mode 100644 scripts/check-source.mjs
+
+diff --git a/package.json b/package.json
+index 9234028..04454a8 100644
+--- a/package.json
++++ b/package.json
+@@ -10,6 +10,7 @@
+     "test": "vitest",
+     "prepare": "husky",
+     "lint": "eslint src --fix --ignore-path .gitignore",
++    "check:source": "node scripts/check-source.mjs",
+     "check-types": "tsc --project tsconfig.json --pretty --noEmit",
+     "generate": "plop",
+     "storybook": "storybook dev -p 6006",
+diff --git a/scripts/check-source.mjs b/scripts/check-source.mjs
+new file mode 100644
+index 0000000..f420cb3
+--- /dev/null
++++ b/scripts/check-source.mjs
+@@ -0,0 +1,36 @@
++// Quick source check, run before every commit: no stray debugging left in src/.
++// Plain node, no install needed, so it also runs where node_modules is missing.
++import { readdirSync, readFileSync, statSync } from 'node:fs';
++import { join } from 'node:path';
++
++const RULES = [
++  [/\bconsole\.log\(/, 'console.log left in'],
++  [/^\s*debugger\b/, 'debugger statement left in'],
++  [/\b(?:it|test|describe)\.only\(/, '.only( left in a test'],
++];
++
++const files = (dir) =>
++  readdirSync(dir).flatMap((name) => {
++    const path = join(dir, name);
++    if (statSync(path).isDirectory()) return files(path);
++    return /\.(?:ts|tsx|js|jsx)$/.test(name) ? [path] : [];
++  });
++
++let problems = 0;
++for (const file of files('src')) {
++  readFileSync(file, 'utf8')
++    .split('\n')
++    .forEach((line, i) => {
++      for (const [rule, what] of RULES) {
++        if (rule.test(line)) {
++          console.error(`${file}:${i + 1}: ${what}`);
++          problems += 1;
++        }
++      }
++    });
++}
++if (problems) {
++  console.error(`check-source: ${problems} problem(s)`);
++  process.exit(1);
++}
++console.log(`check-source: ${files('src').length} files clean`);
+-- 
+2.56.0
+

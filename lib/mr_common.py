@@ -141,6 +141,16 @@ def reads_as(text, lang):
     return len(hits) >= 2
 
 
+# A topic's handle as the skills write it (`t5`). Bookkeeping, meaningless on GitLab, so a
+# body about to be posted or copied is refused while it carries one. One definition for
+# both skills: rework-mr's guard-reply.sh reaches it through `threads.py check-handles`.
+HANDLE_RE = re.compile(r"\bt[0-9]+\b")
+
+
+def topic_handles(text):
+    return sorted(set(HANDLE_RE.findall(text or "")))
+
+
 def load(path):
     if os.path.exists(path):
         with open(path) as f:
@@ -149,8 +159,41 @@ def load(path):
 
 
 def save(path, data):
-    with open(path, "w") as f:
+    """Write the state whole or not at all: a reader that does not hold the lock (`hold`) sees
+    the old file or the new one, never half of one."""
+    tmp = f"{path}.tmp-{os.getpid()}"
+    with open(tmp, "w") as f:
         json.dump(data, f, indent=2, ensure_ascii=False)
+    os.replace(tmp, path)
+
+
+_held = {}
+
+
+def hold(path):
+    """Hold the state at `path` for the rest of this run, waiting for any other run that
+    holds it.
+
+    Each run reads the whole state, works, and writes it whole, so two runs that overlap
+    lose the first one's write: a press in the review-ui mod (an ack, a drop) while the
+    mod's update check syncs, a click while the model's command runs. Held from before the
+    read to the process's end, they take turns instead. Released by the OS when the run
+    ends, however it ends. Where locking is not available the run goes ahead unheld, as
+    before.
+
+    Held once per run: a second hold of the same state from the same run (a push that reads
+    the state again) is the run's own, and taking the lock anew on another descriptor would
+    wait on itself forever."""
+    key = os.path.realpath(path)
+    if key in _held:
+        return
+    try:
+        import fcntl
+        fd = open(f"{path}.lock", "w")
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        _held[key] = fd
+    except (ImportError, OSError):
+        pass
 
 
 def topic_for(state, tid):
@@ -171,7 +214,10 @@ def tref(tid):
     diagnostics about a topic that does not exist, and thread/discussion ids, which are
     not topics.
     """
-    return f"{TOPIC_ICON} {tid}"
+    # Where the review-ui mod draws, a topic's state icon is its marker, put in front of
+    # its title by each skill; the handle itself goes bare (lib/ui.py).
+    from lib import ui
+    return tid if ui.drawn() else f"{TOPIC_ICON} {tid}"
 
 
 def first_name(name):
@@ -228,3 +274,34 @@ def state_file(root, slug, iid, filename):
     d = os.path.join(root, f"{slug}--mr{iid}")
     os.makedirs(d, exist_ok=True)
     return os.path.join(d, filename)
+
+
+# The MR as a whole, as the review-ui mod's heading and inbox read it (`lib/gitlab.py`'s
+# `mr_status`): the same in both skills.
+def mr_news(prev, now, at):
+    """What changed in the MR as a whole between two update checks, as inbox news: merged or
+    closed (also the first time a review sees it so), auto-merge set, approvals given."""
+    from lib.fences import YOU     # here: lib/fences.py imports this module
+    events = []
+    if now.get("state") in ("merged", "closed") and (prev or {}).get("state") != now["state"]:
+        events.append({"kind": now["state"], "at": now.get(f"{now['state']}_at") or at,
+                       "by": first_name(now.get(f"{now['state']}_by")) or None})
+    if prev is not None and now.get("auto_merge") and not prev.get("auto_merge"):
+        events.append({"kind": "auto-merge", "at": at, "by": None})
+    before = {a["name"] for a in (prev or {}).get("approved_by") or []}
+    new = [a for a in now.get("approved_by") or [] if a["name"] not in before]
+    if prev is not None and new:
+        events.append({"kind": "approved", "at": at,
+                       "by": ", ".join(YOU if a["me"] else first_name(a["name"]) for a in new)})
+    return events
+
+
+def mr_json(st):
+    """The MR's status as the mod's heading reads it: names as the sidebar says them."""
+    from lib.fences import YOU
+    if not st:
+        return None
+    return {**{k: st.get(k) for k in ("state", "merged_at", "closed_at", "auto_merge", "approvals_left")},
+            "merged_by": first_name(st.get("merged_by")) or None,
+            "closed_by": first_name(st.get("closed_by")) or None,
+            "approved_by": [YOU if a.get("me") else first_name(a.get("name")) for a in st.get("approved_by") or []]}

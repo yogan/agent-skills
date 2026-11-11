@@ -28,6 +28,7 @@ import sys
 import tempfile
 import unittest
 from contextlib import redirect_stdout
+os.environ["REVIEW_UI_DRAWN"] = "0"   # the views as without the review-ui mod, whatever session runs this (lib/ui.py)
 
 os.environ["AGENT_SKILLS_PASTE_GATE"] = "1"
 

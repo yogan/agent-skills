@@ -46,7 +46,7 @@ import shlex
 import shutil
 import subprocess
 
-from lib import tmux
+from lib import diffsize, tmux
 
 # Marks a tmux window as belonging to one agent session. See the module docstring for why
 # this lives on the window rather than in a file.
@@ -178,7 +178,7 @@ def find_session(repo, owner):
     return None
 
 
-def spawn_session(repo, label, owner, sleep=None, cmd="hunk diff"):
+def spawn_session(repo, label, owner, sleep=None, cmd="hunk diff HEAD"):
     """Open a viewer for `repo` in a new background tmux window and return its session id.
 
     `cmd` is what the window runs: the working diff by default, or `hunk patch <file>`
@@ -268,6 +268,23 @@ def window_of(session_id):
     return None
 
 
+def focus_window(session_id):
+    """Switch tmux to the window a session's viewer runs in, for a person who asked to see
+    it: the window, then its client's session where that is another one. False where there
+    is no window to switch to."""
+    for s in sessions():
+        if s.get("sessionId") != session_id:
+            continue
+        pane = _pane_of(s)
+        if not pane:
+            return False
+        rc, _ = _run(["tmux", "switch-client", "-t", pane])
+        if rc != 0:
+            rc, _ = _run(["tmux", "select-window", "-t", pane])
+        return rc == 0
+    return False
+
+
 def reload_working_diff(session_id):
     """Swap the session onto the repository's current working diff; return how many files
     it loaded, or None if the reload did not happen.
@@ -276,13 +293,17 @@ def reload_working_diff(session_id):
     point at — hunk reads the working tree itself rather than taking ours, so the two can
     legitimately be compared and must agree.
 
+    Against `HEAD`, as the callers' own `git diff HEAD`: a plain `hunk diff` is the changes
+    not yet staged, so a fix the agent had staged (`git add`) loaded as nothing at all, and
+    the window stood empty beside a card counting four files.
+
     `--exclude-untracked` is what makes them comparable at all: the viewer lists untracked
     files by default and `git diff` never does, so a single new file in the tree — routine
     while reworking — put the two counts permanently out of step, and the mismatch check
     then fell back to an inline diff every time. The window must show exactly the change
     the message summarises, so it is the viewer that is narrowed to git's view.
     """
-    data = _json(["hunk", "session", "reload", session_id, "--json", "--", "diff",
+    data = _json(["hunk", "session", "reload", session_id, "--json", "--", "diff", "HEAD",
                   "--exclude-untracked"])
     if not data:
         return None
@@ -703,7 +724,8 @@ def diff_stat(diff):
 
 
 def stat_rows(stat):
-    """A diff's per-file counts as `path: +a −r` rows, padded to the longest path.
+    """A diff's per-file counts as `path:  +a −r` rows (lib/diffsize.py's `counts`), padded
+    to the longest path.
 
     Fenced as YAML by the callers: a pasted block's only available colour is whatever the
     reader's markdown renderer gives the fence language — it travels through a model
@@ -712,4 +734,5 @@ def stat_rows(stat):
     nested file cannot push every count off the far side of a terminal.
     """
     width = min(max((len(p) for p, _, _ in stat), default=0), 60)
-    return [f"{p + ':':<{width + 2}} +{a} −{r}" for p, a, r in stat]
+    digits = max((len(str(a)) for _, a, _ in stat), default=0)
+    return [f"{p + ':':<{width + 2}} {diffsize.counts(a, r, digits)}" for p, a, r in stat]

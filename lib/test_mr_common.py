@@ -16,6 +16,8 @@ from lib.mr_common import (MR_LEVEL, first_name, load, loc_md, num, plain_text, 
                            reads_as, save, short_summary,
                            state_file, topic_for, tref)
 
+os.environ["REVIEW_UI_DRAWN"] = "0"   # the views as without the review-ui mod, whatever session runs this (lib/ui.py)
+
 
 class TestTref(unittest.TestCase):
     def test_carries_the_topic_icon(self):
@@ -64,6 +66,50 @@ class TestLoadSave(unittest.TestCase):
             path = os.path.join(d, "state.json")
             save(path, {"topics": [{"id": "t1"}], "note": "héllo"})
             self.assertEqual(load(path), {"topics": [{"id": "t1"}], "note": "héllo"})
+
+
+class TestHold(unittest.TestCase):
+    """Two runs that write the same state take turns: the second waits until the first is
+    done, so neither overwrites the other's write with an older copy."""
+
+    RUN = ("import sys; sys.path.insert(0, {root!r}); from lib.mr_common import hold; "
+           "hold({path!r}); print('held', flush=True); sys.stdin.readline()")
+
+    def test_a_second_run_waits_for_the_first(self):
+        import subprocess
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "state.json")
+            code = self.RUN.format(root=root, path=path)
+            first = subprocess.Popen([sys.executable, "-c", code], stdin=subprocess.PIPE,
+                                     stdout=subprocess.PIPE, text=True)
+            self.assertEqual(first.stdout.readline().strip(), "held")
+            second = subprocess.Popen([sys.executable, "-c", code], stdin=subprocess.PIPE,
+                                      stdout=subprocess.PIPE, text=True)
+            with self.assertRaises(subprocess.TimeoutExpired):
+                second.wait(timeout=0.5)              # still waiting on the first
+            first.communicate("\n")
+            self.assertEqual(second.stdout.readline().strip(), "held")
+            second.communicate("\n")
+
+    def test_a_run_holding_it_already_goes_on(self):
+        import subprocess
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "state.json")
+            code = (f"import sys; sys.path.insert(0, {root!r}); from lib.mr_common import hold; "
+                    f"hold({path!r}); hold({path!r}); print('held twice')")
+            run = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True,
+                                 timeout=10)
+            self.assertEqual(run.stdout.strip(), "held twice")
+
+    def test_save_replaces_the_file_whole(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "state.json")
+            save(path, {"a": 1})
+            save(path, {"b": 2})
+            self.assertEqual(load(path), {"b": 2})
+            self.assertEqual(sorted(os.listdir(d)), ["state.json"])     # no temp file left
 
 
 class TestFirstName(unittest.TestCase):

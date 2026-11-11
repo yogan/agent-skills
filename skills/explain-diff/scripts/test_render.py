@@ -729,11 +729,11 @@ class TestRender(unittest.TestCase):
     def test_diffstat_appended_without_subtitle_has_no_leading_separator(self):
         out = R.render(self._spec(subtitle="", diffstat={"files": 3, "insertions": 10}))
         self.assertIn("3 files", out)
-        self.assertNotIn("· 3 files", out)
+        self.assertNotIn(f"· {R.diffsize.ICON_SVG}", out)
 
     def test_diffstat_appended_after_subtitle_has_a_separator(self):
         out = R.render(self._spec(diffstat={"files": 3, "insertions": 10}))
-        self.assertIn("· 3 files", out)
+        self.assertIn(f"· {R.diffsize.ICON_SVG} 3 files", out)
 
     def test_no_subtitle_and_no_diffstat_omits_the_subtitle_paragraph(self):
         out = R.render(self._spec(subtitle=""))

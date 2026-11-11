@@ -15,6 +15,9 @@ Talk-day checklist and run of show: [RUNBOOK.md](RUNBOOK.md).
 | `tmux-demo.sh` | talk day: verify the rig, reset it only if needed, build the demo tmux session |
 | `drive.py` | drives a real claude in tmux through a scenario: `verify` checks it, `showcase` shows it |
 | `scenarios.py` | the scenarios `drive.py` runs |
+| `mock_model.py` | the model's stand-in: replays a recorded run's replies to a real claude, and cuts recordings from transcripts |
+| `recordings/` | one recording per scenario, played by default; made from a passing real-model run (`--record`) |
+| `transcript.py` | what a session ran, from its transcript: prompts, replies, calls, results, engine notes; a failed verify run keeps it as `transcript.txt` |
 | `news.py` | MR !1 changes while its review waits: `reply`, `push`, `both` or `fix`, as its author (the review-ui mod's inbox); MR !3 as a whole: `approve` (its reviewer), `merge` |
 | `.runs/` | `drive.py verify` captures, one folder per run (gitignored) |
 | `patches/` | the frozen MR diffs (`mr1-flaws.patch`, `mr2/`, `mr3/`) |
@@ -106,7 +109,7 @@ On talk day use `./tmux-demo.sh` instead — it runs this only if the state does
 |---|---|---|---|
 | `!1` | `author-bot` | upstream **PR #175** (standalone mock server), 2 real commits, 20 files, with 2 planted flaws alongside 2 genuine upstream ones. Targets `release/2024-06`, not `main`. Explainer and seed prepared, so nothing is generated live | `/review-mr`, live first pass |
 | `!2` | `author-bot` | route-level prefetch, plus a seeded conversation: fixed-by-push, author-asks-a-question, promised-but-not-done, untouched, and one peer thread | `/review-mr`, re-review |
-| `!3` | **you** | query-key factories in 2 commits, with 3 reviewer threads (trivial / hard / small) | `/rework-mr` |
+| `!3` | **you** | query-key factories in 2 commits, with 3 reviewer threads (trivial / hard / scope creep) | `/rework-mr` |
 
 The MR !2 state is not hand-written. Threads are posted, recorded through `findings.py`'s own
 CLI (`import` → `link`), the baseline is taken with `set-head` while the worktree still sits on
@@ -135,23 +138,40 @@ remote, so from `e2e/` (a GitHub remote) it returns `401`, not `frank`.
 run the same scenarios (`python3 drive.py list`):
 
 ```sh
-python3 drive.py verify rework-3          # detached, Haiku, exits non-zero naming the failed step
+python3 drive.py verify rework-3          # detached, on the recording; non-zero names the failed step
 python3 drive.py verify smoke --keep      # leave the tmux session up to look at
-python3 drive.py showcase rework-3        # a window in your tmux, your model; Enter steps it
+python3 drive.py verify rework-3 --model sonnet --record   # real model (paid): re-record it
+python3 drive.py showcase rework-3        # a window in your tmux, on the recording; Enter steps it
 python3 drive.py showcase rework-3 --pace 4    # or unattended, 4 s between steps
 ```
 
-**verify** runs at a fixed 160×50, on Haiku unless `--model` says otherwise, and leaves your
+**The model is a recording by default.** Claude Code, the skills' scripts, the mod, the hooks
+and GitLab all run for real; only the model's replies are played back from
+`recordings/<scenario>.json` (`mock_model.py`). Such a run is free, comes out the same every
+time, and can only do what the recording does: its tools are exactly the recorded ones, and
+anything else is refused. It proves the parts work together, never that a model follows the
+skills' wording. That is what `--model` is for: a real model, money and minutes, run with the
+owner's go. It lists afterwards the commands it ran beyond the skills' own work
+(`improvised:`), and `--record` keeps a passing run as the scenario's new recording. A
+recording is re-made when a change breaks it: a prompt, a button's text or a script's output
+the replay no longer matches fails the step with "the recording has no answer". It stores the
+home and source folders as `{HOME}` and `{SRC}`, follows the ids a run makes (a comment's, a
+commit's, a press's token) from each call's output to the calls after it, and may be trimmed by
+hand as long as the tool calls stay.
+
+**verify** runs at a fixed 160×50 and leaves your
 own settings out, so your Stop hooks, skills, CLAUDE.md and permission rules play no part: the
 repo's skills come back in as a plugin, and the scenario carries its own allow list. A
 scenario marked `rig` resets the fixture first (~30 s), because the run before it wrote skill
 state and posted to the merge request; `--no-reset` skips that. After every step the screen is
-saved as text and with colours under `.runs/<time>-<scenario>/`. A run costs a few cents and
-well under a minute; the model is only needed where the skill judges, drafts or fixes.
+saved as text and with colours under `.runs/<time>-<scenario>/`, and a failed run adds what
+the session ran (`transcript.txt`, from `transcript.py`) and, on the recording, what each
+request was answered with (`mock.log`).
 
 **showcase** opens a window in the tmux session you are in (or `--session NAME`), with your
-settings and your model, and waits for Enter before each step. A scenario that ends in a
-handover leaves claude running with its line typed: `tmux-demo.sh` builds the talk-day windows
+settings, on the recording, and waits for Enter before each step; the recording stops
+answering when the driver exits. A scenario that ends in a handover runs on your own model,
+since what is typed after it was never recorded, and leaves claude running with its line typed: `tmux-demo.sh` builds the talk-day windows
 that way, from the `stage-*` scenarios.
 
 A path to a `.py` file that defines `SCENARIOS` runs that file instead, for a one-off probe
@@ -163,6 +183,11 @@ Decisions that are expensive to rediscover, and that look like cruft until you k
 
 - **`main` is pinned at `74c76128`** (2024-05-03, parent of `e74349ee`). The era matters: the
   upstream monorepo split lands at `1508d6d`, and everything before it is a flat `src/`.
+- **`main` carries one commit of the demo's own** on top (`patches/main/`): a quick source
+  check in plain node, the check `/rework-mr` runs on every fix. The project's real ones
+  (eslint, tsc, vitest) need an install the demo never does. It checks something no MR
+  touches, so it passes on every fix: a rule an MR breaks would have failed before review.
+  MRs !2 and !3 build on it; MR !1 has a base of its own.
 - **Only MR !1 is real upstream code**, replayed onto the PR's own base — conflict-free by
   construction, since that is what happened historically. MRs !2 and !3 are **authored** on the
   pinned base instead. Measured: 39 commits sit between the candidate bases, including a

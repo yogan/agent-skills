@@ -1,12 +1,12 @@
 ---
 name: review-mr
 description: >-
-  Review someone ELSE's GitLab MR end to end — optionally generate an explainer first (explain-branch), seed findings with review-branch, curate them with you one topic at a time, and draft concise review comments you post yourself. Then run a persistent re-review loop: on each check it reconciles the live threads (author replies, resolutions) and branch pushes, flags what the author addressed, and gates every close behind YOUR ack. Read-only against GitLab — it never posts or resolves; you do that in the UI for full tone control. This is for reviewing another person's MR, NOT reworking your own (use rework-mr for that) and NOT a local-only critique (use review-branch for that). Use when the user says "review MR !123", "review !123", "review this MR", or invokes /review-mr.
+  Review someone ELSE's GitLab MR end to end — optionally generate an explainer first (explain-branch), seed findings with review-branch, curate them with you one topic at a time, and draft concise review comments you post yourself. Then run a persistent re-review loop: on each check it reconciles the live threads (author replies, resolutions) and branch pushes, flags what the author addressed, and gates every close behind YOUR ack. Never posts or resolves on its own: you post, in the UI or with the Post button where the review-ui mod is loaded, for full tone control. This is for reviewing another person's MR, NOT reworking your own (use rework-mr for that) and NOT a local-only critique (use review-branch for that). Use when the user says "review MR !123", "review !123", "review this MR", or invokes /review-mr.
 ---
 
 # Review MR
 
-Reviewing **someone else's** GitLab MR. glab-only, **read-only** against GitLab.
+Reviewing **someone else's** GitLab MR. glab-only; nothing reaches GitLab but what the user posts.
 `SD=~/.claude/skills/review-mr/scripts`.
 
 ## ⛔ Read this first — it is the whole skill
@@ -17,9 +17,32 @@ comment, or question they are being asked to act on. So:
 
 **A card is a paste already made.** When a view's output ends with the line
 `[review-ui] Shown to the user as a card.`, the user sees that view whole, drawn under the
-tool call: running the command was the paste. Your reply then carries only your judgment and
-the question, at most 3 lines per topic, longer only when the user asks why. Every other rule
-here stands. Output without that line is pasted as below.
+tool call: running the command was the paste. Wherever the rules below say *paste*, read
+*run*. Your reply then carries only your judgment and the question, at most 3 lines per
+topic, longer only when the user asks why: no view, and no part of one, in your message.
+The overview table lives in the user's sidebar then, so an opener without one is the
+expected opener; it is what the rules below mean by a pasted table. Output without that line
+is pasted as below.
+
+**Buttons answer your question.** Where cards are drawn, the newest card carries the buttons
+of the current step (Skip explainer, Generate explainer; Draft comment, Drop; Post, Copy; Accept &
+resolve, Later). A press reaches you as a `[review-ui] The user pressed a button: …` note:
+that is their decision, made. Carry on from it. **Never mention the buttons**: not that there
+are any, not what they are called, not what one does, not where they sit ("pick Skip or
+Generate on the card", "press Post when you're happy"). The user sees them; a sentence about
+them is noise, and the one thing in your reply they already know. Where you would ask the
+question a button answers, end on your recommendation instead, or on what you just did. Show a
+topic with the `show_topic` tool where you have it, in place of `quote <t> --focus`.
+
+**Card text is markdown.** Whatever you store for a card to show (`--why`, `--text`) has every
+identifier, path, value and `file:line` in backticks, so the card draws it as code.
+
+**A card ends your reply.** The user decides on the card, so it is the last thing they read.
+Whatever you have to say (the answer to the user's question, what you did and why) goes
+before the call that shows the card, and the turn ends on the card. Text after it lands below
+the user's decision, and a retelling of the card there only makes them scroll. Where a rule
+below orders a pasted view first and your reasoning after it, a card turns that round: your
+reasoning, then the card.
 
 0. **Your first reply in a session is an opener, pasted whole.** Before anything else —
    no "picking up where we left off", no summary of what is left, no question:
@@ -68,23 +91,26 @@ here stands. Output without that line is pasted as below.
    re-showing** — if the code moved (an anchor fix) or the author added a note since, or the
    topic was never shown in full, it renders in full anyway and says why. Rule 1 is unchanged:
    paste whatever the command you ran printed, in full.
-4. **The skill never writes to GitLab.** No comments, no resolves, no approvals — *you*
-   do all of that in the UI, so the tone and the sign-off stay yours. It only *reads*
-   (discussions, branch tip, pushes) and *drafts* text for you to copy. No
-   `glab … -X POST`, ever.
+4. **You never write to GitLab.** No comments, no resolves, no approvals: the user posts,
+   in the UI or with the Post button on a draft's card, so the tone and the sign-off
+   stay theirs. You *read* (discussions, branch tip, pushes) and *draft* text. No
+   `glab … -X POST` and no `findings.py post`, ever: that command is the button's.
 5. **No code changes, ever.** You review; you don't fix. (The author fixes.)
 
 A reply with no pasted table, that touches more than one topic, or that writes anything
 to GitLab is wrong — redo it.
 
-**Name people by first name.** GitLab names look like `Doe, Jane - AB12345`; always
-refer to the author as `Jane`. The table header already renders the short name (from
-`findings.py`) — reuse that, never the raw `Lastname, Firstname - ID` or the bare account id.
+**Name people by first name, the one the scripts print.** GitLab names look like
+`Lastname, Firstname - ID`; the scripts shorten them: `set-head` prints `MR author: <first
+name>` before you write a single finding, and the table header carries it too. Use exactly
+that name, in your words and in what you store (`why`, drafts); never a name you made up
+or took from an example, never the raw GitLab form or the bare account id.
 
 ## Setup — do this silently, then present
 
 **You're given the MR number** (`534` from `/review-mr 534`) — **use it as `--iid` on every
-`findings.py` call** and don't rely on branch inference: you may be launched in a detached or
+`findings.py` call** but `lang` (the language is the repo's, for every MR) and don't rely on
+branch inference: you may be launched in a detached or
 unrelated worktree, and a bare `glab mr view` / `findings.py` there resolves the wrong thing.
 
 **Run setup in the order written, waiting for each step before starting the next.** Several
@@ -103,8 +129,8 @@ python3 $SD/findings.py prune --iid <n>   # removes an OTHER merged/closed MR's 
 ```
 
 This only ever deletes the git worktree, never a findings/state file, and only for an MR
-GitLab reports merged or closed — `--iid <n>` exempts this run's own MR even if it happens to
-already qualify. It's silent when it finds nothing; if it prints a line, mention it in passing.
+GitLab reports merged or closed whose review has lain idle for a day (another session may
+still be on it) — `--iid <n>` exempts this run's own MR even if it happens to already qualify. It's silent when it finds nothing; if it prints a line, mention it in passing.
 
 Then find (or create) **this MR's own** worktree:
 
@@ -140,10 +166,12 @@ git checkout -f --detach "origin/$(python3 $SD/findings.py branch --iid <n>)"   
 value with no local source of truth, and `git branch --show-current` in a detached worktree
 answers with the *last* MR's branch — which is a wrong answer that looks like a right one.
 
-Fresh vs resume: the state file exists iff you've reviewed this MR before —
+Fresh vs resume: a review is resumed once its first pass got as far as importing the
+findings. A state file alone does not say so (the explainer's choice and the baseline are
+written before them, and a first pass can stop there):
 
 ```bash
-test -f "$(python3 $SD/findings.py path --iid <n>)" && echo RESUME || echo FRESH
+python3 $SD/findings.py begun --iid <n>   # RESUME or FRESH
 ```
 
 **FRESH only** — mark the current tip as your baseline so later pushes are measured from here:
@@ -160,9 +188,8 @@ annotate afterwards):
 python3 $SD/findings.py resume --iid <n>
 ```
 
-**Explainer (default for non-trivial diffs, parallel).** **Ask for a prepared one before
-generating anything** — it costs minutes to build and stays the same document until somebody
-pushes:
+**Explainer (the user's choice, asked first).** **Ask for a prepared one before anything
+else** — it costs minutes to build and stays the same document until somebody pushes:
 
 ```bash
 python3 $SD/findings.py explainer --iid <n>    # a path, or nothing
@@ -171,17 +198,33 @@ python3 $SD/findings.py explainer --iid <n>    # a path, or nothing
 If that printed a path, **spawn nothing** — the explainer already exists for this exact tip,
 and `present`/`resume` put its clickable `file://` link at the top of the opener for you, so
 there is nothing extra to paste or to mention. If it printed nothing, there is none (a record
-that has stopped applying says why on stderr) — generate one.
+that has stopped applying says why on stderr).
 
-To generate: if the user **asked for** an explainer
-(in the invocation or since), generate it — **their request beats the size heuristic, always**;
-never talk them out of it because the diff looks short. If they said "no explain(er)", skip it.
-Otherwise decide by size — changed LOC **excluding tests**; below ~40 → skip (it's a short
-change). Otherwise launch `explain-branch` as a **background subagent** pointed at the
+If the user said in the invocation (or since) that they want one, generate it; if they said
+"no explain(er)", skip it. Otherwise **assess, recommend, and let them decide**:
+
+```bash
+python3 $SD/findings.py explainer --iid <n> --assess    # files, lines outside tests, and the share that only moved where it is 20% or more
+python3 $SD/findings.py explainer --iid <n> --recommend skip|generate --why "<one English sentence: what the change is>"
+```
+
+Read the diff's shape before you recommend (`git diff --stat`, the commit messages, a look at
+the largest files). **Lean hard toward `skip`.** An explainer earns its minutes only where a
+reader has to build a mental model the code does not hand them: a new subsystem or data flow,
+a state machine or protocol, a non-obvious algorithm, an architecture change across modules.
+Size alone is never the reason: a refactor that moves code (a high share that only moved), a
+rename, a mechanical change, a dependency bump, tests or config, and a small feature in one
+place are all `skip`, however many lines they touch.
+
+`--recommend` prints the question as a card. **End your turn on it**, with no text of your
+own: where the mod draws, the user answers on the card, and their answer reaches you as a
+prompt to carry on from; without the mod, ask them in one line and wait. **An answer the user
+types instead is recorded before you go on**, as the card's press would:
+`python3 $SD/findings.py explainer --iid <n> --choose skip|generate`. On "generate", launch `explain-branch` as a **background subagent** pointed at the
 checked-out worktree, and move on immediately (it opens the HTML when ready). It must only
 *read* git (no checkout/fetch — that already happened) so it can't race review-branch.
 
-Invoking `/review-mr` **is** the user's request for this subagent — a general "don't spawn
+The user's "generate" **is** their request for this subagent — a general "don't spawn
 agents unless asked" rule does not suppress it. If a harness rule genuinely blocks the spawn,
 say so in the opener rather than skipping silently.
 
@@ -229,8 +272,16 @@ returns a prioritized critique. Turn each finding into a JSON object and import 
 ```jsonc
 // /tmp/seed.json — one object per review-branch finding
 [{"kind":"issue","severity":"high","source":"llm","file":"src/x.ts","line":42,
-  "summary":"one short line, plain words, ENGLISH — see the language rule below"}]
+  "summary":"one short line, plain words, ENGLISH — see the language rule below",
+  "why":"2–4 English sentences: what goes wrong, when, and why it matters.\n\n**Recommendation:** raise it / drop it, and the fix in a few words"}]
 ```
+
+`why` is the **analysis** the topic's card shows: a card a button brings up has no turn of
+yours beside it, so what the user decides Draft comment or Drop on is what you stored here. Write it
+from the code review-branch read, concrete (`file:line`, the input that breaks it; card text
+is markdown, above), and end it on a
+`**Recommendation:**` paragraph. `set <t> --why "…"` rewrites it, and so does a stored view of
+another reviewer's thread (below).
 ```bash
 python3 $SD/findings.py import /tmp/seed.json --iid <n>
 python3 $SD/findings.py seed --iid <n> --set /tmp/seed.json   # so a re-run is instant
@@ -244,6 +295,73 @@ the wrong MR and land findings in the wrong state file.
 
 `present` = the overview table + the current topic (below). Then enter Phase 1.
 
+## The user's own review comes first (where cards are drawn)
+
+On a fresh review where the review-ui mod draws, `present` says **Agent review done** and
+shows no topic: the user reviews the MR in GitLab on their own first, so your topics do not
+steer them, and no topic is current until they are done. The card says so and carries the
+explainer link: end the turn on it, with no text of your own. Their press saying they are
+done opens the topics by itself where they posted no comments of their own.
+
+**Until they are done, nothing of your findings reaches the chat**: not what one says, not
+which is "the bigger one", not how many there are, and not in a line while you work
+("importing two findings now", "I found two points; they stay hidden"). From the first
+`review-branch` call on, until `own-review` opens the topics, your words in the chat are
+about the steps alone ("reading the diff", "seeding"), or there are none. A hint of a
+finding steers the review the user is about to do on their own, which is what waiting is
+for.
+
+**"My review is done: pull in my comments"** reaches you as their prompt. Then:
+
+```bash
+python3 $SD/findings.py own-review done --iid <n>    # syncs; prints their comments not yet on a topic (none: the first topic)
+```
+
+Read each of those comments and compare it with the topics **by what it says**; the file and
+line are a hint, never the test (one file holds unrelated points, and one point can sit in
+two places). **Every** comment gets one of these; `own-review matched` refuses while one is
+left:
+
+```bash
+# the same point as a topic: the user confirms or declines it with a press
+python3 $SD/findings.py propose <discussion_id> --into <t> --summary "<English one-liner>" \
+  --why "<what both say, and where they differ>" [--recommend separate|link] --iid <n>
+# a point of its own: a topic at once, no question
+python3 $SD/findings.py add --thread <discussion_id> --source human --file … --line … --summary "…" --iid <n>
+```
+
+`--why` is one or two English sentences the user decides on, and `--recommend` your answer
+(merge by default; `link` when the comment is a topic's own draft, posted by hand): the comment's
+card shows the comment, your reason and your recommendation, with that answer on the first
+button. Then `python3 $SD/findings.py own-review matched --iid <n>` and end
+the turn, with no text of your own: the card says everything. The first topic comes up by itself
+once all are settled; with no proposal at all, `matched` prints it, already shown as a card.
+
+**No comments of their own** is common: then `own-review done` matches nothing, and prints the
+first topic's card itself, headed by a line that says there was nothing to match. That card is
+your whole reply: end the turn on it, with no text of your own; the user reads the topic on it.
+
+**Comments the user posts later**, once the topics run, are the mod's to handle: its update
+check notes them, a background agent of its own matches them (`propose` / `add --thread`), and
+the user answers each match with a press when their round reaches it.
+
+**Another reviewer's thread, or the MR author's own,** becomes a topic by itself on a sync;
+the mod's background agent gives it a title and a view (see *Rounds and verdicts*). The user
+watches it: `Seen` marks it read, `Reply…` is theirs to write, and `Merge into tN` is there
+where you advised it.
+
+**"Explain"** reaches you as their prompt: compare the two in at most 5 lines, what
+each says and what one covers that the other does not, and end on your recommendation. The
+buttons stay up.
+
+**A merge keeps your findings in play.** The user's comment becomes the topic's thread, and
+the topic comes up again with `I merged my comment into <t>. What does your own analysis add
+to it?`. Answer in at most 2 lines: what you have beyond their comment (a concrete fix, a
+working alternative, a case they did not name), or that you have nothing to add. Their buttons
+are `Draft follow-up` and `Nothing to add`. A follow-up is a reply below their comment, drafted
+like any other (`set <t> --draft "…"`, which shows it as a follow-up), short, and never a
+restatement of what their comment already says.
+
 ## The current topic
 
 Exactly one topic is **current** at a time — the one being decided. `findings.py` keeps it in
@@ -256,7 +374,7 @@ topic's views must be pasted.
 - **Any other topic is research.** `quote`/`diff --show` for a topic that is not current prints
   a `note:` saying so; use it to inform your answer and do not paste it. "Let's stop, I need to
   look into X first" needs nothing — the topic stays current until you come back to it.
-- **It moves on by itself** when the topic stops needing the user — acked, `⊘ wontfix`,
+- **It moves on by itself** when the topic stops needing the user — acked,
   posted and `link`ed — and `set <t> --draft` makes `t` current. `present`/`resume` show it, so
   a jump also survives into the next session.
 
@@ -267,7 +385,7 @@ does + the real trade-off, citing `file:line`), then let the user reshape the *l
 
 ```bash
 python3 $SD/findings.py set <t> --severity … --summary … --source … --iid <n>       # reclassify / reword
-python3 $SD/findings.py drop <t> --iid <n>                                          # not worth raising
+python3 $SD/findings.py drop <t> --iid <n>                                          # not worth raising (kept as dropped; `set <t> --state reset` undoes it)
 python3 $SD/findings.py merge <into> <other…> --iid <n>                             # same point (→ source 👥)
 python3 $SD/findings.py add --file … --line … --summary … --source human --iid <n>  # the user's own find
 ```
@@ -289,7 +407,9 @@ Summary cell that is somebody else's truncated sentence tells the user nothing.
 
 ### Comments the user posts in the UI while you work
 
-Expected, not exceptional — they read the diff in the browser in parallel. `sync` handles it:
+Expected, not exceptional — they read the diff in the browser in parallel. Where cards are
+drawn, they are matched as above ("Comments the user posts later"), and nothing here applies.
+Otherwise `sync` handles it:
 
 - **A thread on a file no ✎ draft covers** is **adopted automatically** as a topic, `source`
   👤 human, `○ open`. Nothing to ask: it appears in the table on the next `sync`, and from then
@@ -307,12 +427,23 @@ python3 $SD/findings.py add --thread <discussion_id> --source human \
 **Never** `add` and then ask whether to link — adopting a posted comment is one intention, so
 it is one call. `--thread` links it and captures the baseline at the same time.
 
-**When the user says they posted your draft** ("done", "posted"), link it immediately with the
-id omitted — it resolves the one unlinked thread of theirs on that topic's file by itself:
+**When the user says in their own words that they posted your draft** ("done", "posted"), link
+it immediately with the id omitted — it resolves the one unlinked thread of theirs on that
+topic's file by itself. A Post press posts and links in one step, and its note says so: there is
+nothing to link after it.
 
 ```bash
 python3 $SD/findings.py link <t> --iid <n>       # ✎ draft → ○ open
 ```
+
+Where cards are drawn, a comment posted by the user's own hand is checked before the round
+moves on, since they often reword it: `posted <t>` prints the draft and what they posted. Say in
+two or three lines whether the posted text still says what it should, correctly and in a fitting
+tone. Where it holds, run `posted <t> --ok`, which shows the next topic. Where it does not, store
+your verdict (a line or two) with a corrected version of what they posted, as close to their
+wording as it can be: `posted <t> --differs "<verdict>" --fix -` with the text in a quoted
+heredoc. That shows its card, the changes marked word by word; editing the comment on GitLab
+is the user's press there, never yours.
 
 Skipping this is silent and expensive: the topic stays `✎ draft` while the comment is live on
 GitLab, so the next session re-offers a draft that is already posted, and the author's reply is
@@ -320,7 +451,9 @@ never reconciled against it.
 
 The user reviews the code elsewhere meanwhile and may **post some comments by hand** before
 you finish (they're slower than you). That's fine — you fold those in during the loop
-(`candidates` → `link`, below). Curate the whole list before drafting anything.
+(`candidates` → `link`, below). Curate the whole list before drafting anything, except where
+cards are drawn: there the user may draft a topic's comment as soon as it is curated, and the
+draft is that topic's Phase 2, before the next topic.
 
 ## Phase 2 — Draft comments (you draft, the user posts)
 
@@ -342,8 +475,9 @@ comment to post (de)`), and while it has no draft yet `quote`'s note to you name
 cannot see it in the output in front of you, run
 `python3 $SD/findings.py lang` rather than assuming (`de` means informal *du*). **The body is
 the only thing in that language**: summaries, headings and your own prose stay English. **As
-short as possible**; a ```suggestion block for a line-precise fix; identifiers in backticks;
-no headings. Show the draft as GitLab-compatible markdown in your reply (via `quote <t>`,
+short as possible**; a ```suggestion block for a line-precise fix, its range
+(`suggestion:-A+B`, A lines above the comment's line through B below) covering every line it
+rewrites, as only those are replaced; identifiers in backticks; no headings. Show the draft as GitLab-compatible markdown in your reply (via `quote <t>`,
 which also gives **where to open the thread** — `file:line` — and the surrounding code with
 the line marked), and offer the clipboard:
 
@@ -379,7 +513,7 @@ REFERENCE.md's *Comments you posted yourself*).
 
 ## Resuming an in-progress review
 
-A state file exists (the common case — a review spans days). Fetch + checkout in the worktree
+`begun` says RESUME (the common case — a review spans days). Fetch + checkout in the worktree
 (above, **no set-head**). Then **one command** produces your entire opener — paste it verbatim,
 whole:
 
@@ -387,18 +521,23 @@ whole:
 python3 $SD/findings.py resume --iid <n>  # pushes since your baseline + overview table + current topic
 ```
 
+Where cards are drawn, `resume` shows no pushes: what arrived since the last review is in the
+sidebar's inbox, where the user opens a round (*Rounds and verdicts*). With no topic current it
+shows nothing at all; your opener is then one line, and it neither summarises the news nor
+offers to start on a topic.
+
 It is one call on purpose. As two steps ("run `updates`, then run `present`") the second gets
 dropped once you start digging into the current topic, and the overview table — the user's only
 view of where every topic stands — silently goes missing. If you catch yourself about to reply
 without that table, you skipped it.
 
 **1 — `updates`.** Paste verbatim, then annotate — don't collapse it into prose. Each push is a
-`- **push N:** <url>` line with a nested `  - ` detail (diffstat + topics touched, or a rebase
+`- **[push N](<url>):**` line with a nested `  - ` detail (diffstat + topics touched, or a rebase
 label). Add your **one-line summary as a further `  - ` sub-bullet** — `diff <t>` for the topics
 a push touches is what to write it from, never something to paste:
 
 ```
-- **push 1:** <url>
+- **[push 1](<url>):**
   - `+20/−8` · 3 files · touches ◈ t1, ◈ t3, ◈ t5
   - the five fixes, one commit — matches each finding
 - **push 2:** <url>
@@ -454,8 +593,7 @@ A point is often *down-scoped in discussion* — e.g. you said "ein `onError` w�
 aber nicht in diesem MR", the author replied "schreib ich als TODO hin" and resolved. Then the
 bar is **the TODO, not the full fix** — re-deriving the original defect from the code and
 declaring it "not fixed" is wrong. If the thread agreed to defer (a TODO / follow-up ticket)
-and the author did that → recommend **ack** (or `⊘ wontfix` if you want a ticket tracked), not a
-re-litigation.
+and the author did that → recommend **ack**, not a re-litigation.
 
 Use the diff only to **confirm the agreed change landed** — and it is **your** input, not the
 user's reading:
@@ -478,18 +616,59 @@ the output then names the window and lists each file's `+/−` counts — and in
 (just the compare URL when it is too big). On the user's word:
 
 ```bash
-python3 $SD/findings.py set <t> --state acked --iid <n>               # ● you're satisfied
-python3 $SD/findings.py set <t> --state wontfix --ticket … --iid <n>  # ⊘ agreed not to fix / deferred
+python3 $SD/findings.py set <t> --state acked --iid <n>               # ● you're satisfied, or agreed to leave it
 # not satisfied → draft a follow-up reply (Phase-2 rules); topic stays open
 ```
 
 **An author resolving a thread is NOT a close — only your ack is.** After you've reviewed a
 push, `set-head` to move the baseline. Always end a check with what's still left (`todo`).
 
+### Rounds and verdicts (where cards are drawn)
+
+The mod's update check only takes notes: news (an author's answer, a push that changed the lines
+a comment is on, another reviewer's thread, a comment of the user's own) marks its topic in the
+sidebar's inbox and never becomes the current topic by itself. The user opens a **round** from the
+inbox or a row; each decision moves to the next topic that needs them, and `Later` puts one off.
+The news is judged before the user gets to it, by a background agent the mod starts with
+`findings.py judge-brief`: its judgments are stored with each topic, so a card a press brings
+up carries one.
+
+A topic whose news could not be judged that way reaches you as the user's `Judge the news on
+<t>` prompt. Read the whole thread (`bodies <t>`) and the change since the comment (`diff <t>`), store the
+judgment, then show the topic (`show_topic`):
+
+```bash
+python3 $SD/findings.py verdict <t> settled --asked "<what the comment asked for>" --did "<what the author did>" --text "<why it holds>" --iid <n>
+python3 $SD/findings.py verdict <t> more --case <case> --asked "<what the comment asked for>" --did "<what the author did>" --text "<what is still open, and the next step>" --iid <n>
+python3 $SD/findings.py verdict <t> wait --asked "<what the comment asked for>" --did "<what the author did>" --text "<what they agreed to do>" --iid <n>
+```
+
+`wait` is for an author who agreed and has the change still to make: the topic goes back to
+waiting on them, out of the user's round, until they push or write.
+
+`--asked` is one English sentence: the problem the comment raised and what it asked for ("`save()`
+drops its promise, so a failed write goes unnoticed; asked for an `await`."), the card's first
+section, so what the author did reads against it; it stays with the topic, so it is given the first
+time the topic is judged and left out after. `--did` is one English sentence ("Pushed the
+`await` on the commented line; no reply."), shown above the verdict; `--text` is 1–3 English
+sentences, code in all three in backticks. A `more` names its case, the card's verdict heading:
+`not-fixed`, `partly-fixed`, `fix-wrong`, or `comment-wrong` when the author did as asked and the
+comment itself was mistaken. Its text ends on one next step (a reply asking for X, accepting a
+follow-up MR, …): **Send follow-up** hands that step back to you to draft. Another reviewer's thread is theirs to settle, and the user watches it: the judgment is
+`peer <t> fyi|needs --why "…"` (with `--summary "…"` for a new one). `fyi` is the usual answer;
+`needs` only when the user has something to add (a question to them: `--advice reply`; a point
+that repeats one of their topics: `--advice merge --into <t>`), its `--why` ending on a
+`**Recommendation:**` sentence. Nothing the user does there resolves it. The user's buttons follow the verdict, its own answer first: settled → `Accept &
+resolve` (resolves the GitLab thread and closes the topic; theirs to press) / `Not good
+enough…` (their reply, which you draft) / `Analyse more`; more → `Send follow-up` / `Wait for
+author` / `Accept anyway` / `Analyse more`. On `Analyse more`, a verdict you change
+prints a card of the change itself: leave the topic unshown, your reply carries the details. A verdict lasts until a new answer arrives, and so
+does a follow-up draft: a newer answer, or `wait`, drops it.
+
 ## Status glyphs
 
-`✎ draft` (post it) · `○ open` (author's turn) · `◐ needs-ack` (your turn) · `● acked` ·
-`⊘ wontfix`. A trailing **`✓`** on `◐ needs-ack` = the GitLab thread is already resolved (by
+`✎ draft` (post it) · `○ open` (author's turn) · `◐ needs-ack` (your turn) · `● acked`.
+A trailing **`✓`** on `◐ needs-ack` = the GitLab thread is already resolved (by
 whoever toggled it) — that's separate from *your* ack, which is the only thing that closes the
 topic here. Kind: 🔴🟠🟡🔵 issue by severity · ❓ question · 💚 praise · ⚪ severity not set
 yet. Source: 🤖 llm · 👤 you · 👥 both/merged · 💬 peer reviewer · 🖊️ author (inbound threads).
@@ -504,5 +683,5 @@ details can be collapsed or hidden.
 repo. `python3`. (`clip.sh` copies to the clipboard via macOS `pbcopy`; where that is
 missing the copy is skipped and nothing else changes.) Build blocks: the `explain-branch` and `review-branch`
 skills installed. `findings.py` subcommands: sync·todo·present·resume·updates·bodies·quote·draft·diff·candidates·
-import·add·set·drop·merge·link·head·base·branch·set-head·worktree·explainer·seed·prune·path·lang
+import·add·set·drop·merge·link·posted·head·base·branch·set-head·worktree·explainer·seed·prune·path·begun·lang
 (run any with `-h`).

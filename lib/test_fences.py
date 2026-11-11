@@ -10,8 +10,8 @@ import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from lib import critical_manifest  # noqa: E402
-from lib.fences import fence, looks_like_diff, note_md, suggestion_diff  # noqa: E402
+from lib import critical_manifest, fences  # noqa: E402
+from lib.fences import LINK_ICON, fence, looks_like_diff, note_md, suggestion_diff, unwrap  # noqa: E402
 
 
 class TestLooksLikeDiff(unittest.TestCase):
@@ -100,7 +100,7 @@ class TestNoteRendering(unittest.TestCase):
         source = ["def a():", "    return 1", "def b():"]
         out = note_md("Robin", "So:\n\n```suggestion:-0+0\n    return 2\n```",
                       "src/x.py", 2, source)
-        self.assertIn("> ```diff\n> -    return 1\n> +    return 2\n> ```", out)
+        self.assertIn("> ```diff path=src/x.py\n> @@ -2,1 +2,1 @@\n> -    return 1\n> +    return 2\n> ```", out)
 
     def test_a_tab_indented_snippet_is_code_too(self):
         """Markdown counts a tab as four spaces; a space-only check missed it."""
@@ -160,15 +160,15 @@ class TestSuggestionDiff(unittest.TestCase):
         """`-1+1` replaces lines 4–6; only the middle one changes."""
         self.assertEqual(
             suggestion_diff("line 4\nLINE 5\nline 6", "suggestion:-1+1", 5, self.SOURCE),
-            " line 4\n-line 5\n+LINE 5\n line 6")
+            "@@ -4,3 +4,3 @@\n line 4\n-line 5\n+LINE 5\n line 6")
 
     def test_an_empty_suggestion_deletes(self):
         self.assertEqual(suggestion_diff("", "suggestion:-0+1", 3, self.SOURCE),
-                         "-line 3\n-line 4")
+                         "@@ -3,2 +2,0 @@\n-line 3\n-line 4")
 
     def test_the_range_is_clamped_to_the_file(self):
         self.assertEqual(suggestion_diff("x", "suggestion:-99+0", 2, self.SOURCE),
-                         "-line 1\n-line 2\n+x")
+                         "@@ -1,2 +1,1 @@\n-line 1\n-line 2\n+x")
 
     def test_unknown_lines_give_no_diff(self):
         for anchor, source in ((5, None), (None, self.SOURCE), (99, self.SOURCE)):
@@ -177,6 +177,66 @@ class TestSuggestionDiff(unittest.TestCase):
     def test_a_plain_block_is_not_a_suggestion(self):
         self.assertIsNone(suggestion_diff("x", "python", 5, self.SOURCE))
 
+
+class TestCompactNote(unittest.TestCase):
+    """A comment as a card shows it: its head alone on a line with its time, then its text,
+    the author's own line wrapping undone so the card wraps it."""
+
+    def test_head_then_text_with_the_author_s_wrapping_undone(self):
+        out = note_md("Chidi Okafor", "couples the route table to a concrete client\n"
+                      "instance, in Storybook.\n\n- one\n- two", compact=True, url="u",
+                      when="Nov 5, 11:38")
+        self.assertEqual(out.splitlines(), [
+            f"> [{LINK_ICON}](u) **Chidi** _Nov 5, 11:38_",
+            "> couples the route table to a concrete client instance, in Storybook.",
+            ">", "> - one", "> - two"])
+
+    def test_a_hard_break_is_kept(self):
+        self.assertEqual(unwrap(["a  ", "b", "c"]), ["a  ", "b c"])
+
+
+
+
+class TestRecount(unittest.TestCase):
+    """A hand-written diff's hunk counts, taken from its lines: a viewer that holds a hunk to
+    its header draws a miscounted one as plain text."""
+
+    def test_a_miscounted_hunk_gets_its_real_counts(self):
+        d = "--- a/k.ts\n+++ b/k.ts\n@@ -1,3 +1,3 @@\n-a\n+b\n c\n-d\n+e\n f\n"
+        self.assertIn("@@ -1,4 +1,4 @@\n", fences.recount(d))
+
+    def test_a_right_count_and_the_heading_text_are_kept(self):
+        d = "@@ -59,3 +59,2 @@ def f():\n a\n-b\n c"
+        self.assertEqual(fences.recount(d), d)
+
+    def test_each_file_s_hunks_are_counted_apart(self):
+        d = "--- a/x\n+++ b/x\n@@ -1 +1 @@\n-a\n+b\n--- a/y\n+++ b/y\n@@ -5,9 +5,9 @@\n+c"
+        self.assertEqual(fences.recount(d).count("@@ -1 +1 @@"), 1)
+        self.assertIn("@@ -5,0 +5,1 @@", fences.recount(d))
+
+
+
+class TestSuggestionReach(unittest.TestCase):
+    """A suggestion's range that misses the lines its replacement rewrites leaves them
+    standing once applied: the draft check names the range it should be."""
+
+    SRC = ["## Decision", "", "### No authentication on the socket", "",
+           "The socket requires no authentication at all.", "", "## Consequences"]
+    NEW = "### Authentication on the socket\n\nThe socket requires a bearer token."
+
+    def test_a_blank_line_replaced_by_a_rewrite_of_its_neighbours_is_widened_to_them(self):
+        self.assertEqual(fences.suggestion_reach(self.NEW, "suggestion", 4, self.SRC),
+                         (3, 5, "suggestion:-1+1"))
+
+    def test_a_range_that_covers_what_it_rewrites_holds(self):
+        self.assertIsNone(fences.suggestion_reach(self.NEW, "suggestion:-1+1", 4, self.SRC))
+
+    def test_a_line_unlike_the_replacement_is_left_out(self):
+        self.assertIsNone(fences.suggestion_reach("x = compute(y)", "suggestion", 5,
+                                                  ["a = 1", "b = 2", "", "c = 3", "x = y"]))
+
+    def test_an_empty_suggestion_deletes_and_is_not_checked(self):
+        self.assertIsNone(fences.suggestion_reach("", "suggestion", 4, self.SRC))
 
 if __name__ == "__main__":
     unittest.main()

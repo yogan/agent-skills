@@ -49,7 +49,7 @@
       "key": "updates",
       "cmd": "findings\\.py\\s+updates\\b",
       "signature": ["since your last review"],
-      "reason": "You ran `findings.py updates` but your message did not include its output. Re-send it with the FULL block pasted verbatim — every `- **push N:**` line with its nested detail — then add your one-line summary per push as a further sub-bullet. Do not collapse the pushes into prose."
+      "reason": "You ran `findings.py updates` but your message did not include its output. Re-send it with the FULL block pasted verbatim — every `- **[push N](…):**` line with its nested detail — then add your one-line summary per push as a further sub-bullet. Do not collapse the pushes into prose."
     },
     {
       "key": "diff",

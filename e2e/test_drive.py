@@ -94,7 +94,7 @@ class PromptBoxTest(unittest.TestCase):
 class StepTest(unittest.TestCase):
     def test_every_scenario_step_is_one_the_driver_runs(self):
         import scenarios
-        known = (drive.Prompt, drive.Type, drive.Keys, drive.Click, drive.Expect,
+        known = (drive.Prompt, drive.Type, drive.Keys, drive.Click, drive.Expect, drive.Check,
                  drive.Panel, drive.Say, drive.Handover)
         for sc in scenarios.SCENARIOS:
             for step in sc.steps:
@@ -125,6 +125,77 @@ class StepTest(unittest.TestCase):
         self.assertNotIn("--setting-sources", cmd)
         self.assertNotIn("--plugin-dir", cmd)
         self.assertNotIn("--model", cmd)
+
+
+class EnginePromptTest(unittest.TestCase):
+    def test_the_engines_own_question_is_answered_before_a_step_reads_the_screen(self):
+        screens = ["cards\n  Teach auto mode about your environment?\n  1. Yes\n  2. Not now",
+                   "cards\n  ❯ "]
+        sent, logged = [], []
+
+        def fake(*args, check=True):
+            if args[0] == "capture-pane":
+                return screens.pop(0) if len(screens) > 1 else screens[0]
+            sent.append(args)
+            return ""
+        old, drive.tmux = drive.tmux, fake
+        self.addCleanup(setattr, drive, "tmux", old)
+        old_sleep, drive.time.sleep = drive.time.sleep, lambda s: None
+        self.addCleanup(setattr, drive.time, "sleep", old_sleep)
+        self.assertEqual(drive.Pane("t", log=logged.append).screen(), "cards\n  ❯ ")
+        self.assertEqual(sent, [("send-keys", "-t", "t", "2")])
+        self.assertTrue(logged)
+
+
+class RecordingTest(unittest.TestCase):
+    REC = {"streams": [
+        {"name": "main", "first": "go", "replies": [
+            {"prompts": ["go"], "content": [{"type": "tool_use", "id": "a", "name": "Bash", "input": {}}]},
+            {"content": [{"type": "tool_use", "id": "b", "name": "Edit", "input": {}},
+                         {"type": "text", "text": "done"}]}]},
+        {"name": "agent: judge", "first": "judge", "replies": [
+            {"prompts": ["judge"], "content": [{"type": "tool_use", "id": "c", "name": "Bash", "input": {}}]}]}]}
+
+    def test_a_run_on_the_recording_may_use_exactly_the_recorded_tools_and_nothing_asks(self):
+        sc = drive.Scenario("x", "x", cwd=None, steps=[])
+        env = {"ANTHROPIC_BASE_URL": "http://127.0.0.1:9"}
+        cmd = drive.claude_command(sc, "mock", verify=True,
+                                   mock=(env, drive.recorded_tools(self.REC)))
+        self.assertIn("--permission-mode dontAsk --allowedTools Bash,Edit", cmd)
+        self.assertIn("ANTHROPIC_BASE_URL=http://127.0.0.1:9", cmd)
+        self.assertNotIn("--model", cmd)
+        self.assertNotIn("python3 *", cmd)          # the real-model allow list is not added
+
+    def test_every_scenario_that_runs_unattended_has_a_recording(self):
+        import scenarios
+        missing = [sc.name for sc in scenarios.SCENARIOS
+                   if not any(isinstance(s, drive.Handover) for s in sc.steps)
+                   and not os.path.isfile(drive.mock_model.recording_path(sc.name))]
+        if missing:
+            self.skipTest(f"not recorded yet: {', '.join(missing)}")
+
+    def test_a_command_is_split_where_the_shell_splits_it(self):
+        self.assertEqual(drive.segments(
+            'SD=x; T="python3 $SD/t.py"; $T reply t1 --text "a; b | c" && echo "$(pwd)"\n'
+            "cat <<'EOF' | python3 $SD/t.py set\nnpm install x; make clean\nEOF"),
+            ['$T reply t1 --text "a; b | c"', "pwd", 'echo "$(…)"',
+             "cat <<'EOF'", "python3 $SD/t.py set"])
+
+    def test_improvised_lists_what_is_not_the_skills_own_work(self):
+        import json
+        import tempfile
+        calls = ["SD=~/.claude/skills/rework-mr/scripts; python3 $SD/threads.py sync --iid 3",
+                 "cd /w && git status && glab mr view 3 | head -5",
+                 'for t in t1 t2; do python3 $SD/threads.py set "$t" --iid 3; done; pwd',
+                 "npm install -g left-pad",
+                 "python3 -c 'import os'; npm install -g left-pad"]
+        lines = [{"type": "assistant", "message": {"content": [
+            {"type": "tool_use", "name": "Bash", "input": {"command": c}}]}} for c in calls]
+        with tempfile.NamedTemporaryFile("w", suffix=".jsonl", delete=False) as fh:
+            fh.write("\n".join(json.dumps(x) for x in lines))
+        self.addCleanup(os.remove, fh.name)
+        self.assertEqual(drive.improvised(fh.name),
+                         ["npm install -g left-pad", "python3 -c 'import os'"])
 
 
 if __name__ == "__main__":

@@ -42,15 +42,25 @@ Subcommands:
   diff-view <t>   render a working diff read from stdin (diff-view.sh's body)
   hunk-notes  print the notes the USER left on the diff, and take them out of the viewer
   hunk-close  close the viewer window once the push has landed
+  checks      whether this repository's checks are worked out; what to read where not
+              (`--set -` stores the reading, JSON from stdin)
+  verify <t>  run the checks on <t>'s fix: its hooks ahead of time, then the fast local
+              checks of the parts of the repository it touches
+  push <t>    commit the checked fix as a fixup, squash and force-push, store the diff URL
   check-handles   internal — used by guard-reply.sh, no MR context needed
 """
 
 import argparse
+import datetime
 import glob
 import hashlib
+import json
 import os
 import re
+import secrets
+import shlex
 import sys
+import time
 
 # Repo root, 4 levels up from skills/rework-mr/scripts/threads.py — needed so `lib/`,
 # which lives outside this skill's own directory, is importable regardless of how this
@@ -61,30 +71,39 @@ _REPO_ROOT = os.path.dirname(
 if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
 
-from lib import critical_manifest, focus, hunk  # noqa: E402
+from lib import change as change_of, checks, code_view, critical_manifest, diffsize, focus, hunk, posted, ui  # noqa: E402
+from lib.ui import analysis_heading  # noqa: E402
 from lib.hunk import diff_stat  # noqa: E402
 from lib.gitlab import (
     api,
+    api_post,
     context,
     current_user,
     die,
     file_at,
+    mr_base,
     mr_object,
+    mr_status,
     mr_view,  # noqa: E402
     project_slug,
     run,
+    versions,
     web_base,
 )
 from lib.mr_common import (
+    mr_json,
+    mr_news,
+    topic_handles,
     DEFAULT_LANG,
     MR_LEVEL,
     TOPIC_ICON,
     first_name,  # noqa: E402
+    hold,
     load,
     loc_md,
     num,
     reads_as,
-    save,
+    save as _save,
     short_summary,
     state_file,
     topic_for,
@@ -92,25 +111,25 @@ from lib.mr_common import (
 )
 from lib.fences import (  # noqa: E402
     FENCE_RE,
+    YOU,
     block_lang,
     code_block,
+    diff_info,
     fence,
     lang_for,
     looks_like_diff,
     note_md,
     quoted_fence,
+    recount,
     segments,
+    when_of,
 )
 from lib.snippet import MAX_BACKTRACK, open_construct  # noqa: E402
 
-# internal topic handles (t5, t6, t10 …) — must never reach a GitLab comment.
-# Single source of truth: guard-reply.sh shells out to `check-handles` below
-# instead of reimplementing this regex in bash, so the two can't drift apart.
-HANDLE_RE = re.compile(r"\bt[0-9]+\b")
-
-
-def find_handles(text):
-    return sorted(set(HANDLE_RE.findall(text or "")))
+# Internal topic handles (t5, t6, t10 …) must never reach a GitLab comment. The pattern
+# lives in lib/mr_common.py, shared with review-mr; guard-reply.sh reaches it through
+# `check-handles` below instead of reimplementing it in bash.
+find_handles = topic_handles
 
 
 STATE_ROOT = os.path.expanduser("~/.claude/rework-mr")
@@ -164,7 +183,11 @@ def _range_keys(pos, on_new):
     return {"line_start": a, "line_end": b}
 
 
-def fetch_threads(ctx, iid, me):
+def fetch_threads(ctx, iid, me, mr_comments=None):
+    """Every resolvable thread on the MR, keyed by discussion id. A list passed as
+    `mr_comments` also receives the comments made on the MR itself, outside any thread
+    (they are not resolvable, so no topic is made of them, but they are part of the review
+    and the review-ui panel shows them)."""
     disc = api(
         f"projects/{ctx['enc']}/merge_requests/{iid}/discussions?per_page=100",
         paginate=True,
@@ -176,6 +199,8 @@ def fetch_threads(ctx, iid, me):
             continue
         first = notes[0]
         if not first.get("resolvable"):
+            if mr_comments is not None:
+                mr_comments += [_note(n, me) for n in notes]
             continue
         resolvable = [n for n in notes if n.get("resolvable")]
         resolved = bool(resolvable) and all(n.get("resolved") for n in resolvable)
@@ -213,16 +238,23 @@ def fetch_threads(ctx, iid, me):
             "awaiting": "reviewer" if (me and last_user == me) else "you",
             # full thread in order, so `quote` can show the whole discussion
             # (original + every reply), not just first + last.
-            "notes": [
-                {
-                    "author": (n.get("author") or {}).get("name")
-                    or (n.get("author") or {}).get("username"),
-                    "body": n.get("body"),
-                }
-                for n in notes
-            ],
+            "notes": [_note(n, me, f"{ctx['web']}/-/merge_requests/{iid}#note_{n.get('id')}")
+                      for n in notes],
         }
     return out
+
+
+def _note(n, me, url=None):
+    """One comment as the views and the review-ui panel read it: who wrote it (and
+    whether that is you), when, what it says, and its link."""
+    username = (n.get("author") or {}).get("username")
+    return {
+        "author": (n.get("author") or {}).get("name") or username,
+        "body": n.get("body"),
+        "at": n.get("created_at"),
+        "mine": bool(me) and username == me,
+        "url": url,
+    }
 
 
 def next_tid(state):
@@ -316,12 +348,17 @@ def sync(state, live):
         if tid not in live:
             state["threads"][tid]["resolved"] = True
     # a reviewer note since your last one (or a reopen) makes any stored
-    # "waiting" stale — clear it so the thread re-derives to open.
+    # "waiting" stale — clear it so the thread re-derives to open. One set while the
+    # reviewer had the last word ("already handled", a comment that asks nothing) carries
+    # what they had said then, and holds until they say more.
     for t in state["topics"]:
         thr = [state["threads"].get(x) for x in t["thread_ids"]]
         unresolved = [x for x in thr if x and not x["resolved"]]
         if any(x.get("awaiting") == "you" for x in unresolved):
+            if t.get("waiting_on") and t["waiting_on"] == reviewer_mark(state, t):
+                continue
             t["state"] = None
+            t.pop("waiting_on", None)
 
 
 def _rows(state, scope, show_done=False):
@@ -421,6 +458,29 @@ def summary_language_warning(state, topics):
     )
 
 
+def ui_state(state, t, status=None):
+    """A topic's state in the vocabulary both skills share where the review-ui mod draws
+    (lib/ui.py). Your move on a thread nobody answered is `new`; once you have replied in it
+    and the reviewer wrote back, `answered`. Mirrors findings.py's `ui_state`, over this
+    skill's own statuses."""
+    s = status or topic_status(state, t)
+    if s == "open":
+        replied = any(n.get("mine") for th in t["thread_ids"]
+                      for n in state["threads"].get(th, {}).get("notes") or [])
+        return "answered" if replied else "new"
+    return {"reply_pending": "draft"}.get(s, s)
+
+
+def title_md(state, t, summ):
+    """A topic's title, bold, and where the mod draws, its state icon in front (the icon is
+    the topic marker there). Mirrors findings.py's `title_md`."""
+    if ui.drawn():
+        # The topic's label as the panel and the band draw it: state, then handle.
+        return (f"{ui.STATE_ICON[ui_state(state, t)]} **{t['id']}**"
+                + (f" **{summ}**" if summ else ""))
+    return f"**{tref(t['id'])}" + (f" — {summ}**" if summ else "**")
+
+
 def render_table(state, scope="all", show_done=False):
     st, counts, shown = _rows(state, scope, show_done)
     out = [f"**MR !{state['iid']}** — {state.get('title') or ''}", ""]
@@ -432,9 +492,10 @@ def render_table(state, scope="all", show_done=False):
             summ = short_summary(state, t, width=72).replace("|", "\\|")
             if needs_summary(state, t):
                 summ = f"✍️ _needs summary:_ {summ}"  # raw quote, not an authored title
+            cell = ui.state_cell(ui_state(state, t, s)) if ui.drawn() else f"{GLYPH[s]} {WORD[s]}"
             out.append(
                 critical_manifest.mark(
-                    f"| {GLYPH[s]} {WORD[s]} | {tref(f'**{tid}**')} "
+                    f"| {cell} | {tref(f'**{tid}**')} "
                     f"| {_loc_cell(state, t)} | {summ} |"
                 )
             )
@@ -558,7 +619,7 @@ def _anchor_span(x, n, last):
     return a, b, b > a
 
 
-def render_code_context(x):
+def render_code_context(x, base=None, drift=True):
     """The code the reviewer's comment hangs on, ready to show ABOVE their note.
 
     Without it the user is asked to judge a comment about code they cannot see, and the
@@ -568,9 +629,11 @@ def render_code_context(x):
     Read from the exact blob the comment is anchored to (`git show <sha>:<path>` for the
     side the position names), NOT from the working tree: the line number belongs to that
     version, so once the author starts fixing things a working-tree read would silently
-    render unrelated lines. When the working tree has since diverged, that is said out
-    loud rather than hidden. Falls back to the working tree for threads stored before the
-    shas were recorded. None when there is nothing trustworthy to show.
+    render unrelated lines. Where your working tree has since changed the lines the comment
+    is on, what changed on them follows as a diff; a change elsewhere in the file, or one
+    that only moved them, says nothing (`_since_comment`). Falls back to the working tree
+    for threads stored before the shas were recorded. None when there is nothing
+    trustworthy to show. `drift=False` leaves that diff to the caller (`fix_since`).
 
     What gets shown follows the reviewer: their selected range first (marked `┃`), else the
     single anchor line (marked `►`). The marker is never a `►` on one line of a span — it
@@ -586,15 +649,8 @@ def render_code_context(x):
     on_new = (x.get("side") or "new") == "new"
     sha = x.get("head_sha") if on_new else x.get("base_sha")
     text, source = _blob_text(sha, path), f"as reviewed, `{(sha or '')[:8]}`"
-    working = _repo_file(path)  # read once: each call shells out to git
-    drift = None
     if text is None:
-        text, source = working, "working tree"
-    elif working not in (None, text):
-        drift = (
-            "_⚠️ the working tree differs from this — you may already have changed "
-            "the file; the lines above are the version the comment is on._"
-        )
+        text, source = _repo_file(path), "working tree"
     if text is None:
         return None
     lines = text.splitlines()
@@ -621,6 +677,14 @@ def render_code_context(x):
             lo = opened[1]
         else:
             lang = ""
+    where = f"{path}:{a}–{b}" if span else f"{path}:{n}"
+    drift = _since_comment(sha, path, a, b) if drift and on_new and source != "working tree" else []
+    # The MR as the comment saw it is its diff up to the commit it was posted on, whichever
+    # side the comment is on.
+    diff = _diff_context(path, x.get("head_sha"), base, "new" if on_new else "old", lo, hi, a, b)
+    if diff:
+        out = [f"_Code the comment is on — `{where}` ({source}):_", "", diff]
+        return "\n".join(out + drift)
     body = []
     for i in range(lo, hi + 1):
         if hi - lo + 1 > MAX_BODY and lo + MAX_BODY - 10 < i < hi - 8:
@@ -640,15 +704,52 @@ def render_code_context(x):
             else (MARK_LINE if not span and i == n else " ")
         )
         rendered.append(f"{mark} {str(i).rjust(width)} | {lines[i - 1]}")
-    where = f"{path}:{a}–{b}" if span else f"{path}:{n}"
     out = [
         f"_Code the comment is on — `{where}` ({source}):_",
         "",
         fence("\n".join(rendered), lang),
     ]
-    if drift:
-        out += ["", drift]
-    return "\n".join(out)
+    return "\n".join(out + drift)
+
+
+def _since_comment(sha, path, first, last):
+    """What your working tree changed on lines `first`..`last` of `path` since commit `sha`
+    (the code the comment is on), as lines to put under the code: nothing where those lines
+    are untouched, which is also the answer whenever git cannot tell."""
+    root = (_git("rev-parse", "--show-toplevel") or "").strip()
+    if not (root and sha):
+        return []
+    hit, _, _ = code_view.touched(code_view._diff_since(root, sha, path), first, last)
+    lines = code_view.since_fence(root, sha, path, first, last) if hit else None
+    if not lines:
+        return []
+    # Where the change stands: still in the working tree, or committed (and pushed, once the
+    # reply comes) already, where "in your working tree" would send the reader looking for
+    # files that are clean.
+    pending = bool((_git("diff", "--no-color", "HEAD", "--", path) or "").strip())
+    head = "Changed since the comment, in your working tree:" if pending else "Changed since the comment:"
+    return ["", f"_{head}_", "", *lines]
+
+
+def _diff_context(path, sha, base, side, lo, hi, a, b):
+    """Lines `lo`..`hi` (of the comment's side) as the MR changed them at the commit the
+    comment was on, lines `a`..`b` the ones it is on: the same diff the sidebar shows
+    (`lib/code_view.py`), so code reads one way everywhere. None when the MR's diff base is
+    not known or git cannot read that commit; the plain excerpt stands in then.
+
+    Unlike the plain excerpt, a long selection is shown whole: cutting rows out of a diff
+    would leave hunks whose numbers no longer add up."""
+    root = (_git("rev-parse", "--show-toplevel") or "").strip()
+    rows = code_view.rows_of(root, path, base, at=sha) if base and sha else None
+    if not rows:
+        return None
+    slot = 2 if side == "new" else 1
+    inside = [i for i, r in enumerate(rows, 1) if r[slot] is not None and lo <= r[slot] <= hi]
+    at = code_view.rows_at(rows, side, a, b)
+    if not (inside and at):
+        return None
+    lines = code_view.diff_fence({"file": path, "rows": rows, "at": at}, inside[0], inside[-1])
+    return "\n".join(lines)
 
 
 def render_change_view(tid, text, path=None):
@@ -717,18 +818,10 @@ def render_diff_pointer(tid, stat, where, notice=""):
 
     The rows are `hunk.stat_rows`, fenced as YAML — see there for why.
     """
-    files, adds, dels = (
-        len(stat),
-        sum(a for _, a, _ in stat),
-        sum(r for _, _, r in stat),
-    )
     # Not marked critical here — `fence` marks every line it wraps, and marking twice puts
     # each row in the manifest twice.
     rows = hunk.stat_rows(stat)
-    head = (
-        f"**Diff ({tref(tid)})** — {files} file{'' if files == 1 else 's'}, "
-        f"+{adds} −{dels} · {where}"
-    )
+    head = f"**Diff ({tref(tid)})** — {diffsize.of_stat(stat)} · {where}"
     # Marked critical explicitly, unlike the rows, which `fence` marks for us. This is the
     # ONLY line naming where the diff is, so under the hook's one-dropped-line tolerance it
     # was the one line a message could lose and still pass — leaving a list of filenames, a
@@ -921,7 +1014,7 @@ def render_quote(state, tid, remember=True):
         # print — `None:` is what an unguarded f-string produced there.
         path = f"{x['file']}:{x.get('line') or ''}" if x.get("file") else ""
         if i == 0:
-            title = f"**{tref(t['id'])}" + (f" — {summ}**" if summ else "**")
+            title = title_md(state, t, summ)
             out.append(f"{title} · {loc_md(path)}")
             for w in (
                 needs_summary_warning(state, t),
@@ -931,11 +1024,13 @@ def render_quote(state, tid, remember=True):
                     out.append(w)
         else:
             out.append(loc_md(path))
-        if x.get("url"):
+        # Drawn, each comment links itself, as review-mr's do.
+        if x.get("url") and not ui.drawn():
             out.append(x["url"])
         # Code FIRST, comment second: the reviewer's note is about these lines, and a
-        # verdict on code the user cannot see is unreviewable.
-        code = render_code_context(x)
+        # verdict on code the user cannot see is unreviewable. A pushed fix's change on them
+        # is the card's own part, after the plan it carries out (`_step_parts`).
+        code = render_code_context(x, state.get("diff_base"), drift=not (i == 0 and shows_pushed_fix(state, t)))
         if code:
             out += ["", code]
         # The file, anchor and the file as the comment saw it let a reviewer's
@@ -943,8 +1038,14 @@ def render_quote(state, tid, remember=True):
         f, ln, src = x.get("file"), x.get("line"), _comment_source(state, x)
         notes = x.get("notes")
         if notes:  # whole thread, in order
+            # Drawn, each comment is one tight block, headed by its link and time: the
+            # form the mod reads a comment in (and leaves out where the sidebar shows it).
+            tight = ui.drawn()
             for n in notes:
-                out += ["", note_md(n.get("author"), n.get("body"), f, ln, src)]
+                out += ["", note_md(n.get("author"), n.get("body"), f, ln, src, compact=tight,
+                                    url=n.get("url") if tight else None,
+                                    mine=tight and bool(n.get("mine")),
+                                    when=when_of(n.get("at")) if tight else None)]
         else:  # pre-`notes` state: first + last only
             out += ["", note_md(x.get("author"), x.get("body"), f, ln, src)]
             if x.get("note_count", 1) > 1:
@@ -953,10 +1054,115 @@ def render_quote(state, tid, remember=True):
                     out += ["", f"_… {skipped} more …_"]
                 out += ["", note_md(x.get("last_author"), x.get("last_body"), f, ln, src)]
         out.append("")
-    text = "\n".join(out).strip()
+    # The context is what `--refine` leaves out: the header, the code and the thread. The
+    # step's parts after it (the plan, the fix, the draft) are not, or a reworded draft would
+    # read as a changed context and bring the whole topic back.
+    context = "\n".join(out).strip()
     if remember:
-        t["shown"] = _digest(text)
-    return text
+        t["shown"] = _digest(context)
+    if ui.drawn():
+        out += _step_parts(state, t)
+    return "\n".join(out).strip()
+
+
+OUTCOME_WORD = {"fix": "Fix", "reply": "Reply only", "push-back": "Push back",
+                "question": "Answer the question"}
+
+
+def differs_now(t):
+    """Whether a correction of the reply the user posted by hand waits: stored, and its
+    draft not yet posted or recorded as posted (either ends it). Mirrors findings.py's."""
+    return bool(t.get("post_differs") and t.get("reply"))
+
+
+def _step_parts(state, t):
+    """What a topic's card says beyond its thread, where the mod draws: the plan proposed
+    (the agent's analysis, its recommendation, the change it would make), the plan agreed,
+    the fix in the working tree, or the reply drafted, whichever step the topic is at."""
+    st = step_of(state, t)
+    out = []
+    p = proposal_of(state, t)
+    if st == "plan" and p:
+        out += [analysis_heading(), "", ui.with_recommendation(p["why"].strip()), ""]
+        if p.get("says") == "needs" and p.get("plan"):
+            out += [ui.heading_md(ui.ASKED_ICON, f"Plan: {OUTCOME_WORD.get(p.get('outcome'), 'Fix')}"),
+                    "", p["plan"].strip(), ""]
+            body = _fenced_diff(p.get("change"))
+            if body:
+                out += [*_change_blocks(body), ""]
+    elif st in ("fix", "reply") and t.get("plan") and t.get("decision"):
+        word = OUTCOME_WORD.get(t.get("outcome") or "fix", "Fix")
+        out += [ui.heading_md(ui.ASKED_ICON, f"Agreed plan: {word}"), "", t["plan"].strip(), ""]
+        kept = t.get("kept") or {}
+        if kept.get("on") and kept["on"] == t.get("plan_on"):
+            out += [f"_{kept['why'].strip().rstrip('.')}: the plan holds._", ""]
+        if shows_pushed_fix(state, t):
+            out += fix_since(state, t)
+    if st == "fixed":
+        out += [render_fix(state, t["id"]).split("\n", 2)[-1], ""]
+    if differs_now(t):
+        # A reply posted by hand that no longer holds: its correction is the card, at any step.
+        return out + [posted.card_md(t, "reply"), ""]
+    if st == "reply" and t.get("reply"):
+        x = state["threads"].get((t["thread_ids"] or [None])[0]) or {}
+        out += [ui.heading_md(ui.DRAFT_ICON, "Draft reply"), "",
+                _quote_draft(t["reply"], x.get("file")), ""]
+    return out
+
+
+_FILE_LINE = re.compile(r"^(?:diff --git |index |--- |\+\+\+ |new file mode |deleted file mode )")
+
+
+def _change_blocks(diff):
+    """A proposal's change as the card shows it: where the mod draws, one ```diff block per
+    file (lib/code_view.py's `diff_fence` form), which it draws as the sidebar draws a file,
+    the file and its lines on one line above the hunks; the `---`/`+++` lines go, as that
+    line says it. Elsewhere, and for a diff without file headers, the diff as it is. The hunks' counts are
+    taken from the hunks, so one written by hand with a wrong count still draws as a diff."""
+    diff = recount(diff)
+    plain = [fence(diff.strip("\n"), "diff")]
+    if not ui.drawn():
+        return plain
+    files, path = [], None
+    for ln in diff.strip("\n").splitlines():
+        if ln.startswith("+++ "):
+            path = re.sub(r"^b/", "", ln[4:].split("\t")[0].strip())
+            files.append([path, []])
+        elif _FILE_LINE.match(ln):
+            continue
+        elif not files:
+            return plain               # hunks with no file named: nothing to head them with
+        else:
+            files[-1][1].append(ln)
+    out = []
+    for path, lines in files:
+        if path == "/dev/null" or not any(x.startswith("@@") for x in lines) or "```" in "\n".join(lines):
+            return plain
+        # `loc`: the card heads the block with the file and its lines, nothing else does.
+        out += [f"```{diff_info(path)} loc", *lines, "```", ""]
+    return out[:-1] or plain
+
+
+def shows_pushed_fix(state, t):
+    """Whether `t`'s card shows its fix as pushed, in a part of its own after the plan: where
+    the mod draws, once the fix is pushed and the reply is left."""
+    return ui.drawn() and bool(t.get("diff_url")) and step_of(state, t) == "reply"
+
+
+def fix_since(state, t):
+    """The pushed fix's change on the lines the comment is on, under its own heading, for the
+    reply card: nothing where the fix left those lines as they were."""
+    x = state["threads"].get((t["thread_ids"] or [None])[0]) or {}
+    path, line = x.get("file"), x.get("line")
+    if not path or not line or (x.get("side") or "new") != "new":
+        return []
+    try:
+        n = int(line)
+    except (TypeError, ValueError):
+        return []
+    a, b, _span = _anchor_span(x, n, n)
+    lines = _since_comment(x.get("head_sha"), path, a, b)[3:]
+    return [ui.heading_md(ui.PUSHED_ICON, "Your fix, pushed"), "", *lines, ""] if lines else []
 
 
 def context_digest(state, tid):
@@ -971,7 +1177,11 @@ def context_digest(state, tid):
     demand lines that appear nowhere in the message.
     """
     with critical_manifest.suspended():
-        return _digest(render_quote(state, tid, remember=False))
+        t = topic_for(state, tid)
+        before = t.get("shown")
+        render_quote(state, tid)          # records the digest of its context
+        now, t["shown"] = t.get("shown"), before
+        return now
 
 
 def render_url(state, tid):
@@ -1024,6 +1234,16 @@ def reply_body(state, tid, legacy_dir=None):
     return body
 
 
+FIXED_LINE = re.compile(r"^Fixed: (https?://\S+)\s*$")
+
+
+def _short_fixed(line):
+    """A draft's `Fixed: <diff url>` line, where the mod draws, as a short link: the URL is
+    long and says nothing to read. Display only; the text posted keeps the URL."""
+    m = FIXED_LINE.match(line)
+    return f"Fixed: [the diff ↗]({m.group(1)})" if m and ui.drawn() else line
+
+
 def _quote_draft(body, path=None):
     """The draft as it should be DISPLAYED: blockquoted whole, so it reads as the one
     artefact being posted — its fenced blocks inside the quote too, where they still render
@@ -1045,7 +1265,7 @@ def _quote_draft(body, path=None):
             seg = seg[:-1]
         if seg:
             blocks.append(
-                "\n".join(f"> {ln}".rstrip() if ln.strip() else ">" for ln in seg)
+                "\n".join(f"> {_short_fixed(ln)}".rstrip() if ln.strip() else ">" for ln in seg)
             )
     # A `>` line, not a blank one, between blocks: a blank line would end the quote.
     return "\n>\n".join(blocks)
@@ -1090,18 +1310,26 @@ def render_reply_view(state, tid, body, refine=False):
         )
         refine = False
     if not refine:
-        out += [render_quote(state, tid), ""]
+        quote = render_quote(state, tid)
+        if ui.drawn() and t.get("reply"):
+            # The draft follows below, as the view's own part: not twice.
+            quote = quote.split(f"\n{ui.heading_md(ui.DRAFT_ICON, 'Draft reply')}", 1)[0].rstrip()
+        out += [quote, ""]
     out += [
-        f"**Draft reply — {tref(tid)}:**" if refine else "**Draft reply:**",
+        # Where the mod draws, headed as every draft is in both skills, a Copy beside it.
+        ui.heading_md(ui.DRAFT_ICON, "Draft reply") if ui.drawn()
+        else f"**Draft reply — {tref(tid)}:**" if refine else "**Draft reply:**",
         "",
         _quote_draft(body, path),
-        "",
-        f"Thread (to post on): {render_url(state, tid)}",
-        "",
-        "**`c`** copy to clipboard · **`p`** post on GitLab · "
-        "**`n`** next topic (already replied/resolved) · "
-        "or just type your thoughts to refine it.",
     ]
+    if not ui.drawn():
+        # Where the mod draws, the card posts it; Copy says where it goes.
+        out += ["", f"Thread (to post on): {render_url(state, tid)}"]
+    if not ui.drawn():
+        # Where the mod draws, the card's own buttons ask this.
+        out += ["", "**`c`** copy to clipboard · **`p`** post on GitLab · "
+                "**`n`** next topic (already replied/resolved) · "
+                "or just type your thoughts to refine it."]
     return "\n".join(out)
 
 
@@ -1122,7 +1350,6 @@ def next_topic(state):
                                  else None)
 
 
-CURRENT = focus.Current(topic_status, NEEDS_YOU, next_topic)
 
 
 def current_topic(state):
@@ -1130,14 +1357,124 @@ def current_topic(state):
     return CURRENT.get(state)
 
 
+def view_context(state):
+    """Which review a view belongs to, for the review-ui mod: the script and the folder to
+    run it in and the MR, plus the overview the model reads where the mod's panel took the
+    table out of the opener. Mirrors findings.py's `view_context`."""
+    return {
+        "review": {"skill": "rework-mr", "script": os.path.abspath(__file__),
+                   "cwd": os.getcwd(), "iid": state.get("iid")},
+        "topics": [f"{x['id']} {ui_state(state, x)}: {x.get('summary') or ''}"
+                   for x in state["topics"]],
+    }
+
+
 def emit(state, block, topic=None):
     """Print a gated view with its manifest, naming the topic it is about and the current
     one, so the paste gate enforces only what belongs to the topic being decided."""
+    extra = view_context(state)
+    t = topic_for(state, topic) if topic else None
+    if t and t.get("reply"):
+        # The version of the draft the view shows: what a Post press under it posts.
+        extra["draft"] = reply_version(t["reply"])
+    if t:
+        # The step it shows the topic at: a turn that moved the topic on without a view of
+        # its own (the model finishing a push it was handed) leaves the card a step behind.
+        extra["step"] = step_of(state, t)
+    ui.record({"review": extra["review"], "topic": topic, "focus": current_topic(state),
+               "draft": extra.get("draft")})
     print(
         critical_manifest.with_manifest(
-            block, topic=topic, focus=current_topic(state)
+            block, topic=topic, focus=current_topic(state), extra=extra
         )
     )
+
+
+def reload_open_viewer(notes):
+    """Where this session's diff viewer for the repository is open, put the fix just shown
+    in it: a fix changed after a look in the viewer (its notes answered) is shown again, and
+    the window would otherwise go on showing the fix as it was, beside a card about the new
+    one. The agent's notes of the earlier showing go, this showing's come in; the user's
+    own are dropped only by the read that hands them to the model (`hunk-notes`). Never
+    opens a window: that is the user's press (`hunk-show`)."""
+    root = (_git("rev-parse", "--show-toplevel") or "").strip()
+    sid = root and hunk.installed() and hunk.find_session(root, hunk.owner_id())
+    if not sid:
+        return
+    hunk.clear_agent_notes(sid)
+    if hunk.reload_working_diff(sid) is not None and notes:
+        try:
+            hunk.add_notes(sid, notes)
+        except ValueError:
+            pass                  # the card says what the notes would have; the diff is in
+
+
+def hunk_window():
+    """The diff viewer's window for the fix shown, where this session opened one: whether it
+    is open, and how many notes the user left on it (None where it could not be asked).
+    Asked only while a fix waits for its push, where the card offers to read the notes."""
+    root = (_git("rev-parse", "--show-toplevel") or "").strip()
+    sid = root and hunk.installed() and hunk.find_session(root, hunk.owner_id())
+    if not sid:
+        return {"open": False, "notes": 0}
+    notes = hunk.user_notes(sid)
+    return {"open": True, "notes": None if notes is None else len(notes)}
+
+
+def state_json(state):
+    """The rework as the review-ui mod reads it: one record per topic, the current one, the
+    whole of the current topic's threads (every reply, every thread merged into it), and
+    the comments made on the MR itself. Mirrors findings.py's `state_json`."""
+    cur = current_topic(state)
+    topics = []
+    for t in state["topics"]:
+        kinds, news_at = news_of(state, t)
+        p = proposal_of(state, t)
+        f = t.get("fix") or {}
+        topics.append({
+            "id": t["id"], "status": topic_status(state, t), "state": ui_state(state, t),
+            "summary": t.get("summary"), "file": _loc_cell(state, t).strip("`") or None,
+            "posted": True, "draft": reply_version(t["reply"]) if t.get("reply") else None,
+            "inbox": inbox_of(state, t), "news": kinds, "news_at": news_at,
+            "step": step_of(state, t),
+            # The plan proposed for it, which Agree plan stores without a model turn.
+            "proposal": ({k: p.get(k) for k in ("says", "outcome", "plan", "answer_now")} if p else None),
+            "outcome": t.get("outcome") or ("fix" if t.get("decision") else None),
+            "pushed": bool(t.get("diff_url")),
+            "diff_url": t.get("diff_url"),
+            # A reply drafted to post ahead of the fix, and whether one went up already.
+            "early": bool(t.get("reply_early") and t.get("reply")),
+            "early_posted": bool(t.get("early_posted")),
+            # A reply posted by hand that no longer holds: its corrected version waits.
+            "post_differs": differs_now(t),
+            # Whether the fix differs from the plan agreed: a reply then explains it.
+            "differs": bool((f.get("compare") or {}).get("differs")),
+            # Whether the plan agreed answers the reviewer: a reply then says what was chosen.
+            "answer_now": bool(t.get("answer_now")),
+            "checks": checks_of(t) if step_of(state, t) == "fixed" else None,
+            "resolved": bool(t["thread_ids"]) and all(
+                (state["threads"].get(x) or {}).get("resolved") for x in t["thread_ids"]),
+            # Its thread on GitLab, where the box's line about it links. Mirrors findings.py's.
+            "thread_url": next((u for x in t["thread_ids"] if (u := (state["threads"].get(x) or {}).get("url"))), None),
+        })
+    thread = []
+    t = topic_for(state, cur) if cur else None
+    for th in (t or {}).get("thread_ids") or []:
+        x = state["threads"].get(th) or {}
+        thread.append({"url": x.get("url"), "file": x.get("file"), "line": x.get("line"),
+                       "resolved": x.get("resolved"),
+                       "notes": [{**n, "author": YOU if n.get("mine") else first_name(n.get("author"))}
+                                 for n in x.get("notes") or []]})
+    return {"skill": "rework-mr", "iid": state.get("iid"), "title": state.get("title"),
+            "url": state.get("mr_web_url"),
+            "current": cur, "topics": topics, "thread": thread,
+            "hunk": hunk_window() if t and step_of(state, t) == "fixed" else None,
+            "round": round_order(state) if ui.drawn() else [],
+            "pass": pass_now(state), "in_round": bool(state.get("in_round")),
+            "mr": mr_json(state.get("mr_status")),
+            "inbox": inbox_json(state, topics), "judge": judge_list(state),
+            "mr_comments": [{**n, "author": YOU if n.get("mine") else first_name(n.get("author"))}
+                            for n in state.get("mr_comments") or []]}
 
 
 def linked_worktree():
@@ -1214,8 +1551,13 @@ def render_present(state, cleanup=""):
     current follows each skill's own status vocabulary, so it stays duplicated: see
     CLAUDE.md's "Sharing vs. duplication". The `cleanup` line is this skill's alone: a
     review runs on someone else's branch, so there is never a worktree of ours to remove."""
-    parts = [render_table(state, "all")] + ([f"\n{cleanup}"] if cleanup else [])
     tid = current_topic(state)
+    if ui.drawn():
+        # The mod's sidebar lists every topic, so the opener is the current one alone, and
+        # with none current there is nothing to show but the cleanup line.
+        return "\n".join(([cleanup, "\n---\n"] if cleanup and tid else [cleanup] if cleanup else [])
+                         + ([render_quote(state, tid)] if tid else []))
+    parts = [render_table(state, "all")] + ([f"\n{cleanup}"] if cleanup else [])
     if tid:
         parts += ["\n---\n", render_quote(state, tid)]
     return "\n".join(parts)
@@ -1240,6 +1582,9 @@ def render_plans(state):
             out.append(f"  decision: {t['decision']}")
         if t.get("plan"):
             out.append(f"  plan: {t['plan']}")
+        change = _fenced_diff(t.get("agreed_change"))
+        if change:
+            out += ["  change agreed:", *(f"    {ln}" for ln in change.strip("\n").splitlines())]
         if t.get("diff_url"):
             out.append(f"  pushed: {t['diff_url']}")
         out.append("")
@@ -1282,6 +1627,697 @@ def render_bodies(state):
     return "\n".join(out).strip() or "(no open threads)"
 
 
+# The commands that only read the state: they run alongside any other, since a write is
+# whole or nothing (lib/mr_common.py's `save`). Mirrors findings.py's READ_ONLY.
+READ_ONLY = ("state", "code", "path", "bodies", "plans", "judge-brief")
+# Runs that take minutes (checks, a push with its hooks) hold the state only to store
+# their result, so a press or an update check is not kept waiting behind them.
+UNHELD = ("push",)
+OUTCOMES = ("fix", "reply", "push-back", "question")
+
+
+# ---------------------------------------------------------------- rounds
+#
+# Where the review-ui mod draws, the rework runs in ROUNDS, as review-mr's review does, and
+# keeps this skill's two passes inside them: first a plan for every open topic (the PLAN
+# pass), then one topic at a time fixed, pushed and replied to (the FIX pass). Between
+# rounds the update check only takes notes: a reviewer's new thread or reply marks its topic
+# in the sidebar and waits in its inbox, and the mod's background agent prepares a plan for
+# it. Opening any topic starts a round; each decision moves on to the next topic of the pass
+# that runs, in list order from the one just left, round to the top again, the ones put off
+# for later last. A pass runs until nothing is left in it: a thread arriving during the fix
+# pass waits until that pass is through, and its plan comes up after.
+#
+# Without the mod the topics come up one after another as they always did (`next_topic`).
+
+PASSES = ("plan", "fix")
+
+
+def reviewer_mark(state, t):
+    """What the reviewers have said on `t`, as a fingerprint: each thread's comments by
+    others and whether it is resolved. Your own replies leave it as it is, so a plan agreed
+    on it, a Later and a "seen" hold until a reviewer writes again."""
+    marks = []
+    for x in t["thread_ids"]:
+        th = state["threads"].get(x) or {}
+        theirs = [n.get("at") for n in th.get("notes") or [] if not n.get("mine")]
+        marks.append((x, len(theirs), max([a for a in theirs if a] or [""]),
+                      bool(th.get("resolved"))))
+    return hashlib.sha1(json.dumps(marks).encode()).hexdigest()[:12]
+
+
+def start_fix_round(t):
+    """A fix agreed on a topic whose earlier fix is pushed: the reviewers asked for more, so
+    the topic goes back to making a fix, and what described the earlier one (its link, its
+    checks, the reply about it) is dropped. The baseline of its first push stays, so the
+    next push's link spans every push the topic had."""
+    if (t.get("outcome") or "fix") == "fix" and t.get("diff_url"):
+        for k in ("diff_url", "fix", "checked", "push_token", "push_from", "handed_from",
+                  "reply", "reply_at", "reply_early", "post_differs", "early_posted"):
+            t.pop(k, None)
+
+
+def plan_holds(t, mark):
+    """Whether `t`'s agreed plan is about what the reviewers said last. A plan agreed before
+    plans carried their mark holds."""
+    return bool(t.get("decision")) and t.get("plan_on") in (None, mark)
+
+
+_WORKING = {}
+
+
+def working_diff():
+    """`git diff HEAD` of the checkout, once per run: the fix in progress, if any."""
+    if "diff" not in _WORKING:
+        _WORKING["diff"] = _git("diff", "--no-color", "HEAD") or ""
+    return _WORKING["diff"]
+
+
+def step_of(state, t, status=None):
+    """Where `t` stands in the rework: `plan` (no plan agreed on what the reviewers said
+    last), `fix` (a fix is agreed and not made yet), `fixed` (the fix is in the working tree,
+    shown, not pushed), `reply` (pushed, or a plan that needs no code: the reply is left), or
+    `none` (nothing of yours to do)."""
+    s = status or topic_status(state, t)
+    if s not in NEEDS_YOU:
+        return "none"
+    if s == "reply_pending":
+        return "reply"
+    if not plan_holds(t, reviewer_mark(state, t)):
+        return "plan"
+    if (t.get("outcome") or "fix") != "fix" or t.get("diff_url"):
+        return "reply"
+    return "fixed" if t.get("fix") and working_diff().strip() else "fix"
+
+
+def pass_of(state):
+    return state.get("pass") if state.get("pass") in PASSES else "plan"
+
+
+def in_pass(state, t, p):
+    """Whether `t` is the user's to work on in pass `p`."""
+    st = step_of(state, t)
+    return st != "none" and (st == "plan") == (p == "plan")
+
+
+def focus_status(state, t):
+    """The status the current topic is kept by (lib/focus.py). Without the mod, the topic's
+    own. With it, `need` while the topic is the user's in the pass that runs, so agreeing a
+    plan moves the plan pass on, while a fix, its push and its reply keep their topic
+    current to the end; `unplanned`/`planned` for a topic of the other pass, which holds
+    while unchanged once the user opened it."""
+    s = topic_status(state, t)
+    if not ui.drawn() or step_of(state, t, s) == "none":
+        return s
+    p = pass_of(state)
+    if in_pass(state, t, p):
+        return "need"
+    return "unplanned" if p == "fix" else "planned"
+
+
+def proposal_of(state, t):
+    """The plan proposed for `t` on what the reviewers said last (the background agent's or
+    the chat's), or None."""
+    p = t.get("proposal") or {}
+    return p if p and p.get("on") == reviewer_mark(state, t) else None
+
+
+def proposal_note(state, tid):
+    """Where the mod draws, what to do about a topic shown in the plan step with no
+    proposal: its card can only offer to make one, so the agent stores its own first. The
+    opener's no-mod route (`change-view`, then a question) reads as just as right, and a
+    model following it leaves the user a card without Agree plan."""
+    t = topic_for(state, tid) if tid else None
+    if not (t and ui.drawn() and step_of(state, t) == "plan" and not proposal_of(state, t)):
+        return None
+    return (f"note: {tid} has no proposal yet, so its card has nothing to agree to. Store "
+            f"yours now, then show it again: `propose {tid} --says needs --why \"…\" "
+            f"--outcome fix|reply|push-back|question --plan \"…\"` (for a small fix, the "
+            f"exact diff with `--change -`), then `quote {tid} --focus`. The proposal's change "
+            f"takes the place of `change-view`.")
+
+
+def _rotated(state, after):
+    ids = [t["id"] for t in state["topics"]]
+    start = ids.index(after) + 1 if after in ids else 0
+    return state["topics"][start:] + state["topics"][:start]
+
+
+def pass_now(state):
+    """The pass that runs: the one stored while it has anything left, else the other."""
+    p = pass_of(state)
+    if any(in_pass(state, t, p) for t in state["topics"]):
+        return p
+    q = PASSES[1 - PASSES.index(p)]
+    return q if any(in_pass(state, t, q) for t in state["topics"]) else p
+
+
+def round_pick(state, after=None, p=None):
+    """The next topic of the round after `after`, in pass `p` (the one that runs): the first
+    in list order from just past it, round to the top again; never `after` itself. Mirrors
+    findings.py's `round_pick`."""
+    p = p or pass_now(state)
+    order = _rotated(state, after)
+    todo = [t for t in order if t["id"] != after and in_pass(state, t, p)]
+    return todo[0] if todo else None
+
+
+def round_order(state):
+    """The topics a round goes through, in the order it visits them: the current one first,
+    then the pass that runs, then the other pass's. The sidebar lists them so."""
+    cur = state.get("focus")
+    order = _rotated(state, None)
+    p = pass_now(state)
+    q = PASSES[1 - PASSES.index(p)]
+    out = [cur] if cur and topic_for(state, cur) and step_of(state, topic_for(state, cur)) != "none" else []
+    for ps in (p, q):
+        out += [t["id"] for t in order if t["id"] not in out and in_pass(state, t, ps)]
+    return out
+
+
+def next_up(state):
+    """The topic the current one hands over to (lib/focus.py's `pick_next`)."""
+    if not ui.drawn():
+        return next_topic(state)
+    if not state.get("in_round"):
+        return None                   # between rounds
+    was, state["pass"] = pass_of(state), pass_now(state)
+    # A new pass starts at the top, the topic just left included: it is one of this pass's.
+    t = round_pick(state, state.get("focus") if state["pass"] == was else None, state["pass"])
+    if t is None:
+        state["in_round"] = False     # nothing left: the round is over
+    return t
+
+
+def start_round(state, tid=None):
+    """Open `tid`, or the round's first topic: a round runs from here."""
+    state["in_round"] = True
+    state["mr_news"] = []
+    state["pass"] = pass_now(state)
+    t = topic_for(state, tid) if tid else round_pick(state, None, state["pass"])
+    if t:
+        CURRENT.jump(state, t["id"])
+
+
+def news_of(state, t):
+    """What arrived on `t` that the user has not opened, and when it last did: `(kinds,
+    at)`, the kinds among `thread` (a thread new to the rework) and `reply` (a reviewer
+    wrote again)."""
+    if inbox_of(state, t) not in ("new", "fyi"):
+        return [], None
+    thr = [x for x in (state["threads"].get(i) for i in t["thread_ids"]) if x]
+    at = [n.get("at") for x in thr for n in x.get("notes") or [] if not n.get("mine") and n.get("at")]
+    replied = t.get("seen") or any(n.get("mine") for x in thr for n in x.get("notes") or [])
+    return ["reply" if replied else "thread"], max(at) if at else None
+
+
+def inbox_of(state, t):
+    """Where `t` stands in the inbox: `new` (news the user has not opened), `yours`
+    (opened, not decided), `fyi` (a reviewer's comment the agent found
+    asks nothing of you), or None for a topic that does not need the user. Mirrors
+    findings.py's `inbox_of`."""
+    if topic_status(state, t) not in NEEDS_YOU:
+        return None
+    mark = reviewer_mark(state, t)
+    p = proposal_of(state, t)
+    if p and p.get("says") == "fyi" and step_of(state, t) == "plan":
+        return None if t.get("seen") == mark else "fyi"
+    return "yours" if t.get("seen") == mark else "new"
+
+
+def inbox_json(state, topics):
+    """The sidebar's inbox, in the shape findings.py's `inbox_json` gives: replies and new
+    threads, how many wait on the reviewers. No pushes: the branch is
+    yours, so a push is news to nobody."""
+    fresh = [x for x in topics if x["inbox"] in ("new", "fyi")]
+    first = round_pick(state, None, pass_now(state))
+    return {
+        "since": min([x["news_at"] for x in fresh if x["news_at"]] or [None]) if fresh else None,
+        "replies": [x["id"] for x in fresh if "reply" in x["news"]],
+        "resolved": [],
+        "threads": [{"id": x["id"], "by": first_name(_thread_by(state, x["id"])) or None,
+                     "fyi": x["inbox"] == "fyi"}
+                    for x in fresh if "thread" in x["news"]],
+        "pushes": [], "own": [], "matching": 0,
+        "mr": state.get("mr_news") or [],
+        "waiting": sum(1 for x in topics if x["status"] == "waiting"),
+        "first": first["id"] if first else None,
+        "newer_push": False,
+    }
+
+
+def _thread_by(state, tid):
+    t = topic_for(state, tid) or {}
+    th = state["threads"].get((t.get("thread_ids") or [None])[0]) or {}
+    return th.get("author")
+
+
+MOD_ENV = "REVIEW_UI_MOD"     # set on the mod's own runs of this script
+
+
+def chat_opens(state, tid):
+    """Note that the model opened `tid` (the opener, or `quote --focus`), so the background
+    agent leaves it to the chat. The mod opens topics too, after a press: those stay the
+    background agent's, since no turn of the model's follows."""
+    if os.environ.get(MOD_ENV) != "1":
+        state["chat_on"] = tid
+
+
+def judge_list(state):
+    """What the mod's background agent has to prepare: each topic whose plan is still to be
+    agreed and has no proposal on what the reviewers said last. Not the topic the chat is
+    on: the current one, where the model opened it."""
+    cur = state.get("focus")
+    chat = cur if cur and cur == state.get("chat_on") else None
+    return {"topics": [t["id"] for t in state["topics"]
+                       if t["id"] != chat and step_of(state, t) == "plan"
+                       and not proposal_of(state, t)], "own": []}
+
+
+def judge_brief(state, iid, skip=()):
+    """The task the mod hands its background agent: each topic with what to read and what to
+    store, but those in `skip` (what an agent failed on before, which the chat takes
+    instead). The agent stores and shows nothing; the user finds its proposal on the topic's
+    card when they get to it."""
+    todo = [x for x in judge_list(state)["topics"] if x not in skip]
+    if not todo:
+        return ""
+    run_as = (f"cd {shlex.quote(os.getcwd())} && python3 {shlex.quote(os.path.abspath(__file__))}"
+              f" <command> --iid {iid}")
+    out = [f"Reviewers wrote on GitLab MR !{iid}, which the user authored and is reworking. "
+           "Prepare each topic below in the background, so its card carries your proposal by "
+           "the time the user opens it. Nobody reads your replies: only what you store counts.",
+           "", f"Run every command as `{run_as}`. Store with `propose` (or `keep-plan`, below) and "
+           "nothing else: never "
+           "edit code, commit, push, post, resolve, or show anything (no `set`, `agree`, "
+           "`post`, `open`, `later`, `quote --focus`, `show_topic`).", "",
+           "Read first: `bodies` (every open thread, first and last comment), then `quote <t>` "
+           "for each topic (the code the comment is on and the whole thread), then the code "
+           "itself where the point needs it.", "",
+           "For each, store one proposal:",
+           "`propose <t> --says needs|fyi --why \"<1–3 English sentences: what the reviewer "
+           "asks, what the code does, and the trade-off; end on a **Recommendation:** "
+           "sentence>\" [--summary \"<English one-liner>\"] [--outcome fix|reply|push-back|"
+           "question --plan \"<one sentence: what to do>\"] [--answer-now] [--change - <<'CHANGE_EOF' … "
+           "CHANGE_EOF]`.",
+           "`fyi` where the comment asks nothing of the user (a thank-you, an OK on what they "
+           "did): no outcome then. `needs` takes `--outcome` and `--plan`; for a small fix "
+           "add `--change -` with the change on stdin as `@@ <path>:<first>-<last>` blocks, "
+           "each followed by the new lines that replace those lines (the diff is built from the "
+           "file; never write one by hand): the idea and its main change at its origin (the "
+           "rename where the name is defined, the new parameter in the signature), never the "
+           "call sites it adapts. `--answer-now` on a fix whose plan answers the reviewer ahead "
+           "of it: they asked a question, or offered options and the plan picks one. In `--why` and `--plan` alike, every identifier, path and value "
+           "in backticks: the card draws them as code.", ""]
+    if any((topic_for(state, tid) or {}).get("decision") for tid in todo):
+        out += ["A topic marked *plan agreed* had its plan agreed before the reviewer wrote "
+                "again (`plans` shows it). Where the new comment only acknowledges it (a "
+                "thank-you, \"sounds good\") and changes nothing about that plan, keep it: "
+                "`keep-plan <t> --why \"<one English sentence: what they said>\"`. Where it "
+                "asks for anything else, propose anew as above.", ""]
+    for tid in todo:
+        t = topic_for(state, tid)
+        kinds, _ = news_of(state, t)
+        title = "" if t.get("summary") else " (no summary yet: give it `--summary`)"
+        what = "wrote again in its thread" if kinds == ["reply"] else "opened it"
+        agreed = " (plan agreed)" if t.get("decision") else ""
+        out.append(f"- {tid}{title}{agreed}: {first_name(_thread_by(state, tid)) or 'a reviewer'} {what}.")
+    out += ["", "End with one line saying what you stored."]
+    return "\n".join(out)
+
+
+def _fenced_diff(text):
+    """The diff inside an agreed change: its ```diff block, or the text itself where it
+    reads as one; None for a change shown as a before/after snippet."""
+    m = re.search(r"```diff[^\n]*\n(.*?)```", text or "", re.S)
+    body = m.group(1) if m else text or ""
+    return body if looks_like_diff(body) else None
+
+
+def render_fix(state, tid):
+    """The card of a fix in the working tree, where the mod draws: what the reviewer asked
+    and what you did, how big it is, whether it is the change agreed, and the commit it goes
+    into. The diff itself is the sidebar's."""
+    t = topic_for(state, tid) or die(f"no topic {tid}")
+    f = t.get("fix") or {}
+    x = state["threads"].get((t["thread_ids"] or [None])[0]) or {}
+    path = f"{x['file']}:{x.get('line') or ''}" if x.get("file") else ""
+    title = title_md(state, t, t.get("summary") or "")
+    out = [f"{title} · {loc_md(path)}" if path else title, ""]
+    if t.get("plan"):
+        out += [ui.heading_md(ui.ASKED_ICON, "Agreed plan"), "", t["plan"].strip(), ""]
+    # What changed, in short: the plan is above it and the thread in the sidebar, so neither
+    # is told again; the checks only where they did not pass, as passing is what a shown
+    # fix means.
+    c = f.get("compare") or {}
+    if c.get("differs"):
+        # Above the change: it is what the user reviews in the diff viewer before pushing.
+        out += [ui.heading_md(ui.DIFFERS_ICON, "Differs from the plan you agreed"), "",
+                c["differs"].strip(), ""]
+    # The heading carries the size and, dim, how many commits it rewrites or adds; the
+    # commits themselves follow the summary.
+    fixups, new = f.get("fixup") or [], f.get("new") or []
+    counts = [f"{len(new)} new commit{'s' if len(new) != 1 else ''}"] if new else []
+    if fixups:
+        counts.append(f"{len(fixups)} commit{'s' if len(fixups) != 1 else ''} rewritten")
+    out += [f"{ui.heading_md(ui.DID_ICON, 'Changes')}  {diffsize.of_stat(f.get('stat') or [])}"
+            + (f"  ({', '.join(counts)})" if counts else ""), ""]
+    summary = (f.get("did") or "").strip() or ("Changes applied as planned." if c.get("as_agreed") else "")
+    if summary:
+        out += [summary, ""]
+    for target in fixups:
+        sha, _, subject = target.partition(" ")
+        out.append(f"{ui.REWRITTEN_ICON} `{sha}` {subject}".rstrip())
+    for subject in new:
+        out.append(f"{ui.NEW_COMMIT_ICON} {subject}")
+    if checks_of(t) != "passed":
+        out += ([""] if out[-1] else []) + checks_line(t)
+    return "\n".join(out).rstrip()
+
+
+def mark_seen(state):
+    """Before every save, where the mod draws: the topic the round opened marked as seen by
+    the user. Mirrors findings.py's `settle`."""
+    if not ui.drawn():
+        return
+    cur = CURRENT.get(state)
+    if cur and state.get("seen_focus") != cur:
+        t = topic_for(state, cur)
+        t["seen"] = reviewer_mark(state, t)
+    state["seen_focus"] = cur
+
+
+def save(path, state):
+    if isinstance(state, dict) and "topics" in state:
+        mark_seen(state)
+    _save(path, state)
+
+
+def post_reply(state, ctx, iid, tid, expect, fixed=False, resolve=False):
+    """Post `tid`'s drafted reply into its thread (or `Fixed: <diff url>` with `fixed`), and
+    resolve its threads with `resolve`. The user's press alone: the mod sets the variable
+    a press runs under. Returns the posted comment's URL."""
+    if os.environ.get(PRESS_ENV) != "1":
+        die("posting is the user's press, on the Post button under a reply's card; nothing "
+            "else posts. Offer the draft and let them press it.")
+    t = topic_for(state, tid) or die(f"no topic {tid}")
+    if not t["thread_ids"]:
+        die(f"{tref(tid)} has no thread to reply in")
+    if fixed:
+        t.get("diff_url") or die(f"{tref(tid)} has no diff URL yet: push the fix first")
+        body = f"Fixed: {t['diff_url']}\n"
+    else:
+        body = t.get("reply") or die(f"{tref(tid)} has no draft reply yet")
+        if expect and reply_version(body) != expect:
+            die(f"the draft of {tref(tid)} changed after the card you pressed Post under was "
+                "drawn; nothing was posted. Press Post under the newest card.")
+    t.pop("post_differs", None)          # posted from here: no hand-posted reply to correct
+    hits = find_handles(body)
+    if hits:
+        die(f"the draft of {tref(tid)} names internal topic handles ({', '.join(hits)}), "
+            "which mean nothing on GitLab; nothing was posted. Reword it first.")
+    early = not fixed and bool(t.get("reply_early"))
+    if early and resolve:
+        die(f"the reply drafted for {tref(tid)} comes before its fix: post it without resolving")
+    if resolve and not fixed and t.get("diff_url"):
+        # A longer reply after the fix explains something: the reviewer reads it, and
+        # resolves the thread once they agree.
+        die(f"the reply drafted for {tref(tid)} explains its fix: post it without resolving")
+    disc = f"projects/{ctx['enc']}/merge_requests/{iid}/discussions"
+    note = api_post(f"{disc}/{t['thread_ids'][0]}/notes", {"body": body})
+    url = f"{ctx['web']}/-/merge_requests/{iid}#note_{note.get('id')}"
+    if early:
+        # Said ahead of the fix (which option, what follows): the plan stands, and the fix
+        # still comes, with a short `Fixed: <link>` once pushed.
+        t.pop("reply")
+        t.pop("reply_early")
+        t["early_posted"] = url
+        return url
+    if resolve:
+        for x in t["thread_ids"]:
+            if not (state["threads"].get(x) or {}).get("resolved"):
+                api_post(f"{disc}/{x}?resolved=true", {}, method="PUT")
+    t["state"] = "waiting"
+    t.pop("waiting_on", None)
+    return url
+
+
+PRESS_ENV = "REVIEW_UI_PRESS"
+
+
+def reply_version(body):
+    """A draft's version: what a Post press names, so it posts the text its card showed.
+    Mirrors findings.py's `draft_version`."""
+    return hashlib.sha1((body or "").encode()).hexdigest()[:12]
+
+
+def repo_root():
+    return (_git("rev-parse", "--show-toplevel") or "").strip() or die("not in a git repository")
+
+
+def checks_of(t):
+    """Where the checks of `t`'s fix stand: `passed` (on exactly the files there now, under
+    the repository's checks as they are), `stale` (files or checks changed since), `failed`,
+    or None (not run)."""
+    c = t.get("checked")
+    if not c:
+        return None
+    if not c.get("ok"):
+        return "failed"
+    key = ("checks", t["id"])
+    if key not in _WORKING:
+        root = (_git("rev-parse", "--show-toplevel") or "").strip()
+        rec, why = checks.status(root) if root else (None, "no repository")
+        _WORKING[key] = "passed" if (
+            not why and checks.digest(rec) == c.get("record")
+            and checks.snapshot(root, c.get("new") or []) == c.get("tree")) else "stale"
+    return _WORKING[key]
+
+
+def checks_line(t):
+    """The fix card's line on its checks, and the failing output under it."""
+    c = t.get("checked") or {}
+    st = checks_of(t)
+    if st == "passed":
+        return [f"Checks passed: {', '.join(c.get('ran') or []) or 'there are none here'}."]
+    if st == "stale":
+        return ["Files or checks changed since the checks ran."]
+    if st == "failed":
+        tail = "\n".join((c.get("output") or "").splitlines()[-12:])
+        return [f"Checks failed: {c.get('failed')}.", "", "```text", tail, "```"] if tail else \
+            [f"Checks failed: {c.get('failed')}."]
+    return ["Checks not run yet."]
+
+
+class Handoff(Exception):
+    """A push the script cannot finish: what the agent is asked to do instead."""
+
+
+def refuse_leaving_fix(state, to=None):
+    """Die when a fix is made and not pushed on a topic other than `to`: its files are in
+    the working tree, and the next topic's fix would be made, checked and pushed on top of
+    them. The mod hides every way out of such a topic; this holds the paths around it."""
+    held = [x["id"] for x in state.get("topics") or []
+            if x["id"] != to and x.get("fix") and step_of(state, x) == "fixed"]
+    if held:
+        die(f"the fix for {', '.join(map(tref, held))} is made and not pushed: push it, or "
+            "take it out of the working tree, before leaving it.")
+
+
+def run_checks(root, tid, new, iid):
+    """`verify`: the repository's checks on `tid`'s fix, the stamp stored on the topic.
+    Run unheld (they take minutes); the state is read again and held to store it."""
+    rec, why = checks.status(root)
+    if why:
+        die(checks.brief(root, why))
+    _, state = local_state(iid)
+    others = [x["id"] for x in (state or {}).get("topics") or []
+              if x["id"] != tid and x.get("fix") and step_of(state, x) == "fixed"]
+    if others:
+        # Its files are in the checkout too, and would be checked, committed and pushed as
+        # this topic's.
+        die(f"the fix for {', '.join(map(tref, others))} is in the working tree and not "
+            f"pushed: push it first, or take it out, before checking {tref(tid)}'s.")
+    try:
+        stamp = checks.run(root, rec, new)
+    except checks.Stop as e:
+        die(str(e))
+    path, state = local_state(iid)
+    t = topic_for(state, tid) if state else None
+    if t:
+        hold(path)
+        path, state = local_state(iid)
+        t = topic_for(state, tid)
+        t["checked"] = {**stamp, "at": int(time.time())}
+        t.pop("push_token", None)
+        t.pop("handed_from", None)
+        save(path, state)
+    strays = [p for p in checks.untracked(root) if p not in new]
+    if not stamp["ok"]:
+        print(f"Checks failed on the fix for {tref(tid)}: {stamp['failed']}.\n")
+        print(stamp.get("output") or "")
+        print("\nFix what fails and run verify again: a fix is shown once its checks pass.")
+        sys.exit(1)
+    print(f"Checks passed on the fix for {tref(tid)}: "
+          f"{', '.join(stamp['ran']) or 'there are none here'}.")
+    if strays:
+        print("Not part of the fix, so neither checked nor committed (pass --new for a file "
+              "that is): " + ", ".join(strays))
+
+
+def diff_url_for(ctx, iid, start, head):
+    """The diff link of the topic's pushes: GitLab makes the new version a moment after the
+    push, so it is waited for."""
+    for _ in range(20):
+        vs = versions(ctx, iid)
+        if vs and vs[0].get("head_commit_sha") == head:
+            return f"{ctx['web']}/-/merge_requests/{iid}/diffs?diff_id={vs[0]['id']}&start_sha={start}"
+        time.sleep(1)
+    return None
+
+
+def handoff_brief(tid, fix, token, skip_hooks):
+    """What a press hands the agent when its fix is not one fixup: the commits to make, new
+    ones first, each from the files that belong to it."""
+    flag = "--no-verify " if skip_hooks else ""
+    steps = [f'`git commit {flag}-m "{x}"` for the new commit "{x}"' for x in fix.get("new") or []]
+    steps += [f"`git commit {flag}--fixup={x.split()[0]}` for {x}" for x in fix.get("fixup") or []]
+    hooks = ("" if skip_hooks else " Let git run the repository's hooks on each commit: they "
+             "have not run for real on this repository's checks yet.")
+    # The checks left the whole fix staged; a commit made from that index takes it all.
+    return (f"The user pressed Ack and push for {tid}, and its fix goes into more than one "
+            "fixup commit, so the press hands you the commits. The checks left the whole fix "
+            "staged: start from an empty index (`git reset -q`), then, in this order, `git add` "
+            "the files that belong to each commit and make it: " + "; ".join(steps or [
+                "one `git commit --fixup=<sha>` per commit the fix belongs to"]) + "."
+            + hooks + f" Then finish the press: run `threads.py push {tid} --committed --token "
+            f"{token}` yourself, in this turn. The token is the press's, good for this one push.")
+
+
+def push_fix(ctx, iid, path, tid, committed=False):
+    """`push`: commit `tid`'s checked fix as a fixup of its commit, squash it in, and
+    force-push, with no check run again where the files are the ones checked. Stores the
+    diff link. Raises Handoff for what needs the agent."""
+    state = load(path)
+    t = topic_for(state, tid) or die(f"no topic {tid}")
+    root = repo_root()
+    c = t.get("checked") or {}
+    if not c.get("ok"):
+        raise Handoff(f"The checks have not passed on the fix for {tid}: run `threads.py "
+                      f"verify {tid}`, fix what fails, and show the fix again.")
+    rec, why = checks.status(root)
+    if why or checks.digest(rec) != c.get("record"):
+        raise Handoff(f"The repository's checks changed since they ran on {tid}'s fix "
+                      f"({why or 'the record was written again'}): run `threads.py verify "
+                      f"{tid}` and show the fix again.")
+    sid = hunk.installed() and hunk.find_session(root, hunk.owner_id())
+    left = hunk.user_notes(sid) if sid else []
+    if left is None:
+        # Unread is not none: a note the user left could be the reason not to push.
+        raise Handoff(f"The diff viewer's notes on {tid}'s fix could not be read: run "
+                      "`threads.py hunk-notes`, and push only once it reads them.")
+    if left:
+        raise Handoff(f"I left notes on {tid}'s fix in the diff viewer: run `threads.py "
+                      "hunk-notes`, answer them, and show the fix again.")
+    fix = t.get("fix") or {}
+    targets = [f.split()[0] for f in fix.get("fixup") or []]
+    new = fix.get("new") or []
+    # Commits the agent made, from a press that handed them over: what they started from.
+    handed = t.get("handed_from")
+    # A push cut short after its commit (a timeout, a rejected push) goes on from there.
+    committed = committed or checks._out(root, "rev-parse", "HEAD^{tree}") == c.get("tree")
+    if committed:
+        if checks._out(root, "rev-parse", "HEAD^{tree}") != c.get("tree"):
+            raise Handoff(f"The commits are not the files checked for {tid}: run `threads.py "
+                          f"verify {tid}` before pushing.")
+    else:
+        if checks.snapshot(root, c.get("new") or []) != c.get("tree"):
+            raise Handoff(f"Files changed since the checks ran on {tid}'s fix: run "
+                          f"`threads.py verify {tid}` and show the fix again.")
+        if len(targets) != 1 or new:
+            # The push goes on from the agent's commits as this press's: a token of it, good
+            # for one push, and dropped by a new fix or new checks.
+            token = secrets.token_hex(4)
+            hold(path)
+            state = load(path)
+            topic_for(state, tid).update(push_token=token,
+                                         handed_from=checks._out(root, "rev-parse", "HEAD"))
+            save(path, state)
+            raise Handoff(handoff_brief(tid, fix, token, checks.skips_commit_hooks(rec)))
+    start = t.get("start_sha") or (versions(ctx, iid) or [{}])[0].get("head_commit_sha")
+    # The branch as it was before this push rewrote it, kept across a push cut short: what
+    # the remote holds must be in it.
+    before = t.get("push_from") or checks._out(root, "rev-parse", "HEAD")
+    if not t.get("push_from"):
+        hold(path)
+        state = load(path)
+        topic_for(state, tid)["push_from"] = before
+        save(path, state)
+    try:
+        if handed:
+            # The agent's commits skipped no check the record does not stand for, but their
+            # messages are checked here, and the new commits the card named must be among them.
+            checks.check_messages(root, handed)
+            made = (checks._out(root, "log", "--format=%s", f"{handed}..HEAD") or "").splitlines()
+            missing = [x for x in new if x not in made]
+            if missing:
+                raise checks.Stop("the fix's card names new commits that are not on the branch: "
+                                  + ", ".join(f'"{x}"' for x in missing))
+        elif not committed:
+            checks.commit_fixup(root, rec, c, targets[0])
+        if targets:
+            oldest = targets[0] if len(targets) == 1 else checks._out(
+                root, "merge-base", "--octopus", *targets) or targets[0]
+            checks.autosquash(root, oldest, c["tree"])
+        checks.push(root, rec, before)
+    except checks.Stop as e:
+        raise Handoff(f"Pushing {tid}'s fix stopped: {e}") from e
+    if not handed:
+        # Only a push whose commit ran the real hooks here tells whether the record's early
+        # runs stand for them; the agent's commits may have skipped them.
+        checks.trust(root)
+    head = checks._out(root, "rev-parse", "HEAD")
+    url = diff_url_for(ctx, iid, start, head) if start else None
+    hold(path)
+    state = load(path)
+    t = topic_for(state, tid)
+    t["start_sha"] = start
+    t.pop("push_from", None)
+    t.pop("handed_from", None)
+    if url:
+        t["diff_url"] = url
+    save(path, state)
+    if sid:
+        say, close = hunk_close_decision(hunk.user_notes(sid))
+        if close:
+            hunk.close_session(sid, hunk.owner_id())
+    return state, url
+
+
+CURRENT = focus.Current(focus_status, NEEDS_YOU + ("need",), next_up,
+                        claims_idle=lambda state: not ui.drawn())
+
+
+def local_state(iid=None):
+    """This MR's state file and state, read without glab or the network, for the views that
+    are stateless otherwise (`change-view`, `diff-view`): the MR `iid` where given, else the
+    one this project reworked last (as `window_label` finds it). `(None, None)` where there
+    is none."""
+    try:
+        if not (_git("remote", "get-url", "origin") or "").strip():
+            return None, None
+        slug = project_slug()
+        if iid is None:
+            dirs = glob.glob(os.path.join(STATE_ROOT, f"{slug}--mr*"))
+            if not dirs:
+                return None, None
+            iid = os.path.basename(max(dirs, key=_state_mtime)).rsplit("--mr", 1)[1]
+        path = state_file(STATE_ROOT, slug, iid, "topics.json")
+        return path, load(path)
+    except (Exception, SystemExit):  # noqa: BLE001 — a view must render without it
+        return None, None
+
+
 def resolve_state(args):
     ctx = context()
     mr = None
@@ -1290,9 +2326,13 @@ def resolve_state(args):
         mr = mr_view()
         iid = mr["iid"]
     path = state_file(STATE_ROOT, ctx["slug"], iid, "topics.json")
+    if args.cmd not in READ_ONLY + UNHELD:
+        hold(path)  # mirrors findings.py: runs that write take turns
     state = load(path)
     if state is None:
-        mr = mr or mr_view()
+        # By number where one was given: `glab mr view` asks about the checked-out branch,
+        # which a detached HEAD (mid-rebase) does not have.
+        mr = mr or mr_object(ctx, iid)
         state = new_state(ctx, mr)
     elif mr:
         state.update(mr_web_url=mr.get("web_url"), title=mr.get("title"))
@@ -1320,8 +2360,15 @@ def main():
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
     sub = ap.add_subparsers(dest="cmd")
-    for name in ("sync", "todo", "present", "bodies", "plans", "path", "cleanup-worktree"):
+    for name in ("sync", "todo", "present", "bodies", "plans", "path", "cleanup-worktree",
+                 "state", "leave"):
         sub.add_parser(name).add_argument("--iid", type=int)
+    pk = sub.add_parser("code", help="a topic's file as JSON for the mod's sidebar: the "
+                        "working tree, the thread's line carried through your changes since")
+    pk.add_argument("topic")
+    pk.add_argument("--iid", type=int)
+    pk.add_argument("--fix", action="store_true",
+                    help="the fix in the working tree: its changes against HEAD marked")
     sub.add_parser(
         "check-handles",
         help="print any internal topic handles "
@@ -1337,6 +2384,7 @@ def main():
     )
     pc.add_argument("topic")
     pc.add_argument("file", nargs="?", help="the change; omit to read stdin")
+    pc.add_argument("--iid", type=int)
     pc.add_argument(
         "--for",
         dest="for_path",
@@ -1348,6 +2396,21 @@ def main():
         help="render a working diff (used by diff-view.sh; reads the diff from stdin)",
     )
     pdv.add_argument("topic")
+    pdv.add_argument("--iid", type=int)
+    pdv.add_argument("--did", help="where the review-ui mod draws: one short sentence "
+                     "summarising the change (\"Changes applied as planned.\", or what more)")
+    pdv.add_argument("--fixup", action="append", default=[], metavar="SHA SUBJECT",
+                     help="a commit the fix goes into, which the push "
+                     "squashes it into (repeatable)")
+    pdv.add_argument("--new-commit", action="append", default=[], metavar="SUBJECT",
+                     help="a new commit the fix makes, by its "
+                     "subject, made before the fixups (repeatable)")
+    pdv.add_argument("--as-agreed", action="store_true",
+                     help="where the review-ui mod draws: the fix carries out the plan agreed")
+    pdv.add_argument("--differs", metavar="TEXT",
+                     help="where the review-ui mod draws: one sentence, how the fix differs "
+                     "from the plan agreed (a surprise, a change of direction, significantly "
+                     "more or less)")
     pdv.add_argument(
         "--plain",
         action="store_true",
@@ -1421,11 +2484,85 @@ def main():
     )
     for f in ("summary", "decision", "plan", "start-sha", "diff-url"):
         ps.add_argument(f"--{f}")
+    ps.add_argument("--outcome", choices=OUTCOMES,
+                    help="with --decision: what the plan does (default fix)")
     ps.add_argument(
         "--reply",
         help="the drafted reply body; `-` reads stdin (use a quoted "
         "heredoc for anything multi-line)",
     )
+    ps.add_argument("--early", action="store_true",
+                    help="with --reply: a reply ahead of the fix (posted without resolving; "
+                    "the plan stands)")
+    # Rounds, where the review-ui mod draws (see "rounds" above).
+    for name, hlp in (("open", "start a round, at <t> or the inbox's first"),
+                      ("agree", "on a person's press: store <t>'s proposed plan as agreed"),
+                      ("wait", "on a person's press: <t> needs nothing more of you until a "
+                               "reviewer writes again"),
+                      ("hunk-show", "on a person's press: <t>'s fix in the diff viewer, "
+                                    "switched to")):
+        pp = sub.add_parser(name, help=hlp)
+        pp.add_argument("topic", nargs="?" if name == "open" else None)
+        pp.add_argument("--iid", type=int)
+    sub.add_parser("refresh").add_argument("--iid", type=int)
+    pjb = sub.add_parser("judge-brief")
+    pjb.add_argument("--iid", type=int)
+    pjb.add_argument("--skip", action="append", default=[], help="a topic an agent failed on")
+    ppd = sub.add_parser("posted", help="the user posted <t>'s reply by hand: the draft and "
+                         "what went up, to compare; `--ok` once it holds")
+    ppd.add_argument("topic")
+    ppd.add_argument("--iid", type=int)
+    ppd.add_argument("--ok", action="store_true", help="what they posted holds: record it")
+    ppd.add_argument("--differs", metavar="VERDICT",
+                     help="what they posted does not hold: your verdict, in a line or two, "
+                     "with the corrected version of the posted text on --fix; shows its card")
+    ppd.add_argument("--fix", help="with --differs: `-` reads the corrected text from stdin")
+    ppd.add_argument("--apply", action="store_true",
+                     help="on the user's press only: edit the posted reply on GitLab to the "
+                     "corrected version, and record it")
+    pkp = sub.add_parser("keep-plan", help="the background agent's: <t>'s agreed plan holds "
+                         "after the reviewer's new comment, which only acknowledged it")
+    pkp.add_argument("topic")
+    pkp.add_argument("--iid", type=int)
+    pkp.add_argument("--why", required=True, help="one sentence: what the reviewer said")
+    pq2 = sub.add_parser("propose", help="store a proposed plan for <t> (the background "
+                         "agent's, or yours before showing the topic)")
+    pq2.add_argument("topic")
+    pq2.add_argument("--iid", type=int)
+    pq2.add_argument("--says", choices=("needs", "fyi"), required=True)
+    pq2.add_argument("--why", required=True)
+    pq2.add_argument("--summary")
+    pq2.add_argument("--outcome", choices=OUTCOMES)
+    pq2.add_argument("--plan")
+    pq2.add_argument("--change", help="`-`: the change from stdin, as `@@ <path>:<first>-<last>` "
+                     "blocks of the new lines (the diff is built from the file)")
+    pq2.add_argument("--answer-now", action="store_true",
+                     help="with a fix: the plan answers the reviewer now, ahead of the fix "
+                     "(they asked a question or offered options)")
+    pq2.add_argument("--unless-judged", action="store_true",
+                     help="keep a proposal stored since on the same comments")
+    ppo = sub.add_parser("post", help="on a person's press only: post <t>'s reply")
+    ppo.add_argument("topic")
+    ppo.add_argument("--iid", type=int)
+    ppo.add_argument("--expect", help="the draft version the card showed")
+    ppo.add_argument("--fixed", action="store_true", help="post `Fixed: <diff url>`")
+    ppo.add_argument("--resolve", action="store_true", help="and resolve the thread")
+    pck = sub.add_parser("checks", help="whether this repository's checks are worked out; "
+                         "what to read to work them out where not")
+    pck.add_argument("--set", metavar="-", help="`-`: store the reading, JSON from stdin")
+    pv = sub.add_parser("verify", help="run the repository's checks on <t>'s fix: its "
+                        "hooks ahead of time, then the checks of the parts it touches")
+    pv.add_argument("topic")
+    pv.add_argument("--iid", type=int)
+    pv.add_argument("--new", action="append", default=[], metavar="PATH",
+                    help="a new file that is part of the fix (repeatable)")
+    pph = sub.add_parser("push", help="commit <t>'s checked fix as a fixup, squash and "
+                         "force-push, without running the checks again")
+    pph.add_argument("topic")
+    pph.add_argument("--iid", type=int)
+    pph.add_argument("--committed", action="store_true",
+                     help="the fixup commits are made already")
+    pph.add_argument("--token", help="with --committed: the one a press's hand-off named")
     pm = sub.add_parser("merge")
     pm.add_argument("into")
     pm.add_argument("others", nargs="+")
@@ -1450,6 +2587,15 @@ def main():
                 render_change_view(args.topic, text, args.for_path), topic=args.topic
             )
         )
+        # Kept with the topic: a plan agreed on it is agreed on this change, which the fix
+        # is judged against once it is made (`plans` shows it).
+        path, state = local_state(args.iid)
+        if state and topic_for(state, args.topic):
+            # Read again once held: a background judgment or a refresh may have written since.
+            hold(path)
+            state = load(path)
+            topic_for(state, args.topic)["change"] = text
+            save(path, state)
         return
     if cmd == "diff-view":
         notes = []
@@ -1477,9 +2623,45 @@ def main():
                 "inline shape, and an inline diff has no lines to anchor a note to. Put "
                 "the point in your prose instead, or show the whole diff."
             )
+        diff = sys.stdin.read()
+        drawn = ui.drawn()
+        # The fix is the topic's however it is shown: the push commits it by what is stored
+        # here (its commits above all), card or no card.
+        path, state = local_state(args.iid)
+        if state and topic_for(state, args.topic) and (diff.strip() or drawn):
+            if not diff.strip():
+                diff_view_block(args.topic, diff)          # dies with the reason
+            if args.as_agreed and args.differs:
+                die("--as-agreed and --differs say opposite things: pass one")
+            # Read again once held: a background judgment or a refresh may have written since.
+            hold(path)
+            state = load(path)
+            t = topic_for(state, args.topic)
+            # Whether the fix still carries out the plan agreed is the agent's judgment, said
+            # here: the idea kept, nothing surprising, no change of direction, not
+            # significantly more or less. A line-by-line count could not tell a new
+            # parameter's adapted call sites from a change nobody agreed.
+            if drawn and t.get("decision") and not (args.as_agreed or args.differs):
+                die(f"say whether the fix carries out the plan agreed for {tref(args.topic)} "
+                    "(`plans`): `--as-agreed`, or `--differs \"<what differs: a surprise, a "
+                    "change of direction, significantly more or less>\"`")
+            t.pop("push_token", None)
+            t.pop("handed_from", None)
+            t["fix"] = {"did": args.did, "fixup": args.fixup, "new": args.new_commit, "stat": diff_stat(diff),
+                        "notes": notes,
+                        "compare": {"as_agreed": bool(args.as_agreed), "differs": args.differs}}
+            if drawn:
+                # Where the mod draws, the fix is a card and its diff the sidebar's: the diff
+                # viewer opens only on the user's press (`hunk-show`), with these notes.
+                CURRENT.jump(state, args.topic)
+                reload_open_viewer(notes)
+                emit(state, render_fix(state, args.topic), args.topic)
+                save(path, state)
+                return
+            save(path, state)
         print(
             critical_manifest.with_manifest(
-                diff_view_block(args.topic, sys.stdin.read(), args.plain, notes),
+                diff_view_block(args.topic, diff, args.plain, notes),
                 topic=args.topic,
             )
         )
@@ -1527,18 +2709,245 @@ def main():
             hunk.close_session(sid, owner)
         return
 
+    if cmd == "checks":
+        root = repo_root()
+        if args.set:
+            try:
+                rec = checks.store(root, json.loads(sys.stdin.read()))
+            except ValueError as e:
+                die(f"not stored: {e}")
+            print("stored: " + "; ".join(
+                [f"{h['event']}: {'run ahead' if h.get('early') else 'runs at its moment'}"
+                 for h in rec["hooks"]] + [f"tests: {', '.join(x['name'] for x in rec['tests']) or 'none'}"]))
+            return
+        rec, why = checks.status(root)
+        print(checks.brief(root, why) if why else json.dumps(
+            {k: rec[k] for k in ("hooks", "tests", "trusted")}, indent=2))
+        return
+    if cmd == "verify":
+        run_checks(repo_root(), args.topic, args.new, args.iid)
+        return
+
     ctx, iid, path, state = resolve_state(args)
 
     if cmd == "path":
         print(path)
+    elif cmd == "state":                  # offline, and asked for after every view
+        print(json.dumps(state_json(state)))
+    elif cmd == "leave":                  # offline: the sidebar's close (findings.py's too)
+        refuse_leaving_fix(state)
+        CURRENT.leave(state)
+        save(path, state)
+        print(json.dumps(state_json(state)))
+    elif cmd == "refresh":                # the mod's update check: fetch, reconcile, state
+        mr_comments = []
+        me = current_user()
+        sync(state, fetch_threads(ctx, iid, me, mr_comments))
+        state["mr_comments"] = mr_comments
+        state["diff_base"] = mr_base(ctx, iid) or state.get("diff_base")
+        # The MR as a whole: approved, auto-merge set, merged. Mirrors findings.py's.
+        status = mr_status(ctx, iid, me)
+        state.setdefault("mr_news", []).extend(mr_news(state.get("mr_status"), status,
+                                                    time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())))
+        state["mr_status"] = status
+        save(path, state)
+        print(json.dumps(state_json(state)))
+    elif cmd == "open":
+        refuse_leaving_fix(state, args.topic)
+        start_round(state, args.topic)
+        save(path, state)
+        print(json.dumps(state_json(state)))
+    elif cmd == "agree":
+        t = topic_for(state, args.topic) or die(f"no topic {args.topic}")
+        p = proposal_of(state, t) or die(f"{tref(args.topic)} has no proposed plan to agree")
+        if p.get("says") == "fyi":
+            die(f"{tref(args.topic)} asks nothing of you: `wait {args.topic}` closes it")
+        t.update(decision=p.get("why"), plan=p.get("plan"), outcome=p.get("outcome") or "fix",
+                 agreed_change=p.get("change"), plan_on=reviewer_mark(state, t),
+                 answer_now=bool(p.get("answer_now")))
+        start_fix_round(t)
+        save(path, state)
+        print(f"agreed the plan for {tref(args.topic)}")
+    elif cmd == "wait":
+        t = topic_for(state, args.topic) or die(f"no topic {args.topic}")
+        t["state"] = "waiting"
+        t["waiting_on"] = reviewer_mark(state, t)
+        save(path, state)
+    elif cmd == "posted":
+        # Mirrors findings.py's `posted`: the user posted the reply themselves, often
+        # reworded; the agent compares it with the draft before it counts as posted.
+        t = topic_for(state, args.topic) or die(f"no topic {args.topic}")
+        if args.apply:
+            # Edits the user's own comment on GitLab: their press, never the agent's move.
+            if os.environ.get(PRESS_ENV) != "1":
+                die("editing a posted reply is the user's press, on its card; nothing else "
+                    "edits it. Show the card and let them press it.")
+            try:
+                print(f"edited the posted reply of {tref(args.topic)}: "
+                      f"{posted.apply(api_post, ctx, iid, t)}")
+            except ValueError as e:
+                die(str(e))
+            args.ok = True
+        if args.differs:
+            fix = sys.stdin.read() if args.fix == "-" else args.fix
+            try:
+                posted.store_differs(state, t, args.differs, fix, last=True, since=t.get("reply_at"))
+            except ValueError as e:
+                die(str(e))
+            save(path, state)
+            emit(state, f"{title_md(state, t, t.get('summary') or '')}\n\n"
+                 + posted.card_md(t, "reply"), args.topic)
+        elif args.ok:
+            t.pop("post_differs", None)
+            if t.pop("reply_early", None):
+                # Ahead of the fix: the plan stands, as after a Post press.
+                t["early_posted"] = True
+            else:
+                t["state"] = "waiting"
+                t.pop("waiting_on", None)
+            t.pop("reply", None)
+            if current_topic(state) == args.topic:
+                CURRENT.leave(state)
+            save(path, state)
+            print(f"{tref(args.topic)} is posted")
+        else:
+            mr_comments = []
+            sync(state, fetch_threads(ctx, iid, current_user(), mr_comments))
+            save(path, state)
+            _disc, mine = posted.own_note(state, t, last=True, since=t.get("reply_at"))
+            print("Drafted:\n\n" + (t.get("reply") or "(no draft kept)").strip())
+            print("\nPosted:\n\n" + (mine.get("body") if mine else "(not on GitLab yet: nothing of the "
+                                        "user's came after the draft)").strip())
+    elif cmd == "keep-plan":
+        t = topic_for(state, args.topic) or die(f"no topic {args.topic}")
+        t.get("decision") or die(f"{tref(args.topic)} has no agreed plan to keep: `propose` one")
+        # What the reviewers said is the plan's again: it holds until they write once more.
+        t["plan_on"] = reviewer_mark(state, t)
+        t["kept"] = {"why": args.why, "on": t["plan_on"]}
+        save(path, state)
+        print(f"kept the plan for {tref(args.topic)}")
+    elif cmd == "propose":
+        t = topic_for(state, args.topic) or die(f"no topic {args.topic}")
+        if args.unless_judged and proposal_of(state, t):
+            print(f"{tref(args.topic)} has a proposal on these comments already; kept it")
+            return
+        if args.says == "needs" and not (args.outcome and args.plan):
+            die("a proposal that needs the user takes --outcome and --plan")
+        change = sys.stdin.read() if args.change == "-" else args.change
+        # The new lines for the ranges they replace, or a clean diff: either way stored as a
+        # diff that parses, built from the file where it can be (lib/change.py). The fix is
+        # compared with it once made, and the card draws it.
+        if change:
+            try:
+                change = change_of.of(repo_root(), change)
+            except ValueError as e:
+                die(f"the change was not stored: {e}")
+        if args.summary:
+            t["summary"] = args.summary
+        t["proposal"] = {"says": args.says, "why": args.why, "outcome": args.outcome,
+                         "plan": args.plan, "change": change, "on": reviewer_mark(state, t)}
+        if args.answer_now:
+            t["proposal"]["answer_now"] = True
+        save(path, state)
+        print(f"stored the proposal for {tref(args.topic)}")
+    elif cmd == "judge-brief":
+        print(judge_brief(state, iid, args.skip))
+    elif cmd == "post":
+        early = bool((topic_for(state, args.topic) or {}).get("reply_early")) and not args.fixed
+        url = post_reply(state, ctx, iid, args.topic, args.expect, args.fixed, args.resolve)
+        if early and current_topic(state) == args.topic:
+            CURRENT.leave(state)               # said; the round goes on, the fix comes later
+        mr_comments = []
+        sync(state, fetch_threads(ctx, iid, current_user(), mr_comments))
+        state["mr_comments"] = mr_comments
+        save(path, state)
+        print(f"posted {tref(args.topic)}: {url}")
+    elif cmd == "push":
+        pressed = os.environ.get(PRESS_ENV) == "1"
+        if ui.drawn() and not pressed:
+            # The one push that is not a press itself: the agent's commits, going on from a
+            # press that handed them over, by the token that press stored.
+            t = topic_for(state, args.topic) or die(f"no topic {args.topic}")
+            if not (args.committed and args.token and args.token == t.get("push_token")):
+                die("pushing is the user's press, on the fix's card; nothing else pushes.")
+            t.pop("push_token")
+            pressed = True
+            save(path, state)
+        try:
+            state, url = push_fix(ctx, iid, path, args.topic, args.committed)
+        except Handoff as e:
+            print(e)
+            sys.exit(3)
+        print(f"pushed the fix for {tref(args.topic)}" + (f": {url}" if url else
+              " (GitLab showed no new version yet: run `diff-url.py url` for the link)"))
+        if pressed and os.environ.get(PRESS_ENV) != "1":
+            # A press the model finished: what comes after the push (a "Fixed" reply, or a
+            # longer one) is the user's to choose on the topic's card.
+            print(f"{tref(args.topic)} is pushed, and its next card is the user's: end the "
+                  "turn here, and never post or resolve for them.")
+    elif cmd == "hunk-show":
+        t = topic_for(state, args.topic) or die(f"no topic {args.topic}")
+        root = (_git("rev-parse", "--show-toplevel") or "").strip()
+        diff = working_diff()
+        if not diff.strip():
+            die("nothing in the working tree to show")
+        shown = hunk.show_working_diff(root, window_label(), diff_stat(diff)) if root else None
+        if not shown:
+            die("the diff viewer did not open with this fix: it needs hunk inside tmux, and "
+                "its window must hold exactly the fix's files")
+        notes = [n for n in (t.get("fix") or {}).get("notes") or [] if isinstance(n, dict)]
+        if notes:
+            try:
+                hunk.add_notes(shown[0], notes)
+            except ValueError:
+                pass
+        hunk.focus_window(shown[0])
+        print(f"the fix for {tref(args.topic)} is in the diff viewer, window {shown[1]}")
+    elif cmd == "code" and args.fix:
+        # The fix in the working tree, for the sidebar: the file the comment is on (else the
+        # fix's first), its changes against HEAD marked, the comment's line carried through
+        # them; and the fix's other files with their sizes, which the diff viewer shows.
+        t = topic_for(state, args.topic) or die(f"no topic {args.topic}")
+        x = (state["threads"].get(t["thread_ids"][0]) if t["thread_ids"] else None) or {}
+        root = (_git("rev-parse", "--show-toplevel") or "").strip()
+        stat = diff_stat(working_diff())
+        files = [f for f, _a, _r in stat]
+        want = x.get("file") if x.get("file") in files else (files or [None])[0]
+        v = code_view.view(root, want, x.get("line_end") or x.get("line") if want == x.get("file") else None,
+                           x.get("head_sha") if want == x.get("file") else None,
+                           start=x.get("line_start") if want == x.get("file") else None,
+                           side=x.get("side") or "new", base="HEAD") if want else None
+        if v:
+            v.update(mode="fix", others=[[f, a, r] for f, a, r in stat if f != want])
+            if v["at"] is None and v["rows"]:
+                hit = next((i for i, r in enumerate(v["rows"], 1) if r[0] != " "), None)
+                v["at"] = [hit, hit] if hit else None
+        print(json.dumps(v))
+    elif cmd == "code":                   # offline: the sidebar asks on every move
+        # Mirrors findings.py's `code`: here the file is the user's own working tree, so a
+        # fix in progress shows as changed lines against the commit the thread was on.
+        t = topic_for(state, args.topic) or die(f"no topic {args.topic}")
+        x = (state["threads"].get(t["thread_ids"][0]) if t["thread_ids"] else None) or {}
+        root = (_git("rev-parse", "--show-toplevel") or "").strip()
+        print(json.dumps(code_view.view(root, x.get("file"), x.get("line_end") or x.get("line"),
+                                        x.get("head_sha"), start=x.get("line_start"),
+                                        side=x.get("side") or "new",
+                                        base=state.get("diff_base"))))
     elif cmd == "quote":
         topic_for(state, args.topic) or die(f"no topic {args.topic}")
+        if args.focus:
+            refuse_leaving_fix(state, args.topic)
+        if args.focus and ui.drawn():
+            state["in_round"] = True      # opening a topic starts a round from it
+            chat_opens(state, args.topic)
         note = CURRENT.view(
             state, args.topic, args.focus, f"threads.py quote {args.topic} --focus"
         )
         if note:
             print(note, file=sys.stderr)
         emit(state, render_quote(state, args.topic), args.topic)
+        if args.topic == current_topic(state) and (note := proposal_note(state, args.topic)):
+            print(note, file=sys.stderr)
         # `render_quote` recorded what it showed; persist it so a later `--refine` can
         # tell whether the context still matches — and the current topic with it. Every
         # command that renders a topic in full does this; it is the only reason these
@@ -1556,8 +2965,14 @@ def main():
         # body only — the payload for the clipboard or `glab api -F body=@-`
         print(reply_body(state, args.topic, os.path.dirname(path)), end="")
     elif cmd == "present":
+        if ui.drawn() and not state.get("in_round"):
+            start_round(state)            # the opener carries on where the rework stands
         cleanup = render_cleanup(cleanup_facts(ctx, iid))
         emit(state, render_present(state, cleanup), current_topic(state))
+        if ui.drawn():
+            chat_opens(state, current_topic(state))
+        if note := proposal_note(state, current_topic(state)):
+            print(note, file=sys.stderr)
         save(path, state)
     elif cmd == "bodies":
         print(render_bodies(state))
@@ -1566,7 +2981,11 @@ def main():
     elif cmd == "plans":
         print(render_plans(state))
     elif cmd in ("sync", "todo"):
-        sync(state, fetch_threads(ctx, iid, current_user()))
+        mr_comments = []
+        sync(state, fetch_threads(ctx, iid, current_user(), mr_comments))
+        state["mr_comments"] = mr_comments
+        # The MR's diff base, so the offline `code` command can show the MR's changes.
+        state["diff_base"] = mr_base(ctx, iid) or state.get("diff_base")
         save(path, state)
         # `sync` isn't gated (see paste-gates.json's note), so the manifest it carries
         # is simply never read for that command — harmless, and keeping one code path
@@ -1577,7 +2996,9 @@ def main():
             show_done=getattr(args, "all", False),
         )
         cleanup = render_cleanup(cleanup_facts(ctx, iid))
-        emit(state, f"{table}\n\n{cleanup}" if cleanup else table)
+        if ui.drawn():
+            table = ""                     # the sidebar is the table; the payload carries it
+        emit(state, "\n\n".join(x for x in (table, cleanup) if x))
     elif cmd == "set":
         t = topic_for(state, args.topic) or die(f"no topic {args.topic}")
         fld = {"start-sha": "start_sha", "diff-url": "diff_url"}
@@ -1607,7 +3028,25 @@ def main():
                         f"(link the other thread via `url <other-t>`), then re-run"
                     )
                 v = v.rstrip("\n") + "\n"
+                # A reply after the fix ends on the line that links it, as `Fixed: <link>`
+                # alone would: the reviewer reads it there and resolves the thread.
+                if t.get("diff_url") and not args.early and t["diff_url"] not in v:
+                    v += f"\nFixed: {t['diff_url']}\n"
+                t.pop("post_differs", None)   # a new draft: the old one's check is over
+                # When it was written: a reply the user posts by hand is one made after this.
+                t["reply_at"] = datetime.datetime.now(datetime.timezone.utc).isoformat()
+                if args.early:
+                    t["reply_early"] = True
+                else:
+                    t.pop("reply_early", None)
             t[fld.get(f, f)] = v
+        if args.decision is not None:
+            # A plan agreed in the chat: on what the reviewers said last, and on the change
+            # shown for it, if one was (`change-view`).
+            t["outcome"] = args.outcome or t.get("outcome") or "fix"
+            t["plan_on"] = reviewer_mark(state, t)
+            t["agreed_change"] = t.get("change")
+            start_fix_round(t)
         save(path, state)
     elif cmd == "merge":
         into = topic_for(state, args.into) or die(f"no topic {args.into}")

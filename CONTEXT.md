@@ -88,11 +88,28 @@ posted on the merge request — is in the thread's language, and a **quoted note
 verbatim, never translated. Everything else a person reads here is English: summaries, headings,
 tables, prose.
 
-**The two skills use different status words, and that is deliberate.** Reviewing, a topic is
-*draft, open, needs-ack, acked* or *wontfix*; reworking, it is *reply-pending, open, waiting* or
-*done*. Only "open" appears in both, and even there it means "waiting on the other person" —
-which is a different person in each. Never carry a status word from one skill into a sentence
-about the other.
+**What a person reads is one vocabulary for both skills.** Where the review-ui mod draws (its
+cards, its panel, its band), a topic's state is one of seven words, each meaning the same thing
+in both skills, and each with its own icon:
+
+| say this | what it means |
+|---|---|
+| **new** | nobody has answered it yet, and it is your move |
+| **draft** | your words are written and waiting to be posted |
+| **waiting** | you said your piece; it is the other side's move |
+| **answered** | the other side replied; your move again |
+| **done** | settled |
+| **won't fix** | settled as not to be fixed |
+| **dropped** | not raised after all (review-mr only) |
+
+"Current" is not a state: it is the topic being decided, shown as a highlight.
+
+The scripts keep their own status words underneath, and those still differ, deliberately:
+reviewing, a topic is *draft, open, needs-ack, acked, wontfix* or *dropped*; reworking,
+*reply-pending, open, waiting* or *done*. They are what the views say without the mod, and
+"open" means "waiting on the other person" in both, a different person in each. In a sentence
+for a person, use the seven words above; a script's own word belongs only where that script's
+output is being quoted.
 
 ---
 
@@ -105,7 +122,7 @@ viewer window with the merge-request skills, and the **diff note** with them too
 |---|---|---|
 | **piece** | item, step, chunk | What the viewer window shows for review at one time: one commit of the branch, named by its number (1 = the oldest), or the uncommitted change. |
 | **diff note** | comment, conversation | As above — and here it means the note together with what is written under it: the agent's answer, and anything you reply. It is not a **thread**: that is the merge request's word, and there is no merge request yet. A diff note whose code a fix moved or rewrote is re-created next to that code, labelled `you (moved from …)`. |
-| **ACK** | approval, sign-off, done | You accepting the piece in the window: you said done, and no diff note awaits an answer. Its diff notes are then cleared and the next piece comes up. "Done" alone only means you have finished writing diff notes. |
+| **ACK** | approval, sign-off | You accepting the piece in the window: you said done, and no diff note awaits an answer. Its diff notes are then cleared and the next piece comes up. "Done" is not one: said here, it only means you have finished writing diff notes, and as a word it is a topic's state in the merge-request skills. |
 
 ---
 
