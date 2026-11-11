@@ -18,5 +18,7 @@ elif command -v ruff >/dev/null 2>&1; then
 else
   echo "pre-commit: neither uv nor ruff installed, lint skipped (brew install uv)" >&2
 fi
+# Nothing from the owner's private work (private_terms.py; its list lives outside the repo).
+python3 private_terms.py check --staged
 # Tests reachable from the uncommitted changes; everything when that cannot be told.
 python3 run_tests.py --changed

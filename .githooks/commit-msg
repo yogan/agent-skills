@@ -1,0 +1,5 @@
+#!/bin/sh
+# A commit message is history: it cannot be edited once pushed. Checked against the owner's
+# list of private words like every added line (private_terms.py).
+cd "$(git rev-parse --show-toplevel)" || exit 1
+exec python3 private_terms.py check --message "$1"
