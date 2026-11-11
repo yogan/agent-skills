@@ -13,8 +13,16 @@ internal API, header, service, field or diagram names, a library choice tied to 
 Invent the identifiers instead. A measurement is ours and can be quoted — "8% of a label was
 covered, three anchors hid nothing" — while the *name* of the thing measured is not.
 
-Commit messages matter most, because a file can be edited later and history cannot. Grep the
-diff before committing.
+Commit messages matter most, because a file can be edited later and history cannot. The
+hooks check every added line and every message against the owner's list of private words
+(`private_terms.py`; the list lives outside the repo): a block word refuses the commit, a
+watch word prints the lines to look at. A list cannot know a renamed copy, so the judgement
+stays yours. The list only grows with the owner's yes: when you find private material it
+missed, or a watch word that keeps flagging fine text, propose the word and the change
+(`private_terms.py add block|watch <word>`, `drop <word>`; `where <word>` says how often a
+word is in the repo now), and run it only after they agree. Real names reached a fixture
+this way once, through a test written from a real review session: such a test takes
+invented names from the start.
 
 ## Working agreement
 
@@ -37,7 +45,9 @@ work that may be rejected.
 
 **Verifying.** Verify the claim you are about to make, by the cheapest means that could
 disprove it: a measurement beats a render, a render beats a full capture. Never present a
-visual result you have not looked at yourself. Say what you did not check.
+visual result you have not looked at yourself. Say what you did not check. A new test proves
+its fix only once it fails without it: `python3 fails_without.py <file> <fixed> <unfixed> --
+<test command>` takes the fix out for one run and always puts it back.
 
 **A claim about speed is measured with `measure_speed.py`, never by hand.** Timing is the one
 thing here that looks easy and is not: a cold run against a warm one, or a block of befores
@@ -70,11 +80,17 @@ tooling:
 - **A generated document** (the `explain-*` skills) — open the document and say what to look
   at in it. There is no before/after tooling here; if a comparison is worth building, that is
   its own topic, not something to improvise mid-change.
-- **A skill's behaviour inside a session** (`review-mr`, `rework-mr`, hooks) — there is no
-  artefact to show, and you cannot test it yourself: the change only proves out in a fresh
-  session. Say exactly what to run and what should be different from last time, then wait.
-  The ack comes after the owner has run it, so step 2's "prove it" is unit tests plus a
-  precise claim about the new behaviour.
+- **A skill's behaviour inside a session** (`review-mr`, `rework-mr`, the mod, hooks) — there
+  is no artefact to show. `e2e/drive.py verify <scenario>` drives a real session through it
+  on the local GitLab rig, the model's replies played from the scenario's recording: free and
+  the same every run, so it belongs in the loop beside the mod's own tests and the unit tests.
+  A real model (`--model`, and `--record` to re-make a recording the change broke) costs money
+  and minutes: one run at the end with the owner's go. Say exactly what to run and what should be different from last time, then
+  wait. The ack comes after the owner has run it, so step 2's "prove it" is unit tests plus
+  a precise claim about the new behaviour.
+- **Nothing the owner can see** (a driver, a rig, a refactor, tooling) — prove it yourself
+  and say so in a line. Do not hand the owner something to test that looks the same as
+  before.
 
 No intermediate results — show when you believe you are done. **Opening something is the LAST
 step, not a step.** Look at intermediate renders yourself; the owner's screen is not a
@@ -96,6 +112,12 @@ drawn from an earlier variant does not carry: the same lever moved twice in one 
 consent does not carry to the next one. Do not raise committing before the owner has
 responded to what you showed them. Mid-session the owner may switch to "keep working, commits
 when I say" — then stop asking after each chunk and wait to be asked.
+
+After anything that rewrites unpushed history — a fold, a fixup and autosquash, a rebase —
+run `python3 check_commits.py`: every commit has to pass on its own, and neither the hook
+(one working tree, often skipped during a fold) nor a green tip says so. Folding by blame has
+put a name into a commit older than its definition three rounds running. Diffs here carry no
+`a/` `b/` prefixes (`diff.noprefix`), so a patch made from one applies with `git apply -p0`.
 
 **Reporting.** Short, high level, from a usage perspective; technical detail to a minimum.
 Always report anyway: architectural changes, shortcuts, hacks, compromises, significant
@@ -187,7 +209,22 @@ that are usually thrown away.
   [lib/diagram/README.md](lib/diagram/README.md). The one place in `lib/` that isn't pure
   Python: `lib/diagram/js/` holds a Node script because measuring a rendered diagram needs a
   real browser. The Python side decides; the JS only measures.
+- `mods/<name>/` — a mod: a plugin that changes Claude Code's own interface (the review
+  skills' cards, buttons and sidebar are `mods/review-ui`). TypeScript, tested by the engine
+  with no model; `mods/test_mods.py` runs each mod's tests, type check and validation inside
+  the suite. Its README holds what the engine does that its types do not say.
 - `e2e/` — local GitLab demo/test rig for `review-mr`/`rework-mr` (see `e2e/README.md`).
+  What only the demo or the rig needs is set up there (`fixture.py`, `drive.py`), never in
+  `lib/` or a SKILL.md: a demo fix once made in the checks' shared brief would have switched
+  off lint and tests in every real repository.
+
+**The installed skills, hook and mod are this checkout**, linked, so an edit reaches the
+owner's running sessions at once (a skill's text: sessions started afterwards; the mod: after
+`/reload-plugins`). Keep every edit runnable between turns.
+
+**Edit code with the Edit tool**, or with a replace that asserts its old text occurs exactly
+once. Never cut a file between two anchors found by search: that has silently deleted tests
+and whole functions here, noticed only by a test count that dropped.
 
 ## Sharing vs. duplication
 
@@ -223,9 +260,11 @@ To run everything: `python3 run_tests.py` (~40s, most of it d2). While editing, 
 
 - `python3 run_tests.py --changed` — resolves your uncommitted edits through the repo's import
   graph and runs every test that reaches them. Touching `lib/gitlab.py` runs 4 files in 1s;
-  touching `lib/diagram/palette.py` runs 21, because that is genuinely how far it reaches. It
-  **declines and runs everything** whenever it cannot map a changed file, since a selector that
-  quietly skips the failing test is worse than a slow one. `test_run_tests.py` exists to pin
+  touching `lib/diagram/palette.py` runs 21, because that is genuinely how far it reaches. A
+  non-Python file counts as a change to every Python file that names it (a SKILL.md, a JSON
+  spec), and a mod's files select `mods/test_mods.py`. It **declines and runs everything**
+  whenever it cannot map a changed file, since a selector that quietly skips the failing test
+  is worse than a slow one. `test_run_tests.py` exists to pin
   that, and every case in it is a real under-selection that was once shipped. With a CLEAN tree
   it runs nothing — no edits, nothing they can affect.
 - `python3 run_tests.py compact` — plain substring filter on the path, when you know what you
