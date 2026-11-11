@@ -303,7 +303,9 @@ class TestStandaloneImage(unittest.TestCase):
         """
         import datetime
 
-        spec = dict(STATE, title="visualize test default path probe")
+        # The process id makes it this RUN's too: two suites at once (two worktrees, two
+        # sessions) wrote one file, and the first to finish deleted the other's.
+        spec = dict(STATE, title=f"visualize test default path probe {os.getpid()}")
         expected = (f"/tmp/{datetime.date.today():%Y-%m-%d}"
                     f"-diagram-{V.slugify(spec['title'])}.svg")
         # Registered before the run, so an assertion failure cannot leave the file behind.
