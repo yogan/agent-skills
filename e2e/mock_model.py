@@ -31,6 +31,7 @@ side requests, never a conversation, and gets a short neutral answer; so does on
 a conversation for the engine's own ends (`SIDE`).
 """
 import argparse
+import difflib
 import json
 import os
 import re
@@ -162,19 +163,26 @@ def _result_text(block):
     return to_placeholders(c if isinstance(c, str) else "\n".join(_texts(c)))
 
 
-def seen_ids(lines):
+def seen_ids(lines, pattern=None):
     """tool_use id -> the ids its output showed, in order: what a replay's outputs are held
-    against to learn the ids this run made instead (see `Mock.renamed`)."""
+    against to learn the ids this run made instead (see `Mock.renamed`). `pattern`: HEX for
+    every hex token, as `hexes` records them."""
     seen = {}
     for d in lines:
         c = (d.get("message") or {}).get("content")
         if d.get("type") == "user" and isinstance(c, list):
             for b in c:
                 if isinstance(b, dict) and b.get("type") == "tool_result":
-                    found = ID.findall(_result_text(b))
+                    found = (pattern or ID).findall(_result_text(b))
                     if found:
                         seen[b.get("tool_use_id")] = found
     return seen
+
+
+# Every hex token an id could be, digits alone included: a commit's short hash is all digits
+# now and then ("7998180"), which ID does not take for one, and the run's output and the
+# recording's then hold a different number of ids. Held side by side as these, they line up.
+HEX = re.compile(r"\b[0-9a-f]{7,40}\b")
 
 
 def _jsonl(path):
@@ -182,12 +190,27 @@ def _jsonl(path):
         return [json.loads(line) for line in fh if line.strip()]
 
 
+def opening(lines):
+    """A transcript's first prompt whole, numbers as `#`: what tells apart two conversations
+    whose first `SIG` characters are the same (two background agents briefed alike, each on
+    other topics). Numbers aside, since a run makes its own (GitLab's note ids)."""
+    for d in lines:
+        c = (d.get("message") or {}).get("content")
+        if d.get("type") == "user" and not is_tool_results(c) and human(c):
+            return _numbers(human(c))
+    return ""
+
+
+def _numbers(text):
+    return re.sub(r"\d+", "#", ID.sub("#", text))
+
+
 def record(session):
     """A recording of one session: its main conversation and each background agent's."""
     lines = _jsonl(session)
     main = conversation(lines)
     streams = [{"name": "main", "first": main[0]["prompts"][0] if main else "", "replies": main,
-                "ids": seen_ids(lines)}]
+                "ids": seen_ids(lines), "hexes": seen_ids(lines, HEX)}]
     agents = os.path.join(session[:-len(".jsonl")], "subagents")
     for f in sorted(os.listdir(agents)) if os.path.isdir(agents) else []:
         if not f.endswith(".jsonl"):
@@ -200,8 +223,9 @@ def record(session):
         replies = conversation(agent)
         if replies and replies[0].get("prompts"):
             streams.append({"name": f"agent: {meta.get('description') or f[:-6]}",
-                            "first": replies[0]["prompts"][0], "replies": replies,
-                            "ids": seen_ids(agent)})
+                            "first": replies[0]["prompts"][0], "opening": opening(agent),
+                            "replies": replies, "ids": seen_ids(agent),
+                            "hexes": seen_ids(agent, HEX)})
     model = next((d["message"].get("model") for d in lines if d.get("type") == "assistant"
                   and d["message"].get("model") != "<synthetic>"), None)
     return {"recorded_from": {"model": model, "session": os.path.basename(session)},
@@ -283,7 +307,12 @@ class Mock:
         if side is not None:
             return [{"type": "text", "text": SIDE[side]}]
         first = first_prompt(messages)
-        stream = next((s for s in self.streams if s["first"] and same(s["first"], first)), None)
+        alike = [s for s in self.streams if s["first"] and same(s["first"], first)]
+        # Several open alike: the one whose whole first prompt is nearest this one's.
+        whole = _numbers(first) if len(alike) > 1 else ""
+        stream = max(alike, key=lambda s: difflib.SequenceMatcher(
+            None, s.get("opening") or "", whole, autojunk=False).ratio(), default=None) if whole else (
+            alike[0] if alike else None)
         if stream is None:
             return self.miss(f"a conversation the recording does not have, opening {first[:80]!r}")
         n = sum(1 for m in messages if m.get("role") == "assistant")
@@ -304,6 +333,7 @@ class Mock:
         and now, shows its ids in the same order; where the two differ, the run made a new
         one (a comment posted, a commit made) and every later reply has to use it."""
         recorded, renamed = stream.get("ids") or {}, {}
+        hexes = stream.get("hexes")
         for reply, asked in zip(stream["replies"], prompts_before(messages)):
             then, now = reply.get("prompt_ids"), ID.findall(asked)
             if then and len(then) == len(now):
@@ -313,6 +343,14 @@ class Mock:
                 continue
             for b in m["content"]:
                 if not (isinstance(b, dict) and b.get("type") == "tool_result"):
+                    continue
+                if hexes is not None:
+                    # Every hex token on both sides; a pair counts where either side is an id,
+                    # so a number that differs (a count, a size) is never taken for one.
+                    then, now = hexes.get(b.get("tool_use_id")), HEX.findall(_result_text(b))
+                    if then and len(then) == len(now):
+                        renamed.update((a, z) for a, z in zip(then, now)
+                                       if a != z and (ID.fullmatch(a) or ID.fullmatch(z)))
                     continue
                 then, now = recorded.get(b.get("tool_use_id")), ID.findall(_result_text(b))
                 if then and len(then) == len(now):

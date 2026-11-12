@@ -131,6 +131,16 @@ class Answering(unittest.TestCase):
         self.mock.answer(request(*history))
         self.assertIn("reply 5 asked for, 4 recorded", self.mock.misses[0])
 
+    def test_two_agents_briefed_alike_are_told_apart_by_their_whole_brief(self):
+        brief = "Prepare each topic below in the background. " * 10
+        streams = [{"name": f"agent: {t}", "first": (brief + t)[:M.SIG],
+                    "opening": M._numbers(f"{brief}{t}: note 9"), "replies": [{"content": [text(t)]}]}
+                   for t in ("t1 naming", "t2 the cache")]
+        mock = M.Mock({"streams": streams})
+        # Each asked for as a run makes it, its note numbered anew.
+        self.assertEqual(mock.answer(request(u(brief + "t2 the cache: note 4711"))), [text("t2 the cache")])
+        self.assertEqual(mock.answer(request(u(brief + "t1 naming: note 4712"))), [text("t1 naming")])
+
     def test_a_background_agent_gets_its_own_conversation(self):
         self.assertEqual(self.mock.answer(request(u("Judge the news on MR !3"))), [text("judged")])
 
@@ -188,6 +198,17 @@ class RunMadeIds(unittest.TestCase):
                                     "ids": M.seen_ids(lines)}]})
         got = mock.answer(request(u("go"), a(text("ready")), u("Ack and push t1 with --token 9ab31e07")))
         self.assertEqual(got[0]["input"]["command"], "python3 threads.py push t1 --token 9ab31e07")
+
+    def test_a_hash_that_came_out_all_digits_is_still_followed(self):
+        lines = [user("go"), said("m1", call("tu1", "git log")),
+                 {"type": "user", "message": {"role": "user", "content": [
+                     {"type": "tool_result", "tool_use_id": "tu1", "content": "index 3826373..fbee0f2\n3c0b4b4 feat"}]}},
+                 said("m2", call("tu2", "git commit --fixup=3c0b4b4"))]
+        mock = M.Mock({"streams": [{"name": "main", "first": "go", "replies": M.conversation(lines),
+                                    "ids": M.seen_ids(lines), "hexes": M.seen_ids(lines, M.HEX)}]})
+        got = mock.answer(request(u("go"), a(call("tu1", "git log")), u([{"type": "tool_result", "tool_use_id": "tu1",
+                                                                           "content": "index 3826373..fbee0f2\n7998180 feat"}])))
+        self.assertEqual(got[0]["input"]["command"], "git commit --fixup=7998180")
 
     def test_words_and_numbers_are_not_ids(self):
         self.assertEqual(M.ID.findall("added a facade, 1287 lines, deadbeef"), [])
