@@ -144,6 +144,10 @@ NEW_COMMIT_ICON = "\U000f071c"
 # rework-mr's reply card: the fix as pushed, headed with the push's own icon (md-upload, the
 # review-ui mod's for its push buttons and the line a push ends a card on).
 PUSHED_ICON = "\U000f0552"
+# A pushed fix's card, one line per step: one done (md-check, the icon of Agree plan) or
+# waited on (md-timer_sand, the icon of Wait for author).
+STEP_DONE_ICON = "\U000f012c"
+STEP_WAITS_ICON = "\U000f051f"
 
 
 def heading_md(icon, words):

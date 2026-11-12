@@ -199,6 +199,14 @@ SCENARIOS = [
             press('Post'),
             # Posted, and the last topic of the fix pass: nothing is current any more.
             Expect(current("t2"), region="panel", absent=True, wait=60),
+            # Opened again from the list, waiting on its reviewer: its card is the fix's steps to
+            # the reply, whom it waits on, and the pushed fix to look at. No round runs.
+            Click("\U000f09e4 t2 ", offset=3),
+            Expect(r"Waits on Miriam", region="screen", wait=30),
+            Expect(button('Show fix in hunk'), region="screen"),
+            Expect(button('Next topic'), region="screen", absent=True),
+            # Left again (the ✕ on its file's line): back to the overview, which says the merge.
+            Click("\U000f0156"),
             Check(thread_on("updateDiscussion.ts", 'len(d["notes"]), d["notes"][-1]["author"]["username"]'),
                   r"^2 frank$"),
             # The MR merged meanwhile: the sidebar says so once the update check has run.

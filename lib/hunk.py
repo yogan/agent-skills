@@ -485,6 +485,16 @@ def show_patch(path, label, cwd, owner=None, sleep=None):
     return (sid, where) if where else None
 
 
+def not_shown():
+    """Why a diff could not be put in the viewer, said for the person: what is missing, or
+    that the window did not come up holding exactly the diff."""
+    if not installed():
+        return "the diff viewer needs `hunk` and `tmux` installed"
+    if not in_tmux():
+        return tmux.background_hint() if tmux.in_background() else "the diff viewer needs this session to run inside tmux"
+    return "the diff viewer did not come up holding exactly this diff (its files and line counts)"
+
+
 def show_working_diff(repo, label, expect_stat, owner=None, sleep=None):
     """Put the repo's working diff in this agent's own window; return (session_id, where)
     or None to mean "show the diff inline instead".

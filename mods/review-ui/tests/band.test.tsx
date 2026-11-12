@@ -17,7 +17,7 @@ const topic = (id: string, status: string, draft: string | null = null) => ({
   file: 'src/cache.ts', line: 17, posted: status !== 'draft', draft,
 })
 
-type Topic = Omit<ReturnType<typeof topic>, 'severity' | 'source'> & { severity: string | null; source: string | null; follow_up?: string | null; verdict?: string | null; verdict_text?: string | null; resolved?: boolean; peer?: boolean; peer_view?: { says: string; advice: string; into?: string | null } | null; watching?: boolean; inbox?: string | null; news?: string[]; later?: number }
+type Topic = Omit<ReturnType<typeof topic>, 'severity' | 'source'> & { severity: string | null; source: string | null; fix_kept?: boolean; follow_up?: string | null; verdict?: string | null; verdict_text?: string | null; resolved?: boolean; peer?: boolean; peer_view?: { says: string; advice: string; into?: string | null } | null; watching?: boolean; inbox?: string | null; news?: string[]; later?: number }
 
 const stateOf = (current: string | null, topics: Topic[], extra: object = {}) =>
   JSON.stringify({ skill: 'review-mr', iid: 42, title: 'Add a widget cache', current, topics, ...extra })
@@ -202,6 +202,24 @@ test('an answer the agent judged settled is accepted first: the thread resolved 
   const ran = w.ran.find(r => r.argv.includes('resolve'))
   expect(ran?.argv.slice(2).join(' ')).toBe('resolve t2 --iid 42')
   expect(ran?.env?.REVIEW_UI_PRESS).toBe('1')
+})
+
+test("review-mr: the author's push that changed the topic's lines is shown in the diff viewer on a press", async ($, on) => {
+  const w = world(on, [stateOf('t2', [{ ...topic('t2', 'needs_ack'), verdict: 'settled', fix_kept: true } as Topic])])
+  await openReview($, w, view('t2'))
+  const ui = await mountStep($, 'terminal')
+  expect(await labels(ui)).toEqual(['Accept & resolve', 'Not good enough…', 'Show fix in hunk', 'Analyse more', 'Next topic', 'Show sidebar'])
+  await ui.press({ key: 'hunk-pushed' })
+  await ui.unmount()
+  expect(w.ran.map(r => r.argv.slice(2).join(' '))).toContain('hunk-show t2 --pushed --iid 42')
+})
+
+test('review-mr: no Next topic while no round runs', async ($, on) => {
+  const w = world(on, [stateOf('t2', [topic('t1', 'open'), topic('t2', 'needs_ack')], { in_round: false })])
+  await openReview($, w, view('t2'))
+  const ui = await mountStep($, 'terminal')
+  expect(await labels(ui)).toEqual(['Ack', 'Follow up', 'Explain', 'Show sidebar'])
+  await ui.unmount()
 })
 
 test('a settled answer on a thread resolved already is accepted alone', async ($, on) => {
@@ -1199,7 +1217,7 @@ test("rework-mr's comments on the MR itself are an area under the file's, a line
   const ui = await $.ui.mount({ ...PANEL, surface: 'terminal' })
   const md = async () => (await ui.findAll({ type: 'Markdown' })).map(m => String(m.props.text))
   const texts = async () => (await ui.findAll({ type: 'Text' })).map(t => String(t.text ?? ''))
-  expect(await texts()).toEqual(expect.arrayContaining(['On the MR', ' · 2']))
+  expect(await texts()).toEqual(expect.arrayContaining(['On the MR', ' · 2 comments']))
   // A line each, the long one cut; the fold key is the icon alone.
   expect((await md()).find(t => t.startsWith('overall fine'))).toMatch(/…$/)
   expect(await md()).toContain('agree')
@@ -1684,6 +1702,33 @@ test("rework-mr: a fix in several files shows the comment's file, the others lis
   await panel.unmount()
 })
 
+test("rework-mr: a pushed fix is the sidebar's files area, all its files, its viewer's key in the line, the code marked pushed", async ($, on) => {
+  const code = codeOf(20, [3, 3], { file: 'src/a/query-keys.ts', pushed_fix: [['src/a/query-keys.ts', 2, 1], ['src/b/create.ts', 4, 0]] })
+  const w = world(on, [reworkState('t1', [reworkTopic('t1', 'reply', { pushed: true, fix_kept: true })])], { code: { stdout: JSON.stringify(code) } })
+  await openRework($, w, reworkView('t1'))
+  const panel = await $.ui.mount({ ...PANEL, surface: 'terminal' })
+  const texts = (await panel.findAll({ type: 'Text' })).map(t => t.text ?? '')
+  expect(texts).toContain('Your fix')
+  expect(texts).toContain(' · 2 files')
+  expect(texts).not.toContain('Also changed')
+  expect(texts).toContain('pushed')
+  expect(texts.some(t => /^ {2}src\/a\/query-keys\.ts {2}\+2 −1$/.test(t))).toBe(true)
+  await panel.press({ key: 'files-hunk' })
+  await panel.unmount()
+  expect(w.ran.map(r => r.argv.slice(2).join(' '))).toContain('hunk-show t1 --pushed --iid 42')
+})
+
+test("review-mr: the author's pushed fix is the sidebar's files area under its own name", async ($, on) => {
+  const code = codeOf(20, [3, 3], { mode: 'since', file: 'src/cache.ts', pushed_fix: [['src/cache.ts', 2, 1]] })
+  const w = world(on, [stateOf('t2', [{ ...topic('t2', 'needs_ack'), fix_kept: true } as Topic])], { code: { stdout: JSON.stringify(code) } })
+  await openReview($, w, view('t2'))
+  const panel = await $.ui.mount({ ...PANEL, surface: 'terminal' })
+  const texts = (await panel.findAll({ type: 'Text' })).map(t => t.text ?? '')
+  expect(texts).toContain("Author's fix")
+  expect(texts).toContain('pushed')
+  await panel.unmount()
+})
+
 test('rework-mr: a topic with news is marked in the list, as in review-mr, and the heading counts it', async ($, on) => {
   const w = world(on, [reworkState('t1', [reworkTopic('t1', 'plan'), reworkTopic('t2', 'plan', { inbox: 'new' })])])
   await openRework($, w, reworkView('t1'))
@@ -1706,6 +1751,15 @@ test("rework-mr: a fix's other files are an area of five rows, opened to a third
   expect((await panel.find({ type: 'Button', key: 'files-open' }))?.props.label).toBe('\u{F084F}')
   expect(String((await panel.find({ type: 'Button', key: 'files-hunk' }))?.props.label)).toMatch(/Review in hunk$/)
   expect((await panel.find({ type: 'Text', text: 'unpushed' }))?.props.color).toBe('yellow')
+  // The viewer's key after the area's name and count, the fold key at the line's end, never
+  // on a row that scrolls.
+  const line = JSON.stringify((await panel.find({ type: 'Box', key: 'files-line' }))?.children ?? [])
+  expect(line.indexOf('files-hunk')).toBeGreaterThan(-1)
+  expect(line.indexOf('files-open')).toBeGreaterThan(line.indexOf('files-hunk'))
+  expect(line.slice(0, line.indexOf('files-hunk'))).toContain('" ──"')
+  expect(line.slice(line.indexOf('files-hunk'), line.indexOf('files-open'))).toMatch(/─{3,}/)
+  expect((await panel.findAll({ type: 'Text' })).map(t => t.text)).toContain(' · 12 files')
+  expect(JSON.stringify((await panel.find({ type: 'Box', key: 'files-first' }))?.children ?? [])).not.toContain('files-open')
   await panel.press({ key: 'files-open' })
   expect(await files()).toHaveLength(10)                                 // a third of 30 rows
   expect(await panel.find({ type: 'Button', key: 'files-down' })).toBeDefined()
@@ -1836,6 +1890,41 @@ test('rework-mr: after the push, a "Fixed" resolved or not, or a reply', async (
   await ui.press({ key: 'post-fixed' })
   await ui.unmount()
   expect(w.ran.find(r => r.argv[2] === 'post')?.argv.slice(2).join(' ')).toBe('post t1 --fixed --iid 42')
+})
+
+test('rework-mr: a pushed fix kept in git is shown in the diff viewer on a press, never as the recommendation', async ($, on) => {
+  const w = world(on, [reworkState('t1', [reworkTopic('t1', 'reply', { pushed: true, fix_kept: true })])])
+  await openRework($, w, reworkView('t1'))
+  const ui = await mountStep($, 'terminal')
+  expect(await labels(ui)).toEqual(['Post “Fixed” and resolve', 'Post “Fixed”', 'Draft reply…', 'Show fix in hunk', 'Next topic', 'Show sidebar'])
+  await ui.press({ key: 'hunk-pushed' })
+  await ui.unmount()
+  expect(w.ran.map(r => r.argv.slice(2).join(' '))).toContain('hunk-show t1 --pushed --iid 42')
+  expect(w.prompts).toEqual([])
+})
+
+test('rework-mr: a reply drafted after the push keeps the pushed fix to look at', async ($, on) => {
+  const w = world(on, [reworkState('t1', [reworkTopic('t1', 'reply', { draft: 'v3', pushed: true, fix_kept: true })])])
+  await openRework($, w, reworkView('t1', 'v3'))
+  const ui = await mountStep($, 'terminal')
+  expect(await labels(ui)).toContain('Show fix in hunk')
+  await ui.unmount()
+})
+
+test('rework-mr: a pushed topic that waits on its reviewer offers its fix to look at, and nothing else', async ($, on) => {
+  const w = world(on, [reworkState('t1', [reworkTopic('t1', 'none', { status: 'waiting', pushed: true, fix_kept: true })], { in_round: false })])
+  await openRework($, w, reworkView('t1'))
+  const ui = await mountStep($, 'terminal')
+  expect(await labels(ui)).toEqual(['Show fix in hunk', 'Show sidebar'])
+  await ui.unmount()
+})
+
+test('rework-mr: no way on to a next topic while no round runs', async ($, on) => {
+  const w = world(on, [reworkState('t1', [reworkTopic('t1', 'reply', { pushed: true }), reworkTopic('t2', 'plan')], { in_round: false, round: ['t1', 't2'] })])
+  await openRework($, w, reworkView('t1'))
+  const ui = await mountStep($, 'terminal')
+  expect(await labels(ui)).toEqual(['Post “Fixed” and resolve', 'Post “Fixed”', 'Draft reply…', 'Show sidebar'])
+  await ui.unmount()
 })
 
 test('rework-mr: after a push that differs from the plan, the reply comes first', async ($, on) => {

@@ -53,6 +53,9 @@ export type ReviewTopic = {
   outcome?: string | null
   pushed?: boolean
   diff_url?: string | null
+  // A pushed fix kept in git, which Show fix in hunk opens: rework-mr's own, review-mr's the
+  // author's push that changed the topic's lines.
+  fix_kept?: boolean
   // Its (first) thread on GitLab, where the box's line about it links.
   thread_url?: string | null
   // rework-mr: a reply drafted to post ahead of the fix, and whether one went up already.
@@ -195,6 +198,9 @@ export type ReviewCode = {
   mode?: 'since' | 'mr' | 'fix'; since_at?: string | null
   // rework-mr, a fix: its files other than the one shown, each with its size.
   others?: [string, number, number][]
+  // A pushed fix kept in git (the topic's `fix_kept`): every file it changed, each with its
+  // size. rework-mr's own fix; review-mr's the author's.
+  pushed_fix?: [string, number, number][]
   // A file the MR adds or removes whole (never a renamed one), drawn plain and marked so.
   whole?: 'added' | 'removed' | null
 }

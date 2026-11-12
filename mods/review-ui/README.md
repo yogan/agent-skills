@@ -15,7 +15,9 @@ How it fits together:
 - `hooks/paste-gate.py` stands down for a session in which that line ended a tool result.
 
 - rework-mr gets the same: buttons for each step (Agree plan for the plan the agent proposed;
-  Ack and push, Review in hunk for a fix made; Post, Post and resolve for a reply),
+  Ack and push, Review in hunk for a fix made; Post, Post and resolve for a reply; Show fix
+  in hunk once the fix is pushed, from the commits the push kept in git, which review-mr
+  offers too for the author's push that changed a topic's lines),
   rounds through a plan pass and then a fix pass, the inbox, and a background agent that
   prepares a plan for each reviewer's new thread or reply. A fix shows in the sidebar; the
   diff viewer opens on its button alone, and comes first where the agent that made the fix
@@ -55,7 +57,9 @@ How it fits together:
   from other reviewers, closed, folded at first), the legend's key in the line; then the
   current item's file with its thread under the lines it is on (or a thread with no file, or
   the inbox between rounds); then the fix's other files, with the diff viewer's key, and in
-  rework-mr the comments on the MR itself. Every area but the file's has a height it grows
+  rework-mr the comments on the MR itself. A pushed fix kept in git takes the fix's files'
+  place: every file it changed ("Your fix", in review-mr "Author's fix"), the diff viewer's
+  key in its line. Every area but the file's has a height it grows
   to (the list a quarter of the pane, a folded area five rows, opened a third) and scrolls
   inside itself past it, by its arrows at its right corners or the wheel over it; the file
   takes the rest, so the sidebar fits its pane. It opens by itself; its ✕ (or ctrl+x x

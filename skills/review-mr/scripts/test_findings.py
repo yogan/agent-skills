@@ -1657,6 +1657,37 @@ class TestStateForTheMod(unittest.TestCase):
         state["threads"] = {"d1": {"url": "https://gl/x#note_1", "notes": []}}
         self.assertEqual(F.state_json(state)["topics"][0]["thread_url"], "https://gl/x#note_1")
 
+    def test_the_author_s_push_on_a_topic_is_kept_in_git_and_offered_until_the_merge(self):
+        with tempfile.TemporaryDirectory() as wt:
+            git = lambda *a: subprocess.run(["git", "-C", wt, *a], check=True,  # noqa: E731
+                                            capture_output=True, text=True).stdout.strip()
+            git("init", "-q")
+            for k, v in (("user.email", "t@example.invalid"), ("user.name", "t"), ("commit.gpgsign", "false")):
+                git("config", k, v)
+            with open(os.path.join(wt, "a.ts"), "w") as fh:
+                fh.write("one\n")
+            git("add", ".")
+            git("commit", "-qm", "c")
+            before = git("rev-parse", "HEAD")
+            with open(os.path.join(wt, "a.ts"), "w") as fh:
+                fh.write("two\n")
+            git("commit", "-qam", "the author's fix")
+            after = git("rev-parse", "HEAD")
+            state = new_state()
+            state["iid"] = 7
+            F.add_topic(state, summary="a", file="a.ts", line=1)
+            F.add_topic(state, summary="b", file="a.ts", line=1)
+            state["topics"][0]["pushed"] = {"from": before, "to": after, "at": "x"}
+            # A push git has not fetched yet keeps nothing: the next fetch tries again.
+            state["topics"][1]["pushed"] = {"from": before, "to": "0" * 40, "at": "x"}
+            with patch.object(F, "get_worktree", return_value=wt):
+                F.keep_author_fixes(state, wt, 7)
+                self.assertEqual([t["fix_kept"] for t in F.state_json(state)["topics"]], [True, False])
+                self.assertEqual(F.kept_fix(state, state["topics"][0]), (before, after))
+                state["mr_status"] = {"state": "closed"}
+                F.keep_author_fixes(state, wt, 7)
+                self.assertEqual([t["fix_kept"] for t in F.state_json(state)["topics"]], [False, False])
+
     def test_a_view_names_its_review_and_the_draft_it_shows(self):
         state = new_state()
         F.add_topic(state, summary="a", draft="Text")

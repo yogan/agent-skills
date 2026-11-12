@@ -71,7 +71,7 @@ _REPO_ROOT = os.path.dirname(
 if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
 
-from lib import change as change_of, checks, code_view, critical_manifest, diffsize, focus, hunk, posted, ui  # noqa: E402
+from lib import change as change_of, checks, code_view, critical_manifest, diffsize, fix_refs, focus, hunk, posted, ui  # noqa: E402
 from lib.ui import analysis_heading  # noqa: E402
 from lib.hunk import diff_stat  # noqa: E402
 from lib.gitlab import (
@@ -1054,9 +1054,10 @@ def render_quote(state, tid, remember=True):
         if x.get("url") and not ui.drawn():
             out.append(x["url"])
         # Code FIRST, comment second: the reviewer's note is about these lines, and a
-        # verdict on code the user cannot see is unreviewable. A pushed fix's change on them
-        # is the card's own part, after the plan it carries out (`_step_parts`).
-        code = render_code_context(x, state.get("diff_base"), drift=not (i == 0 and shows_pushed_fix(state, t)))
+        # verdict on code the user cannot see is unreviewable. Once the topic's fix is pushed,
+        # what changed on them is that fix, which the card's steps link and the diff viewer
+        # shows whole (`pushed_steps`): a diff of it here would be a second, partial copy.
+        code = render_code_context(x, state.get("diff_base"), drift=not (ui.drawn() and t.get("diff_url")))
         if code:
             out += ["", code]
         # The file, anchor and the file as the comment saw it let a reviewer's
@@ -1116,14 +1117,14 @@ def _step_parts(state, t):
             body = _fenced_diff(p.get("change"))
             if body:
                 out += [*_change_blocks(body), ""]
+    elif is_pushed_fix(t) and st in ("reply", "none"):
+        out += [*pushed_steps(state, t), ""]
     elif st in ("fix", "reply") and t.get("plan") and t.get("decision"):
         word = OUTCOME_WORD.get(t.get("outcome") or "fix", "Fix")
         out += [ui.heading_md(ui.ASKED_ICON, f"Agreed plan: {word}"), "", t["plan"].strip(), ""]
         kept = t.get("kept") or {}
         if kept.get("on") and kept["on"] == t.get("plan_on"):
             out += [f"_{kept['why'].strip().rstrip('.')}: the plan holds._", ""]
-        if shows_pushed_fix(state, t):
-            out += fix_since(state, t)
     if st == "fixed":
         out += [render_fix(state, t["id"]).split("\n", 2)[-1], ""]
     if differs_now(t):
@@ -1169,26 +1170,66 @@ def _change_blocks(diff):
     return out[:-1] or plain
 
 
-def shows_pushed_fix(state, t):
-    """Whether `t`'s card shows its fix as pushed, in a part of its own after the plan: where
-    the mod draws, once the fix is pushed and the reply is left."""
-    return ui.drawn() and bool(t.get("diff_url")) and step_of(state, t) == "reply"
+def is_pushed_fix(t):
+    """Whether `t`'s fix is pushed: a fix agreed, its push made (the diff link is stored)."""
+    return (t.get("outcome") or "fix") == "fix" and bool(t.get("diff_url"))
 
 
-def fix_since(state, t):
-    """The pushed fix's change on the lines the comment is on, under its own heading, for the
-    reply card: nothing where the fix left those lines as they were."""
+def kept_fix(state, t):
+    """The pushed fix's two ends as kept in git (`lib/fix_refs.py`), or None: pushed before
+    they were kept and not found again since, or no longer in git."""
+    root = (_git("rev-parse", "--show-toplevel") or "").strip()
+    return fix_refs.kept(root, SKILL, state.get("iid")).get(t["id"]) if root and is_pushed_fix(t) else None
+
+
+def _one_line(text, width=72):
+    """The first line of `text`, cut at a word to `width` with an ellipsis."""
+    line = (text or "").strip().splitlines()[0] if (text or "").strip() else ""
+    if len(line) <= width:
+        return line
+    return line[:width].rsplit(" ", 1)[0].rstrip(" ,;:.") + "…"
+
+
+def reply_posted(state, t):
+    """The link of the reply the user posted after the fix, or None: the one stored by the
+    Post press, else the thread's last comment of theirs where the topic waits on the
+    reviewer since (posted by hand, or before the link was stored)."""
+    if t.get("reply_posted"):
+        return t["reply_posted"]
+    if t.get("state") != "waiting":
+        return None
     x = state["threads"].get((t["thread_ids"] or [None])[0]) or {}
-    path, line = x.get("file"), x.get("line")
-    if not path or not line or (x.get("side") or "new") != "new":
-        return []
-    try:
-        n = int(line)
-    except (TypeError, ValueError):
-        return []
-    a, b, _span = _anchor_span(x, n, n)
-    lines = _since_comment(x.get("head_sha"), path, a, b)[3:]
-    return [ui.heading_md(ui.PUSHED_ICON, "Your fix, pushed"), "", *lines, ""] if lines else []
+    notes = x.get("notes") or []
+    return notes[-1].get("url") if notes and notes[-1].get("mine") else None
+
+
+def reviewer_of(state, t):
+    """Who the topic's thread is from: the first name of its first comment's author."""
+    x = state["threads"].get((t["thread_ids"] or [None])[0]) or {}
+    first = next((n for n in x.get("notes") or [] if not n.get("mine")), None)
+    return first_name((first or {}).get("author") or x.get("author")) or "the reviewer"
+
+
+def pushed_steps(state, t):
+    """A pushed fix's card, step by step, one line each: the plan agreed (its first line),
+    the push (its size, where the fix is kept in git, and GitLab's link to it), the reply
+    posted since and whom it waits on now. What the fix changed is the diff viewer's to
+    show (Show fix in hunk), not a copy here."""
+    done = ui.STEP_DONE_ICON
+    out = [f"{done} Plan agreed: {_one_line(t.get('plan'))}" if t.get("plan") else f"{done} Plan agreed"]
+    ends = kept_fix(state, t)
+    root = (_git("rev-parse", "--show-toplevel") or "").strip()
+    stat = fix_refs.stat(root, ends) if ends else None
+    size = f" · {diffsize.of_stat(stat)}" if stat else ""
+    out.append(f"{done} Fix pushed{size} · [the diff ↗]({t['diff_url']})")
+    url = reply_posted(state, t)
+    if url:
+        out.append(f"{done} Reply posted · [your reply ↗]({url})")
+    resolved = bool(t["thread_ids"]) and all(
+        (state["threads"].get(x) or {}).get("resolved") for x in t["thread_ids"])
+    if url and not resolved:
+        out.append(f"{ui.STEP_WAITS_ICON} Waits on {reviewer_of(state, t)}")
+    return out
 
 
 def context_digest(state, tid):
@@ -1453,6 +1494,8 @@ def state_json(state):
     the comments made on the MR itself. Mirrors findings.py's `state_json`."""
     cur = current_topic(state)
     topics = []
+    root = (_git("rev-parse", "--show-toplevel") or "").strip()
+    kept = fix_refs.kept(root, SKILL, state.get("iid")) if root and any(map(is_pushed_fix, state["topics"])) else {}
     for t in state["topics"]:
         kinds, news_at = news_of(state, t)
         p = proposal_of(state, t)
@@ -1468,6 +1511,8 @@ def state_json(state):
             "outcome": t.get("outcome") or ("fix" if t.get("decision") else None),
             "pushed": bool(t.get("diff_url")),
             "diff_url": t.get("diff_url"),
+            # The pushed fix kept in git, which Show fix in hunk opens.
+            "fix_kept": is_pushed_fix(t) and t["id"] in kept,
             # A reply drafted to post ahead of the fix, and whether one went up already.
             "early": bool(t.get("reply_early") and t.get("reply")),
             "early_posted": bool(t.get("early_posted")),
@@ -1699,7 +1744,8 @@ def start_fix_round(t):
     next push's link spans every push the topic had."""
     if (t.get("outcome") or "fix") == "fix" and t.get("diff_url"):
         for k in ("diff_url", "fix", "checked", "push_token", "push_from", "handed_from",
-                  "reply", "reply_at", "reply_early", "post_differs", "early_posted"):
+                  "reply", "reply_at", "reply_early", "post_differs", "early_posted",
+                  "reply_posted", "fix_lost"):
             t.pop(k, None)
 
 
@@ -2085,10 +2131,14 @@ def post_reply(state, ctx, iid, tid, expect, fixed=False, resolve=False):
                 api_post(f"{disc}/{x}?resolved=true", {}, method="PUT")
     t["state"] = "waiting"
     t.pop("waiting_on", None)
+    if t.get("diff_url"):
+        t["reply_posted"] = url          # the pushed fix's card links it
     return url
 
 
 PRESS_ENV = "REVIEW_UI_PRESS"
+# Where this skill keeps what is its own in a repository (`lib/fix_refs.py`).
+SKILL = "rework-mr"
 
 
 def reply_version(body):
@@ -2189,6 +2239,28 @@ def run_checks(root, tid, new, iid):
     if strays:
         print("Not part of the fix, so neither checked nor committed (pass --new for a file "
               "that is): " + ", ".join(strays))
+
+
+def keep_pushed_fixes(state, ctx, iid):
+    """The update check's care of the pushed fixes kept in git (`lib/fix_refs.py`): once the
+    MR is merged or closed, every one of them goes; while it is open, a fix pushed before
+    they were kept is found again from its saved diff link (its start, and the head of the
+    version it names), where git still has both commits."""
+    root = (_git("rev-parse", "--show-toplevel") or "").strip()
+    if not root:
+        return
+    if (state.get("mr_status") or {}).get("state") in ("merged", "closed"):
+        fix_refs.drop(root, SKILL, iid)
+        return
+    have = fix_refs.kept(root, SKILL, iid)
+    missing = [(t, ends) for t in state["topics"] if is_pushed_fix(t) and t["id"] not in have
+               and not t.get("fix_lost") and (ends := fix_refs.from_diff_url(t["diff_url"]))]
+    if not missing:
+        return
+    heads = {v.get("id"): v.get("head_commit_sha") for v in versions(ctx, iid) or []}
+    for t, (start, diff_id) in missing:
+        if not fix_refs.keep(root, SKILL, iid, t["id"], start, heads.get(diff_id)):
+            t["fix_lost"] = True          # asked once: git no longer has it, the link stays
 
 
 def diff_url_for(ctx, iid, start, head):
@@ -2304,6 +2376,10 @@ def push_fix(ctx, iid, path, tid, committed=False):
         checks.trust(root)
     head = checks._out(root, "rev-parse", "HEAD")
     url = diff_url_for(ctx, iid, start, head) if start else None
+    if start:
+        # The fix as pushed, for the diff viewer after the push: what it started from and
+        # what it made, held in git against the force push that leaves both on no branch.
+        fix_refs.keep(root, SKILL, iid, tid, start, head)
     hold(path)
     state = load(path)
     t = topic_for(state, tid)
@@ -2530,6 +2606,10 @@ def main():
         pp = sub.add_parser(name, help=hlp)
         pp.add_argument("topic", nargs="?" if name == "open" else None)
         pp.add_argument("--iid", type=int)
+        if name == "hunk-show":
+            pp.add_argument("--pushed", action="store_true",
+                            help="the fix as pushed, from the commits kept in git, not the "
+                            "working tree's")
     sub.add_parser("refresh").add_argument("--iid", type=int)
     pjb = sub.add_parser("judge-brief")
     pjb.add_argument("--iid", type=int)
@@ -2776,6 +2856,7 @@ def main():
         state.setdefault("mr_news", []).extend(mr_news(state.get("mr_status"), status,
                                                     time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())))
         state["mr_status"] = status
+        keep_pushed_fixes(state, ctx, iid)
         save(path, state)
         print(json.dumps(state_json(state)))
     elif cmd == "open":
@@ -2908,6 +2989,19 @@ def main():
             # longer one) is the user's to choose on the topic's card.
             print(f"{tref(args.topic)} is pushed, and its next card is the user's: end the "
                   "turn here, and never post or resolve for them.")
+    elif cmd == "hunk-show" and args.pushed:
+        # The pushed fix, from the two commits kept in git: written as a patch, opened in
+        # this session's diff viewer window.
+        t = topic_for(state, args.topic) or die(f"no topic {args.topic}")
+        root = (_git("rev-parse", "--show-toplevel") or "").strip()
+        ends = kept_fix(state, t) or die(f"{tref(args.topic)} has no pushed fix kept in git "
+                                         "to show: its diff link is all there is")
+        shown = fix_refs.show(root, ends, state_file(STATE_ROOT, ctx["slug"], iid, f"fix-{args.topic}.patch"),
+                              window_label())
+        if not shown:
+            die(hunk.not_shown())
+        hunk.focus_window(shown[0])
+        print(f"the pushed fix for {tref(args.topic)} is in the diff viewer, window {shown[1]}")
     elif cmd == "hunk-show":
         t = topic_for(state, args.topic) or die(f"no topic {args.topic}")
         root = (_git("rev-parse", "--show-toplevel") or "").strip()
@@ -2955,10 +3049,14 @@ def main():
         t = topic_for(state, args.topic) or die(f"no topic {args.topic}")
         x = (state["threads"].get(t["thread_ids"][0]) if t["thread_ids"] else None) or {}
         root = (_git("rev-parse", "--show-toplevel") or "").strip()
-        print(json.dumps(code_view.view(root, x.get("file"), x.get("line_end") or x.get("line"),
-                                        x.get("head_sha"), start=x.get("line_start"),
-                                        side=x.get("side") or "new",
-                                        base=state.get("diff_base"))))
+        v = code_view.view(root, x.get("file"), x.get("line_end") or x.get("line"),
+                           x.get("head_sha"), start=x.get("line_start"),
+                           side=x.get("side") or "new", base=state.get("diff_base"))
+        ends = kept_fix(state, t)
+        if v and ends:
+            # The pushed fix's files with their sizes, under the file: the diff viewer's.
+            v["pushed_fix"] = [[f, a, r] for f, a, r in fix_refs.stat(root, ends)]
+        print(json.dumps(v))
     elif cmd == "quote":
         topic_for(state, args.topic) or die(f"no topic {args.topic}")
         if args.focus:

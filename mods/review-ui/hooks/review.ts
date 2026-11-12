@@ -28,6 +28,9 @@ export type Press =
   | { kind: 'handled'; did: string }
   // rework-mr: the fix in the diff viewer, switched to.
   | { kind: 'hunk' }
+  // A pushed fix, from the commits kept in git, in the diff viewer: rework-mr's own fix,
+  // review-mr's the author's.
+  | { kind: 'hunk-pushed' }
   // rework-mr: the checked fix committed as a fixup, squashed and force-pushed by the
   // script, with no model turn. Only that: what is said in the thread is the next card's.
   | { kind: 'push' }
@@ -83,9 +86,13 @@ export const stepOf = (topic: ReviewTopic | undefined): Step => {
 const ask = (prompt: string): Press => ({ kind: 'ask', prompt })
 
 // Whether the round has another topic to go on to: the way on is offered only then. A card
-// with none left is closed with its ✕ instead (register.tsx's `drawCard`).
+// with none left, or opened while no round runs, is closed with its ✕ instead
+// (register.tsx's `drawCard`).
 const hasNext = (review: ReviewState | null, tid: string): boolean =>
-  !review?.round || review.round.some(id => id !== tid)
+  review?.in_round !== false && (!review?.round || review.round.some(id => id !== tid))
+
+// A pushed fix kept in git, in the diff viewer: on every card of a topic that has one.
+export const showFix: BandButton = { key: 'hunk-pushed', label: 'Show fix in hunk', press: { kind: 'hunk-pushed' } }
 
 // Whether a topic must be finished before another one, or none, comes up: a fix made and not
 // pushed holds it (its files are in the working tree). Its card has no ✕ then.
@@ -150,7 +157,7 @@ const ICON: Record<string, string> = {
   'Check again': '\u{F0450}', // md-refresh
   'Apply edit': '\u{F1A7D}', // md-text_box_edit_outline
   'Keep it as posted': '\u{F012C}', // md-check
-  'Review in hunk': '\u{F08AA}', // md-file_compare
+  'Review in hunk': '\u{F08AA}', 'Show fix in hunk': '\u{F08AA}', 'Show in hunk': '\u{F08AA}', // md-file_compare
   'Check hunk comments': '\u{F0A3D}', // md-comment_search_outline
   'Redo…': '\u{F099B}', // md-restore
   'Run the checks': '\u{F0096}', 'Fix the checks': '\u{F0096}', // md-flask_outline
@@ -185,7 +192,9 @@ export const buttonsFor = (review: ReviewState | null): BandButton[] => {
   // Every topic the person has open can be put off: to the end of the round, and once
   // there, out of it.
   if (!topic || buttons === null || review?.skill !== 'review-mr' || stepOf(topic) === 'watch') return ordered(buttons ?? [])
-  return ordered([...buttons, ...(hasNext(review, topic.id) ? [{ key: 'next', label: 'Next topic', press: { kind: 'next' } } as BandButton] : [])])
+  // The author's push that changed its lines, to look at: never the recommendation.
+  const look = topic.fix_kept && !topic.peer ? [showFix] : []
+  return ordered([...buttons, ...look, ...(hasNext(review, topic.id) ? [{ key: 'next', label: 'Next topic', press: { kind: 'next' } } as BandButton] : [])])
 }
 
 // The step's own buttons; null where the step is not a topic's (the person's own review, a
@@ -473,7 +482,7 @@ const reworkButtons = (review: ReviewState): BandButton[] => {
         // the fix explains it and never resolves: the reviewer reads it and resolves.
         bs = [{ key: 'post', label: 'Post', press: { kind: 'post', reply: true }, isPrimary: true },
           ...(topic.pushed ? [] : [{ key: 'post-resolve', label: 'Post and resolve', press: { kind: 'post', reply: true, resolve: true } } as BandButton]),
-          replied]
+          replied, ...(topic.fix_kept ? [showFix] : [])]
       } else if (topic.pushed) {
         // After the push: a "Fixed" with its link, resolved or not, or a reply that says more.
         // A reply is the recommendation where there is something to say: the fix differs
@@ -481,14 +490,17 @@ const reworkButtons = (review: ReviewState): BandButton[] => {
         const hasMore = topic.differs === true || (topic.answer_now === true && !topic.early_posted)
         bs = [{ key: 'post-fixed', label: 'Post “Fixed”', press: { kind: 'post', fixed: true } },
           { key: 'post-fixed-resolve', label: 'Post “Fixed” and resolve', press: { kind: 'post', fixed: true, resolve: true }, ...(hasMore ? {} : { isPrimary: true as const }) },
-          { key: 'draft', label: 'Draft reply…', press: { kind: 'fill', text: `Draft the reply for ${t} after its fix${lang}: ` }, ...(hasMore ? { isPrimary: true as const } : {}) }]
+          { key: 'draft', label: 'Draft reply…', press: { kind: 'fill', text: `Draft the reply for ${t} after its fix${lang}: ` }, ...(hasMore ? { isPrimary: true as const } : {}) },
+          ...(topic.fix_kept ? [showFix] : [])]
       } else {
         bs = [{ key: 'draft', label: 'Draft reply', press: ask(`Draft the reply for ${t}${lang}, and show it.`) }, replied]
       }
       break
     }
     default:
-      return []
+      // Nothing of the person's to do on it: a pushed fix can still be looked at, which
+      // answers nothing, so it is no recommendation.
+      return topic.fix_kept ? [showFix, ...wayOn(review, topic)] : []
   }
   return [...primary(bs), ...wayOn(review, topic)]
 }
@@ -506,6 +518,8 @@ export const argsFor = (press: Press, topic: string, card: ReviewCard | null): s
       return ['wait', topic]
     case 'hunk':
       return ['hunk-show', topic]
+    case 'hunk-pushed':
+      return ['hunk-show', topic, '--pushed']
     case 'push':
       return ['push', topic]
     case 'drop':
@@ -606,6 +620,7 @@ export const didText = (press: Press, topic: string, into?: string): string => {
   if (press.kind === 'agree') return `${topic}: agreed the proposed plan${press.reply ? '; a reply ahead of the fix comes next' : press.draft ? '; its reply is drafted next' : ''}`
   if (press.kind === 'post' && press.early) return `${topic}: posted the reply ahead of its fix; the fix follows`
   if (press.kind === 'hunk') return `${topic}: opened the fix in the diff viewer`
+  if (press.kind === 'hunk-pushed') return `${topic}: opened the pushed fix in the diff viewer`
   if (press.kind === 'push') return `${topic}: pushed the fix`
   if (press.kind === 'post' && press.fixed) return `${topic}: posted “Fixed” with the diff link${press.resolve ? ' and resolved the thread' : ''}`
   if (press.kind === 'post' && press.resolve) return `${topic}: posted the reply and resolved the thread`

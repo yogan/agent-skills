@@ -1790,8 +1790,12 @@ export const register: Register = on => {
     // first part gives way from its start (a path keeps its file's name), then the last parts.
     type Seg = { text: string; color?: string; isBold?: boolean; isDim?: boolean }
     const cells = (x: string) => [...x].length
-    const rule = (key: string, segs: Seg[], right?: { el: JSX.Element; width: number }) => {
-      const tail = right ? right.width + 3 : 1
+    // A count with its unit: "1 file", "51 files".
+    const countOf = (n: number, unit: string) => `${n} ${unit}${n === 1 ? '' : 's'}`
+    // `middle`: a key after the line's words, a short stretch of line between them, the rest
+    // of the line after it.
+    const rule = (key: string, segs: Seg[], right?: { el: JSX.Element; width: number }, middle?: { el: JSX.Element; width: number }) => {
+      const tail = (right ? right.width + 3 : 1) + (middle ? middle.width + 2 : 0)
       const room = Math.max(4, cols - 4 - tail - 1)
       let parts = segs.filter(x => x.text)
       const total = () => parts.reduce((n, x) => n + cells(x.text), 0)
@@ -1807,13 +1811,17 @@ export const register: Register = on => {
       // A line with nothing to say is the rule alone, unbroken.
       if (parts.length === 0 && !right) return <Text key={key} dimColor>{'─'.repeat(Math.max(1, cols))}</Text>
       const dashes = Math.max(1, cols - 4 - total() - tail)
+      const before = middle ? Math.min(2, dashes) : dashes
       return (
         <Box key={key} flexDirection="row" flexShrink={0}>
           <Text dimColor>{'── '}</Text>
           {parts.map((x, i) => (
             <Text key={`${key}-${i}`} color={x.color} bold={x.isBold || undefined} dimColor={x.isDim || undefined}>{x.text}</Text>
           ))}
-          <Text dimColor>{` ${'─'.repeat(dashes)}`}</Text>
+          <Text dimColor>{` ${'─'.repeat(before)}`}</Text>
+          {middle && <Text> </Text>}
+          {middle?.el}
+          {middle && <Text dimColor>{` ${'─'.repeat(Math.max(1, dashes - before))}`}</Text>}
           {right && <Text> </Text>}
           {right?.el}
           <Text dimColor>{right ? ' ─' : '─'}</Text>
@@ -1823,12 +1831,13 @@ export const register: Register = on => {
     // An area's rows, one line each, in at most `cap` lines: past that a window of them that
     // scrolls inside the area, by its arrows (the up one at the end of its first line, the
     // down one at the end of its last, dim where it cannot move further) and by the wheel over
-    // it. The fold key, where the area has one, stands left of the up arrow. `at` is where the
+    // it. An area's fold key is its line's, at the right, where it stays put while the rows
+    // scroll and fold under it. `at` is where the
     // window starts unless the person moved it for this `item` (the current one). `rows` is
     // the lines themselves, or how many there are and a drawing of a run of them (a thread's,
     // whose code block is one element over several lines).
     const areaRows = (key: string, rows: JSX.Element[] | { count: number; draw: (from: number, n: number) => JSX.Element[] },
-      cap: number, top: number, at: number, item: string | null, fold?: JSX.Element | false, news: number[] = []) => {
+      cap: number, top: number, at: number, item: string | null, news: number[] = []) => {
       const count = Array.isArray(rows) ? rows.length : rows.count
       const n = Math.min(count, cap)
       const tag = key.split(':')[0]       // the area's name, which its keys are named by
@@ -1847,7 +1856,7 @@ export const register: Register = on => {
         </Button>
       )
       const shown = Array.isArray(rows) ? rows.slice(from, from + n) : rows.draw(from, n)
-      const keys = (fold || up) && <Box key={`${tag}-keys`} flexDirection="row" gap={1} flexShrink={0}>{fold}{up}</Box>
+      const keys = up && <Box key={`${tag}-keys`} flexDirection="row" flexShrink={0}>{up}</Box>
       return (
         <Box key={`${tag}-rows`} flexDirection="column" position="relative" flexShrink={0}>
           {keys
@@ -2152,7 +2161,11 @@ export const register: Register = on => {
     // the rest, its line included.
     const listShown = Math.min(listRows.length, listCap)
     const listArea = 1 + listShown + legendRows
-    const others = code?.view.mode === 'fix' ? code.view.others ?? [] : []
+    // A fix in the working tree lists its files other than the one shown; a pushed one kept in
+    // git lists every file it changed, the one shown among them, since the file above is the
+    // MR's code and not the fix.
+    const pushedFix = code?.view.mode !== 'fix' ? code?.view.pushed_fix ?? [] : []
+    const others = code?.view.mode === 'fix' ? code.view.others ?? [] : pushedFix
     const isFilesOpen = code ? (await read($, filesOpen))[code.key] === true : false
     const filesShown = Math.min(others.length, filesCap(isFilesOpen))
     const filesArea = others.length ? 1 + filesShown : 0
@@ -2297,6 +2310,7 @@ export const register: Register = on => {
       if (v.renamed_from) said.push({ text: 'renamed', isDim: true })
       if (v.mode === 'since') said.push({ text: 'changed', color: 'green' })
       if (v.mode === 'fix') said.push({ text: 'unpushed', color: 'yellow' })
+      if (pushedFix.length > 0) said.push({ text: 'pushed', color: 'green' })
       if (r.inbox?.newer_push) said.push({ text: 'newer push', isDim: true })
       const badges = said.flatMap(x => [{ text: ' · ', isDim: true }, x])
       codePart = (
@@ -2351,13 +2365,19 @@ export const register: Register = on => {
           onPress={() => update($, filesOpen, m => ({ ...m, [code.key]: !isFilesOpen }))} />
       )
       const { buttons, press } = await stepControls($, s, r, await read($, working))
-      const hunk = buttons.find(b => b.key === 'hunk' || b.key === 'hunk-notes')
+      const found = buttons.find(b => b.key === 'hunk' || b.key === 'hunk-notes' || b.key === 'hunk-pushed')
+      // The pushed fix's key is the card's Show fix in hunk, worded for the area it heads.
+      const hunk = found?.key === 'hunk-pushed' ? { ...found, label: 'Show in hunk' } : found
       const hunkLabel = hunk ? `${iconOf(hunk.label) ?? ''} ${hunk.label}`.trim() : ''
+      const filesName = pushedFix.length === 0 ? 'Also changed' : s.skill === 'review-mr' ? 'Author\'s fix' : 'Your fix'
       filesPart = (
         <Box key="files" flexDirection="column">
-          {rule('files-line', [{ text: 'Also changed', isBold: true }, { text: ` · ${others.length}`, isDim: true }],
+          {/* The viewer's key after the area's name and count, the fold key at the line's end,
+              where it stays put while the rows scroll and fold under it. */}
+          {rule('files-line', [{ text: filesName, isBold: true }, { text: ` · ${countOf(others.length, 'file')}`, isDim: true }],
+            fold ? { el: <Box key="files-keys" flexDirection="row">{fold}</Box>, width: 1 } : undefined,
             hunk ? { el: <Button key="files-hunk" plain label={hunkLabel} onPress={() => { void press(hunk)({ surface: 'terminal' }) }} />, width: cells(hunkLabel) } : undefined)}
-          {areaRows(`files:${code.key}`, fileRows, filesShown, filesTop, 0, null, fold)}
+          {areaRows(`files:${code.key}`, fileRows, filesShown, filesTop, 0, null)}
         </Box>
       )
     }
@@ -2375,10 +2395,9 @@ export const register: Register = on => {
       ))
     const mrPart = mrComments.length > 0 && (
       <Box key="mr-comments" flexDirection="column">
-        {rule('mr-line', [{ text: 'On the MR', isBold: true }, { text: ` · ${mrComments.length}`, isDim: true }])}
-        {areaRows('mr', mrLines, mrShown, mrTop, 0, null, isMrFoldable && (
-          <Button key="mr-open" plain dimColor label={isMrOpen ? GLYPH.less : GLYPH.more} onPress={() => update($, mrOpen, x => !x)} />
-        ))}
+        {rule('mr-line', [{ text: 'On the MR', isBold: true }, { text: ` · ${countOf(mrComments.length, 'comment')}`, isDim: true }],
+          isMrFoldable ? { el: <Button key="mr-open" plain dimColor label={isMrOpen ? GLYPH.less : GLYPH.more} onPress={() => update($, mrOpen, x => !x)} />, width: 1 } : undefined)}
+        {areaRows('mr', mrLines, mrShown, mrTop, 0, null)}
       </Box>
     )
     // The legend: its key in the list's line, and opened, a box under the list saying what
@@ -2550,7 +2569,7 @@ export const register: Register = on => {
       <Box key="list" flexDirection="column">
         {rule('list-line', [{ text: phase === 'own' ? 'Your comments' : 'Topics', isBold: true }],
           allGroups.length > 0 ? { el: <Button key="legend" plain dimColor label={GLYPH.legend} onPress={() => update($, legendShown, x => !x)} />, width: 1 } : undefined)}
-        {areaRows('list', listRows, listCap, 2, currentRow - Math.floor(listCap / 2), focusId, false, newsRows)}
+        {areaRows('list', listRows, listCap, 2, currentRow - Math.floor(listCap / 2), focusId, newsRows)}
         {legendBox}
       </Box>
     )

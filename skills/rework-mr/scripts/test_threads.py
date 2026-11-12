@@ -1208,24 +1208,92 @@ class TestCodeContext(unittest.TestCase):
         finally:
             self._git("reset", "-q", "--hard", self.sha)
 
-    def test_the_reply_card_shows_the_pushed_fix_under_its_own_heading_after_the_plan(self):
+    def pushed_state(self, **topic):
+        return {"iid": 3, "topics": [{"id": "t1", "summary": "x", "thread_ids": ["d1"], "decision": "y",
+                                      "plan": "Make it 100, as the reviewer asked, and say so in the docs too.",
+                                      "outcome": "fix", "diff_url": "http://gl/d", **topic}],
+                "threads": {"d1": {**self.thread(), "resolved": False,
+                                   "notes": [{"author": "Haas, Robin - X1", "body": "100?", "url": "http://gl/n1"},
+                                             {"author": "Me", "body": "Fixed: http://gl/d", "mine": True,
+                                              "url": "http://gl/n2"}]}}}
+
+    def test_a_pushed_fix_s_card_is_its_steps_with_no_diff_of_it(self):
         lines = [f"const line{i} = {i}" for i in range(1, 31)]
         lines[9] = "const line10 = 100"
         self._write("\n".join(lines) + "\n")
-        state = {"topics": [{"id": "t1", "summary": "x", "thread_ids": ["d1"], "decision": "y",
-                             "plan": "Make it 100.", "outcome": "fix", "diff_url": "http://gl/d"}],
-                 "threads": {"d1": {**self.thread(), "resolved": False, "notes": [{"author": "Robin", "body": "100?"}]}}}
+        state = self.pushed_state()
         try:
             self._git("commit", "-qam", "fix")
+            after = subprocess.run(["git", "rev-parse", "HEAD"], cwd=self.repo, capture_output=True,
+                                   text=True).stdout.strip()
+            T.fix_refs.keep(self.repo, "rework-mr", 3, "t1", self.sha, after)
             with mock.patch.dict(os.environ, {"REVIEW_UI_DRAWN": "1"}), \
                     mock.patch.object(T, "step_of", return_value="reply"):
                 out = T.render_quote(state, "t1")
+            # The mod offers Show fix in hunk on it.
+            self.assertTrue(T.state_json(state)["topics"][0]["fix_kept"])
         finally:
+            T.fix_refs.drop(self.repo, "rework-mr", 3)
             self._git("reset", "-q", "--hard", self.sha)
+        # Neither what changed since the comment nor a copy of the fix: the viewer shows it.
         self.assertNotIn("Changed since the comment", out)
-        plan, fix = out.index("Agreed plan"), out.index(f"{T.ui.PUSHED_ICON} Your fix, pushed")
-        self.assertLess(plan, fix)
-        self.assertIn("+const line10 = 100", out[fix:])
+        self.assertNotIn("+const line10 = 100", out)
+        self.assertNotIn("Agreed plan", out)
+        self.assertIn(f"{T.ui.STEP_DONE_ICON} Plan agreed: Make it 100, as the reviewer asked, and say so in the docs too.", out)
+        self.assertIn(f"{T.ui.STEP_DONE_ICON} Fix pushed · {T.diffsize.text(1, 1, 1)} · [the diff ↗](http://gl/d)", out)
+        # Not posted yet: nothing waits on the reviewer.
+        self.assertNotIn("Reply posted", out)
+        self.assertNotIn("Waits on", out)
+
+    def test_once_its_reply_is_posted_it_waits_on_the_reviewer(self):
+        # The link the Post press stored, over the thread's last comment of the user's.
+        state = self.pushed_state(state="waiting", reply_posted="http://gl/n3")
+        with mock.patch.dict(os.environ, {"REVIEW_UI_DRAWN": "1"}), \
+                mock.patch.object(T, "step_of", return_value="none"):
+            out = T.render_quote(state, "t1")
+        # Pushed before the fix was kept in git: the link alone, no size.
+        self.assertIn(f"{T.ui.STEP_DONE_ICON} Fix pushed · [the diff ↗](http://gl/d)", out)
+        self.assertIn(f"{T.ui.STEP_DONE_ICON} Reply posted · [your reply ↗](http://gl/n3)", out)
+        self.assertIn(f"{T.ui.STEP_WAITS_ICON} Waits on Robin", out)
+        state["threads"]["d1"]["resolved"] = True
+        with mock.patch.dict(os.environ, {"REVIEW_UI_DRAWN": "1"}), \
+                mock.patch.object(T, "step_of", return_value="none"):
+            self.assertNotIn("Waits on", T.render_quote(state, "t1"))
+
+    def test_a_fix_pushed_before_the_refs_is_found_again_from_its_link(self):
+        self._git("commit", "-q", "--allow-empty", "-m", "the push")
+        head = subprocess.run(["git", "rev-parse", "HEAD"], cwd=self.repo, capture_output=True,
+                              text=True).stdout.strip()
+        state = self.pushed_state(diff_url=f"http://gl/-/merge_requests/3/diffs?diff_id=9&start_sha={self.sha}")
+        state["topics"].append({**state["topics"][0], "id": "t2",
+                                "diff_url": "http://gl/-/merge_requests/3/diffs?diff_id=8&start_sha=" + "1" * 40})
+        try:
+            with mock.patch.object(T, "versions", return_value=[{"id": 9, "head_commit_sha": head},
+                                                                {"id": 8, "head_commit_sha": self.sha}]) as vs:
+                T.keep_pushed_fixes(state, {}, 3)
+                self.assertEqual(T.fix_refs.kept(self.repo, "rework-mr", 3), {"t1": (self.sha, head)})
+                # A start git no longer has: the link alone, and not asked again.
+                self.assertTrue(state["topics"][1].get("fix_lost"))
+                T.keep_pushed_fixes(state, {}, 3)
+                self.assertEqual(vs.call_count, 1)
+            # Merged: every fix of the MR kept in git goes.
+            state["mr_status"] = {"state": "merged"}
+            T.keep_pushed_fixes(state, {}, 3)
+            self.assertEqual(T.fix_refs.kept(self.repo, "rework-mr", 3), {})
+        finally:
+            T.fix_refs.drop(self.repo, "rework-mr", 3)
+            self._git("reset", "-q", "--hard", self.sha)
+
+    def test_the_plan_is_cut_to_one_line_at_a_word(self):
+        self.assertEqual(T._one_line("Rename the hook to useQueryKeys everywhere it is imported, and keep the old name.\nMore."),
+                         "Rename the hook to useQueryKeys everywhere it is imported, and keep the…")
+        self.assertEqual(T._one_line("Short.\nSecond line."), "Short.")
+
+    def test_a_reply_posted_by_hand_is_the_thread_s_last_comment(self):
+        state = self.pushed_state(state="waiting")
+        self.assertEqual(T.reply_posted(state, state["topics"][0]), "http://gl/n2")
+        state["topics"][0]["state"] = None
+        self.assertIsNone(T.reply_posted(state, state["topics"][0]))
 
     def test_a_change_elsewhere_in_the_file_says_nothing(self):
         lines = [f"const line{i} = {i}" for i in range(1, 31)]
@@ -2393,6 +2461,15 @@ class TestPushFixGit(unittest.TestCase):
         self.push()
         self.assertEqual(self.log(), ["feat: c", "feat: a and b"])
         self.assertEqual(self.git("rev-parse", "origin/main^{tree}"), stamp["tree"])
+
+    def test_the_push_keeps_the_fix_in_git_for_the_viewer(self):
+        start = self.git("rev-parse", "HEAD")
+        self.t1["start_sha"] = start
+        self.fix(fixup=[f"{self.r.target} feat: a and b"], files=["a.txt"])
+        self.push()
+        head = self.git("rev-parse", "origin/main")
+        self.assertEqual(T.fix_refs.kept(self.r.root, "rework-mr", 1), {"t1": (start, head)})
+        self.assertEqual([f for f, _a, _r in T.fix_refs.stat(self.r.root, (start, head))], ["a.txt"])
 
     def test_a_new_commit_alone_is_pushed_as_one(self):
         stamp = self.fix(new=["fix: the old helper"])

@@ -108,7 +108,7 @@ _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(
 if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
 
-from lib import code_view, critical_manifest, diffsize, focus, hunk, posted, ui  # noqa: E402
+from lib import code_view, critical_manifest, diffsize, fix_refs, focus, hunk, posted, ui  # noqa: E402
 from lib.fences import (LINK_ICON, SUGGESTION_INFO, YOU, block_lang, fence, suggestion_reach,  # noqa: E402
                         diff_info, lang_for, note_md, quoted_fence, segments,
                         suggestion_diff, when_of)
@@ -121,6 +121,8 @@ from lib.mr_common import save as _save                          # noqa: E402
 from lib.snippet import MAX_BACKTRACK, open_construct            # noqa: E402
 
 STATE_ROOT = os.path.expanduser("~/.claude/review-mr")
+# Where this skill keeps what is its own in a repository (`lib/fix_refs.py`).
+SKILL = "review-mr"
 GLYPH = {"draft": "✎", "open": "○", "needs_ack": "◐", "acked": "●",
          "dropped": "✕"}
 WORD = {"draft": "draft", "open": "open", "needs_ack": "needs-ack",
@@ -2116,6 +2118,8 @@ def state_json(state):
     never disagree with what the views say."""
     topics = []
     left = set(left_after(state)) if is_over(state) else set()
+    wt = get_worktree(state.get("slug") or "", state.get("iid"))
+    kept = fix_refs.kept(wt, SKILL, state.get("iid")) if wt and os.path.isdir(wt) else {}
     for t in state["topics"]:
         body = t.get("draft") or t.get("note")
         kinds, news_at = news_of(state, t)
@@ -2126,6 +2130,8 @@ def state_json(state):
             "severity": t.get("severity"), "source": t.get("source"),
             "summary": t.get("summary"), "file": t.get("file"), "line": t.get("line"),
             "posted": bool(t["thread_ids"]), "draft": draft_version(body) if body else None,
+            # The author's push that changed its lines, kept in git: Show fix in hunk opens it.
+            "fix_kept": t["id"] in kept,
             "follow_up": t.get("follow_up"),
             # Posted by the user's own hand: being checked against the draft.
             "post_check": bool(t.get("post_check")),
@@ -2751,6 +2757,31 @@ def move_worktree(state, ctx, iid):
     head = git("rev-parse", "HEAD")
     if head.returncode == 0:
         state["worktree_head"] = head.stdout.strip()
+    keep_author_fixes(state, wt, iid)
+
+
+def keep_author_fixes(state, wt, iid):
+    """Each push that changed a topic's lines, kept in git as the author's fix to it
+    (`lib/fix_refs.py`): the code it changed them from and the head it made, which a force
+    push would otherwise leave to `git gc`. Once the MR is merged or closed they all go.
+    Where git does not have both commits yet (the worktree not fetched since), nothing is
+    kept, and the next fetch tries again."""
+    if not (wt and os.path.isdir(wt)):
+        return
+    if (state.get("mr_status") or {}).get("state") in ("merged", "closed"):
+        fix_refs.drop(wt, SKILL, iid)
+        return
+    have = fix_refs.kept(wt, SKILL, iid)
+    for t in state["topics"]:
+        p = t.get("pushed") or {}
+        if p.get("from") and p.get("to") and have.get(t["id"]) != (p["from"], p["to"]):
+            fix_refs.keep(wt, SKILL, iid, t["id"], p["from"], p["to"])
+
+
+def kept_fix(state, t):
+    """The author's fix to `t` as kept in git, or None."""
+    wt = get_worktree(state.get("slug") or "", state.get("iid"))
+    return fix_refs.kept(wt, SKILL, state.get("iid")).get(t["id"]) if wt and os.path.isdir(wt) else None
 
 
 # ------------------------------------------------- prepared inputs (explainer, seed)
@@ -3021,7 +3052,7 @@ def set_lang(slug, lang):
 
 # The commands that only read the state: they run alongside any other, since a write is
 # whole or nothing (`save`). The mod asks for these after every view and on every move.
-READ_ONLY = ("state", "code", "draft", "path", "begun", "proposal", "bodies", "judge-brief")
+READ_ONLY = ("state", "code", "draft", "path", "begun", "proposal", "bodies", "judge-brief", "hunk-show")
 
 
 def resolve_state(args):
@@ -3201,6 +3232,12 @@ def main():
                          "to judge and the comments to match")
     pjb.add_argument("--iid", type=int)
     pjb.add_argument("--skip", action="append", default=[], help="an item an agent failed on")
+    ph = sub.add_parser("hunk-show", help="on a person's press: the author's push that changed "
+                        "<t>'s lines, kept in git, in the diff viewer")
+    ph.add_argument("topic")
+    ph.add_argument("--pushed", action="store_true", help="the only kind there is here; "
+                    "accepted as rework-mr's `hunk-show` takes it")
+    ph.add_argument("--iid", type=int)
     pc = sub.add_parser("code", help="a topic's file, or one of your threads', as JSON for "
                         "the mod's sidebar")
     pc.add_argument("topic", nargs="?")
@@ -3350,6 +3387,17 @@ def main():
         save(path, state)
         print(json.dumps(state_json(state)))
         return
+    if cmd == "hunk-show":                # on a press: the author's fix in the diff viewer
+        t = topic_for(state, args.topic) or die(f"no topic {args.topic}")
+        wt = get_worktree(state.get("slug") or "", state.get("iid"))
+        ends = kept_fix(state, t) or die(f"{tref(args.topic)} has no push of the author's kept "
+                                         "in git to show")
+        shown = fix_refs.show(wt, ends, state_file(STATE_ROOT, ctx["slug"], iid, f"fix-{args.topic}.patch"), f"{TOPIC_ICON}!{iid}")
+        if not shown:
+            die(hunk.not_shown())
+        hunk.focus_window(shown[0])
+        print(f"the author's fix for {tref(args.topic)} is in the diff viewer, window {shown[1]}")
+        return
     if cmd == "code":                     # offline: the sidebar asks on every move
         # The file the sidebar shows: the topic's, or one of the user's own threads'.
         if args.thread:
@@ -3372,6 +3420,10 @@ def main():
             v["mode"] = "since" if mine else "mr"
             push = pushed_of(state, t) if not args.thread else None
             v["since_at"] = (push or {}).get("at")
+            ends = kept_fix(state, t) if not args.thread else None
+            if ends:
+                # The author's fix's files with their sizes, under the file: the viewer's.
+                v["pushed_fix"] = [[f, a, r] for f, a, r in fix_refs.stat(wt, ends)]
         if v and v["line"] and v["side"] == "new" and not args.thread:
             # Where the code the topic names begins, as its card's snippet reaches back to.
             at = _anchor_view(code_view.new_lines(v), v["line"], _names(t.get("summary")))[0]
@@ -3732,6 +3784,7 @@ def main():
             status = mr_status(ctx, iid, me)
             state.setdefault("mr_news", []).extend(mr_news(state.get("mr_status"), status, now_iso()))
             state["mr_status"] = status
+            keep_author_fixes(state, get_worktree(state.get("slug") or ctx["slug"], iid), iid)
         state["diff_base"] = base or state.get("diff_base")
         save(path, state)
         print(json.dumps(state_json(state)))
