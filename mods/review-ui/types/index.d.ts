@@ -195,12 +195,13 @@ export type ReviewCode = {
   // change, and when the push that made it was noted.
   // rework-mr: `fix` when the rows are the fix in the working tree, against HEAD, and
   // `files` every file it changes.
-  mode?: 'since' | 'mr' | 'fix'; since_at?: string | null
-  // rework-mr, a fix: its files other than the one shown, each with its size.
-  others?: [string, number, number][]
-  // A pushed fix kept in git (the topic's `fix_kept`): every file it changed, each with its
-  // size. rework-mr's own fix; review-mr's the author's.
-  pushed_fix?: [string, number, number][]
+  // `pushed` when the rows are a pushed fix's change (rework-mr's own, review-mr's the
+  // author's), from the commit before it to the one it made.
+  mode?: 'since' | 'mr' | 'fix' | 'pushed'; since_at?: string | null
+  // A fix's files, each with its size: the working tree's, or a pushed one kept in git. The
+  // one shown is `file`; `commented` is the file the comment is on.
+  fix_files?: [string, number, number][]
+  commented?: string | null
   // A file the MR adds or removes whole (never a renamed one), drawn plain and marked so.
   whole?: 'added' | 'removed' | null
 }
@@ -218,7 +219,7 @@ declare module 'claude-code' {
       folded: Shaped<Record<string, boolean>>
       'own-pick': Shaped<string | null>
       'code-at': Shaped<Record<string, number>>
-      'code-seen': Shaped<{ key: string; stamp: number; view: ReviewCode | null } | null>
+      'code-seen': Shaped<Record<string, { stamp: number; view: ReviewCode | null }>>
       stamp: Shaped<number>
       sidebar: Shaped<{ isClosedByPerson: boolean }>
       ticks: Shaped<number>
@@ -246,8 +247,10 @@ declare module 'claude-code' {
       'copy-told': Shaped<string[]>
       // How far each sidebar area that scrolls inside itself is scrolled, for which item.
       'area-at': Shaped<Record<string, { at: number; on: string | null }>>
-      // The fix's other files opened past their folded rows, by the code view's key.
+      // The fix's files opened past their folded rows, by the code view's key.
       'files-open': Shaped<Record<string, boolean>>
+      // The file picked from a fix's list, by the item's code key without a pick.
+      'file-pick': Shaped<Record<string, string>>
     }
   }
 }

@@ -21,33 +21,39 @@ import re
 import subprocess
 
 
-def _diff_since(repo, sha, path, context=0):
-    """`git diff -U<context> <sha> -- <path>` against the files on disk, or None when git
-    cannot. A file renamed since is diffed against its name now, so the diff holds what
-    changed in it rather than every line removed."""
-    now = now_at(repo, sha, path)
+def _diff_since(repo, sha, path, context=0, commit=None):
+    """`git diff -U<context> <sha> -- <path>` against the files on disk (or `commit`), or None
+    when git cannot. A file renamed since is diffed against its name now, so the diff holds
+    what changed in it rather than every line removed."""
+    now = now_at(repo, sha, path, commit)
     paths = [path] if now == path else [path, now]
     try:
-        r = subprocess.run(["git", "-C", repo, "diff", "--no-color", "-M", f"-U{context}", sha, "--", *paths],
+        r = subprocess.run(["git", "-C", repo, "diff", "--no-color", "-M", f"-U{context}", sha,
+                            *([commit] if commit else []), "--", *paths],
                            capture_output=True, text=True, errors="replace", timeout=20)
     except (OSError, subprocess.SubprocessError):
         return None
     return r.stdout if r.returncode == 0 else None
 
 
-def now_at(repo, sha, path):
-    """Where `path` of commit `sha` is in the files on disk: its name now, followed through a
-    rename made since (a fix renaming the file a comment is on, pushed before the comment's
-    own topic is reached). `path` itself where the file is still there, or git cannot say."""
-    if not (repo and sha and path) or os.path.isfile(os.path.join(repo, path)):
+def now_at(repo, sha, path, commit=None):
+    """Where `path` of commit `sha` is in the files on disk (or in `commit`): its name now,
+    followed through a rename made since (a fix renaming the file a comment is on, pushed
+    before the comment's own topic is reached). `path` itself where the file is still there,
+    or git cannot say."""
+    if not (repo and sha and path):
         return path
-    return _renamed_since(repo, sha).get(path, path)
+    if commit is None and os.path.isfile(os.path.join(repo, path)):
+        return path
+    return _renamed_since(repo, sha, commit).get(path, path)
 
 
 @functools.lru_cache(maxsize=16)
-def _renamed_since(repo, sha):
-    """Every rename git sees between commit `sha` and the files on disk, old name to new."""
-    out = _git_out(repo, "diff", "--no-color", "--no-ext-diff", "-M", "--name-status", sha)
+def _renamed_since(repo, sha, commit=None):
+    """Every rename git sees between commit `sha` and the files on disk (or `commit`), old
+    name to new."""
+    out = _git_out(repo, "diff", "--no-color", "--no-ext-diff", "-M", "--name-status", sha,
+                   *([commit] if commit else []))
     pairs = (ln.split("\t") for ln in (out or "").splitlines())
     return {f[1]: f[2] for f in pairs if f[0].startswith("R") and len(f) == 3}
 
@@ -173,7 +179,7 @@ def row_of(rows, new):
     return next((i for i, r in enumerate(rows, 1) if r[2] == new), None)
 
 
-def view(repo, path, line, since=None, start=None, side="new", base=None):
+def view(repo, path, line, since=None, start=None, side="new", base=None, commit=None):
     """The JSON the sidebar draws, or None when the file is neither in the checkout nor in
     the MR's diff:
 
@@ -184,12 +190,15 @@ def view(repo, path, line, since=None, start=None, side="new", base=None):
     - `file`, `side`, `line`, `start`, `moved`: where the comment is, in line numbers of
       its side (`start` where a comment on a range of lines begins, `line` its end).
 
+    `commit`: the commit the file is read at, against `base`, instead of the files on disk (a
+    pushed fix, from the commit before it to the one it made).
+
     A comment on the new side is carried through the changes since it was posted; one on
     a line the MR removed (`side` "old") stays where it was."""
     # Read where the file is now: a rename since the comment moved it.
-    posted, path = path, now_at(repo, since, path) if since and side != "old" else path
+    posted, path = path, now_at(repo, since, path, commit) if since and side != "old" else path
     full = os.path.join(repo or "", path or "")
-    rows = rows_of(repo, path, base) if os.path.isfile(full) or base else None
+    rows = rows_of(repo, path, base, commit) if os.path.isfile(full) or base else None
     if rows is None:
         if not (repo and path and os.path.isfile(full)):
             return None
@@ -210,7 +219,7 @@ def view(repo, path, line, since=None, start=None, side="new", base=None):
     n, first = num(line), num(start)
     changed, moved = [], False
     if since and not is_old:
-        diff = _diff_since(repo, since, posted)
+        diff = _diff_since(repo, since, posted, commit=commit)
         if diff is not None:
             at, changed = carry(diff, n)
             first = carry(diff, first)[0] if first else None
@@ -224,7 +233,7 @@ def view(repo, path, line, since=None, start=None, side="new", base=None):
     gone = set(changed)
     # A file the MR adds or removes whole is all one colour, which marks nothing: the sidebar
     # draws it plain and says so beside its name instead.
-    kind = change_of(repo, path, base)[0] if base else None
+    kind = change_of(repo, path, base, commit)[0] if base else None
     return {"file": path, "side": "old" if is_old else "new", "line": n, "start": first,
             "moved": moved, "rows": rows, "at": at,
             "renamed_from": posted if posted != path else None,
@@ -353,3 +362,38 @@ def touched(diff, first, last):
             return line + known
         return carry(diff, line)[0]
     return False, moved(first, shift_first), moved(last, shift_last)
+
+
+def commented(repo, thread):
+    """The file `thread`'s comment is on, under its name in the files on disk (a rename
+    since followed), or None for a comment on no file."""
+    return now_at(repo, thread.get("head_sha"), thread.get("file")) if thread.get("file") else None
+
+
+def fix_view(repo, thread, files, pick=None, base="HEAD", commit=None):
+    """A fix's file for the sidebar: `files` is the fix's `[path, added, removed]` each; the
+    one shown is `pick` where it is one of them, else the comment's file where the fix
+    touches it, else the fix's first. Its change from `base` (to `commit`, or the files on
+    disk), the comment's lines carried through it where it is the comment's file; elsewhere
+    the first changed row stands for where to look. None for a fix with no files.
+
+    Adds `fix_files` (all of `files`) and `commented` (the comment's file now), so the
+    sidebar lists the fix and marks the file the comment is on."""
+    names = [f for f, _a, _r in files]
+    if not names:
+        return None
+    now = commented(repo, thread)
+    want = pick if pick in names else now if now in names else names[0]
+    its = want == now
+    v = view(repo, thread.get("file") if its else want,
+             thread.get("line_end") or thread.get("line") if its else None,
+             thread.get("head_sha") if its else None,
+             start=thread.get("line_start") if its else None,
+             side=thread.get("side") or "new", base=base, commit=commit)
+    if not v:
+        return None
+    if v["at"] is None and v["rows"]:
+        hit = next((i for i, r in enumerate(v["rows"], 1) if r[0] != " "), None)
+        v["at"] = [hit, hit] if hit else None
+    v.update(fix_files=files, commented=now)
+    return v

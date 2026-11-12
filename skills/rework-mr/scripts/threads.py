@@ -2471,6 +2471,8 @@ def main():
     pk.add_argument("--iid", type=int)
     pk.add_argument("--fix", action="store_true",
                     help="the fix in the working tree: its changes against HEAD marked")
+    pk.add_argument("--file", help="one of the fix's files to show (the sidebar's pick), not "
+                    "the comment's")
     sub.add_parser(
         "check-handles",
         help="print any internal topic handles "
@@ -3020,42 +3022,34 @@ def main():
                 pass
         hunk.focus_window(shown[0])
         print(f"the fix for {tref(args.topic)} is in the diff viewer, window {shown[1]}")
-    elif cmd == "code" and args.fix:
-        # The fix in the working tree, for the sidebar: the file the comment is on (else the
-        # fix's first), its changes against HEAD marked, the comment's line carried through
-        # them; and the fix's other files with their sizes, which the diff viewer shows.
-        t = topic_for(state, args.topic) or die(f"no topic {args.topic}")
-        x = (state["threads"].get(t["thread_ids"][0]) if t["thread_ids"] else None) or {}
-        root = (_git("rev-parse", "--show-toplevel") or "").strip()
-        stat = diff_stat(working_diff())
-        files = [f for f, _a, _r in stat]
-        # The comment's file under its name now, where a fix since renamed it.
-        now = code_view.now_at(root, x.get("head_sha"), x.get("file")) if x.get("file") else None
-        its = now in files
-        want = now if its else (files or [None])[0]
-        v = code_view.view(root, x.get("file") if its else want, x.get("line_end") or x.get("line") if its else None,
-                           x.get("head_sha") if its else None,
-                           start=x.get("line_start") if its else None,
-                           side=x.get("side") or "new", base="HEAD") if want else None
-        if v:
-            v.update(mode="fix", others=[[f, a, r] for f, a, r in stat if f != v["file"]])
-            if v["at"] is None and v["rows"]:
-                hit = next((i for i, r in enumerate(v["rows"], 1) if r[0] != " "), None)
-                v["at"] = [hit, hit] if hit else None
-        print(json.dumps(v))
     elif cmd == "code":                   # offline: the sidebar asks on every move
-        # Mirrors findings.py's `code`: here the file is the user's own working tree, so a
-        # fix in progress shows as changed lines against the commit the thread was on.
+        # The topic's file for the sidebar. A fix in the working tree (`--fix`): the file the
+        # comment is on (else the fix's first, or the one picked), its changes against HEAD.
+        # A pushed fix kept in git: the same from the commit before it to the one it made.
+        # Otherwise the file as the MR changes it, the thread's line carried through the
+        # changes since. Mirrors findings.py's `code`.
         t = topic_for(state, args.topic) or die(f"no topic {args.topic}")
         x = (state["threads"].get(t["thread_ids"][0]) if t["thread_ids"] else None) or {}
         root = (_git("rev-parse", "--show-toplevel") or "").strip()
-        v = code_view.view(root, x.get("file"), x.get("line_end") or x.get("line"),
-                           x.get("head_sha"), start=x.get("line_start"),
-                           side=x.get("side") or "new", base=state.get("diff_base"))
-        ends = kept_fix(state, t)
-        if v and ends:
-            # The pushed fix's files with their sizes, under the file: the diff viewer's.
-            v["pushed_fix"] = [[f, a, r] for f, a, r in fix_refs.stat(root, ends)]
+        if args.fix:
+            files = [[f, a, r] for f, a, r in diff_stat(working_diff())]
+            v = code_view.fix_view(root, x, files, args.file, "HEAD")
+            if v:
+                v["mode"] = "fix"
+        else:
+            ends = kept_fix(state, t)
+            files = [[f, a, r] for f, a, r in fix_refs.stat(root, ends)] if ends else []
+            names = [f for f, _a, _r in files]
+            if files and (args.file in names or code_view.commented(root, x) in names):
+                v = code_view.fix_view(root, x, files, args.file, *ends)
+                if v:
+                    v["mode"] = "pushed"      # the rows are the pushed fix's change
+            else:
+                v = code_view.view(root, x.get("file"), x.get("line_end") or x.get("line"),
+                                   x.get("head_sha"), start=x.get("line_start"),
+                                   side=x.get("side") or "new", base=state.get("diff_base"))
+                if v and files:
+                    v.update(fix_files=files, commented=code_view.commented(root, x))
         print(json.dumps(v))
     elif cmd == "quote":
         topic_for(state, args.topic) or die(f"no topic {args.topic}")

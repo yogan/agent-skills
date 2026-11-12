@@ -2189,19 +2189,19 @@ class TestFixAgainstThePlan(unittest.TestCase):
 
 
 class TestFixInTheSidebar(unittest.TestCase):
-    """A fix in several files: the sidebar gets the comment's own file, and the others with
-    their sizes, never a file of the user's picking to page through."""
+    """A fix in several files: the sidebar gets the comment's own file, every file of the fix
+    with its size, and the file picked from that list where the person picked one."""
 
-    def test_the_comment_s_file_and_the_others_sized(self):
+    def run_code(self, *extra):
         state = TestRounds.state(1)
         state["threads"]["d1"].update(file="b.ts", line=2)
         stat = [("a.ts", 4, 4), ("b.ts", 1, 1), ("c.ts", 12, 3)]
         seen = {}
 
-        def view(root, path, *a, **k):
-            seen["path"] = path
+        def view(root, path, line, *a, **k):
+            seen.update(path=path, line=line)
             return {"file": path, "rows": [["+", None, 1, "x"]], "at": [1, 1]}
-        with mock.patch.object(sys, "argv", ["threads.py", "code", "t1", "--fix", "--iid", "1"]), \
+        with mock.patch.object(sys, "argv", ["threads.py", "code", "t1", "--fix", "--iid", "1", *extra]), \
                 mock.patch.object(T, "load", return_value=state), mock.patch.object(T, "save"), \
                 mock.patch.object(T, "state_file", return_value="/state"), \
                 mock.patch.object(T, "context", return_value={"slug": "g-p", "enc": "g%2Fp", "web": "https://gl/g/p"}), \
@@ -2210,10 +2210,20 @@ class TestFixInTheSidebar(unittest.TestCase):
                 mock.patch.object(T.code_view, "view", side_effect=view), \
                 mock.patch("sys.stdout", new_callable=io.StringIO) as out:
             T.main()
-        got = json.loads(out.getvalue())
-        self.assertEqual(seen["path"], "b.ts")
-        self.assertEqual(got["others"], [["a.ts", 4, 4], ["c.ts", 12, 3]])
-        self.assertNotIn("files", got)
+        return json.loads(out.getvalue()), seen
+
+    def test_the_comment_s_file_and_every_file_of_the_fix_sized(self):
+        got, seen = self.run_code()
+        self.assertEqual((seen["path"], seen["line"]), ("b.ts", 2))
+        self.assertEqual(got["fix_files"], [["a.ts", 4, 4], ["b.ts", 1, 1], ["c.ts", 12, 3]])
+        self.assertEqual((got["commented"], got["mode"]), ("b.ts", "fix"))
+
+    def test_a_file_picked_from_the_list_is_shown_with_no_comment_on_it(self):
+        got, seen = self.run_code("--file", "c.ts")
+        self.assertEqual((seen["path"], seen["line"]), ("c.ts", None))
+        self.assertEqual(got["commented"], "b.ts")
+        # A name that is not the fix's shows the comment's file, as with no pick.
+        self.assertEqual(self.run_code("--file", "elsewhere.ts")[1]["path"], "b.ts")
 
 
 class TestChangeBlocks(unittest.TestCase):

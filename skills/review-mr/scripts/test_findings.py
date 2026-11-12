@@ -1688,6 +1688,35 @@ class TestStateForTheMod(unittest.TestCase):
                 F.keep_author_fixes(state, wt, 7)
                 self.assertEqual([t["fix_kept"] for t in F.state_json(state)["topics"]], [False, False])
 
+    def test_the_sidebar_lists_the_author_s_fix_and_shows_a_file_picked_from_it(self):
+        state = new_state()
+        state["iid"] = 7
+        F.add_topic(state, summary="a", file="a.ts", line=1)
+        state["topics"][0]["thread_ids"] = ["d1"]
+        state["threads"] = {"d1": {"file": "a.ts", "line": 1, "side": "new", "head_sha": "B"}}
+        files = [("a.ts", 1, 1), ("b.ts", 3, 0)]
+        shown = []
+
+        def view(repo, path, line, *a, **k):
+            shown.append((path, line, k.get("commit")))
+            return {"file": path, "line": line, "side": "new", "rows": [["+", None, 1, "x"]], "at": [1, 1]}
+
+        def code(*extra):
+            with patch.object(F, "resolve_state", return_value=(CTX, 7, "/s", state)), \
+                    patch.object(F, "get_worktree", return_value="/wt"), \
+                    patch.object(F, "kept_fix", return_value=("B", "A")), \
+                    patch.object(F.fix_refs, "stat", return_value=files), \
+                    patch.object(F.code_view, "view", side_effect=view), \
+                    patch.object(F.code_view, "now_at", side_effect=lambda r, s, p, c=None: p), \
+                    patch.object(sys, "argv", ["findings.py", "code", "t1", "--iid", "7", *extra]), \
+                    redirect_stdout(io.StringIO()) as out:
+                F.main()
+            return json.loads(out.getvalue())
+        got = code()
+        self.assertEqual((got["fix_files"], got["commented"], got["mode"]), ([list(f) for f in files], "a.ts", "mr"))
+        got = code("--file", "b.ts")
+        self.assertEqual((got["file"], got["mode"], shown[-1]), ("b.ts", "pushed", ("b.ts", None, "A")))
+
     def test_a_view_names_its_review_and_the_draft_it_shows(self):
         state = new_state()
         F.add_topic(state, summary="a", draft="Text")

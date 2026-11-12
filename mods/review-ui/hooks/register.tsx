@@ -15,6 +15,7 @@ import {
   askedFor, clampOffset, codeArgsOf, codeWindow, currentOwn, firstOffset, phaseOf, stepOwn,
   type CodeView,
 } from './sidebar.ts'
+import { COMMENTED, iconOfFile } from './files.ts'
 
 const P = 'review-ui'
 // Each tag changes when its value's fields do: it declines what an earlier version stored,
@@ -52,7 +53,14 @@ const folded = atom({ plugin: 'review-ui', key: 'folded' } as const, {} as Recor
 // last read for it, and whether the sidebar opened by itself or was closed by the person.
 const ownPick = atom({ plugin: 'review-ui', key: 'own-pick' } as const, null as string | null, { shape: 'own-pick-1' })
 const codeAt = atom({ plugin: 'review-ui', key: 'code-at' } as const, {} as Record<string, number>, { shape: 'code-at-1' })
-const codeSeen = atom({ plugin: 'review-ui', key: 'code-seen' } as const, null as { key: string; stamp: number; view: CodeView | null } | null, { shape: 'code-seen-2' })
+// The file picked from a fix's list, per item (its code key without a pick).
+const filePick = atom({ plugin: 'review-ui', key: 'file-pick' } as const, {} as Record<string, string>, { shape: 'file-pick-1' })
+// The files the sidebar read lately, by their code key, each with the state's stamp it was
+// read at: fetched before the state or the pick that shows them is stored, so a click draws
+// once, with its file, and never the sidebar without it in between.
+const codeSeen = atom({ plugin: 'review-ui', key: 'code-seen' } as const, {} as Record<string, { stamp: number; view: CodeView | null }>, { shape: 'code-seen-3' })
+// How many files that keeps: enough to go back and forth between a few without a wait.
+const CODE_KEPT = 12
 const stamp = atom({ plugin: 'review-ui', key: 'stamp' } as const, 0, { shape: 'stamp-1' })
 const ticks = atom({ plugin: 'review-ui', key: 'ticks' } as const, 0, { shape: 'ticks-1' })
 // When the update check last asked GitLab, and when it asks next (ms since the epoch), for
@@ -258,10 +266,12 @@ const refresh = async ($: EngineInterface, s: ReviewSession, how: 'state' | 'ref
   const r = await runScript($, s, [how])
   if (r.exitCode !== 0) return null
   const state = JSON.parse(r.stdout) as ReviewState
+  // The new state's file first, then the state: drawn with the state, the file is there.
+  const next = (await read($, stamp)) + 1
+  await syncCode($, s, state, { now: next })
   await update($, review, () => state)
-  await update($, stamp, n => n + 1)
+  await update($, stamp, () => next)
   await remember($, s)
-  await syncCode($, s, state)
   return state
 }
 
@@ -581,7 +591,6 @@ const startRound = async ($: EngineInterface, s: ReviewSession, tid?: string) =>
       await update($, notice, () => ({ text: lastLine(ran.stderr) || 'Open failed', isError: true }))
       return
     }
-    await update($, codeSeen, () => null)
     const now = await refresh($, s)
     await showStep($, s, now)
   } finally {
@@ -598,13 +607,16 @@ const showStep = async ($: EngineInterface, s: ReviewSession, r: ReviewState | n
 
 // The current item's file, read again when the item or the review changed: after every
 // state read and every pick in the sidebar. Drawing is pure, so the sidebar draws what this
-// left and never runs the script itself.
-const syncCode = async ($: EngineInterface, s: ReviewSession, r: ReviewState) => {
-  const want = codeArgsOf(r, currentOwn(r, await read($, ownPick)))
+// left and never runs the script itself. Called BEFORE what it is for is stored (`now`, the
+// stamp the new state will have; `own`, an own comment about to be picked; `picks`, a file
+// about to be picked), so the drawing that shows it finds its file already read.
+const syncCode = async ($: EngineInterface, s: ReviewSession, r: ReviewState,
+  next: { now?: number; own?: string; picks?: Record<string, string> } = {}) => {
+  const own = currentOwn(r, next.own ?? await read($, ownPick))
+  const want = codeArgsOf(r, own, next.picks ?? await read($, filePick))
   if (!want) return
-  const now = await read($, stamp)
-  const seen = await read($, codeSeen)
-  if (seen?.key === want.key && seen.stamp === now) return
+  const now = next.now ?? await read($, stamp)
+  if ((await read($, codeSeen))[want.key]?.stamp === now) return
   let view: CodeView | null = null
   try {
     const ran = await runScript($, s, want.args)
@@ -612,7 +624,11 @@ const syncCode = async ($: EngineInterface, s: ReviewSession, r: ReviewState) =>
   } catch {
     view = null
   }
-  await update($, codeSeen, () => ({ key: want.key, stamp: now, view }))
+  // The one read now last, so the oldest go first once more are kept than CODE_KEPT.
+  await update($, codeSeen, m => {
+    const { [want.key]: _old, ...rest } = m
+    return Object.fromEntries([...Object.entries(rest), [want.key, { stamp: now, view }]].slice(-CODE_KEPT))
+  })
 }
 
 // A turn that moved the review on without showing where it went (the model finishing a
@@ -649,19 +665,19 @@ const leaveTopic = async ($: EngineInterface, s: ReviewSession) => {
 // whose match waits for an answer brings its card up, so what the band asks is on screen.
 const pickOwn = async ($: EngineInterface, s: ReviewSession, id: string, isStep = false) => {
   const before = await read($, ownPick)
-  await update($, ownPick, () => id)
   const r = await read($, review)
+  if (r) await syncCode($, s, r, { own: id })
+  await update($, ownPick, () => id)
   if (!r) return
-  await syncCode($, s, r)
   if ((isStep || before !== id) && r.own_review !== 'pending' && r.proposals?.some(p => p.thread === id)) {
     await placeView($, s, ['proposal', id])
   }
 }
 
 const codeFor = async ($: EngineInterface, r: ReviewState, own: ReturnType<typeof currentOwn>) => {
-  const want = codeArgsOf(r, own)
-  const seen = await read($, codeSeen)
-  return want && seen?.key === want.key && seen.view ? { key: want.key, view: seen.view } : undefined
+  const want = codeArgsOf(r, own, await read($, filePick))
+  const view = want ? (await read($, codeSeen))[want.key]?.view : undefined
+  return want && view ? { key: want.key, base: want.base, view } : undefined
 }
 
 // Sessions whose sidebar opened by itself once: kept here, not in the mod's state, because
@@ -1995,9 +2011,13 @@ export const register: Register = on => {
 
     // The current item's thread: the topic's (both skills), or the own comment's.
     const threads = (phase === 'own' ? own?.thread : r.thread) ?? []
-    const notes = threads.flatMap(th => th.notes)
     const code = await codeFor($, r, own)
-    const openKey = code?.key ?? (phase === 'own' ? `thread:${own?.id}` : `topic:${r.current}`)
+    // Another of a fix's files, picked from its list: the comment is not on it, so its thread
+    // is not drawn under it.
+    const isOtherFile = !!code?.view.commented && code.view.file !== code.view.commented
+    const notes = isOtherFile ? [] : threads.flatMap(th => th.notes)
+    // Per item, not per file picked from a fix: a pick keeps what was folded and scrolled.
+    const openKey = code?.base ?? (phase === 'own' ? `thread:${own?.id}` : `topic:${r.current}`)
 
     // A comment as the sidebar reads it: the author leads it, its link a glyph after the
     // name.
@@ -2035,7 +2055,8 @@ export const register: Register = on => {
     // Open while the thread is what the person reads, so planning has the reviewer's words in
     // full; folded under the person's own fix, where the code is what they look at. Either
     // way as the person last left it on that view.
-    const isOpen = (await read($, threadOpen))[openKey] ?? code?.view.mode !== 'fix'
+    // Folded at first under the person's own fix, in the working tree or pushed.
+    const isOpen = (await read($, threadOpen))[openKey] ?? !(code?.view.mode === 'fix' || code?.view.mode === 'pushed')
     const inner = cols - 6
     // The first line leaves the fold key its two cells (a space and the icon).
     const short = notes.map((n, i) => oneLineNote(withEmoji(n.body ?? ''),
@@ -2045,7 +2066,7 @@ export const register: Register = on => {
     // A topic with no thread yet stands in its own box under its lines, as one line: its
     // severity (or kind) and its title. On code the MR added, the lines' own colour hides
     // the background that marks them, so the box is what says where the topic is.
-    const finding = phase === 'topics' && notes.length === 0 ? currentTopic(r) : undefined
+    const finding = phase === 'topics' && notes.length === 0 && !isOtherFile ? currentTopic(r) : undefined
     const findingRow = finding && (() => {
       const slot = kindSlot(finding)
       const title = oneLineNote(finding.summary ?? '', Math.max(8, inner - 2)).text
@@ -2161,14 +2182,14 @@ export const register: Register = on => {
     // the rest, its line included.
     const listShown = Math.min(listRows.length, listCap)
     const listArea = 1 + listShown + legendRows
-    // A fix in the working tree lists its files other than the one shown; a pushed one kept in
-    // git lists every file it changed, the one shown among them, since the file above is the
-    // MR's code and not the fix.
-    const pushedFix = code?.view.mode !== 'fix' ? code?.view.pushed_fix ?? [] : []
-    const others = code?.view.mode === 'fix' ? code.view.others ?? [] : pushedFix
-    const isFilesOpen = code ? (await read($, filesOpen))[code.key] === true : false
+    // A fix's files (in the working tree, or pushed and kept in git), every one of them, the
+    // one shown above among them: a list to pick from where there is more than one, the
+    // area's line alone where there is not.
+    const fixFiles = code?.view.fix_files ?? []
+    const others = fixFiles.length > 1 ? fixFiles : []
+    const isFilesOpen = code ? (await read($, filesOpen))[code.base] === true : false
     const filesShown = Math.min(others.length, filesCap(isFilesOpen))
-    const filesArea = others.length ? 1 + filesShown : 0
+    const filesArea = fixFiles.length ? 1 + filesShown : 0
     const footRows = !code && waitingOf(r) ? 1 : 0
     const rest = Math.max(4, H - 1 - listArea - filesArea - mrRows - footRows)
     // The thread box's room: what leaves the lines it is on, and up to five lines of the file
@@ -2241,7 +2262,10 @@ export const register: Register = on => {
       const isPinned = isPinnedAt(room)
       const codeRows = isPinned ? room - 1 : room
       const offset = offsets[code.key] ?? firstOffset(v, codeRows)
-      const w = codeWindow(v, codeRows, offset)
+      // A file of the fix without the comment: its first change says where to open it, but it
+      // is no stretch of its own. Drawn as one, its line numbers line up: each drawn stretch
+      // pads its numbers to its own widest, so a split at line 9 and 10 shifts the code.
+      const w = codeWindow(isOtherFile ? { ...v, at: null } : v, codeRows, offset)
       const move = (by: number) => update($, codeAt, m => ({ ...m, [code.key]: clampOffset(v, codeRows, w.start + by) }))
       const back = () => update($, codeAt, m => ({ ...m, [code.key]: firstOffset(v, room) }))
       const lines = v.line ? `${v.start && v.start !== v.line ? `lines ${v.start}–` : 'line '}${v.line}` : 'its lines'
@@ -2310,11 +2334,13 @@ export const register: Register = on => {
       if (v.renamed_from) said.push({ text: 'renamed', isDim: true })
       if (v.mode === 'since') said.push({ text: 'changed', color: 'green' })
       if (v.mode === 'fix') said.push({ text: 'unpushed', color: 'yellow' })
-      if (pushedFix.length > 0) said.push({ text: 'pushed', color: 'green' })
+      if (v.mode === 'pushed') said.push({ text: 'pushed', color: 'green' })
       if (r.inbox?.newer_push) said.push({ text: 'newer push', isDim: true })
       const badges = said.flatMap(x => [{ text: ' · ', isDim: true }, x])
       codePart = (
-        <Box key="code" flexDirection="column">
+        // Its whole share of the height, however short the file: the areas under it stay at
+        // the sidebar's foot, where the wheel's map of the rows has them.
+        <Box key="code" flexDirection="column" height={1 + room + boxRows}>
           {rule('code-line', [{ text: where, color: ACCENT, isBold: true }, ...badges],
             isLeavable ? { el: <Button key="leave" plain dimColor label={GLYPH.close} onPress={leave} />, width: 1 } : undefined)}
           {/* The arrows that scroll the file stand at the content's own corners, the up one at
@@ -2347,37 +2373,61 @@ export const register: Register = on => {
     const filesTop = 1 + listArea + codeArea + 1
     const pathCut = (f: string, width: number) => (cells(f) <= width ? f : `…${[...f].slice(cells(f) - width + 1).join('')}`)
     let filesPart: JSX.Element | null = null
-    if (code && others.length > 0) {
-      const addedWidth = Math.max(...others.map(([, a]) => `+${a}`.length))
-      const sizeWidth = addedWidth + 1 + Math.max(...others.map(([, , d]) => `−${d}`.length))
-      // Whole paths where they fit: two of a fix's files often share a name (`query-keys.ts` per feature).
-      const nameWidth = Math.max(8, Math.min(Math.max(...others.map(([f]) => cells(f))), cols - 2 - 2 - sizeWidth - BOX_ARROWS))
-      const fileRows = others.map(([f, a, d]) => (
-        <Text key={`other-${f}`} wrap="truncate-end">
-          {`  ${pathCut(f, nameWidth).padEnd(nameWidth)}  `}
-          <Text color="green">{`+${a}`.padEnd(addedWidth)}</Text>
-          {' '}
-          <Text color="red">{`−${d}`}</Text>
-        </Text>
-      ))
+    if (code && fixFiles.length > 0) {
+      const addedWidth = Math.max(...others.map(([, a]) => `+${a}`.length), 0)
+      const sizeWidth = addedWidth + 1 + Math.max(...others.map(([, , d]) => `−${d}`.length), 0)
+      // A row: the bar, the file's icon and a space, its path (whole where it fits: two of a
+      // fix's files often share a name, `query-keys.ts` per feature), the comment's mark
+      // where it is the comment's file, and its size at the right edge, clear of the arrows
+      // where the list scrolls.
+      const nameWidth = Math.max(8, cols - 1 - 2 - 2 - sizeWidth - (others.length > filesShown ? BOX_ARROWS : 0))
+      // The file is read first, then picked: the sidebar draws once, with it.
+      const pick = async (f: string) => {
+        const picks = { ...(await read($, filePick)), [code.base]: f }
+        await syncCode($, s, r, { picks })
+        await update($, filePick, () => picks)
+      }
+      const fileRows = others.map(([f, a, d]) => {
+        const isShown = f === code.view.file
+        const isCommented = f === code.view.commented
+        const icon = iconOfFile(f)
+        const name = pathCut(f, nameWidth - (isCommented ? 2 : 0))
+        const base = { bold: isShown || undefined, dimColor: !isShown || undefined }
+        // The bar and the coloured icon stand outside the row's button, as on a topic's
+        // row: under the pointer the button inverts, and they would turn into blocks.
+        return (
+          <Box key={`file-${f}`} flexDirection="row">
+            <Text color={ACCENT}>{isShown ? '▌' : ' '}</Text>
+            <Text color={icon.color} dimColor={!icon.color || undefined}>{`${icon.glyph} `}</Text>
+            <Button key={`file-pick-${f}`} plain onPress={() => { void pick(f) }}>
+              <Text {...base}>{name}</Text>
+            </Button>
+            {isCommented && <Text color={ACCENT}>{` ${COMMENTED}`}</Text>}
+            <Text>{' '.repeat(Math.max(1, nameWidth - cells(name) - (isCommented ? 2 : 0)) + 2)}</Text>
+            <Text color="green">{`+${a}`.padEnd(addedWidth)}</Text>
+            <Text>{' '}</Text>
+            <Text color="red">{`−${d}`}</Text>
+          </Box>
+        )
+      })
       const fold = others.length > FOLDED_ROWS && (
         <Button key="files-open" plain dimColor label={isFilesOpen ? GLYPH.less : GLYPH.more}
-          onPress={() => update($, filesOpen, m => ({ ...m, [code.key]: !isFilesOpen }))} />
+          onPress={() => update($, filesOpen, m => ({ ...m, [code.base]: !isFilesOpen }))} />
       )
       const { buttons, press } = await stepControls($, s, r, await read($, working))
       const found = buttons.find(b => b.key === 'hunk' || b.key === 'hunk-notes' || b.key === 'hunk-pushed')
       // The pushed fix's key is the card's Show fix in hunk, worded for the area it heads.
       const hunk = found?.key === 'hunk-pushed' ? { ...found, label: 'Show in hunk' } : found
       const hunkLabel = hunk ? `${iconOf(hunk.label) ?? ''} ${hunk.label}`.trim() : ''
-      const filesName = pushedFix.length === 0 ? 'Also changed' : s.skill === 'review-mr' ? 'Author\'s fix' : 'Your fix'
+      const filesName = s.skill === 'review-mr' ? 'Author\'s fix' : 'Your fix'
       filesPart = (
         <Box key="files" flexDirection="column">
           {/* The viewer's key after the area's name and count, the fold key at the line's end,
               where it stays put while the rows scroll and fold under it. */}
-          {rule('files-line', [{ text: filesName, isBold: true }, { text: ` · ${countOf(others.length, 'file')}`, isDim: true }],
+          {rule('files-line', [{ text: filesName, isBold: true }, { text: ` · ${countOf(fixFiles.length, 'file')}`, isDim: true }],
             fold ? { el: <Box key="files-keys" flexDirection="row">{fold}</Box>, width: 1 } : undefined,
             hunk ? { el: <Button key="files-hunk" plain label={hunkLabel} onPress={() => { void press(hunk)({ surface: 'terminal' }) }} />, width: cells(hunkLabel) } : undefined)}
-          {areaRows(`files:${code.key}`, fileRows, filesShown, filesTop, 0, null)}
+          {fileRows.length > 0 && areaRows(`files:${code.base}`, fileRows, filesShown, filesTop, 0, null)}
         </Box>
       )
     }

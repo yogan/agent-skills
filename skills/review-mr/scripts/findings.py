@@ -3244,6 +3244,8 @@ def main():
     pc.add_argument("--thread")
     pc.add_argument("--since-comment", action="store_true",
                     help="the change since the comment was posted, not the MR's whole change")
+    pc.add_argument("--file", help="one of the author's fix's files to show (the sidebar's "
+                    "pick), not the comment's")
     pc.add_argument("--iid", type=int)
 
     po = sub.add_parser("own-review", help="the user's own review, before the topics: "
@@ -3421,9 +3423,15 @@ def main():
             push = pushed_of(state, t) if not args.thread else None
             v["since_at"] = (push or {}).get("at")
             ends = kept_fix(state, t) if not args.thread else None
-            if ends:
+            files = [[f, a, r] for f, a, r in fix_refs.stat(wt, ends)] if ends else []
+            if files and args.file and args.file != code_view.commented(wt, x or {}):
+                # Another file of the author's fix, picked in the sidebar: its change in it.
+                picked = code_view.fix_view(wt, x or {}, files, args.file, *ends)
+                if picked:
+                    v = {**picked, "mode": "pushed"}
+            if files:
                 # The author's fix's files with their sizes, under the file: the viewer's.
-                v["pushed_fix"] = [[f, a, r] for f, a, r in fix_refs.stat(wt, ends)]
+                v.update(fix_files=files, commented=code_view.commented(wt, x or {}))
         if v and v["line"] and v["side"] == "new" and not args.thread:
             # Where the code the topic names begins, as its card's snippet reaches back to.
             at = _anchor_view(code_view.new_lines(v), v["line"], _names(t.get("summary")))[0]

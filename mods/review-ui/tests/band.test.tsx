@@ -52,7 +52,9 @@ const world = (on: On, states: string[], extra: Record<string, Out> = {}, store:
     const cmd = e.argv[2] ?? ''
     if (cmd === 'state') return answer({ stdout: states[Math.min(at, states.length - 1)] ?? '' })
     if (cmd === 'quote') return answer({ stdout: view(e.argv[3] ?? '') })
-    const hit = extra[cmd]
+    // A file picked in the sidebar is answered apart where the test gives it (`code --file <f>`).
+    const pick = e.argv.indexOf('--file')
+    const hit = (pick > 0 ? extra[`${cmd} --file ${e.argv[pick + 1]}`] : undefined) ?? extra[cmd]
     if (hit) return answer(hit)
     at += 1
     return answer({ stdout: '' })
@@ -1687,23 +1689,85 @@ test('rework-mr: a topic at its fix is not a review that waits: no "topics have 
   await band.unmount()
 })
 
-test("rework-mr: a fix in several files shows the comment's file, the others listed with their sizes, no paging", async ($, on) => {
-  const fix = codeOf(20, [3, 3], { mode: 'fix', file: 'src/a/query-keys.ts', others: [['src/a/create.ts', 4, 4], ['src/b/query-keys.ts', 12, 3]] })
+test("rework-mr: a fix in several files shows the comment's file, every file listed with its size, the comment's marked", async ($, on) => {
+  const fix = codeOf(20, [3, 3], { mode: 'fix', file: 'src/a/query-keys.ts', commented: 'src/a/query-keys.ts',
+    fix_files: [['src/a/create.ts', 4, 4], ['src/a/query-keys.ts', 1, 1], ['src/b/query-keys.ts', 12, 3]] })
   const w = world(on, [reworkState('t1', [reworkTopic('t1', 'fixed', { checks: 'passed' })])], { code: { stdout: JSON.stringify(fix) } })
   await openRework($, w, reworkView('t1'))
   const panel = await $.ui.mount({ ...PANEL, surface: 'terminal' })
   const texts = (await panel.findAll({ type: 'Text' })).map(t => t.text ?? '')
-  expect(texts).toContain('Also changed')
-  expect(texts.some(t => /^ {2}src\/a\/create\.ts {6}\+4 {2}−4$/.test(t))).toBe(true)
-  expect(texts.some(t => /src\/b\/query-keys\.ts {2}\+12 −3/.test(t))).toBe(true)
-  expect(await panel.find({ type: 'Button', key: 'fix-◀' })).toBeUndefined()
-  expect(texts.some(t => /file \d of/.test(t))).toBe(false)
+  expect(texts).toContain('Your fix')
+  expect(texts).toContain(' · 3 files')
+  expect(texts).toEqual(expect.arrayContaining(['src/a/create.ts', 'src/b/query-keys.ts', '+12', '−3']))
+  // The shown file's row carries the bar, the comment's file its mark; a TypeScript file its icon.
+  const shown = JSON.stringify((await panel.find({ type: 'Box', key: 'file-src/a/query-keys.ts' }))?.children ?? [])
+  expect(shown).toContain('▌')
+  expect(shown).toContain('\u{F0189}')
+  expect(JSON.stringify((await panel.find({ type: 'Box', key: 'file-src/a/create.ts' }))?.children ?? [])).toContain('\u{E628}')
   expect(w.ran.find(r => r.argv[2] === 'code')?.argv.slice(2, 5)).toEqual(['code', 't1', '--fix'])
   await panel.unmount()
 })
 
+test('rework-mr: picking keeps the list where it was scrolled, draws no topic box on another file, and comes back to a file without asking again', async ($, on) => {
+  const listed = Array.from({ length: 12 }, (_, i) => [`src/f${i + 1}.ts`, 1, 1])
+  const at = (f: string, line: number | null) => codeOf(20, [3, 3], { mode: 'pushed', file: f, line, commented: 'src/f1.ts', fix_files: listed })
+  const w = world(on, [reworkState('t1', [reworkTopic('t1', 'reply', { pushed: true, fix_kept: true })], {
+    thread: [{ url: 'http://gl/n1', file: 'src/f1.ts', line: 3, notes: [{ author: 'Robin', body: 'This needs a guard before the cache is read. '.repeat(6) }] }] })],
+  { code: { stdout: JSON.stringify(at('src/f1.ts', 3)) }, 'code --file src/f9.ts': { stdout: JSON.stringify(at('src/f9.ts', null)) },
+    'code --file src/f1.ts': { stdout: JSON.stringify(at('src/f1.ts', 3)) } })
+  await openRework($, w, reworkView('t1'))
+  const panel = await $.ui.mount({ ...PANEL, surface: 'terminal' })
+  // Under the person's own pushed fix the thread starts folded: its author's line, not its text.
+  const texts = async () => (await panel.findAll({ type: 'Text' })).map(t => String(t.text ?? ''))
+  expect(await texts()).toContain('Robin')
+  expect((await panel.find({ type: 'Button', key: 'thread-open' }))?.props.label).toBe('\u{F084F}')   // the key that opens it
+  await panel.press({ key: 'files-down' })
+  await panel.press({ key: 'files-down' })
+  // The list's rows, by their pick buttons: the code line above names the shown file too.
+  const rows = async () => (await panel.findAll({ type: 'Button' })).map(b => String(b.key ?? '')).filter(k => k.startsWith('file-pick-'))
+  const scrolled = await rows()
+  expect(scrolled).toContain('file-pick-src/f9.ts')
+  await panel.press({ key: 'file-pick-src/f9.ts' })
+  expect(await rows()).toEqual(scrolled)
+  expect(await panel.find({ type: 'Box', key: 'finding' })).toBeUndefined()
+  // Back on the comment's own file: drawn from what was read before, nothing asked again.
+  const asked = w.ran.filter(r => r.argv[2] === 'code').length
+  await panel.press({ key: 'files-up' })
+  await panel.press({ key: 'files-up' })
+  await panel.press({ key: 'file-pick-src/f1.ts' })
+  expect(w.ran.filter(r => r.argv[2] === 'code').length).toBe(asked + 1)   // the pick of f1, read once more
+  await panel.press({ key: 'files-down' })
+  await panel.press({ key: 'files-down' })
+  await panel.press({ key: 'file-pick-src/f9.ts' })
+  expect(w.ran.filter(r => r.argv[2] === 'code').length).toBe(asked + 1)   // f9 was read already
+  await panel.unmount()
+})
+
+test('rework-mr: a file picked from the list is asked for and shown, without the thread', async ($, on) => {
+  const files = [['src/a.ts', 1, 1], ['src/b.ts', 2, 0]]
+  const mine = codeOf(20, [3, 3], { mode: 'fix', file: 'src/a.ts', commented: 'src/a.ts', fix_files: files })
+  const other = codeOf(20, [1, 1], { mode: 'fix', file: 'src/b.ts', line: null, commented: 'src/a.ts', fix_files: files })
+  const w = world(on, [reworkState('t1', [reworkTopic('t1', 'fixed', { checks: 'passed' })], {
+    thread: [{ url: 'http://gl/n1', file: 'src/a.ts', line: 3, notes: [{ author: 'Robin', body: 'This needs a guard.' }] }] })],
+  { code: { stdout: JSON.stringify(mine) }, 'code --file src/b.ts': { stdout: JSON.stringify(other) } })
+  await openRework($, w, reworkView('t1'))
+  const panel = await $.ui.mount({ ...PANEL, surface: 'terminal' })
+  // Under the person's own fix the thread starts folded: its author's line stands for it.
+  expect((await panel.findAll({ type: 'Text' })).map(t => t.text)).toContain('Robin')
+  await panel.press({ key: 'file-pick-src/b.ts' })
+  expect(w.ran.map(r => r.argv.slice(2).join(' '))).toContain('code t1 --fix --file src/b.ts --iid 42')
+  expect((await panel.findAll({ type: 'Text' })).map(t => t.text)).not.toContain('Robin')
+  expect(JSON.stringify((await panel.find({ type: 'Box', key: 'file-src/b.ts' }))?.children ?? [])).toContain('▌')
+  // A file the comment is not on is one stretch, so its line numbers line up, and its area
+  // takes its whole height, keeping the list at the foot.
+  expect((await panel.findAll({ type: 'Box' })).filter(b => String(b.key ?? '').startsWith('run-'))).toHaveLength(1)
+  expect((await panel.find({ type: 'Box', key: 'code' }))?.props.height).toBeGreaterThan(20)
+  await panel.unmount()
+})
+
 test("rework-mr: a pushed fix is the sidebar's files area, all its files, its viewer's key in the line, the code marked pushed", async ($, on) => {
-  const code = codeOf(20, [3, 3], { file: 'src/a/query-keys.ts', pushed_fix: [['src/a/query-keys.ts', 2, 1], ['src/b/create.ts', 4, 0]] })
+  const code = codeOf(20, [3, 3], { mode: 'pushed', file: 'src/a/query-keys.ts', commented: 'src/a/query-keys.ts',
+    fix_files: [['src/a/query-keys.ts', 2, 1], ['src/b/create.ts', 4, 0]] })
   const w = world(on, [reworkState('t1', [reworkTopic('t1', 'reply', { pushed: true, fix_kept: true })])], { code: { stdout: JSON.stringify(code) } })
   await openRework($, w, reworkView('t1'))
   const panel = await $.ui.mount({ ...PANEL, surface: 'terminal' })
@@ -1712,20 +1776,32 @@ test("rework-mr: a pushed fix is the sidebar's files area, all its files, its vi
   expect(texts).toContain(' · 2 files')
   expect(texts).not.toContain('Also changed')
   expect(texts).toContain('pushed')
-  expect(texts.some(t => /^ {2}src\/a\/query-keys\.ts {2}\+2 −1$/.test(t))).toBe(true)
+  expect(texts).toContain('src/b/create.ts')
   await panel.press({ key: 'files-hunk' })
   await panel.unmount()
   expect(w.ran.map(r => r.argv.slice(2).join(' '))).toContain('hunk-show t1 --pushed --iid 42')
 })
 
+test("rework-mr: a fix in one file keeps the area's line, with nothing to pick", async ($, on) => {
+  const code = codeOf(20, [3, 3], { mode: 'pushed', file: 'src/a.ts', commented: 'src/a.ts', fix_files: [['src/a.ts', 2, 1]] })
+  const w = world(on, [reworkState('t1', [reworkTopic('t1', 'reply', { pushed: true, fix_kept: true })])], { code: { stdout: JSON.stringify(code) } })
+  await openRework($, w, reworkView('t1'))
+  const panel = await $.ui.mount({ ...PANEL, surface: 'terminal' })
+  const texts = (await panel.findAll({ type: 'Text' })).map(t => t.text ?? '')
+  expect(texts).toContain(' · 1 file')
+  expect(await panel.find({ type: 'Button', key: 'files-hunk' })).toBeDefined()
+  expect(await panel.find({ type: 'Button', key: 'file-pick-src/a.ts' })).toBeUndefined()
+  await panel.unmount()
+})
+
 test("review-mr: the author's pushed fix is the sidebar's files area under its own name", async ($, on) => {
-  const code = codeOf(20, [3, 3], { mode: 'since', file: 'src/cache.ts', pushed_fix: [['src/cache.ts', 2, 1]] })
+  const code = codeOf(20, [3, 3], { mode: 'since', file: 'src/cache.ts', commented: 'src/cache.ts', fix_files: [['src/cache.ts', 2, 1], ['src/b.ts', 1, 0]] })
   const w = world(on, [stateOf('t2', [{ ...topic('t2', 'needs_ack'), fix_kept: true } as Topic])], { code: { stdout: JSON.stringify(code) } })
   await openReview($, w, view('t2'))
   const panel = await $.ui.mount({ ...PANEL, surface: 'terminal' })
   const texts = (await panel.findAll({ type: 'Text' })).map(t => t.text ?? '')
   expect(texts).toContain("Author's fix")
-  expect(texts).toContain('pushed')
+  expect(texts).toContain('src/b.ts')
   await panel.unmount()
 })
 
@@ -1741,12 +1817,12 @@ test('rework-mr: a topic with news is marked in the list, as in review-mr, and t
 })
 
 test("rework-mr: a fix's other files are an area of five rows, opened to a third of the sidebar, the diff viewer's key in its line", async ($, on) => {
-  const others = Array.from({ length: 12 }, (_, i) => [`src/f${i + 1}.ts`, 1, 1])
-  const fix = codeOf(20, [3, 3], { mode: 'fix', file: 'src/a/query-keys.ts', others })
+  const listed = Array.from({ length: 12 }, (_, i) => [`src/f${i + 1}.ts`, 1, 1])
+  const fix = codeOf(20, [3, 3], { mode: 'fix', file: 'src/f1.ts', commented: 'src/f1.ts', fix_files: listed })
   const w = world(on, [reworkState('t1', [reworkTopic('t1', 'fixed', { checks: 'passed' })])], { code: { stdout: JSON.stringify(fix) } })
   await openRework($, w, reworkView('t1'))
   const panel = await $.ui.mount({ ...PANEL, surface: 'terminal' })
-  const files = async () => (await panel.findAll({ type: 'Text' })).map(t => String(t.text ?? '')).filter(t => /src\/f\d+\.ts/.test(t))
+  const files = async () => (await panel.findAll({ type: 'Text' })).map(t => String(t.text ?? '')).filter(t => /^src\/f\d+\.ts$/.test(t))
   expect(await files()).toHaveLength(5)
   expect((await panel.find({ type: 'Button', key: 'files-open' }))?.props.label).toBe('\u{F084F}')
   expect(String((await panel.find({ type: 'Button', key: 'files-hunk' }))?.props.label)).toMatch(/Review in hunk$/)

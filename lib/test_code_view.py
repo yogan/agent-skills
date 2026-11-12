@@ -101,6 +101,24 @@ class TestView(unittest.TestCase):
         subprocess.run(["git", "-C", repo, "-c", "user.name=t", "-c", "user.email=t@t", *args],
                        check=True, capture_output=True)
 
+    def test_a_pushed_fix_s_file_is_its_change_from_before_to_after_not_the_disk(self):
+        repo, before = self.repo(list("abcdef"), list("abCdef"))
+        with open(os.path.join(repo, "o.md"), "w") as f:
+            f.write("x\n")
+        self.git(repo, "add", "-A")
+        self.git(repo, "commit", "-qm", "the fix")
+        after = subprocess.run(["git", "-C", repo, "rev-parse", "HEAD"], capture_output=True, text=True).stdout.strip()
+        with open(os.path.join(repo, "t.md"), "w") as f:
+            f.write("changed again on disk\n")         # later work: not the fix's
+        files = [["o.md", 1, 0], ["t.md", 1, 1]]
+        thread = {"file": "t.md", "line": 3, "head_sha": before, "side": "new"}
+        v = code_view.fix_view(repo, thread, files, None, before, after)
+        self.assertEqual([r[0] + r[3] for r in v["rows"]], [" a", " b", "-c", "+C", " d", " e", " f"])
+        self.assertEqual((v["commented"], v["fix_files"], v["line"]), ("t.md", files, 3))
+        # Another of the fix's files picked: shown with no comment on it.
+        v = code_view.fix_view(repo, thread, files, "o.md", before, after)
+        self.assertEqual((v["file"], v["line"], v["at"]), ("o.md", None, [1, 1]))
+
     def test_a_file_the_mr_adds_or_removes_whole_says_so(self):
         repo, base = self.repo(list("abc"), list("abc"))
         with open(os.path.join(repo, "n.md"), "w") as f:

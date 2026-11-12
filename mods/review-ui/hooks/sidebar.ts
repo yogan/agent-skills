@@ -49,16 +49,22 @@ export const sinceOf = (r: ReviewState): boolean =>
   (r.topics.find(x => x.id === r.current)?.news ?? []).includes('push')
 
 // rework-mr, a fix made and not pushed yet: the fix itself, in the comment's own file, its
-// other files listed under it.
-export const codeArgsOf = (r: ReviewState, own: ReviewOwnThread | undefined): { key: string; args: string[] } | undefined => {
-  if (phaseOf(r) === 'own') return own ? { key: `thread:${own.id}`, args: ['code', '--thread', own.id] } : undefined
+// files listed under it.
+// `picks`: the file the person picked from a fix's list, by the item's own key (`base`); its
+// file is asked for and kept under a key of its own.
+export const codeArgsOf = (r: ReviewState, own: ReviewOwnThread | undefined, picks: Record<string, string> = {}):
+  { key: string; base: string; args: string[] } | undefined => {
+  if (phaseOf(r) === 'own') return own ? { key: `thread:${own.id}`, base: `thread:${own.id}`, args: ['code', '--thread', own.id] } : undefined
   if (!r.current) return undefined
-  if (r.topics.find(x => x.id === r.current)?.step === 'fixed') {
-    return { key: `fix:${r.current}`, args: ['code', r.current, '--fix'] }
-  }
-  return sinceOf(r)
-    ? { key: `topic:${r.current}:since`, args: ['code', r.current, '--since-comment'] }
-    : { key: `topic:${r.current}`, args: ['code', r.current] }
+  const asked = r.topics.find(x => x.id === r.current)?.step === 'fixed'
+    ? { base: `fix:${r.current}`, args: ['code', r.current, '--fix'] }
+    : sinceOf(r)
+      ? { base: `topic:${r.current}:since`, args: ['code', r.current, '--since-comment'] }
+      : { base: `topic:${r.current}`, args: ['code', r.current] }
+  const pick = picks[asked.base]
+  return pick
+    ? { key: `${asked.base}:file=${pick}`, base: asked.base, args: [...asked.args, '--file', pick] }
+    : { key: asked.base, ...asked }
 }
 
 // The file as the code command answers it.
