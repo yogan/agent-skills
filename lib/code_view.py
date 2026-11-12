@@ -21,14 +21,35 @@ import re
 import subprocess
 
 
-def _diff_since(repo, sha, path):
-    """`git diff -U0 <sha> -- <path>` against the files on disk, or None when git cannot."""
+def _diff_since(repo, sha, path, context=0):
+    """`git diff -U<context> <sha> -- <path>` against the files on disk, or None when git
+    cannot. A file renamed since is diffed against its name now, so the diff holds what
+    changed in it rather than every line removed."""
+    now = now_at(repo, sha, path)
+    paths = [path] if now == path else [path, now]
     try:
-        r = subprocess.run(["git", "-C", repo, "diff", "--no-color", "-U0", sha, "--", path],
+        r = subprocess.run(["git", "-C", repo, "diff", "--no-color", "-M", f"-U{context}", sha, "--", *paths],
                            capture_output=True, text=True, errors="replace", timeout=20)
     except (OSError, subprocess.SubprocessError):
         return None
     return r.stdout if r.returncode == 0 else None
+
+
+def now_at(repo, sha, path):
+    """Where `path` of commit `sha` is in the files on disk: its name now, followed through a
+    rename made since (a fix renaming the file a comment is on, pushed before the comment's
+    own topic is reached). `path` itself where the file is still there, or git cannot say."""
+    if not (repo and sha and path) or os.path.isfile(os.path.join(repo, path)):
+        return path
+    return _renamed_since(repo, sha).get(path, path)
+
+
+@functools.lru_cache(maxsize=16)
+def _renamed_since(repo, sha):
+    """Every rename git sees between commit `sha` and the files on disk, old name to new."""
+    out = _git_out(repo, "diff", "--no-color", "--no-ext-diff", "-M", "--name-status", sha)
+    pairs = (ln.split("\t") for ln in (out or "").splitlines())
+    return {f[1]: f[2] for f in pairs if f[0].startswith("R") and len(f) == 3}
 
 
 HUNK = re.compile(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@", re.M)
@@ -165,6 +186,8 @@ def view(repo, path, line, since=None, start=None, side="new", base=None):
 
     A comment on the new side is carried through the changes since it was posted; one on
     a line the MR removed (`side` "old") stays where it was."""
+    # Read where the file is now: a rename since the comment moved it.
+    posted, path = path, now_at(repo, since, path) if since and side != "old" else path
     full = os.path.join(repo or "", path or "")
     rows = rows_of(repo, path, base) if os.path.isfile(full) or base else None
     if rows is None:
@@ -187,7 +210,7 @@ def view(repo, path, line, since=None, start=None, side="new", base=None):
     n, first = num(line), num(start)
     changed, moved = [], False
     if since and not is_old:
-        diff = _diff_since(repo, since, path)
+        diff = _diff_since(repo, since, posted)
         if diff is not None:
             at, changed = carry(diff, n)
             first = carry(diff, first)[0] if first else None
@@ -204,6 +227,7 @@ def view(repo, path, line, since=None, start=None, side="new", base=None):
     kind = change_of(repo, path, base)[0] if base else None
     return {"file": path, "side": "old" if is_old else "new", "line": n, "start": first,
             "moved": moved, "rows": rows, "at": at,
+            "renamed_from": posted if posted != path else None,
             "changed": [i for i, r in enumerate(rows, 1) if r[2] in gone],
             "whole": kind if kind in ("added", "removed") else None}
 
@@ -264,16 +288,13 @@ def since_fence(repo, sha, path, first, last, context=1):
     """What changed in `path` since commit `sha` (the code a comment was posted on) around
     its lines `first`..`last`, as a ```diff block of the hunks that reach them, or None when
     git cannot say or nothing there changed. The card of a topic the author answered in
-    code shows it under what they did."""
-    try:
-        r = subprocess.run(["git", "-C", repo, "diff", "--no-color", f"-U{context}", sha, "--", path],
-                           capture_output=True, text=True, errors="replace", timeout=20)
-    except (OSError, subprocess.SubprocessError):
-        return None
-    if r.returncode != 0 or not r.stdout:
+    code shows it under what they did. A file renamed since is followed: its block holds what
+    changed in it, under its name now."""
+    out = _diff_since(repo, sha, path, context)
+    if not out:
         return None
     hunks, cur = [], None
-    for ln in r.stdout.splitlines():
+    for ln in out.splitlines():
         m = HUNK.match(ln)
         if m:
             old, n = int(m[1]), int(m[2]) if m[2] is not None else 1
@@ -284,7 +305,7 @@ def since_fence(repo, sha, path, first, last, context=1):
             cur.append(ln)
     if not hunks:
         return None
-    return [f"```diff path={path}", *[ln for h in hunks for ln in h], "```"]
+    return [f"```diff path={now_at(repo, sha, path)}", *[ln for h in hunks for ln in h], "```"]
 
 
 def touched(diff, first, last):

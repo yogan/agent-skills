@@ -740,16 +740,21 @@ def _since_comment(sha, path, first, last):
     root = (_git("rev-parse", "--show-toplevel") or "").strip()
     if not (root and sha):
         return []
+    # A file renamed since (another topic's fix, say) is followed, and said in a line: the
+    # rename alone is no change to the comment's lines.
+    now = code_view.now_at(root, sha, path)
+    moved = [f"_Since renamed to `{now}`._"] if now != path else []
     hit, _, _ = code_view.touched(code_view._diff_since(root, sha, path), first, last)
     lines = code_view.since_fence(root, sha, path, first, last) if hit else None
     if not lines:
-        return []
+        return ["", *moved] if moved else []
+    path = now
     # Where the change stands: still in the working tree, or committed (and pushed, once the
     # reply comes) already, where "in your working tree" would send the reader looking for
     # files that are clean.
     pending = bool((_git("diff", "--no-color", "HEAD", "--", path) or "").strip())
     head = "Changed since the comment, in your working tree:" if pending else "Changed since the comment:"
-    return ["", f"_{head}_", "", *lines]
+    return ["", *moved, *([""] if moved else []), f"_{head}_", "", *lines]
 
 
 def _diff_context(path, sha, base, side, lo, hi, a, b):
@@ -2930,13 +2935,16 @@ def main():
         root = (_git("rev-parse", "--show-toplevel") or "").strip()
         stat = diff_stat(working_diff())
         files = [f for f, _a, _r in stat]
-        want = x.get("file") if x.get("file") in files else (files or [None])[0]
-        v = code_view.view(root, want, x.get("line_end") or x.get("line") if want == x.get("file") else None,
-                           x.get("head_sha") if want == x.get("file") else None,
-                           start=x.get("line_start") if want == x.get("file") else None,
+        # The comment's file under its name now, where a fix since renamed it.
+        now = code_view.now_at(root, x.get("head_sha"), x.get("file")) if x.get("file") else None
+        its = now in files
+        want = now if its else (files or [None])[0]
+        v = code_view.view(root, x.get("file") if its else want, x.get("line_end") or x.get("line") if its else None,
+                           x.get("head_sha") if its else None,
+                           start=x.get("line_start") if its else None,
                            side=x.get("side") or "new", base="HEAD") if want else None
         if v:
-            v.update(mode="fix", others=[[f, a, r] for f, a, r in stat if f != want])
+            v.update(mode="fix", others=[[f, a, r] for f, a, r in stat if f != v["file"]])
             if v["at"] is None and v["rows"]:
                 hit = next((i for i, r in enumerate(v["rows"], 1) if r[0] != " "), None)
                 v["at"] = [hit, hit] if hit else None

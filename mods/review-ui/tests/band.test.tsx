@@ -1083,6 +1083,17 @@ test('rework-mr: under the fix the thread is folded, so the code has the room', 
   expect(await reworkFoldKey($, on, 'fix')).toBe('\u{F084F}')   // the key opens it
 })
 
+test('a file renamed since the comment is shown under its name now, said in a word', async ($, on) => {
+  const code = codeOf(20, [3, 3], { file: 'src/renamed.ts', renamed_from: 'src/cache.ts' })
+  const thread = [{ url: 'u', file: 'src/cache.ts', line: 3, notes: [{ author: 'Kim', body: 'seems bad' }] }]
+  const w = world(on, [stateOf('t1', [topic('t1', 'open')], { thread })], { code: { stdout: JSON.stringify(code) } })
+  await openReview($, w, view('t1'))
+  const ui = await $.ui.mount({ ...PANEL, surface: 'terminal' })
+  expect((await ui.find({ type: 'Text', text: /^renamed$/ }))?.props.dimColor).toBe(true)
+  expect(await ui.find({ type: 'Text', text: /^src\/renamed\.ts/ })).toBeDefined()
+  await ui.unmount()
+})
+
 test('a thread with nothing to leave out offers no folding', async ($, on) => {
   const thread = [{ url: 'u', file: 'src/cache.ts', line: 17, notes: [{ author: 'You', body: 'seems bad', mine: true }] }]
   const w = world(on, [stateOf('t1', [topic('t1', 'open')], { thread })], { code: { stdout: JSON.stringify(codeOf(50, [17, 17])) } })

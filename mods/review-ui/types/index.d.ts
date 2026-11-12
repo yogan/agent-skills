@@ -184,6 +184,8 @@ export type ReviewOutcome = { text: string; url?: string | null; label?: string 
 // `from`: rows (1-based); `line`, `start`: where the comment is, in its side's line numbers.
 export type ReviewCode = {
   file: string; side: 'old' | 'new'; line: number | null; start?: number | null; moved: boolean
+  // The name the file had at the comment, where a push since renamed it.
+  renamed_from?: string | null
   rows: [' ' | '-' | '+', number | null, number | null, string][]
   at: [number, number] | null; changed: number[]; from?: number | null
   // review-mr: `since` when the rows are the change since the comment, not the MR's whole

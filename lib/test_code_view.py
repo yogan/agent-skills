@@ -112,6 +112,33 @@ class TestView(unittest.TestCase):
         removed = code_view.view(repo, "t.md", 2, side="old", base=base)
         self.assertEqual((removed["whole"], [r[0] for r in removed["rows"]]), ("removed", ["-"] * 3))
 
+    def test_a_file_renamed_since_the_comment_is_shown_under_its_name_now(self):
+        # A fix for another topic renamed the file and edited one line; the comment was on
+        # line 6 of the old name.
+        lines = [f"line {i} of a file long enough for git to see the rename" for i in range(1, 11)]
+        repo, sha = self.repo(lines, lines)
+        self.git(repo, "mv", "t.md", "moved.md")
+        with open(os.path.join(repo, "moved.md"), "w") as f:
+            f.write("".join(f"{x}\n" for x in ["new first line"] + lines))
+        v = code_view.view(repo, "t.md", 6, since=sha)
+        self.assertEqual((v["file"], v["renamed_from"], v["line"]), ("moved.md", "t.md", 7))
+        self.assertEqual(code_view.new_lines(v)[6], lines[5])
+        self.assertEqual(v["changed"], [1])
+
+    def test_what_changed_on_a_comment_s_lines_follows_the_rename(self):
+        lines = [f"line {i} of a file long enough for git to see the rename" for i in range(1, 11)]
+        repo, sha = self.repo(lines, lines)
+        self.git(repo, "mv", "t.md", "moved.md")
+        edited = lines[:5] + ["line 6, rewritten"] + lines[6:]
+        with open(os.path.join(repo, "moved.md"), "w") as f:
+            f.write("".join(f"{x}\n" for x in edited))
+        fence = code_view.since_fence(repo, sha, "t.md", 6, 6)
+        self.assertEqual(fence[0], "```diff path=moved.md")
+        self.assertIn("+line 6, rewritten", fence)
+        self.assertEqual(len([x for x in fence if x.startswith("-")]), 1)     # one line, not the file
+        # Only renamed, the comment's lines are untouched: nothing to show.
+        self.assertIsNone(code_view.since_fence(repo, sha, "t.md", 2, 2))
+
     def test_a_renamed_file_is_no_new_file_and_marks_only_what_changed_in_it(self):
         lines = [f"line {i} of a file long enough for git to see the rename" for i in range(1, 9)]
         repo, base = self.repo(lines, lines)
