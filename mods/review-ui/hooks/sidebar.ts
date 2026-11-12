@@ -161,3 +161,50 @@ export const shownLines = (v: CodeView, w: CodeWindow): { from: number; to: numb
   const of = v.rows.filter(r => r[2] !== null).length
   return nums.length ? { from: nums[0] as number, to: nums[nums.length - 1] as number, of } : undefined
 }
+
+// A scrollbar: one column beside an area that holds more rows than it shows, its thumb as long
+// as the share shown and where the window is, in eighths of a cell. The ends of the thumb are
+// block elements filled from the bottom (where it starts inside a cell) and from the top (where
+// it ends inside one); the upper ones past ▔ and ▀ are from Symbols for Legacy Computing.
+export const BAR_LOWER = [' ', '▁', '▂', '▃', '▄', '▅', '▆', '▇', '█'] as const
+export const BAR_UPPER = [' ', '▔', '\u{1FB82}', '\u{1FB83}', '▀', '\u{1FB84}', '\u{1FB85}', '\u{1FB86}', '█'] as const
+
+// The thumb over a track of `rows` cells, for `shown` of `count` rows scrolled `from` down: the
+// eighth it starts at and the one it ends before. Never shorter than a cell, the whole track
+// when everything shows, and at the track's end exactly when the window is at the last row.
+export const thumbOf = (count: number, shown: number, from: number, rows: number): { top: number; end: number } => {
+  const total = rows * 8
+  if (count <= shown || count <= 0) return { top: 0, end: total }
+  const size = Math.min(total, Math.max(8, Math.round(total * shown / count)))
+  const max = count - shown
+  const top = Math.round((total - size) * Math.min(max, Math.max(0, from)) / max)
+  return { top, end: top + size }
+}
+
+// Each cell of the track: what of it the thumb covers, as the glyph that draws it (a space
+// where it covers nothing), and whether the cell lies above the thumb, in it, or below it.
+export const barCells = (count: number, shown: number, from: number, rows: number):
+  { glyph: string; at: 'above' | 'thumb' | 'below' }[] => {
+  const { top, end } = thumbOf(count, shown, from, rows)
+  return Array.from({ length: rows }, (_, i) => {
+    const a = i * 8
+    const lo = Math.max(a, top)
+    const hi = Math.min(a + 8, end)
+    if (hi <= lo) return { glyph: ' ', at: a + 8 <= top ? 'above' as const : 'below' as const }
+    if (lo === a && hi === a + 8) return { glyph: '█', at: 'thumb' as const }
+    // Starting inside the cell, the thumb fills its lower part; ending inside, its upper part.
+    return { glyph: hi === a + 8 ? BAR_LOWER[a + 8 - lo] as string : BAR_UPPER[hi - a] as string, at: 'thumb' as const }
+  })
+}
+
+// The cells of the track standing for rows out of the window (`marks`, row indexes): where a
+// row with news lies that the person cannot see, the bar says so.
+export const markedCells = (count: number, shown: number, from: number, rows: number, marks: number[]): Set<number> =>
+  new Set(marks.filter(m => m < from || m >= from + shown)
+    .map(m => Math.min(rows - 1, Math.floor(m * rows / Math.max(1, count)))))
+
+// Where a press on cell `cell` of a scrollbar's track scrolls to (the row the window then
+// starts at): its share of the way down the track, of the way the window can go. A press on
+// the top cell goes to the top, on the bottom one to the end, from wherever the window is.
+export const jumpOf = (count: number, shown: number, rows: number, cell: number): number =>
+  rows <= 1 ? 0 : Math.round(Math.max(0, count - shown) * Math.min(1, Math.max(0, cell / (rows - 1))))

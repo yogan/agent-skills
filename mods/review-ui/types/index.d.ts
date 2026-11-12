@@ -234,7 +234,6 @@ declare module 'claude-code' {
       'thread-open': Shaped<Record<string, boolean>>
       'code-open': Shaped<Record<string, boolean>>
       'box-at': Shaped<Record<string, number>>
-      'mr-open': Shaped<boolean>
       // `running`: a check is asking GitLab now, its time come or the person's sync.
       checks: Shaped<{ last: number | null; next: number | null; failed?: number | null; running?: boolean }>
       judging: Shaped<ReviewJudging>

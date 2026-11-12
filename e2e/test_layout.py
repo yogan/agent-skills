@@ -11,18 +11,18 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import layout  # noqa: E402
 
-UP, DOWN = layout.UP, layout.DOWN
+# The file's lines and the thread box among them, its scrollbar beside them all at the right.
+BODY = [" 1 -export const a = {", "  ╭──────────────────────────────────╮",
+        "  │ Miriam Naming: this one exports… │", "  ╰──────────────────────────────────╯",
+        " 2  b;"]
+THUMB = ["▃", "█", "█", "\U0001fb82", " "]
 GOOD = "\n".join([
     "── \U000f04c2 !3 Extract keys into factories ───────── ─",
     "\uf47c To fix",
     "  t2 Refetch the detail key",
     "",
     "── src/a.ts:1 · pushed ──────────────────── ✕ ─",
-    f" 1 -export const a = {{                      {UP}",
-    "  ╭──────────────────────────────────────╮",
-    "  │ Miriam Naming: this one exports a…   │",
-    "  ╰──────────────────────────────────────╯",
-    f" 2  b;                                    {DOWN}",
+    *[f"{line:<44} {bar}" for line, bar in zip(BODY, THUMB)],
 ])
 
 
@@ -35,13 +35,17 @@ class TestProblems(unittest.TestCase):
         cut = "\n".join(GOOD.split("\n")[:8])
         self.assertTrue(any("no bottom border" in p for p in layout.problems(cut)))
 
+    def test_a_box_an_area_clips_at_its_foot_is_no_cut(self):
+        clipped = "\n".join(["── src/a.ts:1 ─────", " 1 a", "  ╭──────╮", "  │ text │", "", "── On the MR ──", "x"])
+        self.assertEqual(layout.problems(clipped), [])
+
     def test_a_box_whose_top_is_cut_off(self):
         cut = "\n".join(l for i, l in enumerate(GOOD.split("\n")) if i != 6)
         self.assertTrue(any("with no top" in p for p in layout.problems(cut)))
 
-    def test_a_missing_down_arrow(self):
-        cut = GOOD.replace(DOWN, " ")
-        self.assertTrue(any("up arrow" in p for p in layout.problems(cut)))
+    def test_a_thumb_broken_in_its_run(self):
+        broken = GOOD.replace("\U0001fb82", "▃")
+        self.assertTrue(any("starts in the middle" in p for p in layout.problems(broken)))
 
     def test_a_line_wrapped_onto_the_next_row(self):
         wrapped = GOOD.replace("\uf47c To fix", "              Supplier's", 1)

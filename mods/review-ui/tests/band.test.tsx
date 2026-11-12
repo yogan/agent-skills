@@ -147,6 +147,25 @@ const openReview = async ($: Engine, w: World, stdout: string) => {
 const labels = async (ui: { findAll: (q: { type: string }) => Promise<{ props: Record<string, unknown> }[]> }) =>
   (await ui.findAll({ type: 'Button' })).map(b => b.props.label)
 
+// An area's scrollbar, by its name (`list`, `files`, `code`, `box`, `mr`, `thread`): a press on
+// its track jumps there, `page` presses its top cell (`up`) or its bottom one (`down`). `bar` is
+// the thumb's cells and the track's, in order (null where the area has no bar).
+type Scrolls = { findAll: (q: { type: string }) => Promise<{ key?: unknown; text?: unknown; props: Record<string, unknown> }[]>; press: (q: { key: string }) => Promise<unknown> }
+const page = async (ui: Scrolls, tag: string, dir: 'up' | 'down') => {
+  const keys = (await ui.findAll({ type: 'Button' })).map(b => String(b.key ?? ''))
+    .filter(k => k.startsWith(`${tag}-${dir === 'up' ? 'above' : 'below'}-`))
+  const key = dir === 'up' ? keys[0] : keys[keys.length - 1]
+  if (!key) throw new Error(`${tag}'s scrollbar has no track ${dir === 'up' ? 'above' : 'below'} its thumb`)
+  await ui.press({ key })
+}
+const bar = async (ui: Scrolls, tag: string) => {
+  const keys = [...(await ui.findAll({ type: 'Button' })), ...(await ui.findAll({ type: 'Box' }))].map(b => String(b.key ?? ''))
+  const cells = keys.filter(k => new RegExp(`^${tag}-(bar|above|below)-\\d+$`).test(k))
+    .map(k => ({ i: Number(k.split('-').pop()), at: k.includes('-above-') ? 'above' : k.includes('-below-') ? 'below' : 'thumb' }))
+    .sort((a, b) => a.i - b.i)
+  return cells.length ? cells.map(c => c.at) : null
+}
+
 test("the band's buttons are chips with no hotkey, Show sidebar too, with its icon", async ($, on) => {
   const w = world(on, [stateOf(null, [], { explainer: { recommend: 'skip', why: 'A refactor.' } })])
   await openReview($, w, view('t1'))
@@ -423,15 +442,17 @@ test('a list over a quarter of the sidebar scrolls inside its area, the current 
   expect(await shown()).toHaveLength(7)
   expect((await shown()).some(t => t.endsWith('summary of t10'))).toBe(true)
   expect((await shown()).some(t => t.endsWith('summary of t1'))).toBe(false)
-  expect((await ui.find({ type: 'Button', key: 'list-up' }))?.props.dimColor).toBeUndefined()
-  await ui.press({ key: 'list-up' })
-  await ui.press({ key: 'list-up' })
+  // Its scrollbar: 7 cells, the thumb 7 of 15 rows long, away from the top.
+  const before = await bar(ui, 'list')
+  expect(before).toHaveLength(7)
+  expect(before?.[0]).toBe('above')
+  await page(ui, 'list', 'up')                                            // a window up: the top
   expect((await shown()).some(t => t.endsWith('summary of t1'))).toBe(true)
-  expect((await ui.find({ type: 'Button', key: 'list-up' }))?.props.dimColor).toBe(true)
+  expect((await bar(ui, 'list'))?.[0]).toBe('thumb')                       // at the top: nothing above
   await ui.unmount()
 })
 
-test('news in a folded group is marked on its header, and past a scrolled list on its arrow', async ($, on) => {
+test('news in a folded group is marked on its header; a scrolled list marks none on its scrollbar', async ($, on) => {
   const ids = Array.from({ length: 12 }, (_, i) => `t${i + 1}`)
   const topics = [...ids.map(id => ({ ...topic(id, 'open'), ...(id === 't1' ? { inbox: 'new' } : {}) })),
     { ...topic('t13', 'acked'), inbox: 'new' }]
@@ -441,9 +462,10 @@ test('news in a folded group is marked on its header, and past a scrolled list o
   const news = '\u{f09de}'
   // Closed is folded: its header carries the mark its row would.
   expect((await ui.findAll({ type: 'Text' })).some(t => t.text === ` ${news}` && t.props.color === 'yellow')).toBe(true)
-  // t1 is scrolled out above: the up arrow is in the colour of news, and not dim.
-  expect((await ui.find({ type: 'Button', key: 'list-up' }))?.props.dimColor).toBeUndefined()
-  expect((await ui.findAll({ type: 'Text' })).find(t => t.text === '\u{F0BBD}')?.props.color).toBe('yellow')
+  // t1 is scrolled out above: its row's own mark says it when it comes into view, the bar
+  // carries no tick for it.
+  expect((await bar(ui, 'list'))?.[0]).toBe('above')
+  expect((await ui.findAll({ type: 'Text' })).some(t => t.text === '━')).toBe(false)
   await ui.unmount()
 })
 
@@ -809,12 +831,10 @@ test("the sidebar shows the current topic's file, the discussed lines on a backg
   const start = firstLine(runs[0]?.props.source)
   expect(start).toBeLessThan(98)
   expect(await ui.find({ type: 'Text', text: '▎' })).toBeDefined()     // line 101 changed since
-  // The arrows at the content's own corners, over the ends of its first and last lines.
-  const corner = async (key: string) => (await ui.find({ type: 'Box', key }))?.props
-  expect(await corner('code-up-at')).toMatchObject({ position: 'absolute', top: 0, right: 0 })
-  expect(await corner('code-down-at')).toMatchObject({ position: 'absolute', bottom: 0, right: 0 })
-  await ui.press({ key: 'code-down' })
-  expect(firstLine((await ui.findAll({ type: 'Code' }))[0]?.props.source)).toBe(start + 3)
+  // The file's scrollbar beside it, a press below its thumb a window on.
+  expect(await bar(ui, 'code')).not.toBeNull()
+  await page(ui, 'code', 'down')
+  expect(firstLine((await ui.findAll({ type: 'Code' }))[0]?.props.source)).toBeGreaterThan(start + 3)
   await ui.unmount()
 })
 
@@ -1042,12 +1062,15 @@ test('a thread sits under the lines it is about, in full, and its fold key folds
   expect((await ui.find({ type: 'Button', key: 'fold-1-0' }))?.props.label).toBe('\u{F460} suggestion · 1 line')
   await ui.press({ key: 'fold-1-0' })
   expect(await codes()).toContain('@@ -17,1 +17,1 @@\n-const line17 = 17\n+fixed()')
-  // The fold key is an icon alone, in the box's first line, as is the key that opens it again.
+  // The fold key stands on the box's top border near its right corner, whichever way the box
+  // is: restore on an open box, maximize on a folded one.
   const label = async () => (await ui.find({ type: 'Button', key: 'thread-open' }))?.props.label
-  const isFirst = async () => JSON.stringify((await ui.find({ type: 'Box', key: 'box-first' }))?.children ?? []).includes('thread-open')
-  expect([await label(), await isFirst()]).toEqual(['\u{F084D}', true])
+  const onBorder = async () => (await ui.find({ type: 'Box', key: 'box-key' }))?.props
+  expect(await label()).toBe('\u{F05B2}')
+  expect(await onBorder()).toMatchObject({ position: 'absolute', top: 0, right: 2 })
   await ui.press({ key: 'thread-open' })              // folded
-  expect([await label(), await isFirst()]).toEqual(['\u{F084F}', true])
+  expect(await label()).toBe('\u{F05AF}')
+  expect(await onBorder()).toMatchObject({ position: 'absolute', top: 0, right: 2 })
   expect(await md()).toEqual(expect.arrayContaining(['[\u{f03cc}](http://gl/x#note_1)', 'seems bad']))
   expect((await ui.findAll({ type: 'Text' })).find(t => t.text === 'You')?.props.color).toBe('magenta')
   const kim = (await md()).find(t => t.startsWith('seems bad, and')) ?? ''
@@ -1074,14 +1097,13 @@ test('a thread taller than its room keeps five lines of the file above and below
   expect(await md()).not.toContain('paragraph 60')
   // The file keeps five lines around line 20.
   for (const n of [15, 16, 17, 18, 19, 21, 22, 23, 24, 25]) expect(await lines()).toContain(` const line${n} = ${n}`)
-  // At the top: ▲ dim, ▼ not; ▼ moves the box, and the file stays where it was.
-  expect((await ui.find({ type: 'Button', key: 'box-up' }))?.props.dimColor).toBe(true)
-  expect((await ui.find({ type: 'Button', key: 'box-down' }))?.props.dimColor).toBeUndefined()
+  // At the top: the box's own scrollbar, its thumb at the top; a press below it moves the
+  // box, and the file stays where it was.
+  expect((await bar(ui, 'box'))?.[0]).toBe('thumb')
   const file = await lines()
-  await ui.press({ key: 'box-down' })
+  await page(ui, 'box', 'down')
   expect(await md()).not.toContain('paragraph 1')
   expect(await lines()).toEqual(file)
-  expect((await ui.find({ type: 'Button', key: 'box-up' }))?.props.dimColor).toBeUndefined()
   await ui.unmount()
 })
 
@@ -1100,11 +1122,11 @@ const reworkFoldKey = async ($: Engine, on: Parameters<typeof world>[0], mode?: 
 }
 
 test('rework-mr: while planning, the thread under the code is in full', async ($, on) => {
-  expect(await reworkFoldKey($, on)).toBe('\u{F084D}')          // the key folds it
+  expect(await reworkFoldKey($, on)).toBe('\u{F05B2}')          // the key folds it
 })
 
 test('rework-mr: under the fix the thread is folded, so the code has the room', async ($, on) => {
-  expect(await reworkFoldKey($, on, 'fix')).toBe('\u{F084F}')   // the key opens it
+  expect(await reworkFoldKey($, on, 'fix')).toBe('\u{F05AF}')   // the key opens it
 })
 
 test('a file renamed since the comment is shown under its name now, said in a word', async ($, on) => {
@@ -1139,22 +1161,46 @@ test('once the agent explained a topic, the button asks it to explain further', 
   expect(w.prompts[1]).toMatch(/^Explain t1 further: .*do not repeat/)
 })
 
-test('the thread stays when the lines it is about scroll out of the window', async ($, on) => {
+test("the thread scrolls out of view with its lines, marked on the file's scrollbar, a press there bringing them back", async ($, on) => {
   const code = codeOf(200, [10, 10])
   const thread = [{ url: 'u', file: 'src/cache.ts', line: 10, notes: [{ author: 'You', body: 'odd', mine: true, url: 'http://gl/n1' }] }]
   const w = world(on, [stateOf('t1', [topic('t1', 'open')], { thread })], { code: { stdout: JSON.stringify(code) } })
   await openReview($, w, view('t1'))
   const ui = await $.ui.mount({ ...PANEL, surface: 'terminal' })
-  for (let i = 0; i < 10; i += 1) await ui.press({ key: 'code-down' })
+  const md = async () => (await ui.findAll({ type: 'Markdown' })).map(m => m.props.text as string).join('\n')
+  const mark = async () => (await ui.findAll({ type: 'Button' })).map(b => String(b.key ?? '')).find(k => k.startsWith('code-mark-'))
+  expect(await md()).toContain('odd')
+  expect(await mark()).toBeUndefined()                                      // in view: no mark
+  await page(ui, 'code', 'down')                                            // to the end
   expect(firstLine((await ui.findAll({ type: 'Code' }))[0]?.props.source)).toBeGreaterThan(10)
-  const md = (await ui.findAll({ type: 'Markdown' })).map(m => m.props.text as string).join('\n')
-  expect(md).toContain('odd')
-  // It says where its lines are, and takes the file back to them.
-  const back = await ui.find({ type: 'Button', key: 'thread-back' })
-  expect(back?.props.label).toBe('↑ on line 10')
-  await ui.press({ key: 'thread-back' })
-  expect(firstLine((await ui.findAll({ type: 'Code' }))[0]?.props.source)).toBeLessThanOrEqual(10)
+  // Out of view with its lines: gone from the file, a mark near the top of its scrollbar.
+  expect(await md()).not.toContain('odd')
   expect(await ui.find({ type: 'Button', key: 'thread-back' })).toBeUndefined()
+  const key = await mark()
+  expect(Number(key?.split('-').pop())).toBeLessThan(3)
+  // One place, one mark.
+  expect((await ui.findAll({ type: 'Button' })).filter(b => String(b.key ?? '').startsWith('code-mark-'))).toHaveLength(1)
+  await ui.press({ key: key as string })
+  expect(firstLine((await ui.findAll({ type: 'Code' }))[0]?.props.source)).toBeLessThanOrEqual(10)
+  expect(await md()).toContain('odd')
+  await ui.unmount()
+})
+
+test("a thread on a line near the file's end is in view whenever its line is, scrolled to the end too", async ($, on) => {
+  const code = codeOf(77, [73, 73])
+  const thread = [{ url: 'u', file: 'src/cache.ts', line: 73, notes: [{ author: 'Kim', body: 'risky default', url: 'http://gl/x#note_2' }] }]
+  const w = world(on, [stateOf('t1', [topic('t1', 'open')], { thread })], { code: { stdout: JSON.stringify(code) } })
+  await openReview($, w, view('t1'))
+  const ui = await $.ui.mount({ ...PANEL, surface: 'terminal' })
+  const md = async () => (await ui.findAll({ type: 'Markdown' })).map(m => m.props.text as string).join('\n')
+  const lines = async () => (await ui.findAll({ type: 'Code' })).flatMap(c => String(c.props.source).split('\n').slice(1))
+  await page(ui, 'code', 'up')                                              // the top: line 73 out of view
+  expect(await lines()).not.toContain(' const line73 = 73')
+  expect(await md()).not.toContain('risky default')
+  await page(ui, 'code', 'down')                                            // the end: its line, and its thread
+  expect(await lines()).toContain(' const line73 = 73')
+  expect(await lines()).toContain(' const line77 = 77')
+  expect(await md()).toContain('risky default')
   await ui.unmount()
 })
 
@@ -1212,7 +1258,7 @@ test('"Check my post" links the comment, and the agent checks it before the roun
   expect(w.ran.map(r => r.argv.slice(2).join(' '))).toContain('posted t3 --ok --iid 42')
 })
 
-test("rework-mr's comments on the MR itself are an area under the file's, a line each until opened", async ($, on) => {
+test("rework-mr's comments on the MR itself are an area under the file's, in full, never folded", async ($, on) => {
   const long = `overall fine, ${'and some more words '.repeat(8)}`
   const state = JSON.stringify({
     skill: 'rework-mr', iid: 42, title: 'x', current: 't1', topics: [topic('t1', 'open')],
@@ -1224,15 +1270,27 @@ test("rework-mr's comments on the MR itself are an area under the file's, a line
   const md = async () => (await ui.findAll({ type: 'Markdown' })).map(m => String(m.props.text))
   const texts = async () => (await ui.findAll({ type: 'Text' })).map(t => String(t.text ?? ''))
   expect(await texts()).toEqual(expect.arrayContaining(['On the MR', ' · 2 comments']))
-  // A line each, the long one cut; the fold key is the icon alone.
-  expect((await md()).find(t => t.startsWith('overall fine'))).toMatch(/…$/)
-  expect(await md()).toContain('agree')
-  expect((await ui.find({ type: 'Button', key: 'mr-open' }))?.props.label).toBe('\u{F084F}')
-  await ui.press({ key: 'mr-open' })
-  // In full: each comment with its own line for who wrote it and when.
+  // In full: each comment with its own line for who wrote it and when; no fold key.
   expect((await md()).some(t => t.includes('and some more words and some more words'))).toBe(true)
   expect(await texts()).toContain('Nov 5, 12:09')
-  expect((await ui.find({ type: 'Button', key: 'mr-open' }))?.props.label).toBe('\u{F084D}')
+  expect(await ui.find({ type: 'Button', key: 'mr-open' })).toBeUndefined()
+  await ui.unmount()
+})
+
+test("rework-mr: a thread under the code and the comments on the MR are drawn together, each row its own key", async ($, on) => {
+  const block = 'see:\n\n```ts\nconst a = 1\n```'
+  const state = JSON.stringify({
+    skill: 'rework-mr', iid: 42, title: 'x', current: 't1', topics: [topic('t1', 'open')],
+    thread: [{ url: 'u', file: 'src/cache.ts', line: 17, notes: [{ author: 'Kim', body: `odd, ${block}`, url: 'http://gl/x#note_2' }] }],
+    mr_comments: [{ author: 'Sam', body: `overall, ${block}` }, { author: 'Jo', body: 'agree' }],
+  })
+  const w = world(on, [state], { code: { stdout: JSON.stringify(codeOf(50, [17, 17])) } })
+  await openReview($, w, view('t1'))
+  // Mounted at all: a key drawn twice has the engine refuse the whole sidebar.
+  const ui = await $.ui.mount({ ...PANEL, surface: 'terminal' })
+  const md = (await ui.findAll({ type: 'Markdown' })).map(m => String(m.props.text))
+  expect(md.some(t => t.startsWith('odd'))).toBe(true)
+  expect(md.some(t => t.startsWith('overall'))).toBe(true)
   await ui.unmount()
 })
 
@@ -1288,8 +1346,9 @@ test('while your comments are matched to the topics, nothing says the review is 
 })
 
 test("a topic opened only to look at closes by the file's ✕ or a second press on its row", async ($, on) => {
-  const opened = stateOf('t1', [topic('t1', 'open'), topic('t2', 'open')])
-  const left = stateOf(null, [topic('t1', 'open'), topic('t2', 'open')])
+  // No round runs: the topic was opened to look at, and the ✕ closes it.
+  const opened = stateOf('t1', [topic('t1', 'open'), topic('t2', 'open')], { in_round: false })
+  const left = stateOf(null, [topic('t1', 'open'), topic('t2', 'open')], { in_round: false })
   const w = world(on, [opened, left], { code: { stdout: JSON.stringify(codeOf(50, [17, 17])) } })
   await openReview($, w, view('t1'))
   const ui = await $.ui.mount({ ...PANEL, surface: 'terminal' })
@@ -1305,9 +1364,18 @@ test("a topic opened only to look at closes by the file's ✕ or a second press 
   await ui.unmount()
 })
 
+test("while the round has another topic the file has no ✕: leaving would only bring that one up, the card's Next", async ($, on) => {
+  const w = world(on, [stateOf('t1', [topic('t1', 'open'), topic('t2', 'open')], { in_round: true, round: ['t1', 't2'] })],
+    { code: { stdout: JSON.stringify(codeOf(50, [17, 17])) } })
+  await openReview($, w, view('t1'))
+  const ui = await $.ui.mount({ ...PANEL, surface: 'terminal' })
+  expect(await ui.find({ type: 'Button', key: 'leave' })).toBeUndefined()
+  await ui.unmount()
+})
+
 test("another reviewer's thread opened to know of closes by the file's ✕ too", async ($, on) => {
   const peer = { ...topic('t5', 'acked'), source: 'peer', peer: true, peer_view: { says: 'fyi' as const, advice: 'seen' as const } }
-  const w = world(on, [stateOf('t5', [topic('t1', 'open'), peer])], { code: { stdout: JSON.stringify(codeOf(50, [10, 10])) } })
+  const w = world(on, [stateOf('t5', [topic('t1', 'open'), peer], { in_round: false })], { code: { stdout: JSON.stringify(codeOf(50, [10, 10])) } })
   await openReview($, w, view('t5'))
   const ui = await $.ui.mount({ ...PANEL, surface: 'terminal' })
   expect((await ui.find({ type: 'Button', key: 'leave' }))?.props.label).toBe('\u{F0156}')
@@ -1315,7 +1383,7 @@ test("another reviewer's thread opened to know of closes by the file's ✕ too",
 })
 
 test('pressing the row of a topic opened only to look at closes it', async ($, on) => {
-  const w = world(on, [stateOf('t1', [topic('t1', 'open'), topic('t2', 'open')]), stateOf(null, [topic('t1', 'open'), topic('t2', 'open')])],
+  const w = world(on, [stateOf('t1', [topic('t1', 'open'), topic('t2', 'open')], { in_round: false }), stateOf(null, [topic('t1', 'open'), topic('t2', 'open')], { in_round: false })],
     { code: { stdout: JSON.stringify(codeOf(50, [17, 17])) } })
   await openReview($, w, view('t1'))
   const ui = await $.ui.mount({ ...PANEL, surface: 'terminal' })
@@ -1741,9 +1809,8 @@ test('rework-mr: picking keeps the list where it was scrolled, draws no topic bo
   // Under the person's own pushed fix the thread starts folded: its author's line, not its text.
   const texts = async () => (await panel.findAll({ type: 'Text' })).map(t => String(t.text ?? ''))
   expect(await texts()).toContain('Robin')
-  expect((await panel.find({ type: 'Button', key: 'thread-open' }))?.props.label).toBe('\u{F084F}')   // the key that opens it
-  await panel.press({ key: 'files-down' })
-  await panel.press({ key: 'files-down' })
+  expect((await panel.find({ type: 'Button', key: 'thread-open' }))?.props.label).toBe('\u{F05AF}')   // the key that opens it
+  await page(panel, 'files', 'down')
   // The list's rows, by their pick buttons: the code line above names the shown file too.
   const rows = async () => (await panel.findAll({ type: 'Button' })).map(b => String(b.key ?? '')).filter(k => k.startsWith('file-pick-'))
   const scrolled = await rows()
@@ -1753,12 +1820,10 @@ test('rework-mr: picking keeps the list where it was scrolled, draws no topic bo
   expect(await panel.find({ type: 'Box', key: 'finding' })).toBeUndefined()
   // Back on the comment's own file: drawn from what was read before, nothing asked again.
   const asked = w.ran.filter(r => r.argv[2] === 'code').length
-  await panel.press({ key: 'files-up' })
-  await panel.press({ key: 'files-up' })
+  await page(panel, 'files', 'up')
   await panel.press({ key: 'file-pick-src/f1.ts' })
   expect(w.ran.filter(r => r.argv[2] === 'code').length).toBe(asked + 1)   // the pick of f1, read once more
-  await panel.press({ key: 'files-down' })
-  await panel.press({ key: 'files-down' })
+  await page(panel, 'files', 'down')
   await panel.press({ key: 'file-pick-src/f9.ts' })
   expect(w.ran.filter(r => r.argv[2] === 'code').length).toBe(asked + 1)   // f9 was read already
   await panel.unmount()
@@ -1892,10 +1957,10 @@ test("a title too long for the list's line is cut, and the line keeps to the sid
   const cut = texts.find(t => t.includes('Warn when'))
   expect(cut?.endsWith('…')).toBe(true)
   // The line within the 60 columns: its title, the number, the marks and the dashes around them.
-  // Its texts from the first dashes to the last, and the legend's key, a button, one cell.
+  // Its texts from the first dashes to the last, the legend's key among them (its icon a text).
   const from = texts.indexOf('── ')
-  const parts = texts.slice(from, texts.indexOf(' ─', texts.indexOf(cut ?? '')) + 3)
-  expect([...parts.join('')].length + 1).toBe(60)
+  const parts = texts.slice(from, texts.indexOf(' ─', texts.indexOf(cut ?? '')) + 4)
+  expect([...parts.join('')].length).toBe(60)
   await panel.unmount()
 })
 
@@ -1918,7 +1983,7 @@ test("rework-mr: a fix's files are an area of a sixth of the sidebar, scrolling 
   const files = async () => (await panel.findAll({ type: 'Text' })).map(t => String(t.text ?? '')).filter(t => /^src\/f\d+\.ts$/.test(t))
   expect(await files()).toHaveLength(5)                                  // a sixth of 30 rows
   expect(await panel.find({ type: 'Button', key: 'files-open' })).toBeUndefined()
-  expect(await panel.find({ type: 'Button', key: 'files-down' })).toBeDefined()
+  expect(await bar(panel, 'files')).toHaveLength(5)
   expect(String((await panel.find({ type: 'Button', key: 'files-hunk' }))?.props.label)).toMatch(/Review in hunk$/)
   expect((await panel.find({ type: 'Text', text: 'unpushed' }))?.props.color).toBe('yellow')
   // The viewer's key opens the line, a chip between its caps, the rule after it.
@@ -2453,7 +2518,7 @@ test("a merged MR's box offers to check an answer not accepted yet, not to open 
 test("a merged MR's topic shown by its thread alone, with no file, closes by the thread's ✕", async ($, on) => {
   const t1 = Object.assign(topic('t1', 'needs_ack'), { verdict: 'settled', resolved: true })
   const thread = [{ url: 'http://gitlab.test/x#note_1', file: 'src/cache.ts', line: 17, notes: [{ author: 'Ana', body: 'rename it' }] }]
-  const w = world(on, [stateOf('t1', [t1], { mr: { state: 'merged' }, thread })])
+  const w = world(on, [stateOf('t1', [t1], { mr: { state: 'merged' }, thread, round: ['t1'] })])
   await openReview($, w, view('t1'))
   const panel = await $.ui.mount({ ...PANEL, surface: 'terminal' })
   expect(await panel.find({ type: 'Text', text: 'Thread' })).toBeDefined()
@@ -2523,7 +2588,7 @@ test("between rounds the box lists the MR's own news as dim lines: an approval, 
 test('a merged MR: Accept closes the topic, and any topic it left can be closed from the sidebar', async ($, on) => {
   const mr = { state: 'merged', merged_at: '2026-11-09T15:20:00Z', merged_by: 'Jan', auto_merge: true, approved_by: ['Jan'] }
   const t1 = Object.assign(topic('t1', 'needs_ack'), { verdict: 'settled', verdict_text: 'Holds.', resolved: true, inbox: 'yours' })
-  const extra = { mr, merged: { left: [], drafts: [], quiet: 0 }, in_round: true }
+  const extra = { mr, merged: { left: [], drafts: [], quiet: 0 }, in_round: true, round: ['t1'] }
   const w = world(on, [stateOf('t1', [t1], extra), stateOf(null, [{ ...t1, status: 'acked', state: 'done' }], extra)], { code: { stdout: JSON.stringify(codeOf(50, [17, 17])) } })
   await openReview($, w, view('t1'))
   w.panes.push('review-ui-topics')

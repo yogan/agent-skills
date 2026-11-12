@@ -89,7 +89,7 @@ const ask = (prompt: string): Press => ({ kind: 'ask', prompt })
 // Whether the round has another topic to go on to: the way on is offered only then. A card
 // with none left, or opened while no round runs, is closed with its ✕ instead
 // (register.tsx's `drawCard`).
-const hasNext = (review: ReviewState | null, tid: string): boolean =>
+export const hasNext = (review: ReviewState | null, tid: string): boolean =>
   review?.in_round !== false && (!review?.round || review.round.some(id => id !== tid))
 
 // A pushed fix kept in git, in the diff viewer: on every card of a topic that has one.
