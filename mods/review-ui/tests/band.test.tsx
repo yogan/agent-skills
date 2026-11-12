@@ -2500,7 +2500,7 @@ test('the box gives one line a topic with the verdict, resolved-but-not-fixed sa
   expect(box?.lines.find(l => l.topic === 't2')).toBeUndefined()          // past five
   expect(box?.more).toBe(2)
   const one = inboxOf(JSON.parse(stateOf(null, ts, { author: 'Jonas', inbox: inbox({ resolved: ['t2'], first: 't2' }) })))
-  expect(one?.lines.map(l => l.what)).toEqual(['Jonas resolved it, not fixed'])
+  expect(one?.lines.map(l => l.what)).toEqual(['Jonas resolved, not fixed'])
   expect(one?.button).toBe('Check t2')
 })
 

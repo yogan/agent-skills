@@ -735,7 +735,8 @@ export const inboxOf = (review: ReviewState | null, judging: { topics: string[];
     })
   }
   for (const id of box.replies) topicLine(id, isRework ? 'replied' : 'answered')
-  for (const id of box.resolved) topicLine(id, 'resolved it')
+  // Its thread, which a topic's line on the inbox always stands for.
+  for (const id of box.resolved) topicLine(id, 'resolved')
   for (const x of box.threads) topicLine(x.id, 'opened a new thread', x.fyi === true)
   // The person's own comments, posted on GitLab since, and what the agent matched them to.
   for (const p of box.own) topicLines.push({ tone: 'needs', what: `your comment: the same as ${p.into}?` })
