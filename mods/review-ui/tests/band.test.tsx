@@ -169,7 +169,7 @@ test('each step has its own buttons, on every surface that takes input', async (
   await openReview($, w, view('t1'))
   for (const surface of ['terminal', 'desktop'] as const) {
     const ui = await mountStep($, surface)
-    expect(await labels(ui)).toEqual(['Draft comment', 'Drop', 'Explain', 'Next topic', 'Show sidebar'])
+    expect(await labels(ui)).toEqual(['Comment', 'Drop', 'Explain', 'Next', 'Show sidebar'])
     expect(await ui.find({ type: 'Text', text: /^t1$/ })).toBeUndefined()   // the card and the sidebar name it
     await ui.unmount()
   }
@@ -179,7 +179,7 @@ test('a drafted topic offers Post', async ($, on) => {
   const w = world(on, [stateOf('t1', [topic('t1', 'draft', 'v1')])])
   await openReview($, w, view('t1', 'v1'))
   const ui = await mountStep($, 'terminal')
-  expect(await labels(ui)).toEqual(['Post', 'I posted it, check it', 'Next topic', 'Show sidebar'])
+  expect(await labels(ui)).toEqual(['Post', 'Check my post', 'Next', 'Show sidebar'])
   await ui.unmount()
 })
 
@@ -187,7 +187,7 @@ test('a topic the author answered offers Ack', async ($, on) => {
   const w = world(on, [stateOf('t2', [topic('t1', 'open'), topic('t2', 'needs_ack')])])
   await openReview($, w, view('t2'))
   const ui = await mountStep($, 'terminal')
-  expect(await labels(ui)).toEqual(['Ack', 'Follow up', 'Explain', 'Next topic', 'Show sidebar'])
+  expect(await labels(ui)).toEqual(['Ack', 'Follow up', 'Explain', 'Next', 'Show sidebar'])
   expect(await ui.find({ type: 'Text', text: /^t2$/ })).toBeUndefined()   // the card and the sidebar name it
   expect(await ui.find({ type: 'Text', text: / of / })).toBeUndefined()
   await ui.unmount()
@@ -198,7 +198,7 @@ test('an answer the agent judged settled is accepted first: the thread resolved 
   const w = world(on, [stateOf('t2', [answered]), stateOf(null, [{ ...answered, status: 'acked', state: 'done' }])])
   await openReview($, w, view('t2'))
   const ui = await mountStep($, 'terminal')
-  expect(await labels(ui)).toEqual(['Accept & resolve', 'Not good enough…', 'Analyse more', 'Next topic', 'Show sidebar'])
+  expect(await labels(ui)).toEqual(['Accept + resolve', 'Not enough…', 'Analyse more', 'Next', 'Show sidebar'])
   await ui.press({ key: 'resolve' })
   await ui.unmount()
   const ran = w.ran.find(r => r.argv.includes('resolve'))
@@ -210,13 +210,13 @@ test("review-mr: the author's push that changed the topic's lines is shown in th
   const w = world(on, [stateOf('t2', [{ ...topic('t2', 'needs_ack'), verdict: 'settled', fix_kept: true } as Topic])])
   await openReview($, w, view('t2'))
   const ui = await mountStep($, 'terminal')
-  expect(await labels(ui)).toEqual(['Accept & resolve', 'Not good enough…', 'Show fix in hunk', 'Analyse more', 'Next topic', 'Show sidebar'])
+  expect(await labels(ui)).toEqual(['Accept + resolve', 'Not enough…', 'Show fix in hunk', 'Analyse more', 'Next', 'Show sidebar'])
   await ui.press({ key: 'hunk-pushed' })
   await ui.unmount()
   expect(w.ran.map(r => r.argv.slice(2).join(' '))).toContain('hunk-show t2 --pushed --iid 42')
 })
 
-test('review-mr: no Next topic while no round runs', async ($, on) => {
+test('review-mr: no way on to a next topic while no round runs', async ($, on) => {
   const w = world(on, [stateOf('t2', [topic('t1', 'open'), topic('t2', 'needs_ack')], { in_round: false })])
   await openReview($, w, view('t2'))
   const ui = await mountStep($, 'terminal')
@@ -228,7 +228,7 @@ test('a settled answer on a thread resolved already is accepted alone', async ($
   const w = world(on, [stateOf('t2', [{ ...topic('t2', 'needs_ack'), verdict: 'settled', resolved: true }])])
   await openReview($, w, view('t2'))
   const ui = await mountStep($, 'terminal')
-  expect(await labels(ui)).toEqual(['Accept', 'Not good enough…', 'Analyse more', 'Next topic', 'Show sidebar'])
+  expect(await labels(ui)).toEqual(['Accept', 'Not enough…', 'Analyse more', 'Next', 'Show sidebar'])
   await ui.unmount()
 })
 
@@ -236,7 +236,7 @@ test('an answer that needs more offers the follow-up first, or accepting it anyw
   const w = world(on, [stateOf('t2', [{ ...topic('t2', 'needs_ack'), verdict: 'more', verdict_text: 'Writes still skip the locale. Ask for writes.' }], { lang: 'de' })])
   await openReview($, w, view('t2'))
   const ui = await mountStep($, 'terminal')
-  expect(await labels(ui)).toEqual(['Send follow-up', 'Wait for author', 'Accept anyway', 'Analyse more', 'Next topic', 'Show sidebar'])
+  expect(await labels(ui)).toEqual(['Send follow-up', 'Wait for author', 'Accept anyway', 'Analyse more', 'Next', 'Show sidebar'])
   await ui.press({ key: 'follow' })
   await ui.unmount()
   // The chat did not judge it: the prompt hands it the stored verdict, and the language.
@@ -498,7 +498,7 @@ test('a view whose manifest the model filtered away still opens the review, from
   w.files['/home/me/.claude/review-ui/sessions/s-1'] = JSON.stringify({ review: REVIEW, topic: 't1', focus: 't1', draft: null })
   await openReview($, w, '◈ **t1** `src/cache.ts:17`\n\nsome view')
   const ui = await mountStep($, 'terminal')
-  expect(await labels(ui)).toEqual(['Draft comment', 'Drop', 'Explain', 'Next topic', 'Show sidebar'])
+  expect(await labels(ui)).toEqual(['Comment', 'Drop', 'Explain', 'Next', 'Show sidebar'])
   await ui.unmount()
 })
 
@@ -508,7 +508,7 @@ test('a conversation carried on under a new session id finds its review again', 
   w.files['/home/me/.claude/review-ui/sessions/s-1'] = JSON.stringify({ review: REVIEW, topic: 't1', focus: 't1', draft: null })
   await $.turn.start({ text: 'go on', turnId: 'turn-1' })
   const ui = await mountStep($, 'terminal')
-  expect(await labels(ui)).toEqual(['Draft comment', 'Drop', 'Explain', 'Next topic', 'Show sidebar'])
+  expect(await labels(ui)).toEqual(['Comment', 'Drop', 'Explain', 'Next', 'Show sidebar'])
   await ui.unmount()
 })
 
@@ -521,7 +521,7 @@ test('back under a new session id, the conversation finds its review from the fo
   on('session.messages', () => ({ value: [{ role: 'user', text: '<command-name>/review-mr</command-name><command-args>!42</command-args>', toolUses: [] }] }))
   await $.turn.start({ text: 'go on', turnId: 'turn-1' })
   const ui = await mountStep($, 'terminal')
-  expect(await labels(ui)).toEqual(['Draft comment', 'Drop', 'Explain', 'Next topic', 'Show sidebar'])
+  expect(await labels(ui)).toEqual(['Comment', 'Drop', 'Explain', 'Next', 'Show sidebar'])
   await ui.unmount()
 })
 
@@ -557,7 +557,7 @@ test("back under a new session id, a review run on the folder's own branch is fo
   ] as never }))
   await $.turn.start({ text: 'show the sidebar again', turnId: 'turn-1' })
   const ui = await mountStep($, 'terminal')
-  expect(await labels(ui)).toEqual(['Draft comment', 'Drop', 'Explain', 'Next topic', 'Show sidebar'])
+  expect(await labels(ui)).toEqual(['Comment', 'Drop', 'Explain', 'Next', 'Show sidebar'])
   await ui.unmount()
 })
 
@@ -598,7 +598,7 @@ test('a review the mod took up by itself is let go at the next turn once nothing
   on('session.messages', () => ({ value: said.messages as never }))
   await $.turn.start({ text: 'go on', turnId: 'turn-1' })
   const ui = await mountStep($, 'terminal')
-  expect(await labels(ui)).toContain('Next topic')
+  expect(await labels(ui)).toContain('Next')
   // The same words, but printed by a tool the session ran: no review skill of its own.
   said.messages = [{ role: 'user', text: '<command-name>/review-mr</command-name><command-args>!42</command-args>', toolUses: [], toolResults: [{ tool_use_id: 'x', text: '' }] }]
   await $.turn.start({ text: 'and now', turnId: 'turn-2' })
@@ -709,7 +709,7 @@ test('a topic your comment was merged into offers a follow-up, or nothing to add
   const w = world(on, [stateOf('t3', [merged]), stateOf(null, [{ ...merged, follow_up: null }])])
   await openReview($, w, view('t3'))
   const ui = await mountStep($, 'terminal')
-  expect(await labels(ui)).toEqual(['Draft follow-up', 'Nothing to add', 'Explain', 'Next topic', 'Show sidebar'])
+  expect(await labels(ui)).toEqual(['Follow up', 'Nothing to add', 'Explain', 'Next', 'Show sidebar'])
   await ui.press({ key: 'no-follow' })
   await ui.unmount()
   expect(w.ran.map(r => r.argv.slice(2).join(' '))).toContain('follow-up t3 none --iid 42')
@@ -834,7 +834,7 @@ test('a comment of yours matched mid-topic waits for the topic; deciding it brin
   ], { proposal: { stdout: view('t2') } })
   await openReview($, w, view('t1'))
   const ui = await mountStep($, 'terminal')
-  expect(await labels(ui)).toEqual(['Draft comment', 'Drop', 'Explain', 'Next topic', 'Show sidebar'])
+  expect(await labels(ui)).toEqual(['Comment', 'Drop', 'Explain', 'Next', 'Show sidebar'])
   await ui.press({ key: 'drop' })
   await ui.unmount()
   expect(w.ran.map(r => r.argv.slice(2).join(' '))).toContain('proposal d9 --iid 42')
@@ -883,7 +883,7 @@ test('an answer still being judged in the background offers nothing to decide, o
   const w = world(on, [stateOf('t1', [{ ...topic('t1', 'needs_ack'), inbox: 'yours' }], { in_round: true, judge: { topics: ['t1'], own: [] } })])
   await openReview($, w, view('t1'))
   const ui = await mountStep($, 'terminal')
-  expect(await labels(ui)).toEqual(['Next topic', 'Show sidebar'])
+  expect(await labels(ui)).toEqual(['Next', 'Show sidebar'])
   expect(await ui.find({ type: 'Text', text: 't1: judging the news…' })).toBeDefined()
   await ui.press({ key: 'next' })
   await ui.unmount()
@@ -936,7 +936,7 @@ test("another reviewer's thread that needs you offers the agent's advice first; 
   const w = world(on, [stateOf('t6', [{ ...peer, peer_view: { says: 'needs' as const, advice: 'reply' as const } }])])
   await openReview($, w, view('t6'))
   const ui = await mountStep($, 'terminal')
-  expect(await labels(ui)).toEqual(['Reply…', 'Seen', 'Next topic', 'Show sidebar'])
+  expect(await labels(ui)).toEqual(['Reply…', 'Seen', 'Next', 'Show sidebar'])
   await ui.press({ key: 'seen' })
   await ui.unmount()
   expect(w.ran.map(r => r.argv.slice(2).join(' '))).toContain('set t6 --state acked --iid 42')
@@ -947,7 +947,7 @@ test('Merge into tN is offered only where the agent advised it, and merges there
   const w = world(on, [stateOf('t6', [topic('t1', 'open'), { ...peer, peer_view: { says: 'needs' as const, advice: 'merge' as const, into: 't1' } }])])
   await openReview($, w, view('t6'))
   const ui = await mountStep($, 'terminal')
-  expect(await labels(ui)).toEqual(['Merge into t1', 'Reply…', 'Seen', 'Next topic', 'Show sidebar'])
+  expect(await labels(ui)).toEqual(['Merge into t1', 'Reply…', 'Seen', 'Next', 'Show sidebar'])
   await ui.press({ key: 'merge' })
   await ui.unmount()
   expect(w.ran.map(r => r.argv.slice(2).join(' '))).toContain('merge t1 t6 --iid 42')
@@ -991,7 +991,7 @@ test('typing the skill puts the session in use', async ($, on) => {
   w.tool.stdout = view('t1')
   await $.tool.call({ tool: 'Bash', command: 'python3 $SD/findings.py present --iid 42', tool_use_id: 'tu-open' } as never)
   const ui = await mountStep($, 'terminal')
-  expect(await labels(ui)).toEqual(['Draft comment', 'Drop', 'Explain', 'Next topic', 'Show sidebar'])
+  expect(await labels(ui)).toEqual(['Comment', 'Drop', 'Explain', 'Next', 'Show sidebar'])
   await ui.unmount()
 })
 
@@ -1171,7 +1171,7 @@ test('a comment on a line the MR removed sits under that removed line, which kee
   await ui.unmount()
 })
 
-test('"I posted it, check it" with no comment on GitLab yet warns and says what to do', async ($, on) => {
+test('"Check my post" with no comment on GitLab yet warns and says what to do', async ($, on) => {
   const none = world(on, [stateOf('t3', [topic('t3', 'draft', 'abc')])], {
     link: { exitCode: 1, stdout: '', stderr: 'error: no comment of yours on a.ts is on GitLab yet\n' },
   })
@@ -1184,7 +1184,7 @@ test('"I posted it, check it" with no comment on GitLab yet warns and says what 
   await ui.unmount()
 })
 
-test('"I posted it, check it" with several comments of yours unlinked asks the model to link the right one', async ($, on) => {
+test('"Check my post" with several comments of yours unlinked asks the model to link the right one', async ($, on) => {
   const many = world(on, [stateOf('t3', [topic('t3', 'draft', 'abc')])], {
     link: { exitCode: 1, stdout: '', stderr: 'error: 2 comments of yours on a.ts are not linked to a topic — pass the discussion id of the one for t3 (see `candidates`)\n' },
   })
@@ -1195,14 +1195,14 @@ test('"I posted it, check it" with several comments of yours unlinked asks the m
   expect(many.prompts).toEqual(['I posted my own comment for t3, and 2 comments of yours on a.ts are not linked to a topic: link the right one to t3.'])
 })
 
-test('"I posted it, check it" links the comment, and the agent checks it before the round moves on', async ($, on) => {
+test('"Check my post" links the comment, and the agent checks it before the round moves on', async ($, on) => {
   const w = world(on, [stateOf('t3', [topic('t3', 'draft', 'abc')]), stateOf('t3', [Object.assign(topic('t3', 'open'), { post_check: true })])])
   await openReview($, w, view('t3'))
   const ui = await mountStep($, 'terminal')
   await ui.press({ key: 'link' })
   expect(w.prompts).toHaveLength(1)
   expect(w.prompts[0]).toContain('Run `posted t3`')
-  expect(await labels(ui)).toEqual(['Check again', 'Keep it as posted', 'Next topic', 'Show sidebar'])
+  expect(await labels(ui)).toEqual(['Check again', 'Keep as posted', 'Next', 'Show sidebar'])
   await ui.press({ key: 'keep' })
   await ui.unmount()
   expect(w.ran.map(r => r.argv.slice(2).join(' '))).toContain('posted t3 --ok --iid 42')
@@ -1356,7 +1356,7 @@ test("the step's buttons sit on the newest card, without keys, and the band keep
   const w = world(on, [stateOf('t1', [topic('t1', 'draft')])])
   await openReview($, w, view('t1'))
   const card = await $.ui.mount(cardRow('tu-open', view('t1')))
-  expect(await labels(card)).toEqual(['Draft comment', 'Drop', 'Explain', 'Next topic'])
+  expect(await labels(card)).toEqual(['Comment', 'Drop', 'Explain', 'Next'])
   expect((await card.findAll({ type: 'Button' })).every(b => b.props.hotkey === undefined)).toBe(true)
   await card.unmount()
   const band = await $.ui.mount({ ...BAND, surface: 'terminal' })
@@ -1368,8 +1368,24 @@ test("the step's buttons sit on the newest card, without keys, and the band keep
   expect(await labels(old)).toEqual([])
   await old.unmount()
   const now = await $.ui.mount(cardRow('tu-2', view('t1')))
-  expect(await labels(now)).toEqual(['Draft comment', 'Drop', 'Explain', 'Next topic'])
+  expect(await labels(now)).toEqual(['Comment', 'Drop', 'Explain', 'Next'])
   await now.unmount()
+})
+
+test("a pushed fix's card leaves the diff viewer's key to the sidebar beside it, and keeps it where there is none", async ($, on) => {
+  const code = codeOf(20, [3, 3], { mode: 'pushed', file: 'src/a.ts', commented: 'src/a.ts', fix_files: [['src/a.ts', 2, 1], ['src/b.ts', 1, 0]] })
+  const w = world(on, [reworkState('t1', [reworkTopic('t1', 'reply', { pushed: true, fix_kept: true })])], { code: { stdout: JSON.stringify(code) } })
+  await openRework($, w, reworkView('t1'))
+  const at = { viewport: { columns: 120, rows: 50, isFullscreen: true } }
+  w.panes.push('review-ui-topics')
+  const beside = await $.ui.mount({ ...(cardRow('tu-open', reworkView('t1')) as object), ...at } as never)
+  expect(await labels(beside)).not.toContain('Show fix in hunk')
+  expect(await labels(beside)).toContain('“Fixed” + resolve')
+  await beside.unmount()
+  w.panes.splice(0)                                   // the sidebar closed: the card is the one place for it
+  const alone = await $.ui.mount({ ...(cardRow('tu-open', reworkView('t1')) as object), ...at } as never)
+  expect(await labels(alone)).toContain('Show fix in hunk')
+  await alone.unmount()
 })
 
 test('the recommended answer is the first button and drawn as the primary, on a card and in the band', async ($, on) => {
@@ -1381,16 +1397,16 @@ test('the recommended answer is the first button and drawn as the primary, on a 
     (await ui.findAll({ type: 'Text' })).map(t => t.props.backgroundColor).filter(Boolean)
   const card = await $.ui.mount(cardRow('tu-open', view('t1')))
   const onCard = await card.findAll({ type: 'Button' })
-  expect(onCard[0]?.props.label).toBe('Draft comment')
+  expect(onCard[0]?.props.label).toBe('Comment')
   const fills = await fillOf(card)
   expect(fills[0]).not.toBe(fills[1])
   expect(new Set(fills.slice(1)).size).toBe(1)
-  expect(JSON.stringify(await card.findAll({ type: 'Text' }))).toContain('\u{F03EB} Draft comment')
+  expect(JSON.stringify(await card.findAll({ type: 'Text' }))).toContain('\u{F03EB} Comment')
   await card.unmount()
   // A step with no card of its own keeps them in the band, drawn the same way.
   const band = await $.ui.mount({ ...BAND, surface: 'terminal' })
   const first = (await band.findAll({ type: 'Button' }))[0]
-  if (first?.props.label === 'Draft comment') expect((await fillOf(band))[0]).toBe(fills[0])
+  if (first?.props.label === 'Comment') expect((await fillOf(band))[0]).toBe(fills[0])
   await band.unmount()
 })
 
@@ -1402,7 +1418,7 @@ test("a step whose card is not the newest one keeps its buttons in the band", as
   expect(await labels(card)).toEqual([])
   await card.unmount()
   const band = await $.ui.mount({ ...BAND, surface: 'terminal' })
-  expect(await labels(band)).toEqual(['Draft comment', 'Drop', 'Explain', 'Next topic', 'Show sidebar'])
+  expect(await labels(band)).toEqual(['Comment', 'Drop', 'Explain', 'Next', 'Show sidebar'])
   await band.unmount()
 })
 
@@ -1555,7 +1571,7 @@ test('rework-mr: a proposed plan is agreed with one press, no model turn', async
   const w = world(on, [reworkState('t1', [t1]), reworkState('t2', [{ ...t1, step: 'fix' }, reworkTopic('t2', 'plan')])])
   await openRework($, w, reworkView('t1'))
   const ui = await mountStep($, 'terminal')
-  expect(await labels(ui)).toEqual(['Agree plan', 'Agree and reply', 'Reply instead…', 'Explain', 'Next topic', 'Show sidebar'])
+  expect(await labels(ui)).toEqual(['Agree plan', 'Agree and reply', 'Reply instead…', 'Explain', 'Next', 'Show sidebar'])
   await ui.press({ key: 'agree' })
   await ui.unmount()
   expect(w.ran.map(r => r.argv.slice(2).join(' '))).toContain('agree t1 --iid 42')
@@ -1568,7 +1584,7 @@ test('rework-mr: a plan that answers the reviewer now recommends agreeing with t
   const w = world(on, [reworkState('t1', [t1])])
   await openRework($, w, reworkView('t1'))
   const ui = await mountStep($, 'terminal')
-  expect(await labels(ui)).toEqual(['Agree and reply', 'Agree plan', 'Reply instead…', 'Explain', 'Next topic', 'Show sidebar'])
+  expect(await labels(ui)).toEqual(['Agree and reply', 'Agree plan', 'Reply instead…', 'Explain', 'Next', 'Show sidebar'])
   await ui.unmount()
 })
 
@@ -1587,7 +1603,7 @@ test('rework-mr: a reply stored as the plan is at the reply step, its draft on t
   const w = world(on, [reworkState('t1', [reworkTopic('t1', 'reply', { draft: 'Not in this MR.', outcome: 'push-back' })])])
   await openRework($, w, reworkView('t1'))
   const ui = await mountStep($, 'terminal')
-  expect((await labels(ui)).slice(0, 2)).toEqual(['Post', 'Post and resolve'])
+  expect((await labels(ui)).slice(0, 2)).toEqual(['Post', 'Post + resolve'])
   await ui.unmount()
 })
 
@@ -1595,7 +1611,7 @@ test('rework-mr: a topic with no plan yet offers its research, or a reply instea
   const w = world(on, [reworkState('t1', [reworkTopic('t1', 'plan')])])
   await openRework($, w, reworkView('t1'))
   const ui = await mountStep($, 'terminal')
-  expect(await labels(ui)).toEqual(['Propose a plan', 'Reply instead…', 'Next topic', 'Show sidebar'])
+  expect(await labels(ui)).toEqual(['Propose a plan', 'Reply instead…', 'Next', 'Show sidebar'])
   await ui.unmount()
 })
 
@@ -1603,7 +1619,7 @@ test('rework-mr: making the fix offers no Discuss…, the prompt takes that', as
   const w = world(on, [reworkState('t1', [reworkTopic('t1', 'fix')])])
   await openRework($, w, reworkView('t1'))
   const ui = await mountStep($, 'terminal')
-  expect(await labels(ui)).toEqual(['Make the fix', 'Next topic', 'Show sidebar'])
+  expect(await labels(ui)).toEqual(['Fix it', 'Next', 'Show sidebar'])
   await ui.unmount()
 })
 
@@ -1624,7 +1640,7 @@ test('rework-mr: a plan that is itself a reply is drafted with one press, or tur
   const w = world(on, [reworkState('t3', [t3], { pass: 'plan' }), reworkState(null, [{ ...t3, step: 'reply' }], { pass: 'plan' })])
   await openRework($, w, reworkView('t3'))
   const ui = await mountStep($, 'terminal')
-  expect(await labels(ui)).toEqual(['Draft reply', 'Fix instead…', 'Explain', 'Next to plan', 'Show sidebar'])
+  expect(await labels(ui)).toEqual(['Reply', 'Fix instead…', 'Explain', 'Next', 'Show sidebar'])
   await ui.press({ key: 'draft-reply' })
   await ui.unmount()
   expect(w.ran.map(r => r.argv.slice(2).join(' '))).toContain('agree t3 --iid 42')
@@ -1636,13 +1652,13 @@ test('rework-mr: an agreed topic opened again in the plan pass offers a reply no
   const w = world(on, [reworkState('t1', [reworkTopic('t1', 'fix'), reworkTopic('t2', 'plan')], { pass: 'plan' })])
   await openRework($, w, reworkView('t1'))
   const ui = await mountStep($, 'terminal')
-  expect(await labels(ui)).toEqual(['Reply now', 'Change plan…', 'Next to plan', 'Show sidebar'])
+  expect(await labels(ui)).toEqual(['Reply now', 'Change plan…', 'Next', 'Show sidebar'])
   await ui.press({ key: 'replan' })
   await ui.unmount()
   expect(w.filled).toEqual(['Change the plan for t1: '])
 })
 
-test('rework-mr: Next to plan moves on to the next topic and puts nothing off', async ($, on) => {
+test('rework-mr: Next in the plan pass moves on to the next topic and puts nothing off', async ($, on) => {
   const w = world(on, [reworkState('t1', [reworkTopic('t1', 'fix'), reworkTopic('t2', 'plan')], { pass: 'plan' }),
     reworkState('t2', [reworkTopic('t1', 'fix'), reworkTopic('t2', 'plan')], { pass: 'plan' })])
   await openRework($, w, reworkView('t1'))
@@ -1654,11 +1670,11 @@ test('rework-mr: Next to plan moves on to the next topic and puts nothing off', 
   expect(ran.some(x => x.startsWith('later'))).toBe(false)
 })
 
-test('rework-mr: a new thread in the fix pass waits for its plan: Next to fix', async ($, on) => {
+test('rework-mr: a new thread in the fix pass waits for its plan: Next', async ($, on) => {
   const w = world(on, [reworkState('t3', [reworkTopic('t3', 'plan', { proposal: { says: 'needs', outcome: 'fix', plan: 'Rename it.' } })], { pass: 'fix' })])
   await openRework($, w, reworkView('t3'))
   const ui = await mountStep($, 'terminal')
-  expect((await labels(ui)).slice(-2)).toEqual(['Next to fix', 'Show sidebar'])
+  expect((await labels(ui)).slice(-2)).toEqual(['Next', 'Show sidebar'])
   await ui.unmount()
 })
 
@@ -1666,7 +1682,7 @@ test('rework-mr: once a reply went up ahead of the fix, the planned topic offers
   const w = world(on, [reworkState('t1', [reworkTopic('t1', 'fix', { early_posted: true }), reworkTopic('t2', 'plan')], { pass: 'plan' })])
   await openRework($, w, reworkView('t1'))
   const ui = await mountStep($, 'terminal')
-  expect(await labels(ui)).toEqual(['Change plan…', 'Next to plan', 'Show sidebar'])
+  expect(await labels(ui)).toEqual(['Change plan…', 'Next', 'Show sidebar'])
   await ui.unmount()
 })
 
@@ -1674,7 +1690,7 @@ test('rework-mr: a reply drafted ahead of the fix is posted without resolving, i
   const w = world(on, [reworkState('t1', [reworkTopic('t1', 'fix', { draft: 'v1', early: true })], { pass: 'plan' }), reworkState(null, [reworkTopic('t1', 'fix')], { pass: 'plan' })])
   await openRework($, w, reworkView('t1', 'v1'))
   const ui = await mountStep($, 'terminal')
-  expect(await labels(ui)).toEqual(['Post', 'I posted it, check it', 'Next to plan', 'Show sidebar'])
+  expect(await labels(ui)).toEqual(['Post', 'Check my post', 'Next', 'Show sidebar'])
   await ui.press({ key: 'post' })
   await ui.unmount()
   expect(w.ran.find(r => r.argv[2] === 'post')?.argv.slice(2).join(' ')).toBe('post t1 --expect v1 --iid 42')
@@ -1805,6 +1821,36 @@ test("review-mr: the author's pushed fix is the sidebar's files area under its o
   await panel.unmount()
 })
 
+test("the list's line is the MR's: its number and title, its marks and the news after a stretch of line, the legend's key at the end", async ($, on) => {
+  const mr = { state: 'opened', auto_merge: false, approved_by: [{ name: 'Jan', me: false }] }
+  const w = world(on, [reworkState('t1', [reworkTopic('t1', 'plan'), reworkTopic('t2', 'plan', { inbox: 'new' })], { mr, url: 'http://gl/g/p/-/merge_requests/42' })])
+  await openRework($, w, reworkView('t1'))
+  const panel = await $.ui.mount({ ...PANEL, surface: 'terminal' })
+  const texts = (await panel.findAll({ type: 'Text' })).map(t => String(t.text ?? ''))
+  expect(texts).not.toContain('Topics')
+  const line = JSON.stringify((await panel.find({ type: 'Box', key: 'list-line' }))?.children ?? [])
+  for (const part of ['!42', ' Add a widget cache', ' ── ', '\u{f0514}', '· ', '1 new', 'legend']) expect(line).toContain(part)
+  expect(line.indexOf('1 new')).toBeGreaterThan(line.indexOf(' ── '))
+  expect(line.indexOf('legend')).toBeGreaterThan(line.indexOf('1 new'))
+  await panel.unmount()
+})
+
+test("a title too long for the list's line is cut, and the line keeps to the sidebar's width", async ($, on) => {
+  const title = 'Warn when the recipient tax identifier equals the supplier tax identifier on every document'
+  const w = world(on, [JSON.stringify({ ...JSON.parse(reworkState('t1', [reworkTopic('t1', 'plan'), reworkTopic('t2', 'plan', { inbox: 'new' })])), title })])
+  await openRework($, w, reworkView('t1'))
+  const panel = await $.ui.mount({ ...PANEL, surface: 'terminal' })
+  const texts = (await panel.findAll({ type: 'Text' })).map(t => String(t.text ?? ''))
+  const cut = texts.find(t => t.includes('Warn when'))
+  expect(cut?.endsWith('…')).toBe(true)
+  // The line within the 60 columns: its title, the number, the marks and the dashes around them.
+  // Its texts from the first dashes to the last, and the legend's key, a button, one cell.
+  const from = texts.indexOf('── ')
+  const parts = texts.slice(from, texts.indexOf(' ─', texts.indexOf(cut ?? '')) + 3)
+  expect([...parts.join('')].length + 1).toBe(60)
+  await panel.unmount()
+})
+
 test('rework-mr: a topic with news is marked in the list, as in review-mr, and the heading counts it', async ($, on) => {
   const w = world(on, [reworkState('t1', [reworkTopic('t1', 'plan'), reworkTopic('t2', 'plan', { inbox: 'new' })])])
   await openRework($, w, reworkView('t1'))
@@ -1812,7 +1858,6 @@ test('rework-mr: a topic with news is marked in the list, as in review-mr, and t
   const texts = await panel.findAll({ type: 'Text' })
   expect(texts.find(t => t.text === '\u{f09de} ')?.props.color).toBe('yellow')
   expect(texts.find(t => t.text === '1 new')?.props.color).toBe('yellow')
-  expect(texts.find(t => t.text === '· ')?.props.dimColor).toBe(true)
   await panel.unmount()
 })
 
@@ -1852,7 +1897,7 @@ test('rework-mr: a turn that moved the rework on without a card brings up the cu
   await $.turn.complete({ answer: 'pushed' } as never)
   expect(w.placed.length).toBe(1)
   const ui = await mountStep($, 'terminal')
-  expect(await labels(ui)).toContain('Make the fix')
+  expect(await labels(ui)).toContain('Fix it')
   await ui.unmount()
 })
 
@@ -1883,7 +1928,7 @@ test('rework-mr: a comment that asks nothing is seen, not planned', async ($, on
   const w = world(on, [reworkState('t1', [reworkTopic('t1', 'plan', { proposal: { says: 'fyi' } })])])
   await openRework($, w, reworkView('t1'))
   const ui = await mountStep($, 'terminal')
-  expect(await labels(ui)).toEqual(['Seen', 'Reply…', 'Next topic', 'Show sidebar'])
+  expect(await labels(ui)).toEqual(['Seen', 'Reply…', 'Next', 'Show sidebar'])
   await ui.press({ key: 'handled-Seen' })
   await ui.unmount()
   expect(w.ran.map(r => r.argv.slice(2).join(' '))).toContain('wait t1 --iid 42')
@@ -1903,7 +1948,7 @@ test('rework-mr: with the fix open in the diff viewer, its notes are read on a p
   const w = world(on, [reworkState('t1', [reworkTopic('t1', 'fixed', { checks: 'passed' })], { hunk: { open: true, notes: 0 } })])
   await openRework($, w, reworkView('t1'))
   const ui = await mountStep($, 'terminal')
-  expect(await labels(ui)).toEqual(['Ack and push', 'Check hunk comments', 'Show sidebar'])
+  expect(await labels(ui)).toEqual(['Ack and push', 'Read hunk notes', 'Show sidebar'])
   await ui.unmount()
 })
 
@@ -1911,7 +1956,7 @@ test('rework-mr: once the person left notes in the diff viewer, reading them com
   const w = world(on, [reworkState('t1', [reworkTopic('t1', 'fixed', { checks: 'passed' })], { hunk: { open: true, notes: 2 } })])
   await openRework($, w, reworkView('t1'))
   const ui = await mountStep($, 'terminal')
-  expect(await labels(ui)).toEqual(['Check hunk comments', 'Ack and push', 'Show sidebar'])
+  expect(await labels(ui)).toEqual(['Read hunk notes', 'Ack and push', 'Show sidebar'])
   await ui.press({ key: 'hunk-notes' })
   await ui.unmount()
   expect(w.prompts[0]).toMatch(/hunk-notes.*Pushing is my press/)
@@ -1929,7 +1974,7 @@ test('rework-mr: a differing fix looked at in hunk, with no notes left, is pushe
   const w = world(on, [reworkState('t1', [reworkTopic('t1', 'fixed', { checks: 'passed', differs: true })], { hunk: { open: true, notes: 0 } })])
   await openRework($, w, reworkView('t1'))
   const ui = await mountStep($, 'terminal')
-  expect(await labels(ui)).toEqual(['Ack and push', 'Check hunk comments', 'Show sidebar'])
+  expect(await labels(ui)).toEqual(['Ack and push', 'Read hunk notes', 'Show sidebar'])
   await ui.unmount()
 })
 
@@ -1962,7 +2007,7 @@ test('rework-mr: after the push, a "Fixed" resolved or not, or a reply', async (
   const w = world(on, [reworkState('t1', [reworkTopic('t1', 'reply', { pushed: true })])])
   await openRework($, w, reworkView('t1'))
   const ui = await mountStep($, 'terminal')
-  expect(await labels(ui)).toEqual(['Post “Fixed” and resolve', 'Post “Fixed”', 'Draft reply…', 'Next topic', 'Show sidebar'])
+  expect(await labels(ui)).toEqual(['“Fixed” + resolve', '“Fixed”', 'Reply…', 'Next', 'Show sidebar'])
   await ui.press({ key: 'post-fixed' })
   await ui.unmount()
   expect(w.ran.find(r => r.argv[2] === 'post')?.argv.slice(2).join(' ')).toBe('post t1 --fixed --iid 42')
@@ -1972,7 +2017,7 @@ test('rework-mr: a pushed fix kept in git is shown in the diff viewer on a press
   const w = world(on, [reworkState('t1', [reworkTopic('t1', 'reply', { pushed: true, fix_kept: true })])])
   await openRework($, w, reworkView('t1'))
   const ui = await mountStep($, 'terminal')
-  expect(await labels(ui)).toEqual(['Post “Fixed” and resolve', 'Post “Fixed”', 'Draft reply…', 'Show fix in hunk', 'Next topic', 'Show sidebar'])
+  expect(await labels(ui)).toEqual(['“Fixed” + resolve', '“Fixed”', 'Reply…', 'Show fix in hunk', 'Next', 'Show sidebar'])
   await ui.press({ key: 'hunk-pushed' })
   await ui.unmount()
   expect(w.ran.map(r => r.argv.slice(2).join(' '))).toContain('hunk-show t1 --pushed --iid 42')
@@ -1999,7 +2044,7 @@ test('rework-mr: no way on to a next topic while no round runs', async ($, on) =
   const w = world(on, [reworkState('t1', [reworkTopic('t1', 'reply', { pushed: true }), reworkTopic('t2', 'plan')], { in_round: false, round: ['t1', 't2'] })])
   await openRework($, w, reworkView('t1'))
   const ui = await mountStep($, 'terminal')
-  expect(await labels(ui)).toEqual(['Post “Fixed” and resolve', 'Post “Fixed”', 'Draft reply…', 'Show sidebar'])
+  expect(await labels(ui)).toEqual(['“Fixed” + resolve', '“Fixed”', 'Reply…', 'Show sidebar'])
   await ui.unmount()
 })
 
@@ -2007,7 +2052,7 @@ test('rework-mr: after a push that differs from the plan, the reply comes first'
   const w = world(on, [reworkState('t1', [reworkTopic('t1', 'reply', { pushed: true, differs: true })])])
   await openRework($, w, reworkView('t1'))
   const ui = await mountStep($, 'terminal')
-  expect((await labels(ui))[0]).toBe('Draft reply…')
+  expect((await labels(ui))[0]).toBe('Reply…')
   await ui.unmount()
 })
 
@@ -2015,7 +2060,7 @@ test('rework-mr: after the push of a plan that answers the reviewer, with nothin
   const w = world(on, [reworkState('t1', [reworkTopic('t1', 'reply', { pushed: true, answer_now: true })])])
   await openRework($, w, reworkView('t1'))
   const ui = await mountStep($, 'terminal')
-  expect((await labels(ui))[0]).toBe('Draft reply…')
+  expect((await labels(ui))[0]).toBe('Reply…')
   await ui.unmount()
 })
 
@@ -2023,7 +2068,7 @@ test('rework-mr: a reply drafted after the fix never resolves; one with no fix m
   const w = world(on, [reworkState('t1', [reworkTopic('t1', 'reply', { draft: 'v3', pushed: true })])])
   await openRework($, w, reworkView('t1', 'v3'))
   const ui = await mountStep($, 'terminal')
-  expect(await labels(ui)).toEqual(['Post', 'I posted it, check it', 'Next topic', 'Show sidebar'])
+  expect(await labels(ui)).toEqual(['Post', 'Check my post', 'Next', 'Show sidebar'])
   await ui.unmount()
 })
 
@@ -2060,7 +2105,7 @@ test('the last topic of a round offers no way on; its card closes with a ✕ ins
   const w = world(on, [stateOf('t1', [topic('t1', 'needs_ack')], { in_round: true, round: ['t1'] }), stateOf(null, [topic('t1', 'needs_ack')])])
   await openReview($, w, out)
   const card = await $.ui.mount(cardRow('tu-open', out))
-  expect(await labels(card)).not.toContain('Next topic')
+  expect(await labels(card)).not.toContain('Next')
   await card.press({ key: 'card-close' })
   await card.unmount()
   expect(w.ran.map(r => r.argv.slice(2).join(' '))).toContain('leave --iid 42')
@@ -2073,7 +2118,7 @@ test('a posted comment waiting on its author: its card offers to keep waiting, f
   await openReview($, w, out)
   const card = await $.ui.mount(cardRow('tu-open', out))
   expect((await card.findAll({ type: 'Button' })).map(b => b.key)).toEqual(['card-close', 'keep-waiting', 'follow', 'resolve'])
-  expect(await labels(card)).toEqual(['\u{F0156}', 'Keep waiting', 'Draft follow-up', 'Accept anyway'])
+  expect(await labels(card)).toEqual(['\u{F0156}', 'Keep waiting', 'Follow up', 'Accept anyway'])
   await card.press({ key: 'keep-waiting' })
   await card.unmount()
   expect(w.ran.map(r => r.argv.slice(2).join(' '))).toContain('leave --iid 42')
@@ -2102,7 +2147,7 @@ test('a card drawn with a draft that is gone since shows no draft and no Copy', 
   await openReview($, w, out)
   const card = await $.ui.mount(cardRow('tu-open', out))
   const md = (await card.findAll({ type: 'Markdown' })).map(m => String(m.props.text)).join('\n')
-  expect(md).not.toContain('Draft follow-up')                      // the heading, not the button
+  expect(md).not.toContain('Follow up')                      // the heading, not the button
   expect(md).not.toContain('Did you forget?')
   expect(md).toContain('Resolved on GitLab by Jonas')
   expect((await card.findAll({ type: 'Button' })).some(b => String(b.key).startsWith('copy-'))).toBe(false)
@@ -2140,7 +2185,7 @@ test('a posted comment waiting on its author, with a follow-up drafted, offers t
   const w = world(on, [stateOf('t1', [topic('t1', 'open', 'v1')], { in_round: true })])
   await openReview($, w, view('t1', 'v1'))
   const ui = await mountStep($, 'terminal')
-  expect((await labels(ui)).slice(0, 3)).toEqual(['Post', 'I posted it, check it', 'Keep waiting'])
+  expect((await labels(ui)).slice(0, 3)).toEqual(['Post', 'Check my post', 'Keep waiting'])
   await ui.unmount()
 })
 
@@ -2192,7 +2237,7 @@ test('rework-mr: a drafted reply offers Post first, Post posts the version its c
   const w = world(on, [reworkState('t1', [reworkTopic('t1', 'reply', { draft: 'v3' })])])
   await openRework($, w, reworkView('t1', 'v3'))
   const ui = await mountStep($, 'terminal')
-  expect(await labels(ui)).toEqual(['Post', 'Post and resolve', 'I posted it, check it', 'Next topic', 'Show sidebar'])
+  expect(await labels(ui)).toEqual(['Post', 'Post + resolve', 'Check my post', 'Next', 'Show sidebar'])
   await ui.press({ key: 'post-resolve' })
   await ui.unmount()
   const post = w.ran.find(r => r.argv[2] === 'post')
@@ -2261,7 +2306,7 @@ test('a comment posted by hand that no longer holds: Apply edit first, as a pres
     { posted: { stdout: 'edited the posted comment of t3: https://gl/g/p/-/merge_requests/42#note_7\n' } })
   await openReview($, w, view('t3'))
   const ui = await mountStep($, 'terminal')
-  expect(await labels(ui)).toEqual(['Apply edit', 'Check again', 'Keep it as posted', 'Next topic', 'Show sidebar'])
+  expect(await labels(ui)).toEqual(['Apply edit', 'Check again', 'Keep as posted', 'Next', 'Show sidebar'])
   await ui.press({ key: 'apply-edit' })
   await ui.unmount()
   const ran = w.ran.find(r => r.argv[2] === 'posted')
@@ -2273,7 +2318,7 @@ test('rework-mr: a reply posted by hand that no longer holds offers the same car
   const w = world(on, [reworkState('t2', [reworkTopic('t2', 'reply', { draft: 'v3', post_differs: true })])])
   await openRework($, w, reworkView('t2', 'v3'))
   const ui = await mountStep($, 'terminal')
-  expect(await labels(ui)).toEqual(['Apply edit', 'Check again', 'Keep it as posted', 'Next topic', 'Show sidebar'])
+  expect(await labels(ui)).toEqual(['Apply edit', 'Check again', 'Keep as posted', 'Next', 'Show sidebar'])
   await ui.press({ key: 'check-again' })
   await ui.unmount()
   expect(w.prompts[0]).toMatch(/^I edited the comment for t2 on GitLab\. .*posted t2 --differs/)
@@ -2283,7 +2328,7 @@ test('rework-mr: a reply ahead of the fix posted by hand that no longer holds ge
   const w = world(on, [reworkState('t2', [reworkTopic('t2', 'fix', { early: true, draft: 'v3', post_differs: true })], { pass: 'plan' })])
   await openRework($, w, reworkView('t2', 'v3'))
   const ui = await mountStep($, 'terminal')
-  expect((await labels(ui)).slice(0, 3)).toEqual(['Apply edit', 'Check again', 'Keep it as posted'])
+  expect((await labels(ui)).slice(0, 3)).toEqual(['Apply edit', 'Check again', 'Keep as posted'])
   expect(await labels(ui)).not.toContain('Post')
   await ui.unmount()
 })
@@ -2392,7 +2437,7 @@ test('a topic a merge left: Summarize, or Drop it', async ($, on) => {
   const w = world(on, [stateOf('t1', [Object.assign(topic('t1', 'open'), { left: true })], { mr: { state: 'merged' } })])
   await openReview($, w, view('t1'))
   const ui = await mountStep($, 'terminal')
-  expect(await labels(ui)).toEqual(['Summarize', 'Drop', 'Next topic', 'Show sidebar'])
+  expect(await labels(ui)).toEqual(['Summarize', 'Drop', 'Next', 'Show sidebar'])
   await ui.press({ key: 'summarize' })
   await ui.unmount()
   expect(w.prompts[0]).toMatch(/^!42 is merged, and t1 was not settled\. Summarize/)
@@ -2451,16 +2496,16 @@ test('a merged MR: Accept closes the topic, and any topic it left can be closed 
 
 test('every step button has its icon, one per action in both skills', () => {
   // Every label a step offers, in either skill: a label missing here draws without an icon.
-  const labels = ['Agree plan', 'Agree and reply', 'Reply…', 'Reply instead…', 'Reply now', 'Draft reply', 'Draft comment',
-    'Draft follow-up', 'Follow up', 'Make the fix', 'Fix instead…', 'Change plan…', 'Propose a plan', 'Explain',
-    'Explain further', 'Analyse more', 'Post', 'Send follow-up', 'Post and resolve',
-    'Post “Fixed” and resolve', 'I posted it, check it', 'Check again', 'Keep it as posted', 'Review in hunk',
+  const labels = ['Agree plan', 'Agree and reply', 'Reply…', 'Reply instead…', 'Reply now', 'Reply', 'Comment',
+    'Follow up', 'Follow up', 'Fix it', 'Fix instead…', 'Change plan…', 'Propose a plan', 'Explain',
+    'Explain further', 'Analyse more', 'Post', 'Send follow-up', 'Post + resolve',
+    '“Fixed” + resolve', 'Check my post', 'Check again', 'Keep as posted', 'Review in hunk',
     'Redo…', 'Run the checks', 'Fix the checks', 'Push', 'Push and resolve', 'Drop', 'Summarize', 'Merge into t3',
-    'Keep separate', 'Link as t3\'s comment', 'Judge', 'Ack', 'Accept', 'Accept & resolve', 'Accept anyway',
-    'Not good enough…', 'Wait for author', 'Nothing to add', 'Seen', 'Generate explainer', 'Skip explainer',
-    'My review is done', 'Next undecided comment', 'Apply edit']
+    'Keep separate', 'Link as t3\'s comment', 'Judge', 'Ack', 'Accept', 'Accept + resolve', 'Accept anyway',
+    'Not enough…', 'Wait for author', 'Nothing to add', 'Seen', 'Generate explainer', 'Skip explainer',
+    'My review is done', 'Next', 'Apply edit']
   expect(labels.filter(l => !iconOf(l))).toEqual([])
   // The same action, the same icon.
   expect(iconOf('Reply now')).toBe(iconOf('Reply…'))
-  expect(iconOf('Post “Fixed” and resolve')).toBe(iconOf('Post and resolve'))
+  expect(iconOf('“Fixed” + resolve')).toBe(iconOf('Post + resolve'))
 })

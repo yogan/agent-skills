@@ -143,22 +143,24 @@ const ordered = (bs: BandButton[]): BandButton[] => {
 const ICON: Record<string, string> = {
   'Agree plan': '\u{F012C}', // md-check
   'Agree and reply': '\u{F0180}', // md-comment_check_outline
-  'Reply…': '\u{F045A}', 'Reply instead…': '\u{F045A}', 'Reply now': '\u{F045A}', // md-reply
-  'Draft reply': '\u{F03EB}', 'Draft comment': '\u{F03EB}', 'Draft follow-up': '\u{F03EB}', 'Follow up': '\u{F03EB}', 'Draft reply…': '\u{F03EB}', // md-pencil
-  'Make the fix': '\u{F05B7}', 'Fix instead…': '\u{F05B7}', // md-wrench
+  // Every press that has a text written, not posted: the pencil says it, so no label needs
+  // to say "Draft".
+  'Reply': '\u{F03EB}', 'Reply…': '\u{F03EB}', 'Reply instead…': '\u{F03EB}', 'Reply now': '\u{F03EB}', // md-pencil
+  'Comment': '\u{F03EB}', 'Follow up': '\u{F03EB}', // md-pencil
+  'Fix it': '\u{F05B7}', 'Fix instead…': '\u{F05B7}', // md-wrench
   'Change plan…': '\u{F04E1}', // md-swap_horizontal
   'Propose a plan': '\u{F0982}', // md-map_outline
   'Explain': '\u{F1739}', 'Explain further': '\u{F1739}', 'Analyse more': '\u{F1739}', // md-chat_question_outline
-  'Next to plan': '\u{F0BB1}', 'Next to fix': '\u{F0BB1}', 'Next topic': '\u{F0BB1}', 'Next undecided comment': '\u{F0BB1}', // md-page_next_outline
-  'Post': '\u{F048A}', 'Send follow-up': '\u{F048A}', 'Post “Fixed”': '\u{F048A}', // md-send
-  'Post and resolve': '\u{F1161}', 'Post “Fixed” and resolve': '\u{F1161}', // md-send_check
+  'Next': '\u{F0BB1}', // md-page_next_outline
+  'Post': '\u{F048A}', 'Send follow-up': '\u{F048A}', '“Fixed”': '\u{F048A}', // md-send
+  'Post + resolve': '\u{F1161}', '“Fixed” + resolve': '\u{F1161}', // md-send_check
   'Copy': '\u{F0CFA}', // md-clipboard_arrow_right_outline
-  'I posted it, check it': '\u{F0008}', // md-account_check
+  'Check my post': '\u{F0008}', // md-account_check
   'Check again': '\u{F0450}', // md-refresh
   'Apply edit': '\u{F1A7D}', // md-text_box_edit_outline
-  'Keep it as posted': '\u{F012C}', // md-check
+  'Keep as posted': '\u{F012C}', // md-check
   'Review in hunk': '\u{F08AA}', 'Show fix in hunk': '\u{F08AA}', 'Show in hunk': '\u{F08AA}', // md-file_compare
-  'Check hunk comments': '\u{F0A3D}', // md-comment_search_outline
+  'Read hunk notes': '\u{F0A3D}', // md-comment_search_outline
   'Redo…': '\u{F099B}', // md-restore
   'Run the checks': '\u{F0096}', 'Fix the checks': '\u{F0096}', // md-flask_outline
   'Push': '\u{F0552}', 'Push and resolve': '\u{F0552}', 'Ack and push': '\u{F0552}', // md-upload
@@ -166,8 +168,8 @@ const ICON: Record<string, string> = {
   'Summarize': '\u{F0279}', // md-format_list_bulleted
   'Keep separate': '\u{F093C}', // md-arrow_split_vertical
   'Judge': '\u{F029B}', // md-gavel
-  'Ack': '\u{F0514}', 'Ack & resolve': '\u{F0514}', 'Accept': '\u{F0514}', 'Accept & resolve': '\u{F0514}', 'Accept anyway': '\u{F0514}', // md-thumb_up_outline
-  'Not good enough…': '\u{F0512}', // md-thumb_down_outline
+  'Ack': '\u{F0514}', 'Ack + resolve': '\u{F0514}', 'Accept': '\u{F0514}', 'Accept + resolve': '\u{F0514}', 'Accept anyway': '\u{F0514}', // md-thumb_up_outline
+  'Not enough…': '\u{F0512}', // md-thumb_down_outline
   'Wait for author': '\u{F051F}', 'Keep waiting': '\u{F051F}', // md-timer_sand
   'Nothing to add': '\u{F0855}', // md-check_outline
   'Seen': '\u{F0D05}', // md-eye_check_outline
@@ -194,7 +196,7 @@ export const buttonsFor = (review: ReviewState | null): BandButton[] => {
   if (!topic || buttons === null || review?.skill !== 'review-mr' || stepOf(topic) === 'watch') return ordered(buttons ?? [])
   // The author's push that changed its lines, to look at: never the recommendation.
   const look = topic.fix_kept && !topic.peer ? [showFix] : []
-  return ordered([...buttons, ...look, ...(hasNext(review, topic.id) ? [{ key: 'next', label: 'Next topic', press: { kind: 'next' } } as BandButton] : [])])
+  return ordered([...buttons, ...look, ...(hasNext(review, topic.id) ? [{ key: 'next', label: 'Next', press: { kind: 'next' } } as BandButton] : [])])
 }
 
 // The step's own buttons; null where the step is not a topic's (the person's own review, a
@@ -246,13 +248,13 @@ const stepButtons = (review: ReviewState | null): BandButton[] | null => {
     case 'topic':
       return [
         explain(t, review),
-        { key: 'draft', label: 'Draft comment', press: ask(`Draft the comment for ${t}${inLang(review)}.`), isPrimary: true },
+        { key: 'draft', label: 'Comment', press: ask(`Draft the comment for ${t}${inLang(review)}.`), isPrimary: true },
         { key: 'drop', label: 'Drop', press: { kind: 'drop' } },
       ]
     case 'draft':
       return [
         { key: 'post', label: 'Post', press: { kind: 'post' }, isPrimary: true },
-        { key: 'link', label: 'I posted it, check it', press: { kind: 'link' } },
+        { key: 'link', label: 'Check my post', press: { kind: 'link' } },
       ]
     case 'left':
       return [
@@ -264,7 +266,7 @@ const stepButtons = (review: ReviewState | null): BandButton[] | null => {
       if (topic?.post_differs) return differsButtons(t, checkPrompt(t))
       return [
         { key: 'check-again', label: 'Check again', press: ask(`I edited the comment for ${t} on GitLab. ${checkPrompt(t)}`), isPrimary: true },
-        { key: 'keep', label: 'Keep it as posted', press: { kind: 'posted-ok' } },
+        { key: 'keep', label: 'Keep as posted', press: { kind: 'posted-ok' } },
       ]
     case 'reack': {
       // An answer with no verdict yet is the background agent's to judge: nothing to decide
@@ -295,14 +297,14 @@ const stepButtons = (review: ReviewState | null): BandButton[] | null => {
       // and closes the topic in one press (Accept alone where the thread is resolved already);
       // replying says the answer is not good enough; Analyse more asks the agent to look again.
       const accept = (label: string): BandButton => (topic?.resolved
-        ? { ...ack, label: label.replace(' & resolve', '') }
+        ? { ...ack, label: label.replace(' + resolve', '') }
         : { key: 'resolve', label, press: { kind: 'resolve' } })
       const analyse: BandButton = { key: 'explain', label: 'Analyse more',
         press: ask(`Analyse ${t} more: read the answer and the change again, deeper than the verdict on its card, and say whether the verdict still holds and why. Where it does not, store the new one (\`verdict\`, with its \`--case\` where it is \`more\`): its output is a card of the change, and the buttons follow it. Do not show the topic again; your reply gives the details.`) }
       if (topic?.verdict === 'settled') {
         return [
-          { ...accept('Accept & resolve'), isPrimary: true },
-          { key: 'respond', label: 'Not good enough…', press: { kind: 'fill', text: `Reply for ${t}, the answer is not good enough: ` } },
+          { ...accept('Accept + resolve'), isPrimary: true },
+          { key: 'respond', label: 'Not enough…', press: { kind: 'fill', text: `Reply for ${t}, the answer is not good enough: ` } },
           analyse,
         ]
       }
@@ -326,7 +328,7 @@ const stepButtons = (review: ReviewState | null): BandButton[] | null => {
         { key: 'post', label: 'Post', press: { kind: 'post' }, isPrimary: true },
         // Posted by hand into the thread: the agent checks it against the draft, as for a
         // comment linked by hand and in rework-mr.
-        { key: 'link', label: 'I posted it, check it', press: ask(checkPrompt(t)) },
+        { key: 'link', label: 'Check my post', press: ask(checkPrompt(t)) },
         // A reply drafted before the author's answer, which the agent judged: the answer may
         // leave the next move to the author, and the draft unsent.
         ...(topic?.verdict === 'more' ? [{ key: 'wait', label: 'Wait for author', press: { kind: 'wait' } } as BandButton] : []),
@@ -336,7 +338,7 @@ const stepButtons = (review: ReviewState | null): BandButton[] | null => {
     case 'merged':
       return [
         explain(t, review),
-        { key: 'follow', label: 'Draft follow-up', isPrimary: true,
+        { key: 'follow', label: 'Follow up', isPrimary: true,
           press: ask(`Draft the follow-up reply for ${t}, below my own comment${inLang(review)}.`) },
         { key: 'no-follow', label: 'Nothing to add', press: { kind: 'no-follow-up' } },
       ]
@@ -352,7 +354,7 @@ const stepButtons = (review: ReviewState | null): BandButton[] | null => {
         : { key: 'resolve', label: 'Accept anyway', press: { kind: 'resolve' } }
       return [
         { key: 'keep-waiting', label: 'Keep waiting', press: { kind: 'keep-waiting' }, isPrimary: true },
-        { key: 'follow', label: 'Draft follow-up', press: ask(`Draft a follow-up reply for ${t}${inLang(review)}.`) },
+        { key: 'follow', label: 'Follow up', press: ask(`Draft a follow-up reply for ${t}${inLang(review)}.`) },
         accept,
       ]
     }
@@ -369,7 +371,7 @@ const stepButtons = (review: ReviewState | null): BandButton[] | null => {
 const differsButtons = (t: string, check: string): BandButton[] => [
   { key: 'apply-edit', label: 'Apply edit', press: { kind: 'apply-edit' }, isPrimary: true },
   { key: 'check-again', label: 'Check again', press: ask(`I edited the comment for ${t} on GitLab. ${check}`) },
-  { key: 'keep', label: 'Keep it as posted', press: { kind: 'posted-ok' } },
+  { key: 'keep', label: 'Keep as posted', press: { kind: 'posted-ok' } },
 ]
 
 // rework-mr's steps (threads.py's `step_of`): a plan to agree, a fix to make, a fix to push,
@@ -391,10 +393,10 @@ export const replyPrompt = (t: string): string => `Draft the reply for ${t} from
 
 export const earlyPrompt = (t: string): string => `Draft a reply for ${t}'s thread to post ahead of its fix, in the language of its thread: from the agreed plan, tell the reviewer what we will do (the option chosen, where they offered several) and that the fix follows. Store it as a reply ahead of the fix (\`set ${t} --reply - --early\`) and show it (\`reply-view ${t}\`).`
 
-// The way on from a card: the round's next topic, named after the pass. It leaves this one
+// The way on from a card: the round's next topic, in either pass. It leaves this one
 // as it is, to come up again once the round gets back to it; nothing is put off or counted.
 const wayOn = (review: ReviewState, topic: ReviewTopic): BandButton[] => (hasNext(review, topic.id)
-  ? [{ key: 'next', label: review.pass === 'fix' ? 'Next to fix' : review.pass === 'plan' ? 'Next to plan' : 'Next topic', press: { kind: 'next' } }]
+  ? [{ key: 'next', label: 'Next', press: { kind: 'next' } }]
   : [])
 
 const reworkButtons = (review: ReviewState): BandButton[] => {
@@ -426,7 +428,7 @@ const reworkButtons = (review: ReviewState): BandButton[] => {
       } else if (p && p.outcome && p.outcome !== 'fix') {
         // The plan is a reply (decline, push back, answer): agreeing it is drafting it, and
         // the other answer is doing what was asked after all.
-        bs = [{ key: 'draft-reply', label: 'Draft reply', press: { kind: 'agree', draft: true }, isPrimary: true }, explain,
+        bs = [{ key: 'draft-reply', label: 'Reply', press: { kind: 'agree', draft: true }, isPrimary: true }, explain,
           { key: 'fix-instead', label: 'Fix instead…', press: { kind: 'fill', text: `Fix ${t} instead: ` } }]
       } else if (p) {
         // A plan that answers the reviewer now (a question, a choice among options) is best
@@ -443,12 +445,12 @@ const reworkButtons = (review: ReviewState): BandButton[] => {
     case 'fix':
       bs = topic.early
         // The reply ahead of the fix, drafted: posted as it is, or copied to edit by hand.
-        ? [{ key: 'post', label: 'Post', press: { kind: 'post', reply: true, early: true } }, { key: 'posted-check', label: 'I posted it, check it', press: ask(reworkCheckPrompt(t)) }]
+        ? [{ key: 'post', label: 'Post', press: { kind: 'post', reply: true, early: true } }, { key: 'posted-check', label: 'Check my post', press: ask(reworkCheckPrompt(t)) }]
         // Planned, while the plan pass runs: the fixes come once every topic has a plan.
         : review.pass === 'plan'
           // Once a reply went up ahead of the fix, another would answer the person's own.
           ? [...(topic.early_posted ? [] : [replyNow]), { key: 'replan', label: 'Change plan…', press: { kind: 'fill', text: `Change the plan for ${t}: ` } }]
-          : [{ key: 'fix', label: 'Make the fix', press: ask(`Make the fix for ${t} as agreed, run its checks (\`verify ${t}\`) until they pass, then show it (\`diff-view.sh ${t}\`, with \`--did\`, \`--fixup\` or \`--new-commit\`, and \`--as-agreed\` or \`--differs\`).`) }]
+          : [{ key: 'fix', label: 'Fix it', press: ask(`Make the fix for ${t} as agreed, run its checks (\`verify ${t}\`) until they pass, then show it (\`diff-view.sh ${t}\`, with \`--did\`, \`--fixup\` or \`--new-commit\`, and \`--as-agreed\` or \`--differs\`).`) }]
       break
     case 'fixed': {
       // The diff viewer: opened on a press, then read on one, once the person wrote there.
@@ -456,7 +458,7 @@ const reworkButtons = (review: ReviewState): BandButton[] => {
       const isOpen = review.hunk?.open === true
       const hasNotes = isOpen && (review.hunk?.notes ?? 0) > 0
       const hunk: BandButton = isOpen
-        ? { key: 'hunk-notes', label: 'Check hunk comments', ...(hasNotes ? { isPrimary: true as const } : {}),
+        ? { key: 'hunk-notes', label: 'Read hunk notes', ...(hasNotes ? { isPrimary: true as const } : {}),
           press: ask(`Read my notes on ${t}'s fix in the diff viewer (\`hunk-notes\`), change the fix where they ask for it (and run its checks again), answer each note, then show the fix again. ${SAY_FIRST} Pushing is my press on its card.`) }
         // A fix that differs from the plan agreed is looked at before it is pushed.
         : { key: 'hunk', label: 'Review in hunk', press: { kind: 'hunk' }, ...(topic.differs ? { isPrimary: true as const } : {}) }
@@ -476,24 +478,24 @@ const reworkButtons = (review: ReviewState): BandButton[] => {
     }
     case 'reply': {
       // Posted by hand, often reworded: the agent checks it against the draft, as in review-mr.
-      const replied: BandButton = { key: 'posted-check', label: 'I posted it, check it', press: ask(reworkCheckPrompt(t)) }
+      const replied: BandButton = { key: 'posted-check', label: 'Check my post', press: ask(reworkCheckPrompt(t)) }
       if (topic.draft) {
         // Rewording is a prompt, or Copy and the person's own edit: no Redo. A reply after
         // the fix explains it and never resolves: the reviewer reads it and resolves.
         bs = [{ key: 'post', label: 'Post', press: { kind: 'post', reply: true }, isPrimary: true },
-          ...(topic.pushed ? [] : [{ key: 'post-resolve', label: 'Post and resolve', press: { kind: 'post', reply: true, resolve: true } } as BandButton]),
+          ...(topic.pushed ? [] : [{ key: 'post-resolve', label: 'Post + resolve', press: { kind: 'post', reply: true, resolve: true } } as BandButton]),
           replied, ...(topic.fix_kept ? [showFix] : [])]
       } else if (topic.pushed) {
         // After the push: a "Fixed" with its link, resolved or not, or a reply that says more.
         // A reply is the recommendation where there is something to say: the fix differs
         // from the plan agreed, or the plan answers the reviewer and nothing went up yet.
         const hasMore = topic.differs === true || (topic.answer_now === true && !topic.early_posted)
-        bs = [{ key: 'post-fixed', label: 'Post “Fixed”', press: { kind: 'post', fixed: true } },
-          { key: 'post-fixed-resolve', label: 'Post “Fixed” and resolve', press: { kind: 'post', fixed: true, resolve: true }, ...(hasMore ? {} : { isPrimary: true as const }) },
-          { key: 'draft', label: 'Draft reply…', press: { kind: 'fill', text: `Draft the reply for ${t} after its fix${lang}: ` }, ...(hasMore ? { isPrimary: true as const } : {}) },
+        bs = [{ key: 'post-fixed', label: '“Fixed”', press: { kind: 'post', fixed: true } },
+          { key: 'post-fixed-resolve', label: '“Fixed” + resolve', press: { kind: 'post', fixed: true, resolve: true }, ...(hasMore ? {} : { isPrimary: true as const }) },
+          { key: 'draft', label: 'Reply…', press: { kind: 'fill', text: `Draft the reply for ${t} after its fix${lang}: ` }, ...(hasMore ? { isPrimary: true as const } : {}) },
           ...(topic.fix_kept ? [showFix] : [])]
       } else {
-        bs = [{ key: 'draft', label: 'Draft reply', press: ask(`Draft the reply for ${t}${lang}, and show it.`) }, replied]
+        bs = [{ key: 'draft', label: 'Reply', press: ask(`Draft the reply for ${t}${lang}, and show it.`) }, replied]
       }
       break
     }
@@ -585,7 +587,7 @@ export const outcomeOf = (press: Press, stdout: string): ReviewOutcome | null =>
   switch (press.kind) {
     case 'post': {
       const what = press.fixed ? 'Posted “Fixed”' : 'Posted'
-      const button = press.fixed ? (press.resolve ? 'Post “Fixed” and resolve' : 'Post “Fixed”') : press.resolve ? 'Post and resolve' : 'Post'
+      const button = press.fixed ? (press.resolve ? '“Fixed” + resolve' : '“Fixed”') : press.resolve ? 'Post + resolve' : 'Post'
       return said(button, `${what} to`, { label: 'its thread', after: press.resolve ? 'and resolved' : undefined })
     }
     case 'push':
@@ -593,7 +595,7 @@ export const outcomeOf = (press: Press, stdout: string): ReviewOutcome | null =>
     case 'apply-edit':
       return said('Apply edit', 'Edited', { label: 'your comment', after: 'on GitLab' })
     case 'resolve':
-      return said('Accept & resolve', 'Accepted the answer and resolved its thread')
+      return said('Accept + resolve', 'Accepted the answer and resolved its thread')
     case 'agree':
       return said('Agree plan', 'Plan agreed')
     case 'drop':
@@ -607,7 +609,7 @@ export const outcomeOf = (press: Press, stdout: string): ReviewOutcome | null =>
     case 'handled':
       return said('Seen', 'Seen')
     case 'posted-ok':
-      return said('Keep it as posted', 'Kept as posted')
+      return said('Keep as posted', 'Kept as posted')
     case 'merge':
       return said(`Merge into ${press.into}`, `Merged into ${press.into}`)
     default:

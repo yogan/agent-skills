@@ -29,7 +29,7 @@ APPROVED = "\U000f0514"        # the heading's thumbs-up: who approved is the Ne
 
 
 # A step's button is a chip: its icon and label on a fill, between rounded caps. Found by its
-# label and the cap after it, so "Post" is not "Post and resolve".
+# label and the cap after it, so "Post" is not "Post + resolve".
 CAP = "\ue0b4"
 
 
@@ -64,9 +64,9 @@ def thread_on(path, show):
 
 REPLY_INSTEAD = [
     Expect(current("t3"), region="panel", wait=180),
-    Expect(button('Draft reply'), region="screen", wait=180),
-    press('Draft reply', turn=True, timeout=600),
-    Expect(button('Post and resolve'), region="screen"),
+    Expect(button('Reply'), region="screen", wait=180),
+    press('Reply', turn=True, timeout=600),
+    Expect(button('Post + resolve'), region="screen"),
     press('Post'),
     Check(thread_on("discussions/api/query-keys.ts", 'len(d["notes"]), d["notes"][-1]["author"]["username"]'),
           r"^2 frank$"),
@@ -86,8 +86,10 @@ REWORK_FIX = [
             *REPLY_INSTEAD,
             Expect(current("t1"), region="panel", wait=30),
             # t1, the rename: made by the model, pushed on a press, then "Fixed" and resolved.
-            press('Make the fix', turn=True, timeout=600),
-            Expect(button('Ack and push', 'Review in hunk'), region="screen"),
+            press('Fix it', turn=True, timeout=600),
+            Expect(button('Ack and push'), region="screen"),
+            # Beside the sidebar, the diff viewer's key is the line over the fix's files, not the card's.
+            Expect(r"Review in hunk", region="panel"),
             Expect(r"Changes\s+\S+ \d+ files? ", region="screen"),
             # The demo repository's one check, as the fixture records it: a quick source check
             # that passes. Passed checks go unsaid on the card; its push button says it.
@@ -97,8 +99,8 @@ REWORK_FIX = [
             # fixup per commit; a fix inside one commit is the script's alone.
             press('Ack and push', turn=True, timeout=600),
             # The push did only that: what goes into the thread is the next card's.
-            Expect(button('Post “Fixed” and resolve', 'Post “Fixed”', 'Draft reply…'), region="screen", wait=60),
-            press('Post “Fixed” and resolve'),
+            Expect(button('“Fixed” + resolve', '“Fixed”', 'Reply…'), region="screen", wait=60),
+            press('“Fixed” + resolve'),
             Expect(current("t2"), region="panel", wait=120),
             Check("git fetch -q && git rev-parse HEAD @{u} | uniq | wc -l", r"^\s*1$"),
             Check("git rev-list --count origin/main..@{u}", r"^2$"),   # squashed, no fixup left
@@ -109,15 +111,15 @@ REWORK_FIX = [
                   r"^True Fixed"),
             # t2, the cache bug: pushed by the script alone, then a reply drafted from a line of
             # the user's and posted from its card, which leaves resolving to the reviewer.
-            press('Make the fix', turn=True, timeout=600),
+            press('Fix it', turn=True, timeout=600),
             press('Ack and push'),
-            Expect(button('Draft reply…'), region="screen", wait=60),
-            press('Draft reply…'),
+            Expect(button('Reply…'), region="screen", wait=60),
+            press('Reply…'),
             Prompt("say which of the two options it took", timeout=600),
             # Copy stands beside the draft's heading, Post in the buttons under it.
             Expect(button('Copy'), region="screen"),
             Expect(button('Post'), region="screen"),
-            Expect(button('Post and resolve'), region="screen", absent=True),
+            Expect(button('Post + resolve'), region="screen", absent=True),
             press('Post'),
             # Posted, and the last topic of the fix pass: nothing is current any more.
             Expect(current("t2"), region="panel", absent=True, wait=60),
@@ -125,8 +127,9 @@ REWORK_FIX = [
             # the reply, whom it waits on, and the pushed fix to look at. No round runs.
             Click("\U000f09e4 t2 ", offset=3),
             Expect(r"Waits on Miriam", region="screen", wait=30),
-            Expect(button('Show fix in hunk'), region="screen"),
-            Expect(button('Next topic'), region="screen", absent=True),
+            # Beside the sidebar, its diff viewer's key is the line over the fix's files.
+            Expect(r"Show in hunk", region="panel"),
+            Expect(button('Next'), region="screen", absent=True),
             # Left again (the ✕ on its file's line): back to the overview, which says the merge.
             Click("\U000f0156"),
             Check(thread_on("updateDiscussion.ts", 'len(d["notes"]), d["notes"][-1]["author"]["username"]'),
@@ -210,7 +213,7 @@ SCENARIOS = [
             *REPLY_INSTEAD,
             # Every topic planned: the fix pass, from the top.
             Expect(current("t1"), region="panel", wait=30),
-            Expect(button('Make the fix'), region="screen"),
+            Expect(button('Fix it'), region="screen"),
         ]),
 
     Scenario(
@@ -227,12 +230,12 @@ SCENARIOS = [
             Prompt("/review-mr !1", timeout=600),
             press('My review is done'),   # no own review: the first topic
             Expect(current("t1"), region="panel", wait=30),
-            Expect(button('Draft comment', 'Drop'), region="screen"),
+            Expect(button('Comment', 'Drop'), region="screen"),
             press('Drop'),
             Expect(current("t2"), region="panel", wait=30),
-            Expect(button('Draft comment'), region="screen"),
+            Expect(button('Comment'), region="screen"),
             Expect(r"^╭─"),
-            press('Draft comment', turn=True),   # the one press here that needs the model
+            press('Comment', turn=True),   # the one press here that needs the model
             # Copy stands beside the draft's heading, Post in the buttons under it.
             Expect(button('Copy'), region="screen"),
             Expect(button('Post'), region="screen"),
@@ -253,8 +256,8 @@ SCENARIOS = [
             Expect(button('Merge into t1', 'Keep separate'), region="screen"),
             press('Merge into t1'),
             # t1 is your comment now; it comes up once more for what the agent adds to it.
-            Expect(button('Draft follow-up', 'Nothing to add'), region="screen", wait=120),
-            press('Draft follow-up', turn=True),
+            Expect(button('Follow up', 'Nothing to add'), region="screen", wait=120),
+            press('Follow up', turn=True),
             # Copy stands beside the draft's heading, Post in the buttons under it.
             Expect(button('Copy'), region="screen"),
             Expect(button('Post'), region="screen"),

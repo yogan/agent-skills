@@ -46,7 +46,13 @@ export const inboxMark = (t: ReviewTopic, unjudged: string[], judging: string[])
   const isDraft = t.draft != null && (t.status === 'draft' || t.status === 'needs_ack')
   if (!t.inbox) return isDraft ? { key: 'draft', icon: INBOX_ICON.draft as string } : undefined
   if (unjudged.includes(t.id)) return { key: 'unjudged', icon: INBOX_ICON.unjudged as string, color: 'yellow' }
-  if (judging.includes(t.id)) return { key: 'judging', icon: INBOX_ICON.judging as string, isDim: true }
+  // Being judged: dim, but in the colour of news on a topic the heading counts as new, so
+  // the count is marked where it is counted.
+  if (judging.includes(t.id)) {
+    return t.inbox === 'new'
+      ? { key: 'judging', icon: INBOX_ICON.judging as string, color: 'yellow' }
+      : { key: 'judging', icon: INBOX_ICON.judging as string, isDim: true }
+  }
   if (t.inbox === 'new') return { key: 'new', icon: INBOX_ICON.new as string, color: 'yellow' }
   return isDraft ? { key: 'draft', icon: INBOX_ICON.draft as string } : undefined
 }

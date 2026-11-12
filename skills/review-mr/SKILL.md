@@ -25,7 +25,7 @@ expected opener; it is what the rules below mean by a pasted table. Output witho
 is pasted as below.
 
 **Buttons answer your question.** Where cards are drawn, the newest card carries the buttons
-of the current step (Skip explainer, Generate explainer; Draft comment, Drop; Post, Copy; Accept &
+of the current step (Skip explainer, Generate explainer; Comment, Drop; Post, Copy; Accept +
 resolve, Later). A press reaches you as a `[review-ui] The user pressed a button: …` note:
 that is their decision, made. Carry on from it. **Never mention the buttons**: not that there
 are any, not what they are called, not what one does, not where they sit ("pick Skip or
@@ -277,7 +277,7 @@ returns a prioritized critique. Turn each finding into a JSON object and import 
 ```
 
 `why` is the **analysis** the topic's card shows: a card a button brings up has no turn of
-yours beside it, so what the user decides Draft comment or Drop on is what you stored here. Write it
+yours beside it, so what the user decides Comment or Drop on is what you stored here. Write it
 from the code review-branch read, concrete (`file:line`, the input that breaks it; card text
 is markdown, above), and end it on a
 `**Recommendation:**` paragraph. `set <t> --why "…"` rewrites it, and so does a stored view of
@@ -358,7 +358,7 @@ buttons stay up.
 the topic comes up again with `I merged my comment into <t>. What does your own analysis add
 to it?`. Answer in at most 2 lines: what you have beyond their comment (a concrete fix, a
 working alternative, a case they did not name), or that you have nothing to add. Their buttons
-are `Draft follow-up` and `Nothing to add`. A follow-up is a reply below their comment, drafted
+are `Follow up` and `Nothing to add`. A follow-up is a reply below their comment, drafted
 like any other (`set <t> --draft "…"`, which shows it as a follow-up), short, and never a
 restatement of what their comment already says.
 

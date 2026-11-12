@@ -25,7 +25,7 @@ GitLab boot is 3-5 min.
 | 3 | terminal · **!1** | click the explainer link → **overview table, 5 topics** → curate 2 → post a comment of your own in the UI, then `sync` → draft one → paste and post |
 | 4 | terminal · **!2** | `sync` → `updates` (2 compare URLs) → `diff t1` → ack t1 → t2 the author's question → t3 claimed-but-not-done |
 | 5 | slide 3 · `/rework-mr` | hat switch; five rows |
-| 6 | terminal · **!3** | t1 trivial: agree the plan → t2 the cache bug: explain, then agree one of the two options → t3 scope creep: the agent proposes declining, Draft reply, post it → the fixes: **diff opens in its own window** → annotate a line there → push → post the replies |
+| 6 | terminal · **!3** | t1 trivial: agree the plan → t2 the cache bug: explain, then agree one of the two options → t3 scope creep: the agent proposes declining, Reply, post it → the fixes: **diff opens in its own window** → annotate a line there → push → post the replies |
 | 7 | slide 4 · outro | don't oversell it; questions |
 
 !1 and !2 have a worktree each, so the two segments are independent — run them in any order,

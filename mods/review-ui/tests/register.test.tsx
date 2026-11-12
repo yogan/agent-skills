@@ -2,7 +2,7 @@ import type { On } from 'claude-code'
 import type { Engine } from 'claude-code/testing'
 import { expect, test } from 'claude-code/testing'
 
-import { boxRowsOf, plainTitle, reflow, rowOf, sectionsOf, urlLabel } from '../hooks/panel.ts'
+import { boxRowsOf, inboxMark, plainTitle, reflow, rowOf, sectionsOf, urlLabel } from '../hooks/panel.ts'
 import { withEmoji } from '../hooks/views.ts'
 import { blocksOf, isPostCommand, NOTE, partsOf } from '../hooks/views.ts'
 
@@ -674,4 +674,10 @@ test("a comment's GitLab emoji shortcodes are drawn as the emoji; code and unkno
   expect(withEmoji('good catch :ok_hand: :+1:')).toBe('good catch 👌 👍')
   expect(withEmoji('keep `:ok_hand:` and :no_such_one:')).toBe('keep `:ok_hand:` and :no_such_one:')
   expect(withEmoji('```\n:tada:\n```\n:tada:')).toBe('```\n:tada:\n```\n🎉')
+})
+
+test('a topic being judged is marked in the colour of news where the heading counts it as new', () => {
+  const t = (inbox: string) => ({ id: 't3', status: 'open', state: 'answered', summary: 's', posted: true, draft: null, inbox }) as never
+  expect(inboxMark(t('new'), [], ['t3'])).toMatchObject({ key: 'judging', color: 'yellow' })
+  expect(inboxMark(t('yours'), [], ['t3'])).toMatchObject({ key: 'judging', isDim: true })
 })

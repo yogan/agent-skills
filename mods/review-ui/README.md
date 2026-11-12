@@ -15,11 +15,14 @@ How it fits together:
 - `hooks/paste-gate.py` stands down for a session in which that line ended a tool result.
 
 - rework-mr gets the same: buttons for each step (Agree plan for the plan the agent proposed;
-  Ack and push, Review in hunk for a fix made; Post, Post and resolve for a reply; Show fix
+  Ack and push, Review in hunk for a fix made; Post, Post + resolve for a reply; Show fix
   in hunk once the fix is pushed, from the commits the push kept in git, which review-mr
-  offers too for the author's push that changed a topic's lines),
+  offers too for the author's push that changed a topic's lines; a card leaves the diff
+  viewer's key out where the sidebar beside it carries it over the fix's files),
   rounds through a plan pass and then a fix pass, the inbox, and a background agent that
-  prepares a plan for each reviewer's new thread or reply. A fix shows in the sidebar; the
+  prepares a plan for each reviewer's new thread or reply. Labels are short in both skills:
+  the icon says the kind of press, and the pencil marks every one that has a text written
+  without posting it. A fix shows in the sidebar; the
   diff viewer opens on its button alone, and comes first where the agent that made the fix
   says it differs from the plan agreed. A fix is shown once the repository's checks passed on it (its hooks
   run ahead of time, the fast local checks of the parts it touches); Push is then the script's, with no model turn and no
@@ -27,9 +30,9 @@ How it fits together:
   new one, is handed to the model to commit, and the press goes on from its commits.
 - Above the prompt, a band of buttons for the current step (review-mr), the recommended
   answer first and drawn as the primary, Explain after it wherever something is decided
-  (Explain further once pressed): Draft and Drop for a new topic; Post, Copy, I posted my own for a draft; for an answer the agent judged, its
-  verdict's own answer first: Accept & resolve, Not good enough… and Analyse more, or Send
-  follow-up, Accept anyway and Analyse more; Next topic, apart at the row's end, where another waits; for another reviewer's thread, which the user watches, Seen and
+  (Explain further once pressed): Comment and Drop for a new topic; Post, Copy, I posted my own for a draft; for an answer the agent judged, its
+  verdict's own answer first: Accept + resolve, Not enough… and Analyse more, or Send
+  follow-up, Accept anyway and Analyse more; Next, apart at the row's end, where another waits; for another reviewer's thread, which the user watches, Seen and
   Reply…, with Merge into tN first where the agent advised merging; for one of
   your own comments the agent matched, its recommendation (Merge into tN or Keep separate)
   first among the answers. They sit on the newest card, where a click presses one; a step
@@ -43,7 +46,7 @@ How it fits together:
   itself: the update check marks its topic in the sidebar and lists it in the sidebar's inbox,
   and an agent of the mod's own judges it in the background, so the topic's card carries the
   judgment by the time you get to it. Opening the inbox (`o`) or a topic starts a round
-  through everything that needs you; Next topic moves on to the next of them. Away from the session (another app in front, another tmux window), a notification
+  through everything that needs you; Next moves on to the next of them. Away from the session (another app in front, another tmux window), a notification
   says what arrived.
 - In a review, the review scripts' calls that print no view are left out of the chat, as the
   views are drawn as cards; ctrl+o shows them.

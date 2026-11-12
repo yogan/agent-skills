@@ -99,6 +99,8 @@ const SCROLL_STEP = 3
 // The columns a scrolling thread box keeps free at its right for its keys: at the top the fold
 // key and ▲, at the bottom ▼, each with the space before it.
 const BOX_ARROWS = 4
+// The blank line above each area under the topic list, between it and the area above.
+const GAP = 1
 // The columns an area's arrow takes at the end of its rows, with the space before it.
 const ARROW = 2
 // The rows a folded area (the fix's other files, the comments on the MR) shows at most.
@@ -1155,7 +1157,13 @@ const cardButtons = async ($: EngineInterface, e: Parameters<EngineInterface['ui
   if (host?.id !== id) return null
   const { s, r } = await known($)
   if (!s || !r) return null
-  const { buttons, press, isHosted } = await stepControls($, s, r, await read($, working))
+  const { buttons: all, press, isHosted } = await stepControls($, s, r, await read($, working))
+  // The diff viewer's key is the line above the fix's files, where the sidebar beside the
+  // chat lists them: one key for one thing on screen, so the card leaves its own out there.
+  const vp = (e as { viewport?: { isFullscreen?: boolean } }).viewport
+  const code = await codeFor($, r, currentOwn(r, await read($, ownPick)))
+  const isInSidebar = vp?.isFullscreen === true && (await panelShown($)) && (code?.view.fix_files?.length ?? 0) > 0
+  const buttons = isInSidebar ? all.filter(b => !HUNK_KEYS.includes(b.key)) : all
   if (!isHosted || buttons.length === 0) return null
   const els = $.ui.resolve(e)
   const { Box } = els
@@ -1171,6 +1179,9 @@ const cardButtons = async ($: EngineInterface, e: Parameters<EngineInterface['ui
     </Box>
   )
 }
+
+// The keys that open the fix in the diff viewer, which the sidebar's files area carries too.
+const HUNK_KEYS = ['hunk', 'hunk-notes', 'hunk-pushed']
 
 // A view in its frame. A topic's title line is drawn in colour, as the panel draws the
 // topic's row: the severity icon in the severity's colour, the handle in the accent colour.
@@ -1524,7 +1535,7 @@ const stepControls = async ($: EngineInterface, s: ReviewSession, r: ReviewState
     && (asked.proposals?.length ?? 0) === 0 && (r.proposals?.length ?? 0) > 0
   const buttons = isWorking || doing ? []
     : isSettledPick ? [
-      { key: 'own-back', label: 'Next undecided comment', press: { kind: 'own-step', by: 1, to: r.proposals?.[0]?.thread } },
+      { key: 'own-back', label: 'Next', press: { kind: 'own-step', by: 1, to: r.proposals?.[0]?.thread } },
     ] as BandButton[]
     : buttonsFor({ ...asked, explained: await read($, explained), unjudged: (await read($, judging)).failed })
   // The newest card in the chat is the current step's: the buttons are drawn on it, and the
@@ -2143,7 +2154,8 @@ export const register: Register = on => {
       : []
     const mrCount = isMrOpen ? mrFull.length : mrComments.length
     const mrShown = Math.min(mrCount, mrCap)
-    const mrRows = mrComments.length === 0 ? 0 : 1 + mrShown
+    // Every area under the list stands under a blank line of its own, then its line.
+    const mrRows = mrComments.length === 0 ? 0 : 1 + 1 + mrShown
     // Folding offered only where it leaves something out: a comment cut, or more than fit.
     const isMrFoldable = mrComments.length > FOLDED_ROWS || mrShort.some(x => x.isCut)
 
@@ -2189,9 +2201,11 @@ export const register: Register = on => {
     const others = fixFiles.length > 1 ? fixFiles : []
     const isFilesOpen = code ? (await read($, filesOpen))[code.base] === true : false
     const filesShown = Math.min(others.length, filesCap(isFilesOpen))
-    const filesArea = fixFiles.length ? 1 + filesShown : 0
+    const filesArea = fixFiles.length ? 1 + 1 + filesShown : 0
     const footRows = !code && waitingOf(r) ? 1 : 0
-    const rest = Math.max(4, H - 1 - listArea - filesArea - mrRows - footRows)
+    // The area under the list (the file, a thread with no file, or the inbox) takes the rest,
+    // its blank line above it apart.
+    const rest = Math.max(4, H - listArea - GAP - filesArea - mrRows - footRows)
     // The thread box's room: what leaves the lines it is on, and up to five lines of the file
     // above and below them (fewer where the file ends first). Taller, it scrolls on its own.
     const at = code?.view.at ?? null
@@ -2310,7 +2324,7 @@ export const register: Register = on => {
       // Where the file's lines sit in the sidebar's tree, for the wheel: the heading, the
       // list's area and the file's own line above them. Kept outside the mod's state, since a
       // drawing may not write it.
-      const top = 1 + listArea + 1
+      const top = listArea + GAP + 1
       // The box's own rows, where it scrolls: right under the lines it is on, or at the edge
       // of the window they went past.
       const boxTop = isPinned ? (isAbove ? top : top + codeRows) : top + ((at?.[1] ?? w.start) - w.start + 1)
@@ -2370,7 +2384,7 @@ export const register: Register = on => {
     // The fix's other files, an area under the file's: each with its size, in columns, folded
     // to five rows and opened to a third of the height. Reading them is the diff viewer's, so
     // its key, the card's own, is in the area's line.
-    const filesTop = 1 + listArea + codeArea + 1
+    const filesTop = listArea + GAP + codeArea + GAP + 1
     const pathCut = (f: string, width: number) => (cells(f) <= width ? f : `…${[...f].slice(cells(f) - width + 1).join('')}`)
     let filesPart: JSX.Element | null = null
     if (code && fixFiles.length > 0) {
@@ -2415,7 +2429,7 @@ export const register: Register = on => {
           onPress={() => update($, filesOpen, m => ({ ...m, [code.base]: !isFilesOpen }))} />
       )
       const { buttons, press } = await stepControls($, s, r, await read($, working))
-      const found = buttons.find(b => b.key === 'hunk' || b.key === 'hunk-notes' || b.key === 'hunk-pushed')
+      const found = buttons.find(b => HUNK_KEYS.includes(b.key))
       // The pushed fix's key is the card's Show fix in hunk, worded for the area it heads.
       const hunk = found?.key === 'hunk-pushed' ? { ...found, label: 'Show in hunk' } : found
       const hunkLabel = hunk ? `${iconOf(hunk.label) ?? ''} ${hunk.label}`.trim() : ''
@@ -2433,7 +2447,7 @@ export const register: Register = on => {
     }
     // The comments on the MR itself, under the file's area and the fix's files: one line each,
     // and opened, in full, as a thread box draws them.
-    const mrTop = filesTop + filesArea
+    const mrTop = listArea + GAP + codeArea + filesArea + GAP + 1
     const mrLines = isMrOpen
       ? { count: mrFull.length, draw: (from: number, n: number) => drawBoxRows(mrFull.slice(from, from + n), i => mrComments[i] as ReviewNote) }
       : mrComments.map((n, i) => (
@@ -2483,20 +2497,46 @@ export const register: Register = on => {
     // leftover puts the line on half a cell, each part is rounded on its own, and the gap
     // after the icon comes out two cells wide. A line too long for the pane is not centred;
     // its title gives way.
-    const headWidth = 1 + 1 + cells(`!${r.iid}`) + (r.title ? 1 + cells(plainTitle(r.title)) : 0)
-      + (fresh > 0 ? 1 + cells(`· ${fresh} new`) : 0) + (marks.length > 0 ? 2 + 2 * marks.length : 0)
-    const headIndent = Math.max(0, Math.floor((cols - headWidth) / 2))
+    // The sidebar's top line, which heads the topic list: the MR's icon (a merged one's is
+    // the merge icon), its number as a link to it, its title, cut to the room; after a short
+    // stretch of line the MR's marks (approved, auto-merge) and what arrived meanwhile; the
+    // legend's key at its end. A space after each icon: Ghostty draws a Nerd Font icon two
+    // cells wide where a space follows it, one where nothing does.
+    const titleText = plainTitle(r.title ?? '')
+    const ownWords = phase === 'own' ? ' · your comments' : ''
+    const after = (marks.length > 0 ? 2 * marks.length : 0) + (fresh > 0 ? (marks.length > 0 ? 2 : 0) + cells(`${fresh} new`) : 0)
+    // `── `, the icon and its space, the number, the words of the own-comments phase, ` ── ` and
+    // the marks and news, the space before the dashes, and the end: ` ⓘ ─` or `─`.
+    const fixedWidth = 3 + 2 + cells(`!${r.iid}`) + cells(ownWords) + (after > 0 ? 4 + after : 0) + 1 + (allGroups.length > 0 ? 4 : 1)
+    // The title's room: the line less its fixed parts, the space before the title and the one
+    // dash the stretch after it always keeps.
+    const titleRoom = Math.max(0, cols - fixedWidth - 1 - 1)
+    const shownTitle = !titleText || titleRoom < 4 ? '' : cells(titleText) <= titleRoom ? titleText : `${[...titleText].slice(0, titleRoom - 1).join('')}…`
+    const dashes = Math.max(1, cols - fixedWidth - (shownTitle ? 1 + cells(shownTitle) : 0))
     const heading = (
-      <Box flexDirection="row" gap={1} flexShrink={1} paddingLeft={headIndent}>
-        {/* GitLab's mark: a merged MR's icon is the merge one. */}
-        <Text bold color={mr?.state === 'merged' ? MR_COLOR.merged : undefined}>{mr?.state === 'merged' ? INBOX_ICON.merged : MR_ICON}</Text>
-        {/* The number never gives way; the title does. */}
-        <Box flexShrink={0}>{r.url ? <Markdown text={`**[!${r.iid}](${r.url})**`} /> : <Text bold>{`!${r.iid}`}</Text>}</Box>
-        {r.title && <Box flexShrink={1}><Text bold wrap="truncate-end">{plainTitle(r.title)}</Text></Box>}
-        {fresh > 0 && <Box flexShrink={0}><Text dimColor>· </Text><Text color="yellow">{`${fresh} new`}</Text></Box>}
-        {/* A space after the last: Ghostty draws a Nerd Font icon two cells wide where a space
-            follows it, one where nothing does, so at a line's end it came out smaller. */}
-        {marks.length > 0 && <Box flexShrink={0} gap={1}>{marks.map(k => <Text key={`mark-${k}`} color={MR_COLOR[k]}>{INBOX_ICON[k]}</Text>)}<Text> </Text></Box>}
+      <Box key="list-line" flexDirection="row" flexShrink={0} width={cols}>
+        <Box key="list-line-head" flexDirection="row" flexShrink={0}>
+          <Text dimColor>{'── '}</Text>
+          <Text bold color={mr?.state === 'merged' ? MR_COLOR.merged : undefined}>{mr?.state === 'merged' ? INBOX_ICON.merged : MR_ICON}</Text>
+          <Text> </Text>
+          {r.url ? <Markdown text={`**[!${r.iid}](${r.url})**`} /> : <Text bold>{`!${r.iid}`}</Text>}
+        </Box>
+        {/* The title alone gives way, cut where the count is off: a wrapped line would make the
+            sidebar a row taller than its pane and cut its last row. */}
+        {shownTitle && <Box key="list-line-title" flexShrink={1}><Text bold wrap="truncate-end">{` ${shownTitle}`}</Text></Box>}
+        <Box key="list-line-tail" flexDirection="row" flexShrink={0}>
+          {ownWords && <Text dimColor>{ownWords}</Text>}
+          {after > 0 && <Text dimColor>{' ── '}</Text>}
+          {marks.map(k => (
+            <Box key={`mark-${k}`} flexDirection="row"><Text color={MR_COLOR[k]}>{INBOX_ICON[k]}</Text><Text> </Text></Box>
+          ))}
+          {fresh > 0 && marks.length > 0 && <Text dimColor>{'· '}</Text>}
+          {fresh > 0 && <Text color="yellow">{`${fresh} new`}</Text>}
+          <Text dimColor>{` ${'─'.repeat(dashes)}`}</Text>
+          {allGroups.length > 0 && <Text> </Text>}
+          {allGroups.length > 0 && <Button key="legend" plain dimColor label={GLYPH.legend} onPress={() => update($, legendShown, x => !x)} />}
+          <Text dimColor>{allGroups.length > 0 ? ' ─' : '─'}</Text>
+        </Box>
       </Box>
     )
     // An item with no file (a comment on the MR as a whole): its thread in full in the file's
@@ -2510,7 +2550,7 @@ export const register: Register = on => {
         {rule('thread-line', [{ text: 'Thread', isBold: true }],
           isLeavable ? { el: <Button key="leave" plain dimColor label={GLYPH.close} onPress={leave} />, width: 1 } : undefined)}
         {areaRows(`thread:${openKey}`, { count: freeRows.length, draw: (from, n) => drawBoxRows(freeRows.slice(from, from + n)) },
-          Math.max(1, rest - 1), 1 + listArea + 1, 0, null)}
+          Math.max(1, rest - 1), listArea + GAP + 1, 0, null)}
       </Box>
     )
     // Nothing left to decide: in the file's place, a box in the middle of what is left. With
@@ -2617,9 +2657,8 @@ export const register: Register = on => {
     const focusId = phase === 'own' ? own?.id ?? null : r.current
     const listPart = (
       <Box key="list" flexDirection="column">
-        {rule('list-line', [{ text: phase === 'own' ? 'Your comments' : 'Topics', isBold: true }],
-          allGroups.length > 0 ? { el: <Button key="legend" plain dimColor label={GLYPH.legend} onPress={() => update($, legendShown, x => !x)} />, width: 1 } : undefined)}
-        {areaRows('list', listRows, listCap, 2, currentRow - Math.floor(listCap / 2), focusId, newsRows)}
+        {heading}
+        {areaRows('list', listRows, listCap, 1, currentRow - Math.floor(listCap / 2), focusId, newsRows)}
         {legendBox}
       </Box>
     )
@@ -2628,12 +2667,16 @@ export const register: Register = on => {
     return (
       <Box flexDirection="column" justifyContent="space-between" minHeight={isDocked ? rowsAll : undefined}>
         <Box flexDirection="column" flexGrow={waitPart ? 1 : undefined}>
-          {heading}
           {listPart}
+          {threadPart && <Text key="gap-thread"> </Text>}
           {threadPart}
+          {codePart && <Text key="gap-code"> </Text>}
           {codePart}
+          {filesPart && <Text key="gap-files"> </Text>}
           {filesPart}
+          {mrPart && <Text key="gap-mr"> </Text>}
           {mrPart}
+          {waitPart && <Text key="gap-inbox"> </Text>}
           {waitPart && rule('inbox-line', [])}
           {waitPart}
         </Box>
