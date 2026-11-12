@@ -76,6 +76,66 @@ REVIEW1 = "~/src/agent-skills-demo-review-mr1"
 REVIEW2 = "~/src/agent-skills-demo-review-mr2"
 WORK = "~/src/agent-skills-demo"
 
+# MR !3 worked through to the merge; a part of it is a scenario of its own (`try-pushed-fix`).
+REWORK_FIX = [
+            Prompt("/rework-mr !3", timeout=600),
+            *[step for t in ("t1", "t2") for step in (
+                Expect(current(t), region="panel", wait=30),
+                Expect(button('Agree plan'), region="screen", wait=240),
+                press('Agree plan'))],
+            *REPLY_INSTEAD,
+            Expect(current("t1"), region="panel", wait=30),
+            # t1, the rename: made by the model, pushed on a press, then "Fixed" and resolved.
+            press('Make the fix', turn=True, timeout=600),
+            Expect(button('Ack and push', 'Review in hunk'), region="screen"),
+            Expect(r"Changes\s+\S+ \d+ files? ", region="screen"),
+            # The demo repository's one check, as the fixture records it: a quick source check
+            # that passes. Passed checks go unsaid on the card; its push button says it.
+            Check("cat .git/rework-mr-checks.json", r'check-source\.mjs'),
+            Expect(r"Checks (?:failed|not run)", region="screen", absent=True),
+            # The rename spans both commits, so the push hands it back to the model for one
+            # fixup per commit; a fix inside one commit is the script's alone.
+            press('Ack and push', turn=True, timeout=600),
+            # The push did only that: what goes into the thread is the next card's.
+            Expect(button('Post “Fixed” and resolve', 'Post “Fixed”', 'Draft reply…'), region="screen", wait=60),
+            press('Post “Fixed” and resolve'),
+            Expect(current("t2"), region="panel", wait=120),
+            Check("git fetch -q && git rev-parse HEAD @{u} | uniq | wc -l", r"^\s*1$"),
+            Check("git rev-list --count origin/main..@{u}", r"^2$"),   # squashed, no fixup left
+            Check("glab api 'projects/demo%2Fbulletproof-react/merge_requests/3/discussions'"
+                  " | python3 -c 'import json,sys; d=[x for x in json.load(sys.stdin) if x[\"notes\"][0]"
+                  ".get(\"position\",{}).get(\"new_path\",\"\").endswith(\"comments/api/query-keys.ts\")][0];"
+                  " print(d[\"notes\"][0][\"resolved\"], d[\"notes\"][-1][\"body\"][:6])'",
+                  r"^True Fixed"),
+            # t2, the cache bug: pushed by the script alone, then a reply drafted from a line of
+            # the user's and posted from its card, which leaves resolving to the reviewer.
+            press('Make the fix', turn=True, timeout=600),
+            press('Ack and push'),
+            Expect(button('Draft reply…'), region="screen", wait=60),
+            press('Draft reply…'),
+            Prompt("say which of the two options it took", timeout=600),
+            # Copy stands beside the draft's heading, Post in the buttons under it.
+            Expect(button('Copy'), region="screen"),
+            Expect(button('Post'), region="screen"),
+            Expect(button('Post and resolve'), region="screen", absent=True),
+            press('Post'),
+            # Posted, and the last topic of the fix pass: nothing is current any more.
+            Expect(current("t2"), region="panel", absent=True, wait=60),
+            # Opened again from the list, waiting on its reviewer: its card is the fix's steps to
+            # the reply, whom it waits on, and the pushed fix to look at. No round runs.
+            Click("\U000f09e4 t2 ", offset=3),
+            Expect(r"Waits on Miriam", region="screen", wait=30),
+            Expect(button('Show fix in hunk'), region="screen"),
+            Expect(button('Next topic'), region="screen", absent=True),
+            # Left again (the ✕ on its file's line): back to the overview, which says the merge.
+            Click("\U000f0156"),
+            Check(thread_on("updateDiscussion.ts", 'len(d["notes"]), d["notes"][-1]["author"]["username"]'),
+                  r"^2 frank$"),
+            # The MR merged meanwhile: the sidebar says so once the update check has run.
+            Check(f"{NEWS} merge", r"merged"),
+            Expect(r"[Mm]erged", region="panel", wait=240),
+]
+
 SCENARIOS = [
     Scenario(
         "smoke", "the driver itself: start claude, send a prompt, read the answer",
@@ -155,64 +215,11 @@ SCENARIOS = [
 
     Scenario(
         "rework-fix", "MR !3: a fix pushed and resolved, a fix pushed and replied to, a reply instead of a fix, the merge", WORK,
-        needs_rig=True, mods=[MOD], steps=[
-            Prompt("/rework-mr !3", timeout=600),
-            *[step for t in ("t1", "t2") for step in (
-                Expect(current(t), region="panel", wait=30),
-                Expect(button('Agree plan'), region="screen", wait=240),
-                press('Agree plan'))],
-            *REPLY_INSTEAD,
-            Expect(current("t1"), region="panel", wait=30),
-            # t1, the rename: made by the model, pushed on a press, then "Fixed" and resolved.
-            press('Make the fix', turn=True, timeout=600),
-            Expect(button('Ack and push', 'Review in hunk'), region="screen"),
-            Expect(r"Changes\s+\S+ \d+ files? ", region="screen"),
-            # The demo repository's one check, as the fixture records it: a quick source check
-            # that passes. Passed checks go unsaid on the card; its push button says it.
-            Check("cat .git/rework-mr-checks.json", r'check-source\.mjs'),
-            Expect(r"Checks (?:failed|not run)", region="screen", absent=True),
-            # The rename spans both commits, so the push hands it back to the model for one
-            # fixup per commit; a fix inside one commit is the script's alone.
-            press('Ack and push', turn=True, timeout=600),
-            # The push did only that: what goes into the thread is the next card's.
-            Expect(button('Post “Fixed” and resolve', 'Post “Fixed”', 'Draft reply…'), region="screen", wait=60),
-            press('Post “Fixed” and resolve'),
-            Expect(current("t2"), region="panel", wait=120),
-            Check("git fetch -q && git rev-parse HEAD @{u} | uniq | wc -l", r"^\s*1$"),
-            Check("git rev-list --count origin/main..@{u}", r"^2$"),   # squashed, no fixup left
-            Check("glab api 'projects/demo%2Fbulletproof-react/merge_requests/3/discussions'"
-                  " | python3 -c 'import json,sys; d=[x for x in json.load(sys.stdin) if x[\"notes\"][0]"
-                  ".get(\"position\",{}).get(\"new_path\",\"\").endswith(\"comments/api/query-keys.ts\")][0];"
-                  " print(d[\"notes\"][0][\"resolved\"], d[\"notes\"][-1][\"body\"][:6])'",
-                  r"^True Fixed"),
-            # t2, the cache bug: pushed by the script alone, then a reply drafted from a line of
-            # the user's and posted from its card, which leaves resolving to the reviewer.
-            press('Make the fix', turn=True, timeout=600),
-            press('Ack and push'),
-            Expect(button('Draft reply…'), region="screen", wait=60),
-            press('Draft reply…'),
-            Prompt("say which of the two options it took", timeout=600),
-            # Copy stands beside the draft's heading, Post in the buttons under it.
-            Expect(button('Copy'), region="screen"),
-            Expect(button('Post'), region="screen"),
-            Expect(button('Post and resolve'), region="screen", absent=True),
-            press('Post'),
-            # Posted, and the last topic of the fix pass: nothing is current any more.
-            Expect(current("t2"), region="panel", absent=True, wait=60),
-            # Opened again from the list, waiting on its reviewer: its card is the fix's steps to
-            # the reply, whom it waits on, and the pushed fix to look at. No round runs.
-            Click("\U000f09e4 t2 ", offset=3),
-            Expect(r"Waits on Miriam", region="screen", wait=30),
-            Expect(button('Show fix in hunk'), region="screen"),
-            Expect(button('Next topic'), region="screen", absent=True),
-            # Left again (the ✕ on its file's line): back to the overview, which says the merge.
-            Click("\U000f0156"),
-            Check(thread_on("updateDiscussion.ts", 'len(d["notes"]), d["notes"][-1]["author"]["username"]'),
-                  r"^2 frank$"),
-            # The MR merged meanwhile: the sidebar says so once the update check has run.
-            Check(f"{NEWS} merge", r"merged"),
-            Expect(r"[Mm]erged", region="panel", wait=240),
-        ]),
+        needs_rig=True, mods=[MOD], steps=[*REWORK_FIX]),
+
+    Scenario(
+        "try-pushed-fix", "MR !3 up to t1's pushed fix in four files, for a person to try (--keep)", WORK,
+        needs_rig=True, mods=[MOD], recording="rework-fix", steps=REWORK_FIX[:21]),
 
     Scenario(
         "review-buttons", "MR !1: drop, draft and post from the band, nothing typed", REVIEW1,

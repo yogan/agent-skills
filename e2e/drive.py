@@ -198,6 +198,7 @@ class Scenario:
     args: list = dataclasses.field(default_factory=list)       # extra claude arguments
     allow: tuple = VERIFY_ALLOW
     needs_rig: bool = False     # the local GitLab must be up and reset (tmux-demo.sh --check)
+    recording: str = ""         # another scenario's recording to play, where this one is a part of it
 
 
 class StepFailed(Exception):
@@ -462,7 +463,7 @@ def recorded_tools(rec):
 def start_mock(sc, log):
     """The recording's stand-in for the model, answering; None with the reason when there is
     no recording for `sc`."""
-    path = mock_model.recording_path(sc.name)
+    path = mock_model.recording_path(sc.recording or sc.name)
     if not os.path.isfile(path) and any(isinstance(s, Handover) for s in sc.steps):
         rec = {"streams": []}     # it hands over before any model is asked: nothing to play
     elif not os.path.isfile(path):
