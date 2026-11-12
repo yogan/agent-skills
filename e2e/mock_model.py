@@ -66,10 +66,26 @@ def places():
     return sorted(set(pairs), key=lambda p: -len(p[0]))
 
 
+# A run's own plugin folder of this repo's skills (drive.py's `skills_plugin`), whose `skills`
+# is a link to the repo's: a command through it names the run, and the run's folder may be
+# gone when the recording is played. Kept as the repo's own skills folder, which it is.
+RUN_SKILLS = re.compile(r"e2e/\.runs/[^/\s'\"]+/skills-plugin/skills/")
+
+
+def _runless(value):
+    if isinstance(value, str):
+        return RUN_SKILLS.sub("skills/", value)
+    if isinstance(value, list):
+        return [_runless(v) for v in value]
+    if isinstance(value, dict):
+        return {k: _runless(v) for k, v in value.items()}
+    return value
+
+
 def to_placeholders(value):
     for path, mark in places():
         value = _swap(value, path, mark)
-    return value
+    return _runless(value)
 
 
 def from_placeholders(value):

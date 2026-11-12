@@ -91,6 +91,11 @@ class Recording(unittest.TestCase):
         self.assertEqual(stored, {"command": "cat {HOME}/notes.txt"})
         self.assertEqual(M.from_placeholders(stored), {"command": f"cat {home}/notes.txt"})
 
+    def test_a_runs_own_skills_folder_is_kept_as_the_repos(self):
+        run = "{SRC}/agent-skills/e2e/.runs/20261112-213646-try-scrolling/skills-plugin/skills/rework-mr/scripts"
+        self.assertEqual(M.to_placeholders({"command": f"python3 {run}/threads.py"}),
+                         {"command": "python3 {SRC}/agent-skills/skills/rework-mr/scripts/threads.py"})
+
     def test_a_prompt_reads_the_same_with_the_engines_reminders_around_it(self):
         self.assertEqual(M.human(reminded("Do  the\nthing")), "Do the thing")
 

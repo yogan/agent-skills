@@ -170,6 +170,7 @@ class Check(Step):
     as whether a comment really reached GitLab. Runs in the scenario's folder."""
     command: str
     pattern: str
+    timeout: int = 120  # seconds the command may run: one that waits for something, longer
 
     def label(self):
         return f"check {self.command[:40]!r}"
@@ -604,7 +605,7 @@ def run_step(pane, step, verify):
             raise StepFailed(f"the panel is {'open' if col is not None else 'closed'}")
     elif isinstance(step, Check):
         r = subprocess.run(step.command, shell=True, capture_output=True, text=True,
-                           cwd=pane.cwd, timeout=120)
+                           cwd=pane.cwd, timeout=step.timeout)
         if not re.search(step.pattern, r.stdout + r.stderr, re.M):
             raise StepFailed(f"{step.pattern!r} not in the output of {step.command!r}: "
                              f"{(r.stdout + r.stderr).strip()[-300:]}")
@@ -615,8 +616,8 @@ def run_step(pane, step, verify):
 
 
 def sidebar_drawn_right(pane):
-    """The sidebar as drawn passes the basic checks of `layout.py` (boxes whole, arrows in
-    pairs, each area's line one row). Asked again a moment later before it fails the step: a
+    """The sidebar as drawn passes the basic checks of `layout.py` (boxes whole, each
+    scrollbar's thumb whole, each area's line one row). Asked again a moment later before it fails the step: a
     capture can land in the middle of a redraw."""
     for attempt in range(3):
         found = layout.problems(region_of(pane.screen(), "panel"))

@@ -8,6 +8,7 @@ An expectation names what a person would look for on the screen, not how the ski
 a check on wording the model chooses breaks whenever the model words it differently, and then
 the run says nothing about the skill.
 """
+import os
 import re
 from pathlib import Path
 
@@ -21,7 +22,8 @@ NOT_PASTED = Expect(r"^  (?:[┌├└]─|► \d+ \|)", absent=True)   # a tabl
 
 # The mod, from this checkout. A verify run loads it with --plugin-dir; a showcase runs on
 # what the person has installed, so it is given no mods.
-MOD = str(Path(__file__).resolve().parent.parent / "mods" / "review-ui")
+# `E2E_MOD` loads another copy of it instead, for a before/after against an older version.
+MOD = os.environ.get("E2E_MOD") or str(Path(__file__).resolve().parent.parent / "mods" / "review-ui")
 
 # The MR as a whole changing while the rework runs: approved by its reviewer, merged.
 NEWS = f"python3 {Path(__file__).resolve().parent / 'news.py'}"
@@ -75,6 +77,17 @@ REPLY_INSTEAD = [
 REVIEW1 = "~/src/agent-skills-demo-review-mr1"
 REVIEW2 = "~/src/agent-skills-demo-review-mr2"
 WORK = "~/src/agent-skills-demo"
+SCROLL = "~/src/agent-skills-demo-scroll"     # MR !4's checkout (fixture.py's MR4_DIR)
+# A scrollbar's thumb as the sidebar draws it: a full cell, or one filled from the bottom.
+THUMB = Expect(r"[█▁▂▃▄▅▆▇]", region="panel", wait=30)
+# How many of MR !4's topics carry a proposal, asked until all do or 14 minutes have passed.
+EVERY_PROPOSAL = ("python3 -c \"import json,os,time\n"
+                  "p=os.path.expanduser('~/.claude/rework-mr/demo-bulletproof-react--mr4/topics.json')\n"
+                  "for _ in range(168):\n"
+                  " ts=json.load(open(p))['topics']; n=sum(1 for t in ts if t.get('proposal'))\n"
+                  " if n==len(ts): break\n"
+                  " time.sleep(5)\n"
+                  "print(n,'of',len(ts))\"")
 
 # MR !3 worked through to the merge; a part of it is a scenario of its own (`try-pushed-fix`).
 REWORK_FIX = [
@@ -266,6 +279,22 @@ SCENARIOS = [
     Scenario(
         "try-pushed-twice", "MR !3 up to t1's second push, t2's between, for a person to try (--keep)", WORK,
         needs_rig=True, mods=[MOD], recording="rework-twice", steps=REWORK_TWICE[:TRY_TWICE]),
+
+    Scenario(
+        "try-scrolling", "MR !4: every sidebar area with more than it shows, beside ones that fit, for a person to try (--keep)",
+        SCROLL, needs_rig=True, mods=[MOD], steps=[
+            Prompt("/rework-mr !4", timeout=600),
+            Panel(True),
+            Expect(current("t1"), region="panel", wait=60),
+            # Thirteen topics in a quarter of the sidebar: the list has its scrollbar.
+            THUMB,
+            # The background agent proposes a plan for each other topic: waited for, so the
+            # session left to try has every card's proposal, and the recording all of them.
+            Check(EVERY_PROPOSAL, r"^13 of 13$", timeout=900),
+            # Its last reply after the last proposal: a recording cut before it has the agent
+            # ask a replay for one more reply than it holds.
+            Expect(r"general-purpose", region="screen", absent=True, wait=180),
+        ]),
 
     Scenario(
         "review-buttons", "MR !1: drop, draft and post from the band, nothing typed", REVIEW1,

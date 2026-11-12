@@ -59,6 +59,7 @@ DATES = {
     "mr1": "2024-05-04T09:12:00+02:00",
     "mr2": "2024-05-06T14:31:00+02:00",
     "mr3": "2024-05-07T10:05:00+02:00",
+    "mr4": "2024-05-08T11:20:00+02:00",
 }
 IDENT = {
     "author-bot": ("Novak, Alex - CD67890", "author-bot@e2e.test"),
@@ -802,6 +803,128 @@ def seed_mr3_threads(iid):
         post_thread(iid, "reviewer-bot", path, needle, body)
 
 
+# MR !4: frank's own again, made for trying the review-ui sidebar's scrollbars. Every area
+# that can scroll gets more than it shows, and most threads stay short, so areas without a
+# bar are on screen beside them: a topic list longer than its quarter of the sidebar, a long
+# file with a long thread on it, a thread on the MR as a whole and comments on the MR that
+# each outgrow their area.
+MR4_BRANCH = "chore/feature-flags-and-docs"
+MR4_TITLE = "Add feature flags and a doc line on each shared component"
+MR4_DESC = """Two small chores in one MR:
+
+- `src/config/feature-flags.ts`: every flag the app reads, in one place, each with its default
+- a one-line doc comment on top of each shared component that had none
+"""
+MR4_DIR = f"{os.path.expanduser('~/src/agent-skills-demo')}-scroll"
+# The flags file: long enough that the sidebar's file scrolls.
+MR4_FLAGS = "src/config/feature-flags.ts"
+MR4_FLAG_NAMES = [f"{a}{b}" for a in ("comments", "discussions", "users", "teams", "profile", "auth",
+                                      "drawer", "table", "notifications", "search", "export", "audit")
+                  for b in ("Enabled", "Beta", "Limit", "Retry", "Cache", "Log")]
+# Components that get a doc line, each a short thread of the reviewer's on it.
+MR4_DOCS = [
+    ("src/components/Elements/Link/Link.tsx", "a router link styled like the rest of the app"),
+    ("src/components/Elements/MDPreview/MDPreview.tsx", "renders sanitized markdown"),
+    ("src/components/Elements/Spinner/Spinner.tsx", "the loading indicator, in three sizes"),
+    ("src/components/Elements/Table/Table.tsx", "a generic table over rows of one shape"),
+    ("src/components/Form/FieldWrapper.tsx", "a field's label, error and description"),
+    ("src/components/Form/InputField.tsx", "a text input bound to react-hook-form"),
+    ("src/components/Form/SelectField.tsx", "a select bound to react-hook-form"),
+    ("src/components/Head/Head.tsx", "the document title and meta description"),
+    ("src/components/Layout/ContentLayout.tsx", "a page's heading and its content"),
+    ("src/components/Notifications/Notification.tsx", "one toast, with its icon and close button"),
+    ("src/features/auth/api/login.ts", "posts the credentials and returns the user"),
+]
+MR4_SHORT = ["Nit: say what it returns, not only what it renders?", "Is that accurate after the refactor?",
+             "Could this mention the props it expects?", "Fine, but keep it under 80 columns.",
+             "Can we drop 'the' at the start, like the others?", "Is this still true for the mobile layout?",
+             "Typo check: 'sanitized' vs 'sanitised' in the rest of the code?", "Let's link the design doc here.",
+             "Should this say it is client-only?", "Not sure this needs a comment at all.",
+             "Maybe name the hook it uses?"]
+MR4_LONG = ("I think this default is risky. " + " ".join(
+    f"Point {i}: the flag is read on every render of the list, so a wrong default here shows up "
+    f"as a slow page long before anyone notices the flag itself." for i in range(1, 7)))
+MR4_REPLIES = [
+    ("frank", "The default matches what production runs today, so nothing changes on release. "
+              "Do you mean the read on every render, or the value itself?"),
+    ("reviewer-bot", "Both, really. The value is fine for now, but a cached read would make "
+                     "the next change to it cheap. " * 3),
+    ("frank", "Fair. I can memoise the read in the hook and leave the value as it is."),
+    ("reviewer-bot", "Sounds good, and a short comment on why the default is what it is would "
+                     "help the next person too. " * 2),
+]
+MR4_GENERAL = ("A general one, not tied to a line: " + " ".join(
+    f"Paragraph {i}. Before this lands, could you check how the flags are documented in the "
+    f"README, so the two do not drift apart?" for i in range(1, 9)))
+MR4_NOTES = [
+    "Thanks for splitting this out of the bigger refactor. " * 6,
+    "CI note: the new flags file adds no runtime cost, the bundle size is unchanged. " * 5,
+    "Release note draft: feature flags now live in one file; each shared component has a doc line. " * 4,
+]
+
+
+def build_mr4():
+    """Two commits on the demo's main, pushed as frank: the flags file, then the doc lines."""
+    step("MR !4 — feature flags and doc lines (your own MR, for trying the scrollbars)")
+    git("checkout", "--quiet", "-B", MR4_BRANCH, build_main(), cwd=BUILD)
+    flags = ["// Every feature flag the app reads, with its default.", "export const featureFlags = {"]
+    for i, name in enumerate(MR4_FLAG_NAMES):
+        value = "true" if name.endswith("Enabled") else "false" if name.endswith("Beta") \
+            else str(10 * (i % 7 + 1)) if name.endswith(("Limit", "Retry")) else "'memory'" \
+            if name.endswith("Cache") else "'warn'"
+        flags.append(f"  {name}: {value},")
+    flags += ["} as const;", "", "export type FeatureFlag = keyof typeof featureFlags;", ""]
+    path = os.path.join(BUILD, MR4_FLAGS)
+    with open(path, "w") as fh:
+        fh.write("\n".join(flags))
+    git("add", MR4_FLAGS, cwd=BUILD)
+    git("commit", "--quiet", "-m", "add the feature flags file", cwd=BUILD, user="frank",
+        date=DATES["mr4"])
+    for f, doc in MR4_DOCS:
+        full = os.path.join(BUILD, f)
+        with open(full) as fh:
+            text = fh.read()
+        with open(full, "w") as fh:
+            fh.write(f"/** {doc[0].upper()}{doc[1:]}. */\n" + text)
+    git("commit", "--quiet", "-am", "document the shared components", cwd=BUILD, user="frank",
+        date=DATES["mr4"].replace("11:20", "11:35"))
+    push_branch("frank", MR4_BRANCH)
+    return create_mr("frank", MR4_BRANCH, MR4_TITLE, MR4_DESC, reviewers=("reviewer-bot",),
+                     expect_iid=4)
+
+
+def seed_mr4(iid):
+    step("MR !4 — seeding threads and comments that outgrow their areas")
+    enc = project_path_enc()
+    long = post_thread(iid, "reviewer-bot", MR4_FLAGS, "auditCache", MR4_LONG)
+    for user, body in MR4_REPLIES:
+        reply(iid, long["id"], user, body)
+    for (f, doc), body in zip(MR4_DOCS, MR4_SHORT):
+        post_thread(iid, "reviewer-bot", f, doc[1:], body)
+    api(f"projects/{enc}/merge_requests/{iid}/discussions", "POST", {"body": MR4_GENERAL},
+        user="reviewer-bot")
+    for body in MR4_NOTES:
+        api(f"projects/{enc}/merge_requests/{iid}/notes", "POST", {"body": body}, user="peer-bot")
+    info(f"!{iid}: {len(MR4_DOCS) + 2} threads, {len(MR4_NOTES)} comments on the MR")
+
+
+def clone_mr4():
+    """MR !4's own checkout, on its branch, beside the demo's: /rework-mr reworks the MR of
+    the folder's branch, and the demo's own checkout is on MR !3's."""
+    step(f"cloning MR !4's checkout at {MR4_DIR}")
+    if os.path.isdir(MR4_DIR):
+        shutil.rmtree(MR4_DIR)
+    host = E["E2E_GITLAB_HOST"]
+    git("clone", "--quiet", f"http://{host}/{E['E2E_PROJECT']}.git", MR4_DIR)
+    git("config", "user.name", IDENT["frank"][0], cwd=MR4_DIR)
+    git("config", "user.email", IDENT["frank"][1], cwd=MR4_DIR)
+    git("remote", "set-url", "origin", push_url("frank"), cwd=MR4_DIR)
+    git("fetch", "--quiet", "origin", MR4_BRANCH, cwd=MR4_DIR)
+    git("checkout", "--quiet", "-B", MR4_BRANCH, f"origin/{MR4_BRANCH}", cwd=MR4_DIR)
+    git("branch", f"--set-upstream-to=origin/{MR4_BRANCH}", MR4_BRANCH, cwd=MR4_DIR, check=False)
+    record_checks(MR4_DIR)
+
+
 # ---------------------------------------------------------------- local clone
 
 
@@ -827,7 +950,7 @@ def reclone_workdir():
     record_checks()
 
 
-def record_checks():
+def record_checks(where=None):
     """Tell rework-mr which checks a fix runs here: the quick source check, nothing else.
 
     Recorded here rather than worked out by the agent, so a fix on stage shows within
@@ -835,13 +958,14 @@ def record_checks():
     elsewhere is the opposite, record what a project defines, installed or not; here
     husky's hook is never installed into git and nothing is installed for yarn, so eslint,
     tsc and vitest could only fail. The source check needs plain node."""
-    checks.store(WORKDIR, {
+    where = where or WORKDIR
+    checks.store(where, {
         "hooks": [],
         "tests": [{"name": "source", "paths": ["src/**", "scripts/**"],
                    "run": "node scripts/check-source.mjs",
                    "does": "no console.log, debugger or .only( left in src/"}],
         "based_on": [".husky", "package.json", "scripts/check-source.mjs"]})
-    checks.trust(WORKDIR)
+    checks.trust(where)
     info("recorded the source check for rework-mr (demo only)")
 
 
@@ -902,7 +1026,7 @@ def wipe_skill_state():
 # ---------------------------------------------------------------- driver
 
 
-STAGES = ("project", "main", "mr1", "mr2", "mr3", "clone", "state", "prepared")
+STAGES = ("project", "main", "mr1", "mr2", "mr3", "mr4", "clone", "state", "prepared")
 
 
 def main():
@@ -935,10 +1059,15 @@ def main():
         mr3 = build_mr3()
         wait_for_diff(mr3["iid"])
         seed_mr3_threads(mr3["iid"])
+    if "mr4" in want:
+        mr4 = build_mr4()
+        wait_for_diff(mr4["iid"])
+        seed_mr4(mr4["iid"])
     # MR !2's conversation is seeded last: it re-clones nothing, but it does need the
     # working copy (for the review worktree), which the clone stage rebuilds.
     if "clone" in want:
         reclone_workdir()
+        clone_mr4()
     if "state" in want:
         wipe_skill_state()
     if "mr2" in want:
