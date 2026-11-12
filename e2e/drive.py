@@ -54,6 +54,7 @@ import time
 import unicodedata
 from pathlib import Path
 
+import layout
 import mock_model
 import transcript
 
@@ -608,6 +609,18 @@ def run_step(pane, step, verify):
         raise StepFailed(f"not a step this driver knows: {step!r}")
 
 
+def sidebar_drawn_right(pane):
+    """The sidebar as drawn passes the basic checks of `layout.py` (boxes whole, arrows in
+    pairs, each area's line one row). Asked again a moment later before it fails the step: a
+    capture can land in the middle of a redraw."""
+    for attempt in range(3):
+        found = layout.problems(region_of(pane.screen(), "panel"))
+        if not found:
+            return
+        time.sleep(1)
+    raise StepFailed("the sidebar is drawn wrong: " + "; ".join(found))
+
+
 def save(pane, out, n, step):
     stem = out / f"{n:02d}-{re.sub(r'[^a-z0-9]+', '-', step.label().lower()).strip('-')[:50]}"
     stem.with_suffix(".txt").write_text(pane.screen())
@@ -674,6 +687,7 @@ def verify(sc, model, out_root, keep, reset, record=False):
             t = time.time()
             run_step(pane, step, verify=True)
             save(pane, out, n, step)
+            sidebar_drawn_right(pane)
             off_script(mock)
             print(f"   ok  {n:2d} {step.label()}  ({time.time() - t:.1f}s)")
         ran = transcript.session_file(cwd)
