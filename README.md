@@ -1,133 +1,81 @@
 # agent-skills
 
 Agent Skills for [Claude Code](https://docs.claude.com/en/docs/claude-code) and
-[OpenCode](https://opencode.ai/) — for **agentic code review** and understanding unfamiliar
-code. The agent does the reading, the digging and the drafting, with a human in the loop for
-every judgement.
+[OpenCode](https://opencode.ai/), for **agentic code review** and for understanding unfamiliar
+code. The agent does the reading, the digging and the drafting; every judgement stays yours.
 
-They cover three kinds of work:
+The merge-request skills work against GitLab through the [`glab`](https://gitlab.com/gitlab-org/cli)
+CLI. Nothing reaches GitLab unattended: posting a comment, pushing a fix and closing a thread
+each wait for your press.
 
-- **Understand code and changes.** Turn a diff, a branch or a merge request into a page that
-  teaches it, or draw one diagram that answers one question about the codebase.
-- **Review someone else's code.** A prioritized critique of a local branch, or a full review of
-  a GitLab merge request, taken comment by comment until every point is settled.
-- **Act on review feedback.** Work through the threads on your own GitLab merge request one topic
-  at a time: agree on the fix, make it, push it, answer the thread.
+## Review 2.0
 
-And one for keeping work apart: **split a side task off** into its own branch and agent session
-the moment it turns up, instead of letting it creep into the current merge request.
+In Claude Code, `review-mr` and `rework-mr` come with the [review-ui mod](mods/review-ui/README.md),
+which turns the chat into a review tool:
 
-The merge-request skills work against GitLab, through the
-[`glab`](https://gitlab.com/gitlab-org/cli) CLI — no other forge today. Nothing reaches it
-unattended: they prepare the work and draft the words, while posting a comment, pushing a fix
-and closing a thread each wait for a go-ahead.
-
----
+- **A card per topic.** Each topic of the review is a card in the chat: the agent's analysis,
+  the plan, the fix or the drafted reply, with buttons for the decision on it. Most presses
+  need no model turn: agreeing a plan, pushing a checked fix, posting a reply.
+- **A sidebar beside the chat.** It shows the topics grouped by where they stand, the
+  commented code with its thread under the lines it is on, and the fix's files with their
+  sizes.
+- **Rounds and an inbox.** What arrives while you wait (a reply, a push, a new thread) is
+  marked in the sidebar and judged by a background agent, so the topic's card already carries
+  the verdict when you get to it.
+- **Fixes you can follow.** In `rework-mr` a fix is made, checked with the repository's own
+  hooks and tests, folded into the commit it belongs to and force-pushed on one press. After
+  the push, the card lists the steps the topic went through, and **Show fix in hunk** opens
+  the fix in [Hunk](https://hunk.dev/), a terminal diff viewer, beside the chat.
 
 ## The skills
 
-### Understanding a change
-
 | skill | what it does |
 |---|---|
-| **explain-diff** | An interactive HTML page that teaches one code change — background, intuition, a code walkthrough, diagrams and a quiz — then opens it in the browser. Targets the current branch, a named local or remote branch, a GitLab MR, or just the last commit. |
-| **explain-branch** | The same page for a whole branch or MR, structured as one chapter per substantial commit: the "how this feature was built, step by step" story, with an intro, a summary and per-chapter quizzes. Falls back to the flat `explain-diff` shape when there is only one commit, or too few substantial ones to earn chapters. |
+| **explain-diff** | An interactive HTML page that teaches one change (background, a code walkthrough, diagrams and a quiz), for the current branch, a named branch, a GitLab MR or the last commit. |
+| **explain-branch** | The same for a whole branch or MR, one chapter per substantial commit: how the feature was built, step by step. |
+| **visualize** | One diagram that answers one question about the code (a database layout, a flow, a state machine, an architecture), drawn with [D2](https://d2lang.com) and checked in a real browser for legibility, clipping and WCAG AA contrast. |
+| **review-branch** | A critique of the current branch's commits: a prioritized list of concrete flaws with fix hints. Local only. |
+| **review-mr** | A review of a GitLab MR **someone else wrote**: an optional explainer, findings seeded by `review-branch`, then one topic at a time to a drafted comment you post. A re-review loop follows replies and pushes over days and closes nothing without your ack. |
+| **rework-mr** | The feedback on an MR **you wrote**: one topic at a time to a plan, a fix folded into the commit it belongs to and force-pushed, and the thread's reply in the thread's own language. |
+| **self-review** | Your own review of your change in Hunk before an MR exists, commit by commit: you leave notes on its lines, the agent answers them and amends what you agree to. |
+| **split-handoff** | A side task that turns up mid-session, moved into its own worktree, branch and agent session in a new tmux window, with a handoff to start from. |
 
-Both pages are self-contained — their own styling, diagrams and quizzes — and follow the
-reader's light/dark preference, with a toggle to override it. One can be sent to somebody who
-has none of this installed.
-
-### Drawing the codebase
-
-| skill | what it does |
-|---|---|
-| **visualize** | One diagram that answers one question about the code — a database layout, a request or interaction flow, how a set of classes relate, a state machine, an architecture, or a before/after pair for a migration. It explores the code for the facts, renders with [D2](https://d2lang.com), then measures the finished drawing in a headless browser and holds it to objective checks: no unreadably small text, nothing hidden behind an annotation, nothing cut off, and WCAG AA contrast — a palette that clears it in light and dark alike. |
-
-Diagrams inside an explainer come from the same engine and pass the same checks; the only
-difference is that they also have to fit the article's column.
-
-### Reviewing
-
-| skill | what it does |
-|---|---|
-| **review-branch** | A critique-only review of every commit on the current branch since it diverged from the remote default branch (detached HEAD included). A flat, prioritized list of concrete flaws with fix hints — severity-tagged, `file:line`-anchored, no praise, no summary. Local only: no GitLab. |
-| **review-mr** | Reviews a GitLab MR **someone else wrote**, end to end. It can generate an explainer first, seeds its findings from `review-branch`, then works through them with the reviewer one topic at a time and drafts a concise comment for each — in the language configured per repo, German by default — which the reviewer posts themselves (in the GitLab UI, or with one press where the review-ui mod is loaded), so the tone stays human. A re-review loop keeps the MR alive over days: on every check it reconciles author replies, resolutions and new pushes, reports what was addressed, offers the per-topic diff, and closes nothing without an explicit ack. Nothing reaches GitLab but what the reviewer posts, and all git work happens in a dedicated worktree, so the current checkout is untouched. |
-| **self-review** | The step before an MR exists: **you** review your own change in [Hunk](https://hunk.dev/), a terminal diff viewer, in a tmux window next to the agent's — one commit at a time from where the branch left the default branch, or the uncommitted change. You leave diff notes on its lines; the agent answers each one under it, amends the fixes you agree to straight into the commit under review and shows it again, and moves to the next commit only on your ACK. Author-led: it adds notes of its own only where you ask it to point something out, and never pushes. |
-| **rework-mr** | The mirror image: the reviewer feedback on an MR **you wrote**. It retrieves the open threads, keeps a per-MR plan so a multi-day cycle survives across sessions, and walks the threads one topic at a time — a straight recommendation for trivial points, a longer discussion for the rest. Per topic it drives the fix test-first, fixes it up into the commit it belongs to instead of piling new ones on top, force-pushes, and drafts the thread reply in the thread's own language. Once the MR is merged, it offers to remove the worktree and local branch it ran in. |
-
-Neither merge-request skill needs an MCP server; `glab` alone is enough.
-
-### Splitting work off
-
-| skill | what it does |
-|---|---|
-| **split-handoff** | A bug or a refactoring that turns up mid-session, moved out of the current branch. It writes a handoff for the side task, creates a worktree in `<main checkout>.wt/` on a new branch from the freshly fetched default branch (or stacked on the current one, when the task needs its unmerged commits), and opens the same agent in a new tmux window right after the current one, seeded with the handoff. A side task that is no branch of a repo (a chore on the machine, work that moves the checkout) gets the same session in a directory of your choosing, without worktree or branch; so does work on a repo used where it is checked out, like this one or your dotfiles, which happens right on its checked-out branch, once that checkout is clean. A worktree is only made where the repo already keeps one in `<main checkout>.wt/`; otherwise it asks you whether the side task works in the checkout itself or starts that folder with a first worktree. The current session carries on untouched. Handoffs go to wherever `git config split-handoff.dir` points for the clone the side task works in, or else to the OS temp dir. |
-
----
+`review-mr` and `rework-mr` are resumable: run them again in a new session, on a new day, and
+they pick the MR up where it stood.
 
 ## Usage
 
-Every skill is invoked by name, or just by asking for the thing it does.
+Invoke a skill by name, or just ask for what it does:
 
 ```
-/visualize show me the database layout
 /visualize what happens when a user logs in
-
-/explain-diff                 # the current branch
-/explain-diff branch:feat/x   # a named local or remote branch
-/explain-diff mr:123          # a GitLab MR, resolved via glab
-/explain-diff commit:abc1234  # one commit
-/explain-branch mr:123        # same targets, chapter-per-commit shape
-
-/review-branch                # local critique of the current branch
-/review-mr 123                # review someone else's MR, then re-review it over days
-/self-review                  # review your own change, commit by commit, before the MR
-/rework-mr                    # work through the feedback on your own MR
-
-/split-handoff the rounding bug in the totals  # spin a side task off into its own session
+/explain-diff mr:123          # also: branch:feat/x, commit:abc1234, or nothing for the current branch
+/explain-branch mr:123
+/review-branch
+/review-mr !123
+/rework-mr
+/self-review
+/split-handoff the rounding bug in the totals
 ```
-
-`review-mr` and `rework-mr` are resumable: run them again later — a new session, a new day —
-and they pick the MR's state back up rather than starting over.
-
----
 
 ## How they fit together
 
-The review skills build on each other, and the parts they share come with the clone. The diagram
-shows the review-related skills:
-
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/review-skills-dark.png">
-  <img alt="Review skills: review-mr runs explain-branch and review-branch; explain-branch renders through explain-diff, which draws through the shared diagram engine; review-mr and rework-mr share the GitLab plumbing and the paste-gate Stop hook; review-mr, rework-mr and self-review show diffs in the shared diff viewer window" src="docs/review-skills-light.png">
+  <img alt="Review skills: review-mr runs explain-branch and review-branch; explain-branch renders through explain-diff, which draws through the shared diagram engine; review-mr and rework-mr share the GitLab plumbing, have their views drawn as cards by the review-ui mod, and fall back to the paste-gate Stop hook without it; review-mr, rework-mr and self-review show diffs in the shared diff viewer window" src="docs/review-skills-light.png">
 </picture>
 
-Drawn by `visualize` itself, from [`docs/review-skills.json`](docs/review-skills.json) — which
-doubles as a worked example of a diagram spec.
+Drawn by `visualize` itself, from [`docs/review-skills.json`](docs/review-skills.json).
 
-What it means for installing:
-
-- **`explain-branch` needs `explain-diff` installed.** It has no scripts of its own: it resolves
-  its target and renders its page through `explain-diff`'s, and hands the whole job over to it
-  when a range turns out to be a single commit.
-- **`review-mr` needs `explain-branch` and `review-branch` installed** (and therefore
-  `explain-diff` too). It runs the explainer in the background and `review-branch` in the
-  foreground to seed its findings — each only once per branch tip: both results are recorded
-  and reused until somebody pushes, so re-opening a review costs neither again.
-- **`visualize`, `review-branch`, `rework-mr`, `self-review` and `split-handoff` stand alone.**
-- **Shared code needs nothing installed.** The diagram engine, the GitLab plumbing and the diff
-  viewer window live in `lib/`, inside the clone every symlink points at, so they are always
-  there — which is why the `explain-*` skills draw without `visualize`.
-
----
+- `explain-branch` needs `explain-diff`; `review-mr` needs `explain-branch` and
+  `review-branch`. The others stand alone.
+- Shared code (the diagram engine, the GitLab plumbing, the diff viewer window) lives in `lib/`,
+  inside the clone every link points at, so it needs no install of its own.
 
 ## Installation
 
-Every skill lives in `skills/<name>/`, so linking them all is one loop. **Keep the clone where
-you put it**: the links point back into it, and the scripts find their shared code relative to
-the real file. Install into the Claude-compatible skill directory shown below: Claude Code uses
-it directly, and OpenCode discovers it natively too. Keeping one shared location also matches
-the bundled commands, which use `~/.claude/skills/<name>` to find sibling skills and scripts.
+Link the skills into the skill directory both Claude Code and OpenCode read, and keep the
+clone where you put it: the links point back into it.
 
 ```bash
 git clone git@github.com:yogan/agent-skills.git ~/src/agent-skills
@@ -136,125 +84,51 @@ for s in ~/src/agent-skills/skills/*/; do
 done
 ```
 
-Or pick individual ones, keeping [How they fit together](#how-they-fit-together) in mind, since
-some need a sibling installed as well:
+Then start a new session. On Claude Code, for `review-mr` and `rework-mr`:
 
-```bash
-ln -sfn ~/src/agent-skills/skills/visualize     ~/.claude/skills/visualize
-ln -sfn ~/src/agent-skills/skills/explain-diff  ~/.claude/skills/explain-diff
-```
+- **The review-ui mod** (recommended), from the clone:
 
-Verify nothing dangles — a broken skill link fails silently, the skill just stops being
-offered:
+  ```bash
+  claude plugin marketplace add ~/src/agent-skills
+  claude plugin install review-ui@yogan-agent-skills
+  ```
 
-```bash
-for d in ~/.claude/skills/*/; do
-  [ -f "$d/SKILL.md" ] || echo "BROKEN: $d"
-done
-```
+- **Without the mod, a `Stop` hook** that makes the model paste the skills' views instead of
+  paraphrasing them. It is one symlink and one settings entry: [`hooks/README.md`](hooks/README.md).
+  Where the mod is loaded, the hook stands down by itself.
+- **Three read permissions**, so the skills' own files and per-MR state raise no prompts. Add
+  them to `~/.claude/settings.json`:
 
-Restart Claude Code or OpenCode (or start a new session) afterwards, so it picks the new skills
-up.
-
-### Recommended on Claude Code for `review-mr` and `rework-mr`: the review-ui mod
-
-[`mods/review-ui`](mods/review-ui/README.md) draws every view the two skills show (the
-overview table, a topic with its code, a drafted comment, a diff) as a card under the tool call
-that printed it, so the model no longer pastes them and its replies stay short. From the clone:
-
-```bash
-claude plugin marketplace add ~/src/agent-skills
-claude plugin install review-ui@yogan-agent-skills
-```
-
-Where the mod is loaded, the `Stop` hook below stands down by itself.
-
-### Required on Claude Code for `review-mr` and `rework-mr`: a `Stop` hook
-
-Both skills work by showing things — an overview table, a quoted topic with its code, a drafted
-comment, the diff behind a push. Claude Code collapses tool output, so the chat message is the
-only window onto them, and a model told to paste a block verbatim will paraphrase it away
-instead. A shared `Stop` hook closes that gap: it checks the finished turn for the output of
-every gated command that ran, and blocks the turn until the block is really there. It **fails
-open**, so a bug in it can never wedge a session, and it never fires outside those two skills.
-
-**Installing it needs a manual edit to `~/.claude/settings.json`** — skills cannot register
-their own hooks. One symlink and one `Stop` entry, both copy-pasteable:
-[`hooks/README.md`](hooks/README.md).
-
-OpenCode needs no equivalent hook: Bash output is visible there, and the scripts omit the
-hook's internal block metadata. The skills still include each block in their chat message so
-it remains visible when tool details are collapsed or hidden.
-
-### Recommended on Claude Code: three read permissions
-
-Claude Code guards `~/.claude/**` separately from the normal permission rules — a blanket
-`Read` allow does **not** cover it — so without these, every skill file and every per-MR state
-file an agent opens raises a prompt, and the dialog's "don't ask again" only remembers it for
-the one repo. Add them to `~/.claude/settings.json`:
-
-```json
-{
-  "permissions": {
-    "allow": [
-      "Read(~/.claude/skills/**)",
-      "Read(~/.claude/rework-mr/**)",
-      "Read(~/.claude/review-mr/**)"
-    ]
-  }
-}
-```
-
-The first covers the skills' own files, the other two the state both merge-request skills keep
-per MR. The `~/` prefix is required: in *user* settings a bare `/path` resolves to
-`~/.claude/path`, not to the filesystem root. `Read` is enough — every write goes through the
-skills' own scripts.
-
----
+  ```json
+  { "permissions": { "allow": [
+    "Read(~/.claude/skills/**)", "Read(~/.claude/rework-mr/**)", "Read(~/.claude/review-mr/**)"
+  ] } }
+  ```
 
 ## Requirements
 
 | you need | for |
 |---|---|
-| `python3` | almost everything: the explainers, every diagram, both merge-request skills, and the `Stop` hook |
-| [`glab`](https://gitlab.com/gitlab-org/cli), authenticated | `review-mr` and `rework-mr`, plus `mr:123` targets for the `explain-*` skills |
-| [D2](https://d2lang.com) — `brew install d2` | every diagram, in `visualize` and the explainers alike |
-| `node` + `puppeteer-core` — `npm i -g puppeteer-core` | measuring a diagram in a real browser: where an annotation fits, and whether anything is cut off |
-| `tmux` | `split-handoff`'s new window; without it, the skill prints the command to start the session yourself |
-| [`hunk`](https://hunk.dev/), inside `tmux` | `self-review`, which needs both; optional for `review-mr` and `rework-mr`, which show a diff in it instead of the chat |
-
-`review-branch` needs none of them. Two things worth knowing about the diagram side:
-
-- **Pin the D2 version.** The engine relies on a few behaviours D2 does not document, so it
-  records the release it was measured against and says so when the installed one differs. An
-  upgrade is a reason to re-check the diagrams, not a routine bump.
-- **`puppeteer-core` drives a browser you already have** — Chrome, Chromium or Edge — rather
-  than downloading a few hundred MB of its own. Point it elsewhere with
-  `PUPPETEER_EXECUTABLE_PATH`, or install the full `puppeteer` if there is no system browser.
-  Without any browser the diagrams still render and every other check still runs; the one that
-  finds cut-off text then reports that it could not run, rather than passing.
-
-On macOS, a drafted comment also lands on the clipboard, ready to paste.
-
----
+| `python3` | nearly everything |
+| [`glab`](https://gitlab.com/gitlab-org/cli), authenticated | `review-mr`, `rework-mr`, and `mr:` targets of the explainers |
+| [D2](https://d2lang.com) (`brew install d2`) | every diagram; the engine says when the installed release differs from the one it was measured against |
+| `node` and `puppeteer-core` (`npm i -g puppeteer-core`) | checking a diagram in your installed Chrome, Chromium or Edge |
+| `tmux` | `split-handoff`'s new window, and the diff viewer below. Nothing else needs it: the review skills and the mod run without it |
+| [`hunk`](https://hunk.dev/) inside `tmux` | `self-review`; optional for `review-mr` and `rework-mr`, to show a diff beside the chat |
 
 ## Under the hood
 
-Just enough to find your way around; the working rules for changing any of it are in
-[CLAUDE.md](CLAUDE.md).
-
 | path | what it is |
 |---|---|
-| `skills/<name>/` | one skill each — `SKILL.md`, sometimes a `REFERENCE.md`, and its Python in `scripts/` |
-| `lib/diagram/` | the diagram engine: a description in, a checked diagram out. Entry point, rules and change loop in [`lib/diagram/README.md`](lib/diagram/README.md) |
-| `lib/` | Python shared repo-wide — GitLab access, per-MR state, code snippets, and the diff viewer window (`hunk.py`, used by `review-mr`, `rework-mr` and `self-review`) |
-| `hooks/` | the paste-enforcement `Stop` hook — [`hooks/README.md`](hooks/README.md) |
-| `e2e/` | a local GitLab rig for exercising `review-mr` / `rework-mr` — [`e2e/README.md`](e2e/README.md) |
-| `docs/` | the review skills diagram under "How they fit together", and the spec it is drawn from |
+| `skills/<name>/` | one skill each: `SKILL.md`, and its Python in `scripts/` |
+| `mods/review-ui/` | the Claude Code mod behind Review 2.0: [`mods/review-ui/README.md`](mods/review-ui/README.md) |
+| `lib/` | Python shared repo-wide; the diagram engine in [`lib/diagram/`](lib/diagram/README.md) |
+| `hooks/` | the `Stop` hook for sessions without the mod |
+| `e2e/` | a local GitLab rig that drives real sessions through the review skills: [`e2e/README.md`](e2e/README.md) |
 
-Tests are plain `unittest`, colocated as `test_<module>.py`. `python3 run_tests.py` runs the
-fast suite; `--changed` runs only what the uncommitted edits can reach.
+Tests are plain `unittest`: `python3 run_tests.py` runs the fast suite, `--changed` only what
+your edits can reach. The working rules for changing anything are in [CLAUDE.md](CLAUDE.md).
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+MIT, see [LICENSE](LICENSE).
