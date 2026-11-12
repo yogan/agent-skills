@@ -96,6 +96,21 @@ class TestCurrentUser(unittest.TestCase):
         self.assertIsNone(G.current_user())
 
 
+class TestRememberUser(unittest.TestCase):
+    def test_an_answer_is_kept(self):
+        state = {}
+        self.assertEqual(G.remember_user(state, "jdoe"), "jdoe")
+        self.assertEqual(state["me"], "jdoe")
+
+    def test_no_answer_gives_the_one_kept_before(self):
+        state = {"me": "jdoe"}
+        self.assertEqual(G.remember_user(state, None), "jdoe")
+        self.assertEqual(state["me"], "jdoe")
+
+    def test_no_answer_ever_is_none(self):
+        self.assertIsNone(G.remember_user({}, None))
+
+
 class TestMrHead(unittest.TestCase):
     def test_prefers_diff_refs_head_sha(self):
         G.mr_object = lambda ctx, iid: {"diff_refs": {"head_sha": "abc123"}, "sha": "old"}

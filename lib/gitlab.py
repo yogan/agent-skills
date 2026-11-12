@@ -197,9 +197,19 @@ def versions(ctx, iid):
                paginate=True)
 
 
+def remember_user(state, me):
+    """`me` (a `current_user()` answer) kept in `state`, or the one kept there before when
+    GitLab could not say. Every comment's "yours or theirs" comes from it, so one failed
+    lookup would otherwise turn the user's own replies into someone else's for that run: news
+    that is not news, and every plan agreed on the thread out of date."""
+    if me:
+        state["me"] = me
+    return me or state.get("me")
+
+
 def current_user():
     """glab-authenticated username — the reviewer in review-mr's flow, the MR
-    author in rework-mr's."""
+    author in rework-mr's. None when GitLab cannot say: see `remember_user`."""
     r = run(["glab", "api", "user"])
     if r.returncode != 0:
         return None

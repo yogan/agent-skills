@@ -1557,6 +1557,30 @@ class TestResumeWithNothingToShow(unittest.TestCase):
 
 CTX = {"enc": "g%2Fp", "web": "http://gl/g/p"}
 
+
+class TestGitLabCannotSayWhoYouAre(unittest.TestCase):
+    """Mirrors test_threads.py's: one failed "who am I" must not make your comments the
+    author's news."""
+
+    def refresh(self, state, me):
+        with patch.object(F, "resolve_state", return_value=(CTX, 2, "/s", state)), \
+                patch.object(F, "current_user", return_value=me), patch.object(F, "sync"), \
+                patch.object(F, "fetch_threads", return_value={}) as fetch, patch.object(F, "save"), \
+                patch.object(F, "mr_base", return_value=None), \
+                patch.object(sys, "argv", ["findings.py", "refresh", "--iid", "2"]), \
+                redirect_stdout(io.StringIO()) as out:
+            F.main()
+        return fetch, out.getvalue()
+
+    def test_the_last_known_answer_tells_your_comments(self):
+        fetch, _ = self.refresh({"iid": 2, "topics": [], "threads": {}, "me": "kim"}, None)
+        self.assertEqual(fetch.call_args.args[2], "kim")
+
+    def test_never_known_leaves_the_threads_as_they_were(self):
+        fetch, out = self.refresh({"iid": 2, "topics": [], "threads": {}}, None)
+        fetch.assert_not_called()
+        self.assertTrue(json.loads(out))
+
 DIFF = """@@ -10,4 +10,5 @@ app.use(
  app.use(
    cors({

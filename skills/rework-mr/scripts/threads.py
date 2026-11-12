@@ -79,6 +79,7 @@ from lib.gitlab import (
     api_post,
     context,
     current_user,
+    remember_user,
     die,
     file_at,
     mr_base,
@@ -181,6 +182,26 @@ def _range_keys(pos, on_new):
     if not isinstance(a, int) or not isinstance(b, int) or a > b:
         return {}
     return {"line_start": a, "line_end": b}
+
+
+def me_of(state):
+    """Who the user is on GitLab, the last known answer when GitLab cannot say now."""
+    return remember_user(state, current_user())
+
+
+def resync(state, ctx, iid):
+    """Fetch the threads and reconcile them, with the comments on the MR itself; who the
+    user is back. None, and `state` untouched, while that was never known: without it their
+    own replies would read as a reviewer's."""
+    me = me_of(state)
+    if not me:
+        print("warning: GitLab could not say who you are (is `glab auth status` OK?): "
+              "the threads are as they were", file=sys.stderr)
+        return None
+    mr_comments = []
+    sync(state, fetch_threads(ctx, iid, me, mr_comments))
+    state["mr_comments"] = mr_comments
+    return me
 
 
 def fetch_threads(ctx, iid, me, mr_comments=None):
@@ -2740,10 +2761,10 @@ def main():
         save(path, state)
         print(json.dumps(state_json(state)))
     elif cmd == "refresh":                # the mod's update check: fetch, reconcile, state
-        mr_comments = []
-        me = current_user()
-        sync(state, fetch_threads(ctx, iid, me, mr_comments))
-        state["mr_comments"] = mr_comments
+        me = resync(state, ctx, iid)
+        if not me:
+            print(json.dumps(state_json(state)))   # the state as it was: the next check tries again
+            return
         state["diff_base"] = mr_base(ctx, iid) or state.get("diff_base")
         # The MR as a whole: approved, auto-merge set, merged. Mirrors findings.py's.
         status = mr_status(ctx, iid, me)
@@ -2811,8 +2832,7 @@ def main():
             save(path, state)
             print(f"{tref(args.topic)} is posted")
         else:
-            mr_comments = []
-            sync(state, fetch_threads(ctx, iid, current_user(), mr_comments))
+            resync(state, ctx, iid)
             save(path, state)
             _disc, mine = posted.own_note(state, t, last=True, since=t.get("reply_at"))
             print("Drafted:\n\n" + (t.get("reply") or "(no draft kept)").strip())
@@ -2857,9 +2877,7 @@ def main():
         url = post_reply(state, ctx, iid, args.topic, args.expect, args.fixed, args.resolve)
         if early and current_topic(state) == args.topic:
             CURRENT.leave(state)               # said; the round goes on, the fix comes later
-        mr_comments = []
-        sync(state, fetch_threads(ctx, iid, current_user(), mr_comments))
-        state["mr_comments"] = mr_comments
+        resync(state, ctx, iid)
         save(path, state)
         print(f"posted {tref(args.topic)}: {url}")
     elif cmd == "push":
@@ -2981,9 +2999,7 @@ def main():
     elif cmd == "plans":
         print(render_plans(state))
     elif cmd in ("sync", "todo"):
-        mr_comments = []
-        sync(state, fetch_threads(ctx, iid, current_user(), mr_comments))
-        state["mr_comments"] = mr_comments
+        resync(state, ctx, iid)
         # The MR's diff base, so the offline `code` command can show the MR's changes.
         state["diff_base"] = mr_base(ctx, iid) or state.get("diff_base")
         save(path, state)

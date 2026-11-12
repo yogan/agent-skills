@@ -1537,6 +1537,37 @@ class TestResolveState(unittest.TestCase):
         self.assertEqual((iid, state["iid"]), (7, 7))
 
 
+class TestGitLabCannotSayWhoYouAre(unittest.TestCase):
+    """One failed "who am I" must not turn your own replies into a reviewer's: that reads as
+    news, starts a judge, and puts every plan agreed on the thread out of date."""
+
+    def refresh(self, state, me):
+        with mock.patch.object(T, "resolve_state", return_value=({}, 3, "/s", state)), \
+                mock.patch.object(T, "load", return_value=state), mock.patch.object(T, "save"), \
+                mock.patch.object(T, "hold"), mock.patch.object(T, "current_user", return_value=me), \
+                mock.patch.object(T, "fetch_threads", return_value={}) as fetch, \
+                mock.patch.object(T, "mr_base", return_value=None), \
+                mock.patch.object(T, "mr_status", return_value={"state": "opened"}), \
+                mock.patch.object(sys, "argv", ["threads.py", "refresh", "--iid", "3"]), \
+                redirect_stdout(io.StringIO()) as out:
+            T.main()
+        return fetch, out.getvalue()
+
+    def test_the_last_known_answer_tells_your_comments(self):
+        fetch, _ = self.refresh({"topics": [], "threads": {}, "me": "ana"}, None)
+        self.assertEqual(fetch.call_args.args[2], "ana")
+
+    def test_never_known_leaves_the_threads_as_they_were(self):
+        fetch, out = self.refresh({"topics": [], "threads": {}}, None)
+        fetch.assert_not_called()
+        self.assertTrue(json.loads(out))            # the mod still gets the state to draw
+
+    def test_an_answer_is_kept_for_later(self):
+        state = {"topics": [], "threads": {}}
+        self.refresh(state, "ana")
+        self.assertEqual(state["me"], "ana")
+
+
 class TestRounds(unittest.TestCase):
     """Where the mod draws: the plan pass, then the fix pass, inside rounds."""
 

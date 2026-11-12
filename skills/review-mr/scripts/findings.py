@@ -112,7 +112,7 @@ from lib import code_view, critical_manifest, diffsize, focus, hunk, posted, ui 
 from lib.fences import (LINK_ICON, SUGGESTION_INFO, YOU, block_lang, fence, suggestion_reach,  # noqa: E402
                         diff_info, lang_for, note_md, quoted_fence, segments,
                         suggestion_diff, when_of)
-from lib.gitlab import (api, api_post, context, current_user, die, file_at, mr_base,  # noqa: E402
+from lib.gitlab import (api, api_post, context, current_user, die, file_at, mr_base, remember_user,  # noqa: E402
                         mr_head, mr_object, mr_status, mr_view, versions, web_base)
 from lib.mr_common import (DEFAULT_LANG, LANG_GIVEAWAYS, MR_LEVEL, TOPIC_ICON, first_name,  # noqa: E402
                            hold, load, mr_json, mr_news, topic_handles, loc_md, num, plain_text, reads_as,
@@ -3378,7 +3378,7 @@ def main():
             v["from"] = code_view.row_of(v["rows"], at)
         print(json.dumps(v))
         return
-    me = current_user()
+    me = remember_user(state, current_user())
     author = state.get("author_username")
     if me is None and cmd in ("sync", "todo", "present", "candidates"):
         print("warning: could not determine your glab username — needs-ack and "
@@ -3718,7 +3718,12 @@ def main():
         save(path, state)
         print(done)
     elif cmd == "refresh":
-        # The update check's: what GitLab says now, read back as the mod's state.
+        # The update check's: what GitLab says now, read back as the mod's state. Not while
+        # who the user is was never known: their own comments would read as the author's
+        # news. The next check tries again.
+        if not me:
+            print(json.dumps(state_json(state)))
+            return
         sync(state, fetch_threads(ctx, iid, me, author), ctx, iid)
         base = mr_base(ctx, iid)
         if ui.drawn():
