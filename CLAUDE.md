@@ -80,8 +80,12 @@ tooling:
 - **A generated document** (the `explain-*` skills) — open the document and say what to look
   at in it. There is no before/after tooling here; if a comparison is worth building, that is
   its own topic, not something to improvise mid-change.
-- **A skill's behaviour inside a session** (`review-mr`, `rework-mr`, the mod, hooks) — there
-  is no artefact to show. `e2e/drive.py verify <scenario>` drives a real session through it
+- **A skill's behaviour inside a session** (`review-mr`, `rework-mr`, the mod, hooks) — a
+  change the owner would see on screen (the cards, the band, the sidebar) has an artefact:
+  `e2e/screenshot.py` draws the verify run's captures as Ghostty draws them. For a
+  significant UI change, look at them yourself first; once convinced it is right, offer the
+  owner the ones that show the change, named and with what to look at. Its docstring says
+  where it differs from Ghostty. `e2e/drive.py verify <scenario>` drives a real session through it
   on the local GitLab rig, the model's replies played from the scenario's recording: free and
   the same every run, so it belongs in the loop beside the mod's own tests and the unit tests.
   A real model (`--model`, and `--record` to re-make a recording the change broke) costs money

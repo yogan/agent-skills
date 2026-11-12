@@ -17,6 +17,7 @@ Talk-day checklist and run of show: [RUNBOOK.md](RUNBOOK.md).
 | `scenarios.py` | the scenarios `drive.py` runs |
 | `mock_model.py` | the model's stand-in: replays a recorded run's replies to a real claude, and cuts recordings from transcripts |
 | `recordings/` | one recording per scenario, played by default; made from a passing real-model run (`--record`) |
+| `screenshot.py` | a colour capture (`.ansi`) as a PNG drawn as Ghostty draws it, the whole screen or the sidebar alone |
 | `transcript.py` | what a session ran, from its transcript: prompts, replies, calls, results, engine notes; a failed verify run keeps it as `transcript.txt` |
 | `news.py` | MR !1 changes while its review waits: `reply`, `push`, `both` or `fix`, as its author (the review-ui mod's inbox); MR !3 as a whole: `approve` (its reviewer), `merge` |
 | `.runs/` | `drive.py verify` captures, one folder per run (gitignored) |
@@ -143,6 +144,7 @@ python3 drive.py verify smoke --keep      # leave the tmux session up to look at
 python3 drive.py verify rework-3 --model sonnet --record   # real model (paid): re-record it
 python3 drive.py showcase rework-3        # a window in your tmux, on the recording; Enter steps it
 python3 drive.py showcase rework-3 --pace 4    # or unattended, 4 s between steps
+python3 screenshot.py .runs/<run> --region panel   # every step's screen as a PNG, the sidebar alone
 ```
 
 **The model is a recording by default.** Claude Code, the skills' scripts, the mod, the hooks
@@ -166,7 +168,9 @@ scenario marked `rig` resets the fixture first (~30 s), because the run before i
 state and posted to the merge request; `--no-reset` skips that. After every step the screen is
 saved as text and with colours under `.runs/<time>-<scenario>/`, and a failed run adds what
 the session ran (`transcript.txt`, from `transcript.py`) and, on the recording, what each
-request was answered with (`mock.log`).
+request was answered with (`mock.log`). `screenshot.py` turns those colour captures into PNGs
+drawn as Ghostty draws them, so a change to the cards or the sidebar can be looked at without
+running a session by hand.
 
 **showcase** opens a window in the tmux session you are in (or `--session NAME`), with your
 settings, on the recording, and waits for Enter before each step; the recording stops
