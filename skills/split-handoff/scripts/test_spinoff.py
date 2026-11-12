@@ -277,12 +277,24 @@ class TestLaunch(unittest.TestCase):
     P = {"name": "x", "branch": "fix/x", "base": "origin/main", "worktree": "/w/app.wt/x",
          "handoff": "/h/x-handoff.md"}
 
-    def runner(self, calls, stdout="3"):
+    def runner(self, calls, stdout="3", shell="/opt/fish"):
         def run(argv, **_):
             calls.append(argv)
-            return SimpleNamespace(returncode=0, stdout="@7" if "display-message" in argv
-                                   else stdout, stderr="")
+            out = ("@7" if "display-message" in argv else shell if "default-shell" in argv
+                   else stdout)
+            return SimpleNamespace(returncode=0, stdout=out, stderr="")
         return run
+
+    def test_quitting_the_agent_leaves_the_window_at_the_default_shell(self):
+        calls = []
+        S.launch(self.P, {"TMUX": "1", "TMUX_PANE": "%1", "SHELL": "/bin/zsh"}, self.runner(calls))
+        self.assertTrue(calls[-1][-1].endswith("; exec /opt/fish -l"))
+
+    def test_without_a_tmux_default_shell_the_login_shell_follows(self):
+        calls = []
+        S.launch(self.P, {"TMUX": "1", "TMUX_PANE": "%1", "SHELL": "/bin/zsh"},
+                 self.runner(calls, shell=""))
+        self.assertTrue(calls[-1][-1].endswith("; exec /bin/zsh -l"))
 
     def test_opens_a_window_beside_the_current_one_without_switching(self):
         calls = []

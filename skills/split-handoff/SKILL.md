@@ -99,7 +99,7 @@ python3 ~/.claude/skills/split-handoff/scripts/spinoff.py start --name <name> --
 
 It fetches (unless stacked) and creates the worktree on the new branch (with `--dir`, neither),
 then opens the same agent (Claude Code or OpenCode) in a tmux window right after the current
-one, without switching to it. Outside tmux it prints the command for the user to run instead.
+one, without switching to it; quitting the agent leaves that window at the user's shell. Outside tmux it prints the command for the user to run instead.
 
 `--model` takes your own model id, so the new Claude Code session runs on the same model as
 this one rather than the configured default. OpenCode ignores it.

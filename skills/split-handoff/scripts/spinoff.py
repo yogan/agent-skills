@@ -181,6 +181,20 @@ def prompt_for(p):
             f"This session runs {where}.")
 
 
+def default_shell(env, run):
+    """The shell a new tmux window would start: tmux's `default-shell`, else the login
+    shell `$SHELL` names (an agent's own environment may name another), else sh."""
+    try:
+        got = run(["tmux", "show-options", "-gv", "default-shell"],
+                  capture_output=True, text=True).stdout.strip()
+    except (OSError, subprocess.SubprocessError):
+        got = ""
+    for shell in (got, env.get("SHELL", "")):
+        if shell.startswith("/"):
+            return shell
+    return "/bin/sh"
+
+
 def launch(p, env=None, run=subprocess.run, model=None):
     """Open the agent in a tmux window right after the current one, without switching to
     it. Returns the line to report; outside tmux, the command for the user to run."""
@@ -205,8 +219,12 @@ def launch(p, env=None, run=subprocess.run, model=None):
                    capture_output=True, text=True).stdout.strip()
         if here:
             place = ["-a", "-t", here]
+    # The window outlives the agent: quitting it lands in the person's shell, in the same
+    # folder, for a `--resume` or a few commands of their own. tmux runs the line through
+    # that same shell, so it holds only what every shell reads alike.
+    after = f"; exec {shlex.quote(default_shell(env, run))} -l"
     argv = (["tmux", "new-window", "-d", "-P", "-F", "#{window_index}"] + place
-            + ["-n", p["name"], "-c", where, shlex.join(cmd)])
+            + ["-n", p["name"], "-c", where, shlex.join(cmd) + after])
     proc = run(argv, capture_output=True, text=True)
     if proc.returncode != 0:
         return (f"tmux refused ({proc.stderr.strip()}); start it yourself:\n"
