@@ -274,7 +274,8 @@ lands in the sidebar's inbox, and a background agent of the mod's prepares a pla
   viewer are answered, show the fix again and leave the push to its card.
 - **After the push** the card offers a short `Fixed: <link>` or a longer reply. Asked for the
   longer one, draft what the reviewer needs to know (how the fix differs from what they
-  asked, the answer to their question); `set --reply` ends it on the `Fixed: <link>` line,
+  asked, the answer to their question); `set --reply` ends it on the `Fixed:` line (a link per
+  fix the thread has not seen linked yet),
   and it never resolves the thread: the reviewer reads it and resolves.
 - **Posting is the user's**: they post from the card. `threads.py post` refuses anything else.
 

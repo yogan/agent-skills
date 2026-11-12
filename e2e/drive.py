@@ -132,6 +132,7 @@ class Click(Step):
     offset: int = 0     # columns right of where `text` starts, to hit one glyph of it
     turn: bool = False  # the press starts a turn: wait it out, as `Keys` does
     timeout: int = 300
+    region: str = "screen"  # "panel": the sidebar's only, where the chat may show it too
 
     def label(self):
         return f"click {self.text!r}"
@@ -227,10 +228,14 @@ def columns_of(line, needle):
     return out
 
 
-def find_text(screen, text):
-    """(row, column), both 0-based, of the first occurrence of `text` on screen, or None."""
+def find_text(screen, text, region="screen"):
+    """(row, column), both 0-based, of the first occurrence of `text` on screen, or None.
+    `region="panel"`: only right of the sidebar's divider (none where no sidebar is open)."""
+    after = divider_column(screen) if region == "panel" else -1
+    if after is None:
+        return None
     for row, line in enumerate(screen.split("\n")):
-        cols = columns_of(line, text)
+        cols = [c for c in columns_of(line, text) if c > after]
         if cols:
             return row, cols[0]
     return None
@@ -570,7 +575,7 @@ def run_step(pane, step, verify):
         # A button that has only just appeared may still be redrawn (a background agent's
         # result filling its card): a click into that is lost. Let it stand first.
         time.sleep(2)
-        at = find_text(pane.screen(), step.text)
+        at = find_text(pane.screen(), step.text, step.region)
         if at is None:
             raise StepFailed(f"nothing on screen reads {step.text!r}")
         pane.click(at[0], at[1] + step.offset)

@@ -52,9 +52,13 @@ const world = (on: On, states: string[], extra: Record<string, Out> = {}, store:
     const cmd = e.argv[2] ?? ''
     if (cmd === 'state') return answer({ stdout: states[Math.min(at, states.length - 1)] ?? '' })
     if (cmd === 'quote') return answer({ stdout: view(e.argv[3] ?? '') })
-    // A file picked in the sidebar is answered apart where the test gives it (`code --file <f>`).
-    const pick = e.argv.indexOf('--file')
-    const hit = (pick > 0 ? extra[`${cmd} --file ${e.argv[pick + 1]}`] : undefined) ?? extra[cmd]
+    // A file or a push picked in the sidebar is answered apart where the test gives it
+    // (`code --file <f>`, `code --push <n>`).
+    const picked = (flag: string) => {
+      const i = e.argv.indexOf(flag)
+      return i > 0 ? extra[`${cmd} ${flag} ${e.argv[i + 1]}`] : undefined
+    }
+    const hit = picked('--file') ?? picked('--push') ?? extra[cmd]
     if (hit) return answer(hit)
     at += 1
     return answer({ stdout: '' })
@@ -1712,8 +1716,9 @@ test("rework-mr: a fix in several files shows the comment's file, every file lis
   await openRework($, w, reworkView('t1'))
   const panel = await $.ui.mount({ ...PANEL, surface: 'terminal' })
   const texts = (await panel.findAll({ type: 'Text' })).map(t => t.text ?? '')
-  expect(texts).toContain('Your fix')
-  expect(texts).toContain(' · 3 files')
+  expect(texts).not.toContain('Your fix')
+  // No count in the area's line: the rows are the files.
+  expect(texts.some(t => / · \d+ files?/.test(t))).toBe(false)
   expect(texts).toEqual(expect.arrayContaining(['src/a/create.ts', 'src/b/query-keys.ts', '+12', '−3']))
   // The shown file's row carries the bar, the comment's file its mark; a TypeScript file its icon.
   const shown = JSON.stringify((await panel.find({ type: 'Box', key: 'file-src/a/query-keys.ts' }))?.children ?? [])
@@ -1788,8 +1793,7 @@ test("rework-mr: a pushed fix is the sidebar's files area, all its files, its vi
   await openRework($, w, reworkView('t1'))
   const panel = await $.ui.mount({ ...PANEL, surface: 'terminal' })
   const texts = (await panel.findAll({ type: 'Text' })).map(t => t.text ?? '')
-  expect(texts).toContain('Your fix')
-  expect(texts).toContain(' · 2 files')
+  expect(texts).not.toContain('Your fix')
   expect(texts).not.toContain('Also changed')
   expect(texts).toContain('pushed')
   expect(texts).toContain('src/b/create.ts')
@@ -1798,26 +1802,70 @@ test("rework-mr: a pushed fix is the sidebar's files area, all its files, its vi
   expect(w.ran.map(r => r.argv.slice(2).join(' '))).toContain('hunk-show t1 --pushed --iid 42')
 })
 
-test("rework-mr: a fix in one file keeps the area's line, with nothing to pick", async ($, on) => {
+test("rework-mr: a fix pushed twice picks its push in the files area's line, the files and the viewer's key following it", async ($, on) => {
+  const latest = codeOf(20, [3, 3], { mode: 'pushed', file: 'src/a.ts', commented: 'src/a.ts', fix_files: [['src/a.ts', 2, 1]] })
+  const first = codeOf(20, [3, 3], { mode: 'pushed', file: 'src/a.ts', commented: 'src/a.ts', fix_files: [['src/a.ts', 1, 1], ['src/b.ts', 5, 0]] })
+  const w = world(on, [reworkState('t1', [reworkTopic('t1', 'reply', { pushed: true, fix_kept: true, pushes: 2 })])],
+    { code: { stdout: JSON.stringify(latest) }, 'code --push 1': { stdout: JSON.stringify(first) } })
+  await openRework($, w, reworkView('t1'))
+  const panel = await $.ui.mount({ ...PANEL, surface: 'terminal' })
+  const texts = async () => (await panel.findAll({ type: 'Text' })).map(t => String(t.text ?? ''))
+  // The latest at first, the key to it dim: there is no later one.
+  expect(await texts()).toContain('push 2 of 2 ')
+  // At the line's right end: the rule runs from the viewer's key to it.
+  const line = JSON.stringify((await panel.find({ type: 'Box', key: 'files-line' }))?.children ?? [])
+  expect(line.slice(line.indexOf('"key":"files-hunk"'), line.indexOf('push-earlier'))).toMatch(/─{3,}/)
+  expect((await panel.find({ type: 'Button', key: 'push-earlier' }))?.props.label).toBe('\u{F0BB9}')
+  expect((await panel.find({ type: 'Button', key: 'push-later' }))?.props.dimColor).toBe(true)
+  await panel.press({ key: 'push-earlier' })
+  expect(w.ran.map(r => r.argv.slice(2).join(' '))).toContain('code t1 --push 1 --iid 42')
+  expect(await texts()).toEqual(expect.arrayContaining(['push 1 of 2 ', 'src/b.ts']))
+  await panel.press({ key: 'files-hunk' })
+  expect(w.ran.map(r => r.argv.slice(2).join(' '))).toContain('hunk-show t1 --pushed --push 1 --iid 42')
+  await panel.unmount()
+})
+
+test("rework-mr: the files area's viewer key stays drawn while a press or the model works", async ($, on) => {
+  const code = codeOf(20, [3, 3], { mode: 'pushed', file: 'src/a.ts', commented: 'src/a.ts', fix_files: [['src/a.ts', 2, 1]] })
+  const w = world(on, [reworkState('t1', [reworkTopic('t1', 'reply', { pushed: true, fix_kept: true, pushes: 2 })])], { code: { stdout: JSON.stringify(code) } })
+  on('turn.start', ($, e) => ({ turnId: e.turnId }))
+  await openRework($, w, reworkView('t1'))
+  await $.turn.start({ text: 'go on', turnId: 'turn-1' })
+  const panel = await $.ui.mount({ ...PANEL, surface: 'terminal' })
+  expect(await panel.find({ type: 'Button', key: 'files-hunk' })).toBeDefined()
+  await panel.unmount()
+})
+
+test("rework-mr: a fix pushed once has no push to pick", async ($, on) => {
+  const code = codeOf(20, [3, 3], { mode: 'pushed', file: 'src/a.ts', commented: 'src/a.ts', fix_files: [['src/a.ts', 2, 1]] })
+  const w = world(on, [reworkState('t1', [reworkTopic('t1', 'reply', { pushed: true, fix_kept: true, pushes: 1 })])], { code: { stdout: JSON.stringify(code) } })
+  await openRework($, w, reworkView('t1'))
+  const panel = await $.ui.mount({ ...PANEL, surface: 'terminal' })
+  expect(await panel.find({ type: 'Button', key: 'push-earlier' })).toBeUndefined()
+  await panel.unmount()
+})
+
+test("rework-mr: a fix in one file lists that file, its size and the comment's mark", async ($, on) => {
   const code = codeOf(20, [3, 3], { mode: 'pushed', file: 'src/a.ts', commented: 'src/a.ts', fix_files: [['src/a.ts', 2, 1]] })
   const w = world(on, [reworkState('t1', [reworkTopic('t1', 'reply', { pushed: true, fix_kept: true })])], { code: { stdout: JSON.stringify(code) } })
   await openRework($, w, reworkView('t1'))
   const panel = await $.ui.mount({ ...PANEL, surface: 'terminal' })
   const texts = (await panel.findAll({ type: 'Text' })).map(t => t.text ?? '')
-  expect(texts).toContain(' · 1 file')
+  expect(texts).toEqual(expect.arrayContaining(['src/a.ts', '+2', '−1']))
   expect(await panel.find({ type: 'Button', key: 'files-hunk' })).toBeDefined()
-  expect(await panel.find({ type: 'Button', key: 'file-pick-src/a.ts' })).toBeUndefined()
+  expect(JSON.stringify((await panel.find({ type: 'Box', key: 'file-src/a.ts' }))?.children ?? [])).toContain('\u{F0189}')
   await panel.unmount()
 })
 
-test("review-mr: the author's pushed fix is the sidebar's files area under its own name", async ($, on) => {
+test("review-mr: the author's pushed fix is the sidebar's files area, led by its viewer's key", async ($, on) => {
   const code = codeOf(20, [3, 3], { mode: 'since', file: 'src/cache.ts', commented: 'src/cache.ts', fix_files: [['src/cache.ts', 2, 1], ['src/b.ts', 1, 0]] })
   const w = world(on, [stateOf('t2', [{ ...topic('t2', 'needs_ack'), fix_kept: true } as Topic])], { code: { stdout: JSON.stringify(code) } })
   await openReview($, w, view('t2'))
   const panel = await $.ui.mount({ ...PANEL, surface: 'terminal' })
   const texts = (await panel.findAll({ type: 'Text' })).map(t => t.text ?? '')
-  expect(texts).toContain("Author's fix")
+  expect(texts).not.toContain("Author's fix")
   expect(texts).toContain('src/b.ts')
+  expect(JSON.stringify((await panel.find({ type: 'Box', key: 'files-line' }))?.children ?? [])).toContain('files-hunk')
   await panel.unmount()
 })
 
@@ -1861,29 +1909,24 @@ test('rework-mr: a topic with news is marked in the list, as in review-mr, and t
   await panel.unmount()
 })
 
-test("rework-mr: a fix's other files are an area of five rows, opened to a third of the sidebar, the diff viewer's key in its line", async ($, on) => {
+test("rework-mr: a fix's files are an area of a sixth of the sidebar, scrolling past that, with no fold, the diff viewer's key opening its line", async ($, on) => {
   const listed = Array.from({ length: 12 }, (_, i) => [`src/f${i + 1}.ts`, 1, 1])
   const fix = codeOf(20, [3, 3], { mode: 'fix', file: 'src/f1.ts', commented: 'src/f1.ts', fix_files: listed })
   const w = world(on, [reworkState('t1', [reworkTopic('t1', 'fixed', { checks: 'passed' })])], { code: { stdout: JSON.stringify(fix) } })
   await openRework($, w, reworkView('t1'))
   const panel = await $.ui.mount({ ...PANEL, surface: 'terminal' })
   const files = async () => (await panel.findAll({ type: 'Text' })).map(t => String(t.text ?? '')).filter(t => /^src\/f\d+\.ts$/.test(t))
-  expect(await files()).toHaveLength(5)
-  expect((await panel.find({ type: 'Button', key: 'files-open' }))?.props.label).toBe('\u{F084F}')
+  expect(await files()).toHaveLength(5)                                  // a sixth of 30 rows
+  expect(await panel.find({ type: 'Button', key: 'files-open' })).toBeUndefined()
+  expect(await panel.find({ type: 'Button', key: 'files-down' })).toBeDefined()
   expect(String((await panel.find({ type: 'Button', key: 'files-hunk' }))?.props.label)).toMatch(/Review in hunk$/)
   expect((await panel.find({ type: 'Text', text: 'unpushed' }))?.props.color).toBe('yellow')
-  // The viewer's key after the area's name and count, the fold key at the line's end, never
-  // on a row that scrolls.
+  // The viewer's key opens the line, a chip between its caps, the rule after it.
   const line = JSON.stringify((await panel.find({ type: 'Box', key: 'files-line' }))?.children ?? [])
   expect(line.indexOf('files-hunk')).toBeGreaterThan(-1)
-  expect(line.indexOf('files-open')).toBeGreaterThan(line.indexOf('files-hunk'))
-  expect(line.slice(0, line.indexOf('files-hunk'))).toContain('" ──"')
-  expect(line.slice(line.indexOf('files-hunk'), line.indexOf('files-open'))).toMatch(/─{3,}/)
-  expect((await panel.findAll({ type: 'Text' })).map(t => t.text)).toContain(' · 12 files')
-  expect(JSON.stringify((await panel.find({ type: 'Box', key: 'files-first' }))?.children ?? [])).not.toContain('files-open')
-  await panel.press({ key: 'files-open' })
-  expect(await files()).toHaveLength(10)                                 // a third of 30 rows
-  expect(await panel.find({ type: 'Button', key: 'files-down' })).toBeDefined()
+  expect(line.slice(0, line.indexOf('files-hunk'))).toContain('"── "')
+  expect(line.slice(0, line.indexOf('"key":"files-hunk"'))).toContain('\u{E0B6}')
+  expect(line.slice(line.indexOf('files-hunk'))).toMatch(/─{3,}/)
   await panel.unmount()
 })
 

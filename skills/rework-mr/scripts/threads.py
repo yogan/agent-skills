@@ -1175,11 +1175,81 @@ def is_pushed_fix(t):
     return (t.get("outcome") or "fix") == "fix" and bool(t.get("diff_url"))
 
 
-def kept_fix(state, t):
-    """The pushed fix's two ends as kept in git (`lib/fix_refs.py`), or None: pushed before
-    they were kept and not found again since, or no longer in git."""
-    root = (_git("rev-parse", "--show-toplevel") or "").strip()
-    return fix_refs.kept(root, SKILL, state.get("iid")).get(t["id"]) if root and is_pushed_fix(t) else None
+def push_key(tid, n):
+    """Where the topic's `n`th push (1-based) is kept in git, under the MR's prefix."""
+    return f"{tid}/push{n}"
+
+
+def fixes_of(t):
+    """The topic's pushed fixes, oldest first, one per push (`t["pushes"]`), never with
+    another topic's change: consecutive pushes of it, with nothing pushed between them and
+    nothing but the fix in either, are one fix. Each is `{"pushes": [n, …], "before",
+    "after", "url", "mixed"}`: `before` and `after` the commits its change lies between,
+    `url` GitLab's diff of it (the last push's version, from where the first one started),
+    `mixed` where that link may show more than the fix (a push recorded before pushes were
+    kept one by one, or one that carried a rebase or other commits along)."""
+    out = []
+    for n, p in enumerate(t.get("pushes") or [], 1):
+        last = out[-1] if out else None
+        if last and not last["mixed"] and p.get("clean") and p.get("start") == last["after"]:
+            last["pushes"].append(n)
+            last["after"] = p["after"]
+            last["url"] = (re.sub(r"start_sha=[^&#]+", f"start_sha={last['start']}", p["url"])
+                           if p.get("url") and last["url"] else None)
+            continue
+        out.append({"pushes": [n], "before": p["before"], "start": p.get("start"),
+                    "after": p["after"], "url": p.get("url"), "mixed": not p.get("clean")})
+    return out
+
+
+def kept_fixes(state, t, kept=None):
+    """`fixes_of(t)`, each with `ends` added: its two commits as kept in git
+    (`lib/fix_refs.py`), or None where they are not (no longer in git, or never fetched).
+    `kept`: the MR's kept fixes, where the caller read them for every topic at once."""
+    if kept is None:
+        root = (_git("rev-parse", "--show-toplevel") or "").strip()
+        kept = fix_refs.kept(root, SKILL, state.get("iid")) if root and t.get("pushes") else {}
+    out = []
+    for f in fixes_of(t):
+        first, last = kept.get(push_key(t["id"], f["pushes"][0])), kept.get(push_key(t["id"], f["pushes"][-1]))
+        out.append({**f, "ends": (first[0], last[1]) if first and last else None})
+    return out
+
+
+def kept_fix(state, t, n=None, kept=None):
+    """The pushed fix's two ends as kept in git (`lib/fix_refs.py`): its `n`th fix (1-based),
+    else its latest; None where it is not kept, or the topic's fix is not pushed."""
+    if not is_pushed_fix(t):
+        return None
+    fixes = kept_fixes(state, t, kept)
+    if not fixes or (n is not None and not 1 <= n <= len(fixes)):
+        return None
+    return fixes[(n or len(fixes)) - 1]["ends"]
+
+
+def fixed_links(state, t):
+    """The links a `Fixed:` reply gives: of the topic's fixes since the last one already
+    linked in its threads (a reply of the user's naming its version), each fix's own; every
+    fix where none is linked yet. A link spanning several fixes is never made: between them
+    lies another topic's push, or a rebase, which GitLab's diff would show too."""
+    pushes = t.get("pushes") or []
+    said = "\n".join(n.get("body") or "" for x in t["thread_ids"]
+                      for n in (state["threads"].get(x) or {}).get("notes") or [] if n.get("mine"))
+    ids = [re.search(r"diff_id=(\d+)", p.get("url") or "") for p in pushes]
+    linked = [n for n, m in enumerate(ids, 1) if m and re.search(rf"diff_id={m.group(1)}\b", said)]
+    since = linked[-1] if linked else 0
+    links = [f["url"] for f in fixes_of({"pushes": [p if n > since else {**p, "clean": False}
+                                                    for n, p in enumerate(pushes, 1)]})
+             if f["pushes"][0] > since and f["url"]]
+    return links or ([t["diff_url"]] if t.get("diff_url") else [])
+
+
+def fixed_body(state, t):
+    """The `Fixed:` reply: one link on its line, several as a list."""
+    links = fixed_links(state, t)
+    if len(links) == 1:
+        return f"Fixed: {links[0]}\n"
+    return "Fixed:\n" + "".join(f"- {u}\n" for u in links)
 
 
 def _one_line(text, width=72):
@@ -1217,11 +1287,23 @@ def pushed_steps(state, t):
     show (Show fix in hunk), not a copy here."""
     done = ui.STEP_DONE_ICON
     out = [f"{done} Plan agreed: {_one_line(t.get('plan'))}" if t.get("plan") else f"{done} Plan agreed"]
-    ends = kept_fix(state, t)
     root = (_git("rev-parse", "--show-toplevel") or "").strip()
-    stat = fix_refs.stat(root, ends) if ends else None
-    size = f" · {diffsize.of_stat(stat)}" if stat else ""
-    out.append(f"{done} Fix pushed{size} · [the diff ↗]({t['diff_url']})")
+
+    def said(f):
+        stat = fix_refs.stat(root, f["ends"]) if f.get("ends") else None
+        size = f" · {diffsize.of_stat(stat)}" if stat else ""
+        link = f" · [the diff ↗]({f['url']})" if f.get("url") else ""
+        return size + link + (" · may include other topics' changes" if f.get("mixed") else "")
+
+    # A topic pushed before its pushes were kept one by one has its link alone.
+    fixes = kept_fixes(state, t) or [{"url": t["diff_url"]}]
+    if len(fixes) == 1:
+        out.append(f"{done} Fix pushed{said(fixes[0])}")
+    else:
+        out.append(f"{done} Fix pushed · {len(fixes)} pushes")
+        # Under it, one line per push, indented by no-break spaces: a card's markdown drops
+        # the plain ones that lead a line.
+        out += [f"\u00a0\u00a0{ui.PUSHED_ICON} push {k}{said(f)}" for k, f in enumerate(fixes, 1)]
     url = reply_posted(state, t)
     if url:
         out.append(f"{done} Reply posted · [your reply ↗]({url})")
@@ -1511,8 +1593,10 @@ def state_json(state):
             "outcome": t.get("outcome") or ("fix" if t.get("decision") else None),
             "pushed": bool(t.get("diff_url")),
             "diff_url": t.get("diff_url"),
-            # The pushed fix kept in git, which Show fix in hunk opens.
-            "fix_kept": is_pushed_fix(t) and t["id"] in kept,
+            # The pushed fix kept in git, which Show fix in hunk opens (its latest push), and
+            # how many pushes it has: the sidebar picks one of them where there are several.
+            "fix_kept": bool(kept_fix(state, t, kept=kept)),
+            "pushes": len(fixes_of(t)) if is_pushed_fix(t) else 0,
             # A reply drafted to post ahead of the fix, and whether one went up already.
             "early": bool(t.get("reply_early") and t.get("reply")),
             "early_posted": bool(t.get("early_posted")),
@@ -1740,8 +1824,8 @@ def reviewer_mark(state, t):
 def start_fix_round(t):
     """A fix agreed on a topic whose earlier fix is pushed: the reviewers asked for more, so
     the topic goes back to making a fix, and what described the earlier one (its link, its
-    checks, the reply about it) is dropped. The baseline of its first push stays, so the
-    next push's link spans every push the topic had."""
+    checks, the reply about it) is dropped. Its pushes stay (`t["pushes"]`): the next push
+    is recorded beside them, and the card lists them all."""
     if (t.get("outcome") or "fix") == "fix" and t.get("diff_url"):
         for k in ("diff_url", "fix", "checked", "push_token", "push_from", "handed_from",
                   "reply", "reply_at", "reply_early", "post_differs", "early_posted",
@@ -2097,7 +2181,7 @@ def post_reply(state, ctx, iid, tid, expect, fixed=False, resolve=False):
         die(f"{tref(tid)} has no thread to reply in")
     if fixed:
         t.get("diff_url") or die(f"{tref(tid)} has no diff URL yet: push the fix first")
-        body = f"Fixed: {t['diff_url']}\n"
+        body = fixed_body(state, t)
     else:
         body = t.get("reply") or die(f"{tref(tid)} has no draft reply yet")
         if expect and reply_version(body) != expect:
@@ -2243,24 +2327,40 @@ def run_checks(root, tid, new, iid):
 
 def keep_pushed_fixes(state, ctx, iid):
     """The update check's care of the pushed fixes kept in git (`lib/fix_refs.py`): once the
-    MR is merged or closed, every one of them goes; while it is open, a fix pushed before
-    they were kept is found again from its saved diff link (its start, and the head of the
-    version it names), where git still has both commits."""
+    MR is merged or closed, every one of them goes. While it is open:
+
+    - a fix pushed before pushes were recorded one by one becomes one push, from its saved
+      diff link (its start, and the head of the version it names), kept in git where git
+      still has both commits. Its link spans every push since the topic's first, so it is
+      clean only where GitLab has no version between the two;
+    - a push whose link GitLab had not made yet when it was pushed gets it now."""
     root = (_git("rev-parse", "--show-toplevel") or "").strip()
     if not root:
         return
     if (state.get("mr_status") or {}).get("state") in ("merged", "closed"):
         fix_refs.drop(root, SKILL, iid)
         return
-    have = fix_refs.kept(root, SKILL, iid)
-    missing = [(t, ends) for t in state["topics"] if is_pushed_fix(t) and t["id"] not in have
-               and not t.get("fix_lost") and (ends := fix_refs.from_diff_url(t["diff_url"]))]
-    if not missing:
+    old = [(t, ends) for t in state["topics"] if is_pushed_fix(t) and not t.get("pushes")
+           and not t.get("fix_lost") and (ends := fix_refs.from_diff_url(t["diff_url"]))]
+    unlinked = [p for t in state["topics"] for p in t.get("pushes") or [] if not p.get("url")]
+    if not (old or unlinked):
         return
-    heads = {v.get("id"): v.get("head_commit_sha") for v in versions(ctx, iid) or []}
-    for t, (start, diff_id) in missing:
-        if not fix_refs.keep(root, SKILL, iid, t["id"], start, heads.get(diff_id)):
+    vs = versions(ctx, iid) or []
+    at = {v.get("id"): k for k, v in enumerate(vs)}
+    for t, (start, diff_id) in old:
+        k = at.get(diff_id)
+        head = vs[k].get("head_commit_sha") if k is not None else None
+        if not head or not fix_refs.keep(root, SKILL, iid, push_key(t["id"], 1), start, head):
             t["fix_lost"] = True          # asked once: git no longer has it, the link stays
+            continue
+        older = vs[k + 1].get("head_commit_sha") if k + 1 < len(vs) else None
+        t["pushes"] = [{"before": start, "start": start, "after": head, "url": t["diff_url"],
+                        "clean": older == start}]
+    web = ctx.get("web")
+    for p in unlinked:
+        k = next((k for k, v in enumerate(vs) if v.get("head_commit_sha") == p["after"]), None)
+        if web and k is not None and p.get("start"):
+            p["url"] = f"{web}/-/merge_requests/{iid}/diffs?diff_id={vs[k]['id']}&start_sha={p['start']}"
 
 
 def diff_url_for(ctx, iid, start, head):
@@ -2342,14 +2442,15 @@ def push_fix(ctx, iid, path, tid, committed=False):
                                          handed_from=checks._out(root, "rev-parse", "HEAD"))
             save(path, state)
             raise Handoff(handoff_brief(tid, fix, token, checks.skips_commit_hooks(rec)))
-    start = t.get("start_sha") or (versions(ctx, iid) or [{}])[0].get("head_commit_sha")
-    # The branch as it was before this push rewrote it, kept across a push cut short: what
-    # the remote holds must be in it.
+    # The branch as it was before this push rewrote it, and the MR's head on GitLab then,
+    # both kept across a push cut short: what the remote holds must be in the first, and the
+    # second is where this push's own diff starts.
     before = t.get("push_from") or checks._out(root, "rev-parse", "HEAD")
+    start = t.get("push_start") or (versions(ctx, iid) or [{}])[0].get("head_commit_sha")
     if not t.get("push_from"):
         hold(path)
         state = load(path)
-        topic_for(state, tid)["push_from"] = before
+        topic_for(state, tid).update(push_from=before, push_start=start)
         save(path, state)
     try:
         if handed:
@@ -2376,19 +2477,32 @@ def push_fix(ctx, iid, path, tid, committed=False):
         checks.trust(root)
     head = checks._out(root, "rev-parse", "HEAD")
     url = diff_url_for(ctx, iid, start, head) if start else None
-    if start:
-        # The fix as pushed, for the diff viewer after the push: what it started from and
-        # what it made, held in git against the force push that leaves both on no branch.
-        fix_refs.keep(root, SKILL, iid, tid, start, head)
+    # This push's change alone: from the branch before its fix was committed (the agent's
+    # commits start from where the press handed them over) to the head it made. Where the
+    # branch held more than GitLab's head (a rebase, commits not pushed yet), the link from
+    # that head shows those too: the push is not clean, and joins no other into one fix.
+    frm = handed or before
+
+    def tree(sha):
+        return checks._out(root, "rev-parse", f"{sha}^{{tree}}") if sha else None
+    if tree(frm) == tree(head) and start:
+        frm = start                        # committed before the press: the change is GitLab's
+    clean = bool(start) and tree(frm) == tree(start)
     hold(path)
     state = load(path)
     t = topic_for(state, tid)
-    t["start_sha"] = start
-    t.pop("push_from", None)
-    t.pop("handed_from", None)
+    t.setdefault("pushes", []).append({"before": frm, "start": start, "after": head, "url": url,
+                                       "clean": clean,
+                                       "at": datetime.datetime.now(datetime.timezone.utc).isoformat()})
+    n = len(t["pushes"])
+    for k in ("push_from", "push_start", "handed_from", "start_sha"):
+        t.pop(k, None)
     if url:
         t["diff_url"] = url
     save(path, state)
+    # The fix as pushed, for the diff viewer after the push, held in git against the force
+    # push that leaves both commits on no branch.
+    fix_refs.keep(root, SKILL, iid, push_key(tid, n), frm, head)
     if sid:
         say, close = hunk_close_decision(hunk.user_notes(sid))
         if close:
@@ -2473,6 +2587,8 @@ def main():
                     help="the fix in the working tree: its changes against HEAD marked")
     pk.add_argument("--file", help="one of the fix's files to show (the sidebar's pick), not "
                     "the comment's")
+    pk.add_argument("--push", type=int, help="which of a pushed fix's pushes (1-based, as the "
+                    "card counts them), not the latest")
     sub.add_parser(
         "check-handles",
         help="print any internal topic handles "
@@ -2612,6 +2728,8 @@ def main():
             pp.add_argument("--pushed", action="store_true",
                             help="the fix as pushed, from the commits kept in git, not the "
                             "working tree's")
+            pp.add_argument("--push", type=int, help="with --pushed: which of its pushes "
+                            "(1-based, as the card counts them), not the latest")
     sub.add_parser("refresh").add_argument("--iid", type=int)
     pjb = sub.add_parser("judge-brief")
     pjb.add_argument("--iid", type=int)
@@ -2996,8 +3114,8 @@ def main():
         # this session's diff viewer window.
         t = topic_for(state, args.topic) or die(f"no topic {args.topic}")
         root = (_git("rev-parse", "--show-toplevel") or "").strip()
-        ends = kept_fix(state, t) or die(f"{tref(args.topic)} has no pushed fix kept in git "
-                                         "to show: its diff link is all there is")
+        ends = kept_fix(state, t, args.push) or die(f"{tref(args.topic)} has no pushed fix kept "
+                                                    "in git to show: its diff link is all there is")
         shown = fix_refs.show(root, ends, state_file(STATE_ROOT, ctx["slug"], iid, f"fix-{args.topic}.patch"),
                               window_label())
         if not shown:
@@ -3037,7 +3155,7 @@ def main():
             if v:
                 v["mode"] = "fix"
         else:
-            ends = kept_fix(state, t)
+            ends = kept_fix(state, t, args.push)
             files = [[f, a, r] for f, a, r in fix_refs.stat(root, ends)] if ends else []
             names = [f for f, _a, _r in files]
             if files and (args.file in names or code_view.commented(root, x) in names):
@@ -3147,7 +3265,7 @@ def main():
                 # A reply after the fix ends on the line that links it, as `Fixed: <link>`
                 # alone would: the reviewer reads it there and resolves the thread.
                 if t.get("diff_url") and not args.early and t["diff_url"] not in v:
-                    v += f"\nFixed: {t['diff_url']}\n"
+                    v += "\n" + fixed_body(state, t)
                 t.pop("post_differs", None)   # a new draft: the old one's check is over
                 # When it was written: a reply the user posts by hand is one made after this.
                 t["reply_at"] = datetime.datetime.now(datetime.timezone.utc).isoformat()
@@ -3156,6 +3274,8 @@ def main():
                 else:
                     t.pop("reply_early", None)
             t[fld.get(f, f)] = v
+            if f == "diff-url" and t.get("pushes") and not t["pushes"][-1].get("url"):
+                t["pushes"][-1]["url"] = v      # the link the push could not wait for
         if args.decision is not None:
             # A plan agreed in the chat: on what the reviewers said last, and on the change
             # shown for it, if one was (`change-view`).

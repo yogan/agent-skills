@@ -12,7 +12,7 @@ import {
 } from './panel.ts'
 import { blocksOf, type DiffSize, type SizeRun, withEmoji, withoutDraft, isPostCommand, isViewCommand, partsOf, sizeOf, sizeRunsOf, withoutPasted, withSuggestions, manifestOf, titleOf, viewOf, withNote, withoutExcerpt, withoutExcerptLabel, withoutThread } from './views.ts'
 import {
-  askedFor, clampOffset, codeArgsOf, codeWindow, currentOwn, firstOffset, phaseOf, stepOwn,
+  askedFor, clampOffset, codeArgsOf, codeWindow, currentOwn, firstOffset, phaseOf, pushOf, stepOwn,
   type CodeView,
 } from './sidebar.ts'
 import { COMMENTED, iconOfFile } from './files.ts'
@@ -55,6 +55,8 @@ const ownPick = atom({ plugin: 'review-ui', key: 'own-pick' } as const, null as 
 const codeAt = atom({ plugin: 'review-ui', key: 'code-at' } as const, {} as Record<string, number>, { shape: 'code-at-1' })
 // The file picked from a fix's list, per item (its code key without a pick).
 const filePick = atom({ plugin: 'review-ui', key: 'file-pick' } as const, {} as Record<string, string>, { shape: 'file-pick-1' })
+// rework-mr: the push picked of a topic's pushed fix, per topic; none, its latest.
+const pushPick = atom({ plugin: 'review-ui', key: 'push-pick' } as const, {} as Record<string, number>, { shape: 'push-pick-1' })
 // The files the sidebar read lately, by their code key, each with the state's stamp it was
 // read at: fetched before the state or the pick that shows them is stored, so a click draws
 // once, with its file, and never the sidebar without it in between.
@@ -87,8 +89,6 @@ const codeOpen = atom({ plugin: 'review-ui', key: 'code-open' } as const, {} as 
 // How far each of the sidebar's areas that scroll inside themselves is scrolled, and for which
 // current item: the list's window follows the current topic until the person moves it.
 const areaAt = atom({ plugin: 'review-ui', key: 'area-at' } as const, {} as Record<string, { at: number; on: string | null }>, { shape: 'area-at-1' })
-// The fix's other files the person opened past their folded rows, by the code view.
-const filesOpen = atom({ plugin: 'review-ui', key: 'files-open' } as const, {} as Record<string, boolean>, { shape: 'files-open-1' })
 const boxAt = atom({ plugin: 'review-ui', key: 'box-at' } as const, {} as Record<string, number>, { shape: 'box-at-1' })
 // rework-mr: the comments on the MR itself opened in full under the file.
 const mrOpen = atom({ plugin: 'review-ui', key: 'mr-open' } as const, false, { shape: 'mr-open-1' })
@@ -105,6 +105,9 @@ const GAP = 1
 const ARROW = 2
 // The rows a folded area (the fix's other files, the comments on the MR) shows at most.
 const FOLDED_ROWS = 5
+// The rows a fix's file list takes at least and at most, as the sidebar's height allows.
+const FILES_LEAST = 4
+const FILES_MOST = 10
 // The columns the fold key takes at the end of a folded box's first line, with its space.
 const FOLD_KEY = 2
 // The update check: a tick every 30 seconds, GitLab asked every sixth (every tick while the
@@ -143,6 +146,8 @@ const GLYPH = {
   more: '\u{F084F}', // md-arrow_expand_vertical
   less: '\u{F084D}', // md-arrow_collapse_vertical
   legend: '\u{F064E}', // md-information_variant: not the question kind's circled ?
+  earlier: '\u{F0BB9}', // md-pan_left: the push before, of a topic's pushed fixes, as the
+  later: '\u{F0BBA}', // md-pan_right  scroll arrows are md-pan
 }
 const PANE = 'review-ui-topics'
 
@@ -613,9 +618,9 @@ const showStep = async ($: EngineInterface, s: ReviewSession, r: ReviewState | n
 // stamp the new state will have; `own`, an own comment about to be picked; `picks`, a file
 // about to be picked), so the drawing that shows it finds its file already read.
 const syncCode = async ($: EngineInterface, s: ReviewSession, r: ReviewState,
-  next: { now?: number; own?: string; picks?: Record<string, string> } = {}) => {
+  next: { now?: number; own?: string; picks?: Record<string, string>; pushes?: Record<string, number> } = {}) => {
   const own = currentOwn(r, next.own ?? await read($, ownPick))
-  const want = codeArgsOf(r, own, next.picks ?? await read($, filePick))
+  const want = codeArgsOf(r, own, next.picks ?? await read($, filePick), next.pushes ?? await read($, pushPick))
   if (!want) return
   const now = next.now ?? await read($, stamp)
   if ((await read($, codeSeen))[want.key]?.stamp === now) return
@@ -677,7 +682,7 @@ const pickOwn = async ($: EngineInterface, s: ReviewSession, id: string, isStep 
 }
 
 const codeFor = async ($: EngineInterface, r: ReviewState, own: ReturnType<typeof currentOwn>) => {
-  const want = codeArgsOf(r, own, await read($, filePick))
+  const want = codeArgsOf(r, own, await read($, filePick), await read($, pushPick))
   const view = want ? (await read($, codeSeen))[want.key]?.view : undefined
   return want && view ? { key: want.key, base: want.base, view } : undefined
 }
@@ -1533,16 +1538,20 @@ const stepControls = async ($: EngineInterface, s: ReviewSession, r: ReviewState
   const asked = askedFor(r, own)
   const isSettledPick = phaseOf(r) === 'own' && r.own_review !== 'pending'
     && (asked.proposals?.length ?? 0) === 0 && (r.proposals?.length ?? 0) > 0
-  const buttons = isWorking || doing ? []
-    : isSettledPick ? [
-      { key: 'own-back', label: 'Next', press: { kind: 'own-step', by: 1, to: r.proposals?.[0]?.thread } },
-    ] as BandButton[]
+  // What the step offers, and of it what can be pressed now: nothing while a press or the
+  // model works. A key that only shows something (the sidebar's Show in hunk) stays drawn
+  // meanwhile, from `offered`: a key that vanishes for the moment its own press runs moves
+  // everything after it on its line.
+  const offered = isSettledPick ? [
+    { key: 'own-back', label: 'Next', press: { kind: 'own-step', by: 1, to: r.proposals?.[0]?.thread } },
+  ] as BandButton[]
     : buttonsFor({ ...asked, explained: await read($, explained), unjudged: (await read($, judging)).failed })
+  const buttons = isWorking || doing ? [] : offered
   // The newest card in the chat is the current step's: the buttons are drawn on it, and the
   // band keeps the feedback alone. A step with no card of its own keeps them in the band.
   const host = await read($, hostCard)
   const isHosted = !isSettledPick && !!host && host.topic === (r.current ?? null)
-  return { buttons, press, isHosted, host }
+  return { buttons, offered, press, isHosted, host }
 }
 
 export const register: Register = on => {
@@ -1820,9 +1829,11 @@ export const register: Register = on => {
     // A count with its unit: "1 file", "51 files".
     const countOf = (n: number, unit: string) => `${n} ${unit}${n === 1 ? '' : 's'}`
     // `middle`: a key after the line's words, a short stretch of line between them, the rest
-    // of the line after it.
-    const rule = (key: string, segs: Seg[], right?: { el: JSX.Element; width: number }, middle?: { el: JSX.Element; width: number }) => {
-      const tail = (right ? right.width + 3 : 1) + (middle ? middle.width + 2 : 0)
+    // of the line after it. `inline`: keys within the words, after the first of them. `lead`:
+    // keys that open the line, before any words.
+    const rule = (key: string, segs: Seg[], right?: { el: JSX.Element; width: number }, middle?: { el: JSX.Element; width: number },
+      inline?: { el: JSX.Element; width: number }, lead?: { el: JSX.Element; width: number }) => {
+      const tail = (right ? right.width + 3 : 1) + (middle ? middle.width + 2 : 0) + (inline?.width ?? 0) + (lead?.width ?? 0)
       const room = Math.max(4, cols - 4 - tail - 1)
       let parts = segs.filter(x => x.text)
       const total = () => parts.reduce((n, x) => n + cells(x.text), 0)
@@ -1836,15 +1847,17 @@ export const register: Register = on => {
       }
       while (parts.length > 1 && total() > room) parts = parts.slice(0, -1)
       // A line with nothing to say is the rule alone, unbroken.
-      if (parts.length === 0 && !right) return <Text key={key} dimColor>{'─'.repeat(Math.max(1, cols))}</Text>
+      if (parts.length === 0 && !right && !lead) return <Text key={key} dimColor>{'─'.repeat(Math.max(1, cols))}</Text>
       const dashes = Math.max(1, cols - 4 - total() - tail)
       const before = middle ? Math.min(2, dashes) : dashes
       return (
         <Box key={key} flexDirection="row" flexShrink={0}>
           <Text dimColor>{'── '}</Text>
-          {parts.map((x, i) => (
-            <Text key={`${key}-${i}`} color={x.color} bold={x.isBold || undefined} dimColor={x.isDim || undefined}>{x.text}</Text>
-          ))}
+          {lead?.el}
+          {parts.map((x, i) => [
+            <Text key={`${key}-${i}`} color={x.color} bold={x.isBold || undefined} dimColor={x.isDim || undefined}>{x.text}</Text>,
+            i === 0 ? inline?.el : null,
+          ])}
           <Text dimColor>{` ${'─'.repeat(before)}`}</Text>
           {middle && <Text> </Text>}
           {middle?.el}
@@ -2144,8 +2157,8 @@ export const register: Register = on => {
     // to five lines, and opened, in full up to a third of the height.
     const mrComments = isReview ? [] : (r.mr_comments ?? [])
     const isMrOpen = await read($, mrOpen)
-    const filesCap = (isOpened: boolean) => (isOpened ? Math.max(FOLDED_ROWS, Math.floor(H / 3)) : FOLDED_ROWS)
-    const mrCap = filesCap(isMrOpen)
+    const areaCap = (isOpened: boolean) => (isOpened ? Math.max(FOLDED_ROWS, Math.floor(H / 3)) : FOLDED_ROWS)
+    const mrCap = areaCap(isMrOpen)
     const mrShort = mrComments.map(n => oneLineNote(withEmoji(n.body ?? ''),
       Math.max(8, cols - (n.author ?? 'someone').length - (n.url ? 3 : 1) - BOX_ARROWS)))
     const mrFull = isMrOpen && mrComments.length > 0
@@ -2195,12 +2208,13 @@ export const register: Register = on => {
     const listShown = Math.min(listRows.length, listCap)
     const listArea = 1 + listShown + legendRows
     // A fix's files (in the working tree, or pushed and kept in git), every one of them, the
-    // one shown above among them: a list to pick from where there is more than one, the
-    // area's line alone where there is not.
+    // one shown above among them: a list to pick from, a fix of one file listed too, with its
+    // size and the comment's mark.
     const fixFiles = code?.view.fix_files ?? []
-    const others = fixFiles.length > 1 ? fixFiles : []
-    const isFilesOpen = code ? (await read($, filesOpen))[code.base] === true : false
-    const filesShown = Math.min(others.length, filesCap(isFilesOpen))
+    // Never folded, and kept small beside the code it is for: a sixth of the height, at least
+    // FILES_LEAST rows and at most FILES_MOST, so a tall pane gives it a few more while most of
+    // it stays the code's. Past that the list scrolls inside its area.
+    const filesShown = Math.min(fixFiles.length, Math.max(FILES_LEAST, Math.min(FILES_MOST, Math.floor(H / 6))))
     const filesArea = fixFiles.length ? 1 + 1 + filesShown : 0
     const footRows = !code && waitingOf(r) ? 1 : 0
     // The area under the list (the file, a thread with no file, or the inbox) takes the rest,
@@ -2388,20 +2402,20 @@ export const register: Register = on => {
     const pathCut = (f: string, width: number) => (cells(f) <= width ? f : `…${[...f].slice(cells(f) - width + 1).join('')}`)
     let filesPart: JSX.Element | null = null
     if (code && fixFiles.length > 0) {
-      const addedWidth = Math.max(...others.map(([, a]) => `+${a}`.length), 0)
-      const sizeWidth = addedWidth + 1 + Math.max(...others.map(([, , d]) => `−${d}`.length), 0)
+      const addedWidth = Math.max(...fixFiles.map(([, a]) => `+${a}`.length), 0)
+      const sizeWidth = addedWidth + 1 + Math.max(...fixFiles.map(([, , d]) => `−${d}`.length), 0)
       // A row: the bar, the file's icon and a space, its path (whole where it fits: two of a
       // fix's files often share a name, `query-keys.ts` per feature), the comment's mark
       // where it is the comment's file, and its size at the right edge, clear of the arrows
       // where the list scrolls.
-      const nameWidth = Math.max(8, cols - 1 - 2 - 2 - sizeWidth - (others.length > filesShown ? BOX_ARROWS : 0))
+      const nameWidth = Math.max(8, cols - 1 - 2 - 2 - sizeWidth - (fixFiles.length > filesShown ? BOX_ARROWS : 0))
       // The file is read first, then picked: the sidebar draws once, with it.
       const pick = async (f: string) => {
         const picks = { ...(await read($, filePick)), [code.base]: f }
         await syncCode($, s, r, { picks })
         await update($, filePick, () => picks)
       }
-      const fileRows = others.map(([f, a, d]) => {
+      const fileRows = fixFiles.map(([f, a, d]) => {
         const isShown = f === code.view.file
         const isCommented = f === code.view.commented
         const icon = iconOfFile(f)
@@ -2424,23 +2438,45 @@ export const register: Register = on => {
           </Box>
         )
       })
-      const fold = others.length > FOLDED_ROWS && (
-        <Button key="files-open" plain dimColor label={isFilesOpen ? GLYPH.less : GLYPH.more}
-          onPress={() => update($, filesOpen, m => ({ ...m, [code.base]: !isFilesOpen }))} />
+      const { offered, press } = await stepControls($, s, r, await read($, working))
+      const found = offered.find(b => HUNK_KEYS.includes(b.key))
+      // rework-mr, a fix pushed more than once: which push the area shows, and the keys that
+      // step between them. The file is read first, then picked, as a file's pick is.
+      const topic = r.topics.find(x => x.id === r.current)
+      const pushes = topic?.pushes ?? 0
+      const push = pushOf(topic, await read($, pushPick))
+      const stepPush = async (n: number) => {
+        if (!topic || n < 1 || n > pushes) return
+        const picked = { ...(await read($, pushPick)), [topic.id]: n }
+        await syncCode($, s, r, { pushes: picked })
+        await update($, pushPick, () => picked)
+      }
+      // At the line's right end, clear of the viewer's key that opens it. Its cells: the
+      // label, ◂, a space, ▸.
+      const pushLabel = `push ${push} of ${pushes} `
+      const picker = pushes > 1 && (
+        <Box key="files-push" flexDirection="row">
+          <Text dimColor>{pushLabel}</Text>
+          <Button key="push-earlier" plain dimColor={push <= 1 || undefined} label={GLYPH.earlier} onPress={() => { void stepPush(push - 1) }} />
+          <Text> </Text>
+          <Button key="push-later" plain dimColor={push >= pushes || undefined} label={GLYPH.later} onPress={() => { void stepPush(push + 1) }} />
+        </Box>
       )
-      const { buttons, press } = await stepControls($, s, r, await read($, working))
-      const found = buttons.find(b => HUNK_KEYS.includes(b.key))
-      // The pushed fix's key is the card's Show fix in hunk, worded for the area it heads.
-      const hunk = found?.key === 'hunk-pushed' ? { ...found, label: 'Show in hunk' } : found
+      // The pushed fix's key is the card's Show fix in hunk, worded for the area it heads, and
+      // showing the push the area shows.
+      const hunk = found?.key === 'hunk-pushed'
+        ? { ...found, label: 'Show in hunk', press: { kind: 'hunk-pushed' as const, ...(pushes > 1 ? { push } : {}) } }
+        : found
+      // The viewer's key opens the line, a chip as the card's buttons are: the rows under it
+      // are what it shows, so the line needs no name of its own, nor a count.
       const hunkLabel = hunk ? `${iconOf(hunk.label) ?? ''} ${hunk.label}`.trim() : ''
-      const filesName = s.skill === 'review-mr' ? 'Author\'s fix' : 'Your fix'
+      const chip = hunk && drawChip({ Box, Button, Text }, { ...hunk, key: 'files-hunk', isPrimary: undefined },
+        () => { void press(hunk)({ surface: 'terminal' }) })
+      const lead = chip ? { el: chip, width: cells(hunkLabel) + 4 } : undefined
       filesPart = (
         <Box key="files" flexDirection="column">
-          {/* The viewer's key after the area's name and count, the fold key at the line's end,
-              where it stays put while the rows scroll and fold under it. */}
-          {rule('files-line', [{ text: filesName, isBold: true }, { text: ` · ${countOf(fixFiles.length, 'file')}`, isDim: true }],
-            fold ? { el: <Box key="files-keys" flexDirection="row">{fold}</Box>, width: 1 } : undefined,
-            hunk ? { el: <Button key="files-hunk" plain label={hunkLabel} onPress={() => { void press(hunk)({ surface: 'terminal' }) }} />, width: cells(hunkLabel) } : undefined)}
+          {rule('files-line', [], picker ? { el: picker, width: cells(pushLabel) + 3 } : undefined,
+            undefined, undefined, lead)}
           {fileRows.length > 0 && areaRows(`files:${code.base}`, fileRows, filesShown, filesTop, 0, null)}
         </Box>
       )

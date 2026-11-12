@@ -4,6 +4,10 @@ topic's change started from and the one it ended at, as two refs per topic,
     refs/<skill>/mr<iid>/<topic>/before
     refs/<skill>/mr<iid>/<topic>/after
 
+or, where a topic keeps each push of its own (rework-mr), one pair per push under
+`<topic>/push<N>/`: the key a fix is kept under is whatever stands between the MR's prefix
+and the two ends, `t1` or `t1/push2`.
+
 rework-mr keeps the person's own fix (the MR's head before the topic's first push, and the
 head that push made); review-mr the author's (the code a push changed the topic's lines
 from, and the head it made). A ref holds its commit against `git gc`, which a force push
@@ -34,7 +38,7 @@ def has_commit(repo, sha):
 
 
 def keep(repo, skill, iid, tid, before, after):
-    """Keep `before` and `after` as the topic's fix; False where git does not have both
+    """Keep `before` and `after` as the fix under key `tid` (a topic, or a topic's push); False where git does not have both
     (a commit never fetched, or already collected), and nothing is written then."""
     if not (repo and has_commit(repo, before) and has_commit(repo, after)):
         return False
@@ -45,12 +49,12 @@ def keep(repo, skill, iid, tid, before, after):
 
 
 def kept(repo, skill, iid):
-    """{topic: (before, after)} for every fix of the MR kept with both ends, in one call."""
+    """{key: (before, after)} for every fix of the MR kept with both ends, in one call."""
     out = _git(repo, "for-each-ref", "--format=%(refname) %(objectname)", prefix(skill, iid)) if repo else None
     ends = {}
     for line in (out or "").splitlines():
         ref, _, sha = line.partition(" ")
-        m = re.fullmatch(re.escape(prefix(skill, iid)) + r"([^/]+)/(before|after)", ref)
+        m = re.fullmatch(re.escape(prefix(skill, iid)) + r"(.+)/(before|after)", ref)
         if m:
             ends.setdefault(m.group(1), {})[m.group(2)] = sha
     return {t: (e["before"], e["after"]) for t, e in ends.items() if "before" in e and "after" in e}

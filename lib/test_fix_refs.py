@@ -58,6 +58,12 @@ class FixRefsTest(unittest.TestCase):
         self.assertEqual(fix_refs.kept(self.repo, "rework-mr", 4), {})
         self.assertEqual(fix_refs.kept(self.repo, "review-mr", 3), {})
 
+    def test_a_topics_pushes_are_kept_beside_its_one_fix(self):
+        fix_refs.keep(self.repo, "rework-mr", 3, "t1", self.before, self.after)
+        fix_refs.keep(self.repo, "rework-mr", 3, "t1/push2", self.after, self.before)
+        self.assertEqual(fix_refs.kept(self.repo, "rework-mr", 3),
+                         {"t1": (self.before, self.after), "t1/push2": (self.after, self.before)})
+
     def test_the_ref_holds_a_commit_no_branch_reaches(self):
         fix_refs.keep(self.repo, "rework-mr", 3, "t1", self.before, self.after)
         # A force push leaves the old head on no branch: the ref is what keeps it.

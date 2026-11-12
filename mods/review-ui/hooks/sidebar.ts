@@ -52,19 +52,32 @@ export const sinceOf = (r: ReviewState): boolean =>
 // files listed under it.
 // `picks`: the file the person picked from a fix's list, by the item's own key (`base`); its
 // file is asked for and kept under a key of its own.
-export const codeArgsOf = (r: ReviewState, own: ReviewOwnThread | undefined, picks: Record<string, string> = {}):
-  { key: string; base: string; args: string[] } | undefined => {
+// `pushes`: rework-mr, the push the person picked of a topic's pushed fix, by topic; none
+// picked, or one past the last, is the latest.
+export const codeArgsOf = (r: ReviewState, own: ReviewOwnThread | undefined, picks: Record<string, string> = {},
+  pushes: Record<string, number> = {}): { key: string; base: string; args: string[] } | undefined => {
   if (phaseOf(r) === 'own') return own ? { key: `thread:${own.id}`, base: `thread:${own.id}`, args: ['code', '--thread', own.id] } : undefined
   if (!r.current) return undefined
-  const asked = r.topics.find(x => x.id === r.current)?.step === 'fixed'
+  const topic = r.topics.find(x => x.id === r.current)
+  const push = pushOf(topic, pushes)
+  const asked = topic?.step === 'fixed'
     ? { base: `fix:${r.current}`, args: ['code', r.current, '--fix'] }
     : sinceOf(r)
       ? { base: `topic:${r.current}:since`, args: ['code', r.current, '--since-comment'] }
-      : { base: `topic:${r.current}`, args: ['code', r.current] }
+      : push < (topic?.pushes ?? 0)
+        ? { base: `topic:${r.current}:push=${push}`, args: ['code', r.current, '--push', String(push)] }
+        : { base: `topic:${r.current}`, args: ['code', r.current] }
   const pick = picks[asked.base]
   return pick
     ? { key: `${asked.base}:file=${pick}`, base: asked.base, args: [...asked.args, '--file', pick] }
     : { key: asked.base, ...asked }
+}
+
+// Which of a topic's pushed fixes the sidebar shows (1-based): the one picked, else its latest.
+export const pushOf = (topic: { id: string; pushes?: number } | undefined, pushes: Record<string, number>): number => {
+  const n = topic?.pushes ?? 0
+  const picked = topic ? pushes[topic.id] : undefined
+  return picked && picked >= 1 && picked <= n ? picked : n
 }
 
 // The file as the code command answers it.

@@ -9,6 +9,7 @@ as a whole: approved by its reviewer, then merged.
     python3 e2e/news.py fix     # author-bot pushes the auth.ts fix and says it is fixed now
     python3 e2e/news.py approve # reviewer-bot approves MR !3, frank's own
     python3 e2e/news.py merge   # frank merges MR !3
+    python3 e2e/news.py more    # reviewer-bot reopens MR !3's naming thread and asks for more
 
 Each runs once per rig: a second `push` finds the fix already there and says so. Never
 resets anything; `fixture.py` (or tmux-demo.sh --force) is the way back to the start.
@@ -108,11 +109,33 @@ def merge():
     fx.info(f"!{REWORK_IID}: frank merged it")
 
 
+# The naming thread once its rename is pushed: one more small change, so the topic is fixed
+# and pushed a second time, with another topic's push between the two.
+MORE_ON = "src/features/comments/api/query-keys.ts"
+MORE = ("Thanks, that reads much better. One small thing while you're in there: could you put "
+        "a one-line doc comment above `commentKeys`, saying which queries it keys?")
+
+
+def more():
+    """reviewer-bot's follow-up in MR !3's thread on MORE_ON, reopened if resolved."""
+    enc = fx.project_path_enc()
+    discs = fx.api(f"projects/{enc}/merge_requests/{REWORK_IID}/discussions?per_page=100")
+    for d in discs:
+        pos = (d.get("notes") or [{}])[0].get("position") or {}
+        if pos.get("new_path") == MORE_ON:
+            fx.api(f"projects/{enc}/merge_requests/{REWORK_IID}/discussions/{d['id']}?resolved=false",
+                   "PUT", {}, user="reviewer-bot")
+            fx.reply(REWORK_IID, d["id"], "reviewer-bot", MORE)
+            fx.info(f"!{REWORK_IID}: reviewer-bot asked for more on {MORE_ON}")
+            return
+    die(f"no thread on {MORE_ON} in MR !{REWORK_IID}")
+
+
 def main():
     what = sys.argv[1] if len(sys.argv) > 1 else ""
-    if what in ("approve", "merge"):
+    if what in ("approve", "merge", "more"):
         fx.E = fx.env()
-        return approve() if what == "approve" else merge()
+        return {"approve": approve, "merge": merge, "more": more}[what]()
     if what not in ("reply", "push", "both", "fix"):
         die(__doc__.strip())
     fx.E = fx.env()

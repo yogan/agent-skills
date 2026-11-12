@@ -56,6 +56,9 @@ export type ReviewTopic = {
   // A pushed fix kept in git, which Show fix in hunk opens: rework-mr's own, review-mr's the
   // author's push that changed the topic's lines.
   fix_kept?: boolean
+  // rework-mr: how many fixes its pushes make (consecutive pushes of it are one), which
+  // the sidebar picks between where there are several.
+  pushes?: number
   // Its (first) thread on GitLab, where the box's line about it links.
   thread_url?: string | null
   // rework-mr: a reply drafted to post ahead of the fix, and whether one went up already.
@@ -248,9 +251,9 @@ declare module 'claude-code' {
       // How far each sidebar area that scrolls inside itself is scrolled, for which item.
       'area-at': Shaped<Record<string, { at: number; on: string | null }>>
       // The fix's files opened past their folded rows, by the code view's key.
-      'files-open': Shaped<Record<string, boolean>>
       // The file picked from a fix's list, by the item's code key without a pick.
       'file-pick': Shaped<Record<string, string>>
+      'push-pick': Shaped<Record<string, number>>
     }
   }
 }

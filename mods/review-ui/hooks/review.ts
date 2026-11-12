@@ -30,7 +30,8 @@ export type Press =
   | { kind: 'hunk' }
   // A pushed fix, from the commits kept in git, in the diff viewer: rework-mr's own fix,
   // review-mr's the author's.
-  | { kind: 'hunk-pushed' }
+  // `push`: which of the topic's pushed fixes (1-based), the latest where none is given.
+  | { kind: 'hunk-pushed'; push?: number }
   // rework-mr: the checked fix committed as a fixup, squashed and force-pushed by the
   // script, with no model turn. Only that: what is said in the thread is the next card's.
   | { kind: 'push' }
@@ -521,7 +522,7 @@ export const argsFor = (press: Press, topic: string, card: ReviewCard | null): s
     case 'hunk':
       return ['hunk-show', topic]
     case 'hunk-pushed':
-      return ['hunk-show', topic, '--pushed']
+      return ['hunk-show', topic, '--pushed', ...(press.push ? ['--push', String(press.push)] : [])]
     case 'push':
       return ['push', topic]
     case 'drop':

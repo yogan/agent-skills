@@ -1226,7 +1226,9 @@ class TestCodeContext(unittest.TestCase):
             self._git("commit", "-qam", "fix")
             after = subprocess.run(["git", "rev-parse", "HEAD"], cwd=self.repo, capture_output=True,
                                    text=True).stdout.strip()
-            T.fix_refs.keep(self.repo, "rework-mr", 3, "t1", self.sha, after)
+            T.fix_refs.keep(self.repo, "rework-mr", 3, "t1/push1", self.sha, after)
+            state["topics"][0]["pushes"] = [{"before": self.sha, "start": self.sha, "after": after,
+                                             "url": "http://gl/d", "clean": True}]
             with mock.patch.dict(os.environ, {"REVIEW_UI_DRAWN": "1"}), \
                     mock.patch.object(T, "step_of", return_value="reply"):
                 out = T.render_quote(state, "t1")
@@ -1271,7 +1273,11 @@ class TestCodeContext(unittest.TestCase):
             with mock.patch.object(T, "versions", return_value=[{"id": 9, "head_commit_sha": head},
                                                                 {"id": 8, "head_commit_sha": self.sha}]) as vs:
                 T.keep_pushed_fixes(state, {}, 3)
-                self.assertEqual(T.fix_refs.kept(self.repo, "rework-mr", 3), {"t1": (self.sha, head)})
+                self.assertEqual(T.fix_refs.kept(self.repo, "rework-mr", 3), {"t1/push1": (self.sha, head)})
+                # One push: GitLab has no version between the link's two ends.
+                self.assertEqual(state["topics"][0]["pushes"], [
+                    {"before": self.sha, "start": self.sha, "after": head,
+                     "url": state["topics"][0]["diff_url"], "clean": True}])
                 # A start git no longer has: the link alone, and not asked again.
                 self.assertTrue(state["topics"][1].get("fix_lost"))
                 T.keep_pushed_fixes(state, {}, 3)
@@ -2382,7 +2388,8 @@ class TestPushFix(unittest.TestCase):
 
     def test_a_fix_asked_for_after_a_push_is_made_and_pushed_again(self):
         """The reviewer answers the pushed fix with more to do: the next fix agreed is made,
-        checked and pushed, and its link spans both pushes."""
+        checked and pushed, and its link is its own push's: the push before it is the
+        topic's first fix, a fix of its own."""
         self.t1.update(diff_url="https://gitlab.example/g/p/-/merge_requests/1/diffs?diff_id=3&start_sha=S0",
                        start_sha="S0", reply="Fixed.")
         self.state["threads"]["d1"]["awaiting"] = "reviewer"
@@ -2401,7 +2408,7 @@ class TestPushFix(unittest.TestCase):
         self.t1["fix"] = {"did": "d", "fixup": ["abc123 feat: a"], "stat": [], "compare": {}}
         self.t1["checked"] = {"ok": True, "tree": "T1", "record": "R", "ran": [], "new": []}
         _, url = self.push()
-        self.assertTrue(url.endswith("start_sha=S0"))
+        self.assertTrue(url.endswith("diff_id=7&start_sha=NEW"))
         self.assertEqual(T.step_of(self.state, self.t1), "reply")
 
     def test_the_card_says_where_the_checks_stand(self):
@@ -2413,6 +2420,64 @@ class TestPushFix(unittest.TestCase):
         self.assertEqual(T.checks_line(self.t1)[0], "Checks failed: frontend checks.")
         self.assertIn("boom", T.checks_line(self.t1))
 
+
+
+class TestFixPerPush(unittest.TestCase):
+    """A topic's pushes as its fixes, and the links its `Fixed:` reply gives."""
+
+    @staticmethod
+    def push(start, after, k, clean=True):
+        return {"before": start, "start": start, "after": after, "clean": clean,
+                "url": f"G/diffs?diff_id={k}&start_sha={start}"}
+
+    def topic(self, *pushes, said=()):
+        t = {"id": "t1", "thread_ids": ["d1"], "pushes": list(pushes), "diff_url": pushes[-1]["url"],
+             "outcome": "fix"}
+        notes = [{"body": "please", "mine": False}] + [{"body": b, "mine": True} for b in said]
+        return {"topics": [t], "threads": {"d1": {"notes": notes}}}, t
+
+    def test_pushes_with_nothing_between_are_one_fix_and_one_link(self):
+        _, t = self.topic(self.push("A", "B", 2), self.push("B", "C", 3))
+        self.assertEqual(T.fixes_of(t), [{"pushes": [1, 2], "before": "A", "start": "A", "after": "C",
+                                          "url": "G/diffs?diff_id=3&start_sha=A", "mixed": False}])
+
+    def test_a_push_between_keeps_two_fixes(self):
+        _, t = self.topic(self.push("A", "B", 2), self.push("X", "C", 4))
+        self.assertEqual([f["pushes"] for f in T.fixes_of(t)], [[1], [2]])
+
+    def test_a_push_that_carried_more_than_its_fix_joins_none(self):
+        _, t = self.topic(self.push("A", "B", 2), self.push("B", "C", 3, clean=False))
+        fixes = T.fixes_of(t)
+        self.assertEqual([f["pushes"] for f in fixes], [[1], [2]])
+        self.assertEqual([f["mixed"] for f in fixes], [False, True])
+
+    def test_nothing_linked_yet_lists_every_fix(self):
+        state, t = self.topic(self.push("A", "B", 2), self.push("X", "C", 4))
+        self.assertEqual(T.fixed_body(state, t),
+                         "Fixed:\n- G/diffs?diff_id=2&start_sha=A\n- G/diffs?diff_id=4&start_sha=X\n")
+
+    def test_one_fix_is_one_line(self):
+        state, t = self.topic(self.push("A", "B", 2), self.push("B", "C", 3))
+        self.assertEqual(T.fixed_body(state, t), "Fixed: G/diffs?diff_id=3&start_sha=A\n")
+
+    def test_an_earlier_link_in_the_thread_leaves_only_what_came_after(self):
+        # Linked after its first push: the second, consecutive as it is, is its own link.
+        state, t = self.topic(self.push("A", "B", 2), self.push("B", "C", 3),
+                              said=["Fixed: G/diffs?diff_id=2&start_sha=A"])
+        self.assertEqual(T.fixed_body(state, t), "Fixed: G/diffs?diff_id=3&start_sha=B\n")
+        # A reviewer quoting the link is not the user's having posted it.
+        state["threads"]["d1"]["notes"][1]["mine"] = False
+        self.assertEqual(T.fixed_body(state, t), "Fixed: G/diffs?diff_id=3&start_sha=A\n")
+
+    def test_the_card_says_each_fix_and_marks_what_may_be_mixed(self):
+        state, t = self.topic(self.push("A", "B", 2), self.push("X", "C", 4, clean=False))
+        t["plan"] = "p"
+        with mock.patch.object(T, "_git", return_value=""):
+            out = T.pushed_steps(state, t)
+        self.assertEqual(out[1:4], [f"{T.ui.STEP_DONE_ICON} Fix pushed · 2 pushes",
+                                    f"\u00a0\u00a0{T.ui.PUSHED_ICON} push 1 · [the diff ↗](G/diffs?diff_id=2&start_sha=A)",
+                                    f"\u00a0\u00a0{T.ui.PUSHED_ICON} push 2 · [the diff ↗](G/diffs?diff_id=4&start_sha=X)"
+                                    " · may include other topics' changes"])
 
 
 class TestPushFixGit(unittest.TestCase):
@@ -2478,8 +2543,40 @@ class TestPushFixGit(unittest.TestCase):
         self.fix(fixup=[f"{self.r.target} feat: a and b"], files=["a.txt"])
         self.push()
         head = self.git("rev-parse", "origin/main")
-        self.assertEqual(T.fix_refs.kept(self.r.root, "rework-mr", 1), {"t1": (start, head)})
+        self.assertEqual(T.fix_refs.kept(self.r.root, "rework-mr", 1), {"t1/push1": (start, head)})
         self.assertEqual([f for f, _a, _r in T.fix_refs.stat(self.r.root, (start, head))], ["a.txt"])
+
+    def test_each_push_keeps_its_own_change_with_another_topic_s_between(self):
+        """t1 pushed, then another topic's push, then t1 again: each of t1's pushes is kept
+        with its own change only, and they stay two fixes, each with its own link."""
+        heads = []
+
+        def versions(*_a):
+            head = self.git("rev-parse", "origin/main")
+            if head not in heads:
+                heads.append(head)
+            return [{"id": heads.index(head) + 1, "head_commit_sha": head}]
+        mock.patch.object(T, "versions", side_effect=versions).start()
+        mock.patch.object(T, "diff_url_for", side_effect=lambda ctx, iid, start, head:
+                          f"G/diffs?diff_id={versions()[0]['id']}&start_sha={start}").start()
+        self.fix(fixup=[f"{self.r.target} feat: a and b"], files=["a.txt"])
+        self.push()
+        # Another topic's fix, pushed between.
+        self.r.write("d.txt", "the other topic\n")
+        self.git("add", "d.txt")
+        self.git("commit", "-q", "--no-verify", "-m", "feat: d")
+        self.git("push", "-q", "--no-verify")
+        self.fix(fixup=[f"{self.r.target} feat: a and b"], files=["b.txt"])
+        self.push()
+        kept = T.fix_refs.kept(self.r.root, "rework-mr", 1)
+        self.assertEqual(sorted(kept), ["t1/push1", "t1/push2"])
+        self.assertEqual([f for f, _a, _r in T.fix_refs.stat(self.r.root, kept["t1/push1"])], ["a.txt"])
+        self.assertEqual([f for f, _a, _r in T.fix_refs.stat(self.r.root, kept["t1/push2"])], ["b.txt"])
+        fixes = T.fixes_of(self.t1)
+        self.assertEqual([f["pushes"] for f in fixes], [[1], [2]])
+        self.assertEqual([f["url"] for f in fixes], [f"G/diffs?diff_id=2&start_sha={heads[0]}",
+                                                     f"G/diffs?diff_id=4&start_sha={heads[2]}"])
+        self.assertFalse(any(f["mixed"] for f in fixes))
 
     def test_a_new_commit_alone_is_pushed_as_one(self):
         stamp = self.fix(new=["fix: the old helper"])

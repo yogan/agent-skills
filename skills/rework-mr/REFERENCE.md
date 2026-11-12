@@ -61,13 +61,15 @@ the reply (step 7).
    ```bash
    python3 $SD/threads.py push <t>
    ```
-   It captures the diff baseline on the topic's first push, commits the staged fix as
+   It notes the MR's head before the push, commits the staged fix as
    `fixup!` of the one target named on `diff-view`'s `--fixup`, squashes it in, and
    force-pushes (`--force-with-lease --force-if-includes`). The hooks run ahead of time are
    skipped only where the files committed are exactly the ones checked; a hook with no early
-   run, and every hook on a record's first push, runs for real. Then it stores the topic's diff
-   URL (spanning every push of the topic; never a commit URL, which force-push rots) and closes
-   the viewer window. Exit 3 means it stopped and printed what to do instead: verify again
+   run, and every hook on a record's first push, runs for real. Then it records the push: its own diff
+   URL (this push alone, never another topic's change; never a commit URL, which force-push
+   rots), the change kept in git for the viewer, and closes the viewer window. A topic pushed
+   again later keeps each push; its `Fixed:` reply links only what no earlier reply of yours
+   linked. Exit 3 means it stopped and printed what to do instead: verify again
    after a change, answer notes in the viewer, or, for a fix that goes into several commits
    or makes a new one, the commits it lists and then `push <t> --committed --token <token>`.
 7. Reply — thread + draft + URL are shown via **one** command so none can be dropped:

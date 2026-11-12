@@ -82,6 +82,14 @@ class FindTextTest(unittest.TestCase):
     def test_missing_text_is_none(self):
         self.assertIsNone(drive.find_text("nothing here", "✕"))
 
+    def test_the_panel_s_own_is_found_past_the_chat_s(self):
+        s = screen(["⏺ t1 is done"], [f"row {i}" for i in range(26)] + ["▌ t1 summary"])
+        self.assertEqual(drive.find_text(s, " t1 ")[1], 1)
+        row, col = drive.find_text(s, " t1 ", "panel")
+        self.assertGreater(col, SPLIT)
+        self.assertIn("summary", s.split("\n")[row])
+        self.assertIsNone(drive.find_text(screen(["⏺ t1 is done"] + [""] * 25 + PROMPT), " t1 ", "panel"))
+
 
 class PromptBoxTest(unittest.TestCase):
     def test_claudes_prompt_is_a_prompt_line_under_a_rule(self):

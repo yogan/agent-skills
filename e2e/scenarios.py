@@ -139,6 +139,41 @@ REWORK_FIX = [
             Expect(r"[Mm]erged", region="panel", wait=240),
 ]
 
+# The same MR, with t1 asked for more after its push, t2's push between: t1's second fix is a
+# push of its own, its card lists both, the sidebar picks between them, and its "Fixed" reply
+# links the new push alone. A part of it is a scenario of its own (`try-pushed-twice`).
+POSTED_T2 = next(i for i, x in enumerate(REWORK_FIX)
+                 if isinstance(x, Expect) and x.pattern == current("t2") and x.absent) + 1
+REWORK_TWICE = [
+            *REWORK_FIX[:POSTED_T2],
+            Check(f"{NEWS} more", r"asked for more"),
+            # The update check brings t1 back with the reviewer's word; opened from the list.
+            Expect(r"\bt1\b", region="panel", wait=240),
+            Click(" t1 ", offset=1, region="panel"),
+            Expect(button('Agree plan'), region="screen", wait=240),
+            press('Agree plan'),
+            press('Fix it', turn=True, timeout=600),
+            Expect(button('Ack and push'), region="screen"),
+            # A doc comment in one commit: the script's push alone.
+            press('Ack and push'),
+            Expect(button('“Fixed” + resolve'), region="screen", wait=60),
+            # Two fixes, t2's push between them: the card lists both, the sidebar shows the
+            # latest and steps back to the first.
+            Expect(r"Fix pushed · 2 pushes", region="screen"),
+            Expect(r"push 2 of 2", region="panel"),
+]
+TRY_TWICE = len(REWORK_TWICE)
+REWORK_TWICE += [
+            Click("\U000f0bb9", region="panel"),      # md-pan_left: the push before
+            Expect(r"push 1 of 2", region="panel", wait=30),
+            press('“Fixed” + resolve'),
+            # Its thread holds two "Fixed" replies, each with one link, and not the same one.
+            Check(thread_on("comments/api/query-keys.ts",
+                            '(lambda f: (len(set(f)), sum(b.count("diff_id=") for b in f)))'
+                            '([n["body"] for n in d["notes"] if n["body"].startswith("Fixed")])'),
+                  r"^\(2, 2\)$"),
+]
+
 SCENARIOS = [
     Scenario(
         "smoke", "the driver itself: start claude, send a prompt, read the answer",
@@ -223,6 +258,14 @@ SCENARIOS = [
     Scenario(
         "try-pushed-fix", "MR !3 up to t1's pushed fix in four files, for a person to try (--keep)", WORK,
         needs_rig=True, mods=[MOD], recording="rework-fix", steps=REWORK_FIX[:21]),
+
+    Scenario(
+        "rework-twice", "MR !3: t1 fixed again after t2's push, two pushes on its card, the sidebar and its reply", WORK,
+        needs_rig=True, mods=[MOD], steps=[*REWORK_TWICE]),
+
+    Scenario(
+        "try-pushed-twice", "MR !3 up to t1's second push, t2's between, for a person to try (--keep)", WORK,
+        needs_rig=True, mods=[MOD], recording="rework-twice", steps=REWORK_TWICE[:TRY_TWICE]),
 
     Scenario(
         "review-buttons", "MR !1: drop, draft and post from the band, nothing typed", REVIEW1,
