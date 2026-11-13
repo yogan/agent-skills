@@ -74,6 +74,18 @@ class TestEachCommitAlone(unittest.TestCase):
         self.assertFalse(C.runner_selects(old))
         self.assertTrue(C.runner_selects(new))
 
+    def test_a_commit_that_passed_today_is_remembered_and_only_today(self):
+        rec = os.path.join(self._tmp.name, "passed.json")
+        self.assertEqual(C.passed_today(rec), set())
+        C.record_passes(["a1"], rec)
+        C.record_passes(["b2"], rec)
+        self.assertEqual(C.passed_today(rec), {"a1", "b2"})
+        with open(rec) as fh:
+            old = fh.read().replace(C.time.strftime("%Y-%m-%d"), "2000-01-01")
+        with open(rec, "w") as fh:
+            fh.write(old)
+        self.assertEqual(C.passed_today(rec), set())
+
     def test_no_worktree_is_left_behind(self):
         for c in self.commits:
             C.check(c, self.root, self.steps, self.repo)

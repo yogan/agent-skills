@@ -24,12 +24,14 @@ kept for a commit that passed. Exit 0 only when every commit passed.
 A worktree gets what git does not carry: each mod's engine types, copied from this checkout,
 so its type check runs there too instead of skipping.
 """
+import json
 import os
 import re
 import shutil
 import subprocess
 import sys
 import tempfile
+import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
@@ -125,15 +127,42 @@ def check(commit, root, steps, repo=HERE):
                        capture_output=True)
 
 
+PASSED = os.path.join(HERE, ".check_commits_passed.json")
+
+
+def passed_today(path=None):
+    """The commits recorded as passing today."""
+    try:
+        with open(path or PASSED, encoding="utf-8") as fh:
+            rec = json.load(fh)
+    except (OSError, ValueError):
+        return set()
+    return set(rec.get("commits", [])) if rec.get("day") == time.strftime("%Y-%m-%d") else set()
+
+
+def record_passes(commits, path=None):
+    keep = passed_today(path) | set(commits)
+    with open(path or PASSED, "w", encoding="utf-8") as fh:
+        json.dump({"day": time.strftime("%Y-%m-%d"), "commits": sorted(keep)}, fh, indent=0)
+
+
 def main(argv):
     base = argv[0] if argv else (git("rev-parse", "--abbrev-ref", "@{u}") or "origin/main")
     commits = (git("rev-list", "--reverse", f"{base}..HEAD") or "").split()
     if not commits:
         print(f"no commits above {base}")
         return 0
-    steps = checks(max(1, RUNNER_WORKERS // len(commits)))
+    # A commit that passed today is not checked again: its hash covers its whole content and
+    # history, so the same hash is the same code. Bounded to the day like the runner's record
+    # of a whole run, since a tool updated overnight can change a result.
+    known = passed_today()
+    todo = [c for c in commits if c not in known]
+    steps = checks(max(1, RUNNER_WORKERS // max(1, len(todo))))
     root = tempfile.mkdtemp(prefix="check-commits-")
-    results = parallel.each(lambda c: check(c, root, steps), commits, workers=len(commits))
+    ran = dict(zip(todo, parallel.each(lambda c: check(c, root, steps), todo,
+                                       workers=max(1, len(todo)))))
+    results = [ran.get(c, (True, ["passed today already: not checked again"], None))
+               for c in commits]
     # The owner's private words, in each commit's added lines and its message: the hooks
     # check the same, but a fold commits with them off.
     for i, commit in enumerate(commits):
@@ -151,6 +180,7 @@ def main(argv):
         if log:
             print(f"      full log: {log}")
         failed += not ok
+    record_passes([c for c, (ok, _, _) in zip(commits, results) if ok and c in ran])
     if not failed:
         shutil.rmtree(root, ignore_errors=True)
     print(f"{len(commits) - failed} of {len(commits)} commit(s) above {base} pass on their own")
