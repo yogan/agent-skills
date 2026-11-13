@@ -251,3 +251,13 @@ slower than the one before, from about 30 s to over 5 minutes across the 14 scen
 12 GB / 4 CPU six resets in a row each take about 30 s, with ~7 GB still free, and a cold
 start answers in well under a minute.
 
+### Paused and stopped when unused
+
+`rig.py` brings the container up when something needs it — `fixture.py`, `drive.py verify` on a
+rig scenario, `tmux-demo.sh` — and a launchd agent (`python3 rig.py install`) runs its idle
+check every 5 minutes: unused for an hour it is **paused** (no CPU, back in a fraction of a
+second), unused for 8 hours **stopped**. An open demo or `drive-*` tmux session counts as in use.
+`python3 rig.py status` says where it stands.
+
+Neither gives memory back to macOS: the VM keeps what it has used until the VM itself stops
+(`rdctl shutdown`).

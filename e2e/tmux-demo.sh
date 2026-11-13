@@ -45,11 +45,14 @@ die()  { printf '   FAIL  %s\n' "$1" >&2; exit 1; }
 
 # ── 1. container ─────────────────────────────────────────────────────────────
 say "GitLab container"
+# A rig left unused is paused, later stopped (rig.py): a paused one is unpaused here, even under
+# --check, and the use is noted so it is not paused under the demo. Starting stays below.
+python3 "$E2E/rig.py" up --no-wait --no-start
 if docker ps --format '{{.Names}}' 2>/dev/null | grep -qx e2e-gitlab; then
   ok "e2e-gitlab is up"
 else
   [ "$CHECK_ONLY" = 1 ] && die "e2e-gitlab is not running (--check makes no changes)"
-  warn "e2e-gitlab is not running — starting it, cold boot is 3-5 min"
+  warn "e2e-gitlab is not running — starting it (a cold boot, about a minute)"
   (cd "$E2E" && docker compose up -d) || die "docker compose up failed"
 fi
 

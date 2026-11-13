@@ -56,6 +56,7 @@ from pathlib import Path
 
 import layout
 import mock_model
+import rig
 import transcript
 
 E2E = Path(__file__).resolve().parent
@@ -667,6 +668,10 @@ def verify(sc, model, out_root, keep, reset, record=False):
         print(f"── {sc.name}\n   FAIL reset: the demo session '{DEMO_SESSION}' is open, and a reset "
               "re-clones the checkouts its windows work in. Close it first "
               f"(tmux kill-session -t {DEMO_SESSION}), or run with --no-reset.")
+        return False
+    # Up first, also without a reset: a rig left unused is paused, then stopped (rig.py).
+    if sc.needs_rig and not rig.up(log=lambda m: print(f"   {m}")):
+        print(f"── {sc.name}\n   FAIL the rig's GitLab is not up (python3 e2e/rig.py up)")
         return False
     if sc.needs_rig and reset:
         try:

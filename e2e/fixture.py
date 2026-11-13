@@ -40,6 +40,9 @@ if _REPO_ROOT not in sys.path:
 from lib import checks  # noqa: E402
 from lib.cli import die  # noqa: E402
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import rig  # noqa: E402
+
 # The rig is built by scripts, never in a session the review-ui mod draws: a fixture run from
 # such a session would otherwise seed MR !2 waiting for an own review nobody will do (lib/ui.py).
 os.environ["REVIEW_UI_DRAWN"] = "0"
@@ -1055,6 +1058,8 @@ def main():
     want = set(args.only or STAGES)
 
     ensure_cache()
+    if not rig.up(log=info):
+        die("the rig's GitLab is not up (python3 e2e/rig.py up)")
     started = time.time()
     silence_mail()
     if "project" in want and not args.keep_project:
