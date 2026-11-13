@@ -275,6 +275,19 @@ def _clean_env():
     return env
 
 
+def _tools_env(root, **extra):
+    """The environment a repository's checks and hooks run in: `_clean_env`, with the
+    repository's own `node_modules/.bin` first on PATH where it has one, as `npm run` gives
+    a package's scripts. A JavaScript project's hook manager and linters live there, not on
+    the session's PATH, so an early command such as `lefthook run pre-push` was not found:
+    the person's terminal may have it on PATH, the agent's shell does not."""
+    env = {**_clean_env(), **extra}
+    bin_dir = os.path.join(root, "node_modules", ".bin")
+    if os.path.isdir(bin_dir):
+        env["PATH"] = bin_dir + os.pathsep + env.get("PATH", "")
+    return env
+
+
 def stage(root, new=()):
     """The fix staged: every tracked change, and the new files it adds."""
     r = git(root, "add", "-u")
@@ -312,7 +325,7 @@ FIX_FILES = "REWORK_FIX_FILES"
 def _run(root, cmd):
     files = _out(root, "diff", "--cached", "--name-only", "HEAD") or ""
     r = subprocess.run(["sh", "-c", cmd], cwd=root, capture_output=True, text=True,
-                       env={**_clean_env(), FIX_FILES: files})
+                       env=_tools_env(root, **{FIX_FILES: files}))
     text = (r.stdout + r.stderr).rstrip()
     return r.returncode == 0, "\n".join(text.splitlines()[-TAIL:])
 
@@ -404,7 +417,7 @@ def _hook(root, event, *args, stdin=None):
                 fh.write(stdin)
             feed = [f"--to-stdin={os.path.join(d, 'stdin')}"]
         r = subprocess.run(["git", "-C", root, "hook", "run", "--ignore-missing", *feed, event,
-                            "--", *args], capture_output=True, text=True, env=_clean_env())
+                            "--", *args], capture_output=True, text=True, env=_tools_env(root))
     text = (r.stdout + r.stderr).rstrip()
     return r.returncode == 0, "\n".join(text.splitlines()[-TAIL:])
 

@@ -169,6 +169,28 @@ class TestRun(Case):
         stamp = checks.run(self.r.root, rec, ["d.txt"])
         self.assertEqual(stamp["output"], "a.txt,d.txt,")
 
+    def test_the_repository_s_own_node_tools_are_on_path(self):
+        """A JavaScript project's hook manager sits in its `node_modules/.bin`, which the
+        agent's shell does not have on PATH: an early command calling it bare failed with
+        `command not found`, though the same command worked in the person's terminal."""
+        bin_dir = os.path.join(self.r.root, "node_modules", ".bin")
+        os.makedirs(bin_dir)
+        tool = os.path.join(bin_dir, "hookrunner")
+        with open(tool, "w") as fh:
+            fh.write("#!/bin/sh\necho hookrunner \"$@\" >> \"$0.log\"\n")
+        os.chmod(tool, 0o755)
+        with open(os.path.join(self.r.root, ".git", "info", "exclude"), "a") as fh:
+            fh.write("node_modules/\n")
+        self.r.hook("pre-push", "#!/bin/sh\nhookrunner pre-push\n")
+        rec = self.r.record(tests="hookrunner test", pre_push="hookrunner run pre-push")
+        self.r.write("a.txt", "one fixed\n")
+        stamp = checks.run(self.r.root, rec)
+        self.assertTrue(stamp["ok"], stamp)
+        self.assertEqual(checks._hook(self.r.root, "pre-push"), (True, ""))   # the real hook too
+        with open(tool + ".log") as fh:
+            self.assertEqual(fh.read().splitlines(),
+                             ["hookrunner run pre-push", "hookrunner test", "hookrunner pre-push"])
+
     def test_a_fix_runs_the_parts_it_touches_and_all_where_it_touches_none(self):
         parts = [{"name": "front", "paths": ["front/**"], "run": "true"},
                  {"name": "back", "paths": ["back/**/*.py", "back/pyproject.toml"], "run": "true"}]
