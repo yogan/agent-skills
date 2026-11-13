@@ -797,7 +797,11 @@ def load_scenarios(name):
 
 
 def main(argv=None):
-    ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
+    # A verify of every scenario runs for many minutes, often with its output sent to a file;
+    # block-buffered, that file stays empty until the end and nobody can see where it is.
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(line_buffering=True)
+    ap =argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     sub = ap.add_subparsers(dest="mode", required=True)
     sub.add_parser("list")
     v = sub.add_parser("verify")

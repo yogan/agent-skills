@@ -3,9 +3,11 @@
 
 Run: `python3 e2e/test_drive.py` (stdlib only; no tmux, no claude).
 """
+import io
 import os
 import sys
 import unittest
+from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
@@ -204,6 +206,18 @@ class RecordingTest(unittest.TestCase):
         self.addCleanup(os.remove, fh.name)
         self.assertEqual(drive.improvised(fh.name),
                          ["npm install -g left-pad", "python3 -c 'import os'"])
+
+
+class OutputTest(unittest.TestCase):
+    def test_each_line_reaches_a_file_as_it_is_printed(self):
+        """A file gets block-buffered output, so a log of a running verify stayed empty to
+        the end. Each line has to be there before anything flushes."""
+        raw = io.BytesIO()
+        out = io.TextIOWrapper(raw, encoding="utf-8")
+        with mock.patch.object(sys, "stdout", out):
+            drive.main(["list"])
+            written = raw.getvalue()
+        self.assertIn(b"smoke", written)
 
 
 if __name__ == "__main__":
