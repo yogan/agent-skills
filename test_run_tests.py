@@ -77,7 +77,7 @@ class TestSelectionCoversTheObviousCase(unittest.TestCase):
 
 
 # A file nothing names, this test included: written in pieces so its source does not name it.
-UNNAMED = "docs/no-" + "reader" + ".txt"
+UNNAMED = "docs/no-" + "reader" + ".json"
 
 
 class TestItDeclinesRatherThanGuess(unittest.TestCase):
@@ -90,7 +90,7 @@ class TestItDeclinesRatherThanGuess(unittest.TestCase):
         rt.changed_files = self.real
 
     def _changed(self, *names):
-        rt.changed_files = lambda: set(names)
+        rt.changed_files = lambda base="HEAD": set(names)
         return rt.select_changed(EVERY)
 
     def test_an_unmappable_file_forces_the_full_run(self):
@@ -103,6 +103,18 @@ class TestItDeclinesRatherThanGuess(unittest.TestCase):
         """It must not run "the tests for the .py part" and call that a pass."""
         selected, _ = self._changed("lib/gitlab.py", UNNAMED)
         self.assertIsNone(selected)
+
+    def test_a_document_nothing_names_selects_nothing_rather_than_everything(self):
+        """A README or RUNBOOK edit used to run the whole suite in the commit hook."""
+        selected, _ = self._changed("e2e/NO-" + "SUCH-NOTES.md")
+        self.assertEqual(selected, set())
+        selected, _ = self._changed("lib/gitlab.py", "docs/no-" + "picture.png")
+        self.assertIn(rt.REPO_ROOT / "lib/test_gitlab.py", selected)
+
+    def test_a_document_a_test_names_still_selects_that_test(self):
+        selected, _ = self._changed("skills/rework-mr/SKILL.md")
+        self.assertIsNotNone(selected)
+        self.assertTrue(selected)
 
     def test_a_non_python_file_selects_every_test_reaching_a_file_that_names_it(self):
         """A skill's SKILL.md, a script's JSON spec: whatever names it, and whatever reaches
@@ -134,6 +146,19 @@ class TestItDeclinesRatherThanGuess(unittest.TestCase):
         fp.assert_called_once_with("fast")
         self.assertIn("skipped", out.getvalue())
 
+
+    def test_changed_since_reads_the_difference_from_that_revision(self):
+        """`check_commits.py` checks a commit by what IT changed: in the commit's worktree,
+        the difference from its parent."""
+        seen = {}
+
+        def fake(base="HEAD"):
+            seen["base"] = base
+            return {"lib/gitlab.py"}
+        rt.changed_files = fake
+        selected, _ = rt.select_changed(EVERY, "abc123^")
+        self.assertEqual(seen["base"], "abc123^")
+        self.assertIn(rt.REPO_ROOT / "lib/test_gitlab.py", selected)
 
     def test_measure_js_is_attributed_to_the_module_that_shells_out_to_it(self):
         """Nothing imports it, so without this a browser-side change selects nothing."""

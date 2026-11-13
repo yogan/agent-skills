@@ -37,11 +37,13 @@ How work runs here, whatever it touches. One topic at a time:
    those only if it realistically can.
 5. Show the result in the form it can be judged in, and wait. Feedback sends you back to 1;
    an ack moves to 6.
-6. Run the full quality checks. A commit is never created with a failing test.
+6. Run the commit-level checks (the hook runs them; see "Testing"). A commit is never created
+   with a failing test.
 7. Commit, then the next topic.
 
-The full suite belongs *after* the ack, not before showing — otherwise it is paid for on
-work that may be rejected.
+The push level — the whole unit suite and every scenario a change reaches — runs once per top
+commit, before a push (`python3 check_push.py`), or when a large change needs its feedback
+sooner. Never in a loop and never per commit: a full run of the scenarios is over 20 minutes.
 
 **Verifying.** Verify the claim you are about to make, by the cheapest means that could
 disprove it: a measurement beats a render, a render beats a full capture. Never present a
@@ -87,7 +89,8 @@ tooling:
   owner the ones that show the change, named and with what to look at. Its docstring says
   where it differs from Ghostty. `e2e/drive.py verify <scenario>` drives a real session through it
   on the local GitLab rig, the model's replies played from the scenario's recording: free and
-  the same every run, so it belongs in the loop beside the mod's own tests and the unit tests.
+  the same every run, so the ONE scenario a change shows in belongs in the loop beside the unit
+  tests (each takes from 15 seconds to 4 minutes). The rest run at the push level.
   A real model (`--model`, and `--record` to re-make a recording the change broke) costs money
   and minutes: one run at the end with the owner's go. Say exactly what to run and what should be different from last time, then
   wait. The ack comes after the owner has run it, so step 2's "prove it" is unit tests plus
@@ -118,7 +121,8 @@ responded to what you showed them. Mid-session the owner may switch to "keep wor
 when I say" — then stop asking after each chunk and wait to be asked.
 
 After anything that rewrites unpushed history — a fold, a fixup and autosquash, a rebase —
-run `python3 check_commits.py`: every commit has to pass on its own, and neither the hook
+run `python3 check_commits.py`: every commit has to pass the commit level on its own (its own
+change's tests, in a worktree of its own), and neither the hook
 (one working tree, often skipped during a fold) nor a green tip says so. Folding by blame has
 put a name into a commit older than its definition three rounds running. Diffs here carry no
 `a/` `b/` prefixes (`diff.noprefix`), so a patch made from one applies with `git apply -p0`.
@@ -247,8 +251,18 @@ per-skill conditionals inside code meant to be shared.
 
 ## Testing
 
-`.githooks/pre-commit` runs `ruff check` and `python3 run_tests.py --changed` before every
-commit. Enable it once per clone with `git config core.hooksPath .githooks`.
+The checks come in three levels, each paid as rarely as it can be:
+
+| level | when | what |
+|---|---|---|
+| **loop** | every edit | `run_tests.py --changed` (or a path filter), and the one scenario a change shows in |
+| **commit** | every commit, and `check_commits.py` after a rewrite | ruff, private words, the tests the commit's own change reaches |
+| **push** | once per top commit, before pushing | `check_push.py`: the commit level for every unpushed commit, the whole unit suite, the scenarios the change reaches |
+
+`.githooks/pre-commit` is the commit level; `.githooks/pre-push` refuses a push whose top
+commit's tree has no recorded pass of `check_push.py`. Enable both once per clone with
+`git config core.hooksPath .githooks`. `check_push.py --dry-run` says which scenarios a change
+reaches; its docstring says how it decides.
 
 Ruff runs through `uvx` at the version pinned in the hook (`RUFF=`), falling back to an
 installed `ruff`. Run it the same way by hand, e.g. `uvx ruff@0.17.1 check .`. Check now and
@@ -260,15 +274,17 @@ directly, e.g.:
 
     python3 skills/rework-mr/scripts/test_threads.py
 
-To run everything: `python3 run_tests.py` (~40s, most of it d2). While editing, run less:
+To run everything: `python3 run_tests.py` (~50s, most of it d2 and a browser). While editing,
+run less:
 
 - `python3 run_tests.py --changed` — resolves your uncommitted edits through the repo's import
   graph and runs every test that reaches them. Touching `lib/gitlab.py` runs 4 files in 1s;
   touching `lib/diagram/palette.py` runs 21, because that is genuinely how far it reaches. A
   non-Python file counts as a change to every Python file that names it (a SKILL.md, a JSON
-  spec), and a mod's files select `mods/test_mods.py`. It **declines and runs everything**
-  whenever it cannot map a changed file, since a selector that quietly skips the failing test
-  is worse than a slow one. `test_run_tests.py` exists to pin
+  spec), and a mod's files select `mods/test_mods.py`. A document nothing names (a README, a
+  picture) selects nothing. It **declines and runs everything** whenever it cannot map any
+  other changed file, since a selector that quietly skips the failing test is worse than a
+  slow one. `--changed-since=REV` selects by the difference from REV instead. `test_run_tests.py` exists to pin
   that, and every case in it is a real under-selection that was once shipped. With a CLEAN tree
   it runs nothing — no edits, nothing they can affect.
 - `python3 run_tests.py compact` — plain substring filter on the path, when you know what you
@@ -282,7 +298,7 @@ fingerprint cannot see a browser that updated overnight — the same reason `gat
 insists a check that did not run must not report success. `--force` runs them anyway. If you
 are surprised that nothing ran, that is what happened.
 
-Neither replaces the full fast suite before you commit. Don't reach for `python3 -m unittest
+Neither replaces the push level before a push. Don't reach for `python3 -m unittest
 discover`: it only finds tests under directories with an `__init__.py`, which is just `lib/`
 here, so it silently runs a fraction of the suite with no error.
 

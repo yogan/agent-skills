@@ -51,6 +51,29 @@ class TestEachCommitAlone(unittest.TestCase):
         self.assertEqual(report, ["lint failed:", "  uses.txt: defined.txt is missing"])
         self.assertTrue(os.path.isfile(log))
 
+    def test_a_step_is_told_which_commit_it_checks(self):
+        """The tests step runs what that commit's own change reaches: `{commit}^` names its
+        parent."""
+        steps = [("say", ["sh", "-c", 'test "$0" = "%s^" || exit 1' % self.commits[1], "{commit}^"])]
+        ok, report, _ = C.check(self.commits[1], self.root, steps, self.repo)
+        self.assertTrue(ok, report)
+
+    def test_the_tests_step_is_the_commit_level_not_the_whole_suite(self):
+        tests = dict(C.checks(1))["tests"]
+        self.assertIn("--changed-since={commit}^", tests)
+        self.assertNotIn("--force", tests)
+
+    def test_a_commit_whose_runner_predates_the_selection_gets_the_whole_suite(self):
+        old = os.path.join(self._tmp.name, "old")
+        new = os.path.join(self._tmp.name, "new")
+        for tree, text in ((old, "args = sys.argv  # --changed only\n"),
+                           (new, 'if a.startswith("--changed-since="):\n')):
+            os.makedirs(tree)
+            with open(os.path.join(tree, "run_tests.py"), "w") as fh:
+                fh.write(text)
+        self.assertFalse(C.runner_selects(old))
+        self.assertTrue(C.runner_selects(new))
+
     def test_no_worktree_is_left_behind(self):
         for c in self.commits:
             C.check(c, self.root, self.steps, self.repo)

@@ -3,15 +3,17 @@
 
     python3 run_tests.py               # fast tests only (the default), in parallel
     python3 run_tests.py --changed     # only what your uncommitted edits can affect
+    python3 run_tests.py --changed-since=REV   # only what differs from REV can affect
     python3 run_tests.py compact spec  # only files whose path contains one of these
     python3 run_tests.py --slow        # fast + slow. TWO MINUTES. See below.
     python3 run_tests.py -j1           # serial, for when a parallel failure is confusing
 
 `--changed` reads the working tree against HEAD, resolves each changed module through the
 repo's own import graph, and runs every test that reaches it transitively. It declines and
-runs everything whenever it cannot map a changed file, because a selector that quietly skips
-the test that would have failed is worse than a slow one. It is for the edit loop; the full
-fast suite is still what you run before committing.
+runs everything whenever it cannot map a changed file (a document nothing names selects
+nothing instead), because a selector that quietly skips the test that would have failed is
+worse than a slow one. It is the loop and commit levels' test step; the whole suite runs once
+per top commit, before a push (`check_push.py`).
 
 Why this exists: `python3 -m unittest discover` only finds tests under directories that
 have an __init__.py. Only lib/ does — hooks/ and each skill's scripts/ don't, since
@@ -319,10 +321,10 @@ def _dependents(changed, files, graph=None):
         reached = grown
 
 
-def changed_files():
-    """Everything this working tree has touched relative to HEAD, tracked or not."""
+def changed_files(base="HEAD"):
+    """Everything this working tree has touched relative to `base`, tracked or not."""
     out = set()
-    for cmd in (["git", "diff", "--name-only", "HEAD"],
+    for cmd in (["git", "diff", "--name-only", base],
                 ["git", "ls-files", "--others", "--exclude-standard"]):
         proc = subprocess.run(cmd, capture_output=True, text=True, cwd=REPO_ROOT)
         if proc.returncode == 0:
@@ -354,22 +356,28 @@ def _readers(rel, files):
     return out
 
 
-def select_changed(files):
+# Documents: prose and pictures for people. One a test names (a SKILL.md, an icon table) selects
+# that test like any other file; one nothing names is read by no test and selects nothing, rather
+# than declining into the whole suite on every README edit.
+DOCS = {".md", ".png", ".jpg", ".jpeg", ".gif", ".webp"}
+
+
+def select_changed(files, base="HEAD"):
     """(test files to run, note) for `--changed`, or (None, why) to fall back to everything.
 
     Deliberately conservative: this is a way to make the edit loop cheap, NOT a substitute for
-    the full suite before you commit. A non-Python file counts as a change to every Python
+    the whole suite before a push. A non-Python file counts as a change to every Python
     file that names it (`_readers`); anything it cannot reason about — a file nothing names,
     a changed file it cannot resolve — makes it decline and run everything, because a
     selector that quietly skips the test that would have failed is worse than a slow one.
     """
-    raw = changed_files()
+    raw = changed_files(base)
     if not raw:
         # An EMPTY selection, not a refusal. "There are no edits" and "I cannot map an edit"
         # are different answers and only the second one deserves the whole suite: this used to
         # conflate them, so asking what a clean tree affects cost 125 seconds to be told
         # "everything", which is the one answer that cannot be true.
-        return set(), "nothing changed against HEAD"
+        return set(), f"nothing changed against {base}"
     changed, unknown = set(), []
     for rel in raw:
         path = (REPO_ROOT / rel).resolve()
@@ -383,7 +391,7 @@ def select_changed(files):
                 changed.add(browser)
         else:
             readers = _readers(rel, files)
-            if not readers:
+            if not readers and path.suffix.lower() not in DOCS:
                 unknown.append(rel)
             changed |= readers
     if unknown:
@@ -412,11 +420,15 @@ def main():
     args = sys.argv[1:]
     include_slow = "--slow" in args
     only_changed = "--changed" in args
+    base = "HEAD"
+    for arg in args:
+        if arg.startswith("--changed-since="):
+            only_changed, base = True, arg.split("=", 1)[1]
     force = "--force" in args
     workers = 8
     patterns = []
     for arg in args:
-        if arg in ("--slow", "--changed", "--force"):
+        if arg in ("--slow", "--changed", "--force") or arg.startswith("--changed-since="):
             continue
         if arg.startswith("-j"):
             try:
@@ -435,7 +447,7 @@ def main():
     selected = None
     if only_changed:
         every = [p for p in REPO_ROOT.rglob("*.py") if "__pycache__" not in p.parts]
-        selected, note = select_changed(set(every))
+        selected, note = select_changed(set(every), base)
         if selected is None:
             print(f"--changed: running everything ({note})")
         else:
@@ -443,7 +455,7 @@ def main():
             print(f"--changed: {len(files)} of {len(selected)} affected test file(s) "
                   f"from {note}")
             if not files:
-                print("nothing to run — but run the full suite before you commit")
+                print("nothing to run (the whole suite runs before a push: check_push.py)")
                 return 0
 
     # Only a WHOLE run is cached, and only a passing one. A filtered or narrowed `--changed`

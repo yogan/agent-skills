@@ -1,0 +1,12 @@
+#!/bin/sh
+# Nothing is pushed that has not passed the push level (check_push.py), which records each pass
+# against the top commit's tree. This only reads that record; it runs nothing itself.
+# `git push --no-verify` skips it.
+cd "$(git rev-parse --show-toplevel)" || exit 1
+shas=""
+while read -r _local_ref local_sha _remote_ref _remote_sha; do
+  shas="$shas $local_sha"
+done
+[ -z "$shas" ] && exit 0
+# shellcheck disable=SC2086
+exec python3 check_push.py --verify $shas

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-"""Check each unpushed commit on its own: ruff, the fast suite and the mods' checks, every
-commit in its own throwaway worktree.
+"""Check each unpushed commit on its own, at the commit level: ruff and the tests that commit's
+own change reaches, every commit in its own throwaway worktree.
 
     python3 check_commits.py            # the commits above the branch's upstream
     python3 check_commits.py <base>     # the commits above <base>
@@ -10,6 +10,11 @@ rebase. Every commit must pass alone, and the pre-commit hook cannot tell: it ch
 working tree, once, and a fold commits with hooks off. Folds left broken middle commits three
 rounds running (a name imported one commit after its first use, 95 type errors in one commit)
 before this existed, each found only when somebody checked commit by commit by hand.
+
+Each commit runs the tests its own change reaches (`run_tests.py --changed-since=<commit>^`),
+not the whole suite: the whole suite runs once, on the top commit, before a push
+(`check_push.py`). A whole suite per commit cost about 45 seconds each and was paid again on
+every fold. A commit whose change cannot be mapped still runs everything.
 
 The commits run side by side, each with its share of the test runner's workers, so the
 machine runs about as many processes as one full run. A failing commit prints what failed
@@ -47,12 +52,22 @@ def ruff_version():
 
 
 def checks(workers):
-    """The commands run in each commit's worktree, in order, as (name, argv)."""
+    """The commands run in each commit's worktree, in order, as (name, argv). `{commit}` in an
+    argument is the commit being checked."""
     version = ruff_version()
     ruff = (["uvx", "--quiet", f"ruff@{version}"] if version and shutil.which("uvx")
             else ["ruff"])
     return [("ruff", [*ruff, "check", "--quiet", "."]),
-            ("tests", [sys.executable, "run_tests.py", "--force", f"-j{workers}"])]
+            ("tests", [sys.executable, "run_tests.py", "--changed-since={commit}^", f"-j{workers}"])]
+
+
+def runner_selects(tree):
+    """Whether the test runner in `tree` knows `--changed-since`."""
+    try:
+        with open(os.path.join(tree, "run_tests.py"), encoding="utf-8") as fh:
+            return "--changed-since=" in fh.read()
+    except OSError:
+        return True
 
 
 def copy_untracked(dest, repo=HERE):
@@ -86,6 +101,11 @@ def check(commit, root, steps, repo=HERE):
         env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
         log, report = [], []
         for name, argv in steps:
+            argv = [a.replace("{commit}", commit) for a in argv]
+            if not runner_selects(tree):
+                # A commit from before `--changed-since` has a runner that would read it as a
+                # path filter, match nothing and fail: it gets the whole suite instead.
+                argv = ["--force" if a.startswith("--changed-since=") else a for a in argv]
             r = subprocess.run(argv, cwd=tree, capture_output=True, text=True, env=env)
             log += [f"$ {' '.join(argv)}", r.stdout + r.stderr]
             if r.returncode != 0:
