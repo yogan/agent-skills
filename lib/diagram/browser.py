@@ -37,6 +37,7 @@ import os
 import select
 import shutil
 import subprocess
+import tempfile
 import threading
 import time
 
@@ -119,8 +120,15 @@ class _Browser:
     """
 
     def __init__(self):
+        # Chrome's profile, made and removed here rather than by puppeteer: puppeteer removes
+        # the one it makes only when node closes it, so every node killed (a browser that would
+        # not answer, a test that kills one on purpose) left its profile, up to 120 MB, in the
+        # temp folder for good.
+        self.profile = tempfile.mkdtemp(prefix="diagram-chrome-")
+        env = {**os.environ, "MEASURE_PROFILE": self.profile}
         self.proc = subprocess.Popen(["node", MEASURE_JS], stdin=subprocess.PIPE,
-                                     stdout=subprocess.PIPE, stderr=subprocess.PIPE, bufsize=0)
+                                     stdout=subprocess.PIPE, stderr=subprocess.PIPE, bufsize=0,
+                                     env=env)
         self.buffer = b""
         # Drained on a thread of its own, and kept, because node writes here only when
         # something is wrong: an undrained stderr pipe fills and stops the process mid-batch,
@@ -188,6 +196,13 @@ class _Browser:
         for pipe in (self.proc.stdout, self.proc.stderr):
             with contextlib.suppress(OSError, ValueError):
                 pipe.close()
+        # Chrome runs in a process group of its own (puppeteer starts it detached), so a node
+        # that was killed leaves it running, writing into its profile again after that is
+        # removed: hundreds of orphaned browsers once held gigabytes. Each one is found by the
+        # profile, which is this browser's alone.
+        with contextlib.suppress(OSError):
+            subprocess.run(["pkill", "-KILL", "-f", self.profile], capture_output=True)
+        shutil.rmtree(self.profile, ignore_errors=True)
 
 
 class _Gone(Exception):

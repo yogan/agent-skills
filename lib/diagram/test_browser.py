@@ -11,7 +11,9 @@ renderer's.
 Run: `python3 lib/diagram/test_browser.py`
 """
 import os
+import subprocess
 import sys
+import time
 import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
@@ -95,6 +97,21 @@ class TestTheBrowserPool(unittest.TestCase):
         self.assertEqual(browser.text_widths(self.page()["html"]), [browser.text_widths(
             self.page()["html"])[0]])
         self.assertEqual(len(self.started), 2, "it should have started exactly one more")
+
+    def test_a_killed_browser_leaves_no_profile_behind(self):
+        """A node killed cannot remove the Chrome profile it was started with, and 998 of
+        them, 33 GB, once piled up in the temp folder."""
+        browser.text_widths(self.page()["html"])
+        killed = browser._IDLE[0]
+        self.assertTrue(os.path.isdir(killed.profile), "Chrome should be using this profile")
+        killed.proc.kill()
+        killed.proc.wait(timeout=10)
+        browser.shutdown()
+        # Chrome outlives a killed node unless it is stopped too, and writes its profile again.
+        time.sleep(2)
+        self.assertFalse(os.path.exists(killed.profile))
+        running = subprocess.run(["pgrep", "-f", killed.profile], capture_output=True, text=True)
+        self.assertEqual(running.stdout.split(), [], "Chrome is still running")
 
     def test_shutdown_leaves_nothing_running(self):
         """`atexit` calls this. A browser surviving the command is the failure mode that
