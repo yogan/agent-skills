@@ -7,4 +7,5 @@ e2e/.runs/
 .run_tests_timings.json
 .run_tests_passed.json
 .check_push_passed.json
+.run_tests_tmpdir
 .DS_Store

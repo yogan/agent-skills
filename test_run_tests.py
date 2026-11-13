@@ -193,6 +193,26 @@ class TestIsolation(unittest.TestCase):
         self.assertIn("HOME", seen)
 
 
+class TestTempFolder(unittest.TestCase):
+    def test_the_named_folder_is_every_tests_temp_folder_and_none_without_the_file(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            setting = Path(tmp) / "setting"
+            folder = Path(tmp) / "scanned-less"
+            with mock.patch.object(rt, "TMPDIR_FILE", setting):
+                self.assertIsNone(rt.test_tmpdir())
+                setting.write_text(f"{folder}\n")
+                self.assertEqual(rt.test_tmpdir(), folder)
+                self.assertTrue(folder.is_dir())
+            seen = {}
+
+            def fake_run(argv, **kw):
+                seen.update(kw["env"])
+                return subprocess.CompletedProcess(argv, 0, "", "")
+            with mock.patch.object(rt.subprocess, "run", side_effect=fake_run):
+                rt.run_one((Path("x.py"), None), folder)
+            self.assertEqual(seen["TMPDIR"], f"{folder}/")
+
+
 class TestFailureSummary(unittest.TestCase):
     def test_each_failed_test_is_named_with_what_it_raised(self):
         """Last in the run, so a `tail` names them: the bare count used to send sessions

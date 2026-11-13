@@ -45,7 +45,7 @@ import check_commits  # noqa: E402
 
 # Gitignored files a side needs to behave like this checkout: the runner's per-file seconds
 # decide which files are split and in what order they start.
-CARRIED = (".run_tests_timings.json",)
+CARRIED = (".run_tests_timings.json", ".run_tests_tmpdir")
 
 
 def run(argv, cwd, count):

@@ -90,10 +90,31 @@ def find_test_files(include_slow, patterns):
 SESSION_ENV = re.compile(r"^(?:CLAUDE_CODE_SESSION_ID|REVIEW_UI_\w+)$")
 
 
-def run_one(job):
+# A folder for the tests' temp files, named in this gitignored file: on a machine whose security
+# scanners skip some folder, the throwaway repos, worktrees and browser profiles the tests make
+# go there instead of the system temp folder, which the scanners inspect file by file. Measured
+# on such a machine: the whole suite about 11% faster. Without the file, nothing changes.
+TMPDIR_FILE = REPO_ROOT / ".run_tests_tmpdir"
+
+
+def test_tmpdir():
+    """The folder `.run_tests_tmpdir` names, made if missing; None without the file."""
+    try:
+        folder = Path(os.path.expanduser(TMPDIR_FILE.read_text(encoding="utf-8").strip()))
+    except OSError:
+        return None
+    if not folder.is_absolute():
+        return None
+    folder.mkdir(parents=True, exist_ok=True)
+    return folder
+
+
+def run_one(job, tmpdir=None):
     path, klass = job
     argv = [sys.executable, str(path)] + ([klass] if klass else [])
     env = {k: v for k, v in os.environ.items() if not SESSION_ENV.match(k)}
+    if tmpdir:
+        env["TMPDIR"] = f"{tmpdir}/"
     started = time.monotonic()
     proc = subprocess.run(argv, capture_output=True, text=True, env=env)
     return job, proc, time.monotonic() - started
@@ -478,8 +499,9 @@ def main():
     timings = _load_timings()
     jobs = _jobs(files, timings)
     wall = time.monotonic()
+    tmpdir = test_tmpdir()
     with ThreadPoolExecutor(max_workers=workers) as pool:
-        results = list(pool.map(run_one, jobs))
+        results = list(pool.map(lambda job: run_one(job, tmpdir), jobs))
     wall = time.monotonic() - wall
 
     # Shards are reported as the one file they came from: the split is a scheduling detail,

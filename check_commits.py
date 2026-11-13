@@ -71,7 +71,11 @@ def runner_selects(tree):
 
 
 def copy_untracked(dest, repo=HERE):
-    """What a commit's checks need that git does not carry: the mods' engine types."""
+    """What a commit's checks need that git does not carry: the mods' engine types, and the test
+    runner's temp folder setting (`run_tests.TMPDIR_FILE`)."""
+    local = os.path.join(repo, ".run_tests_tmpdir")
+    if os.path.isfile(local) and not os.path.exists(os.path.join(dest, ".run_tests_tmpdir")):
+        shutil.copy2(local, os.path.join(dest, ".run_tests_tmpdir"))
     mods = os.path.join(repo, "mods")
     for mod in sorted(os.listdir(mods)) if os.path.isdir(mods) else []:
         types = os.path.join(mods, mod, ".claude-plugin", "types")
