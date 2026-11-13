@@ -64,6 +64,10 @@ export type ReviewTopic = {
   // rework-mr: a reply drafted to post ahead of the fix, and whether one went up already.
   early?: boolean
   early_posted?: boolean
+  // rework-mr: the person wrote last in its threads, by hand on GitLab, and nothing says it
+  // waits; and a fix dropped earlier is kept in git, which a new fix may start from.
+  you_last?: boolean
+  dropped?: boolean
   // rework-mr: whether the fix differs from the plan agreed, and whether that plan answers
   // the reviewer: either way a reply after the push has something to explain.
   differs?: boolean

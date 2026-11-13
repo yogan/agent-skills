@@ -25,7 +25,7 @@ export type Press =
   | { kind: 'agree'; reply?: true; draft?: true }
   // rework-mr: nothing more to do on it until a reviewer writes again (already handled,
   // replied by hand, no reply needed, a comment that asks nothing).
-  | { kind: 'handled'; did: string }
+  | { kind: 'handled'; did: string; label?: string; done?: string }
   // rework-mr: the fix in the diff viewer, switched to.
   | { kind: 'hunk' }
   // A pushed fix, from the commits kept in git, in the diff viewer: rework-mr's own fix,
@@ -408,7 +408,9 @@ const reworkButtons = (review: ReviewState): BandButton[] => {
   // A reply in place of a plan (a question back, a push-back, another suggestion): the
   // person types its gist, and the agent drafts it and stores it as the topic's plan.
   const replyInstead: BandButton = { key: 'reply-instead', label: 'Reply instead…', press: { kind: 'fill', text: `Reply to ${t} instead: ` } }
-  const handled = (label: string, did: string): BandButton => ({ key: `handled-${label}`, label, press: { kind: 'handled', did } })
+  // `done`: what the card says once pressed, where it is not "Seen".
+  const handled = (label: string, did: string, done?: string): BandButton =>
+    ({ key: `handled-${label}`, label, press: { kind: 'handled', did, ...(done ? { label, done } : {}) } })
   const isExplained = (review.explained ?? []).includes(t)
   const explain: BandButton = isExplained
     ? { key: 'explain', label: 'Explain further', press: ask(`Explain ${t} further: it is still not clear to me. Take another angle (a smaller example, what the code does step by step, or what happens if we leave it), and do not repeat what you already said.`) }
@@ -451,7 +453,7 @@ const reworkButtons = (review: ReviewState): BandButton[] => {
         : review.pass === 'plan'
           // Once a reply went up ahead of the fix, another would answer the person's own.
           ? [...(topic.early_posted ? [] : [replyNow]), { key: 'replan', label: 'Change plan…', press: { kind: 'fill', text: `Change the plan for ${t}: ` } }]
-          : [{ key: 'fix', label: 'Fix it', press: ask(`Make the fix for ${t} as agreed, run its checks (\`verify ${t}\`) until they pass, then show it (\`diff-view.sh ${t}\`, with \`--did\`, \`--fixup\` or \`--new-commit\`, and \`--as-agreed\` or \`--differs\`).`) }]
+          : [{ key: 'fix', label: 'Fix it', press: ask(`Make the fix for ${t} as agreed${topic.dropped ? ' (a fix dropped earlier is kept: `plans` names it; start from it where the plan is close to it)' : ''}, run its checks (\`verify ${t}\`) until they pass, then show it (\`diff-view.sh ${t}\`, with \`--did\`, \`--fixup\` or \`--new-commit\`, and \`--as-agreed\` or \`--differs\`).`) }]
       break
     case 'fixed': {
       // The diff viewer: opened on a press, then read on one, once the person wrote there.
@@ -486,7 +488,7 @@ const reworkButtons = (review: ReviewState): BandButton[] => {
         bs = [{ key: 'post', label: 'Post', press: { kind: 'post', reply: true }, isPrimary: true },
           ...(topic.pushed ? [] : [{ key: 'post-resolve', label: 'Post + resolve', press: { kind: 'post', reply: true, resolve: true } } as BandButton]),
           replied, ...(topic.fix_kept ? [showFix] : [])]
-      } else if (topic.pushed) {
+      } else if (topic.pushed && (topic.outcome ?? 'fix') === 'fix') {
         // After the push: a "Fixed" with its link, resolved or not, or a reply that says more.
         // A reply is the recommendation where there is something to say: the fix differs
         // from the plan agreed, or the plan answers the reviewer and nothing went up yet.
@@ -496,7 +498,9 @@ const reworkButtons = (review: ReviewState): BandButton[] => {
           { key: 'draft', label: 'Reply…', press: { kind: 'fill', text: `Draft the reply for ${t} after its fix${lang}: ` }, ...(hasMore ? { isPrimary: true as const } : {}) },
           ...(topic.fix_kept ? [showFix] : [])]
       } else {
-        bs = [{ key: 'draft', label: 'Reply', press: ask(`Draft the reply for ${t}${lang}, and show it.`) }, replied]
+        // A plan to reply, a pushed fix defended among them: the fix stays a press away.
+        bs = [{ key: 'draft', label: 'Reply', press: ask(`Draft the reply for ${t}${lang}, and show it.`) }, replied,
+          ...(topic.fix_kept ? [showFix] : [])]
       }
       break
     }
@@ -505,6 +509,9 @@ const reworkButtons = (review: ReviewState): BandButton[] => {
       // answers nothing, so it is no recommendation.
       return topic.fix_kept ? [showFix, ...wayOn(review, topic)] : []
   }
+  // The person wrote last on GitLab by hand (a question back): the topic may wait for the
+  // reviewer's answer, one press.
+  if (topic.you_last) bs = [...bs, handled('Wait for reviewer', 'wrote last on GitLab; it waits on the reviewer', 'Waiting for the reviewer')]
   return [...primary(bs), ...wayOn(review, topic)]
 }
 
@@ -608,7 +615,7 @@ export const outcomeOf = (press: Press, stdout: string): ReviewOutcome | null =>
     case 'keep-waiting':
       return said('Keep waiting', 'Waiting for the author')
     case 'handled':
-      return said('Seen', 'Seen')
+      return said(press.label ?? 'Seen', press.done ?? 'Seen')
     case 'posted-ok':
       return said('Keep as posted', 'Kept as posted')
     case 'merge':

@@ -2123,6 +2123,28 @@ class TestReplyAheadOfTheFix(unittest.TestCase):
         self.assertNotIn("reply", self.t1)
         self.assertEqual(T.step_of(self.state, self.t1), "fix")
 
+    def test_on_a_plan_that_only_replies_it_is_the_reply_and_waits_on_the_reviewer(self):
+        """Stored with `--early` on a push-back, it was taken for one ahead of a fix that
+        never comes: posted, the topic stayed "to reply" until set waiting by hand."""
+        for how in ("press", "by hand"):
+            with self.subTest(how):
+                self.t1.update(outcome="push-back", reply="Bewusst so.\n", reply_early=True)
+                self.t1.pop("state", None)
+                if how == "press":
+                    T.post_reply(self.state, {"enc": "g%2Fp", "web": "https://gl/g/p"}, 1, "t1", None)
+                else:
+                    argv = ["threads.py", "posted", "t1", "--ok", "--iid", "1"]
+                    with mock.patch.object(sys, "argv", argv), \
+                            mock.patch.object(T, "load", return_value=self.state), \
+                            mock.patch.object(T, "save"), mock.patch.object(T, "hold"), \
+                            mock.patch.object(T, "state_file", return_value="/state"), \
+                            mock.patch.object(T, "context", return_value={"slug": "g-p", "enc": "g%2Fp", "web": "https://gl/g/p"}), \
+                            mock.patch("sys.stdout", new_callable=io.StringIO):
+                        T.main()
+                self.assertEqual(self.t1.get("state"), "waiting")
+                self.assertNotIn("early_posted", self.t1)
+                self.assertNotIn("reply_early", self.t1)
+
     def test_a_reply_stored_without_early_is_the_ordinary_one(self):
         argv = ["threads.py", "set", "t1", "--reply", "Fixed.", "--iid", "1"]
         with mock.patch.object(sys, "argv", argv), mock.patch.object(T, "load", return_value=self.state), \
@@ -2204,6 +2226,15 @@ class TestFixAgainstThePlan(unittest.TestCase):
                 mock.patch("sys.stdout", new_callable=io.StringIO) as out:
             T.main()
         return out.getvalue()
+
+    def test_code_changed_on_a_plan_to_reply_makes_it_a_fix_to_push(self):
+        """A push-back that also adds a comment: left a reply, its card offered no push and
+        `push` refused the fix the user had already checked."""
+        TestRounds.agree(self.state, "t1", outcome="push-back")
+        t1 = T.topic_for(self.state, "t1")
+        self.assertEqual(T.step_of(self.state, t1), "reply")
+        self.show("--as-agreed")
+        self.assertEqual((t1["outcome"], T.step_of(self.state, t1)), ("fix", "fixed"))
 
     def test_a_fix_as_agreed_says_so(self):
         out = self.show("--as-agreed")
@@ -2550,6 +2581,176 @@ class TestFixPerPush(unittest.TestCase):
                                     f"\u00a0\u00a0{T.ui.PUSHED_ICON} push 1 · [the diff ↗](G/diffs?diff_id=2&start_sha=A)",
                                     f"\u00a0\u00a0{T.ui.PUSHED_ICON} push 2 · [the diff ↗](G/diffs?diff_id=4&start_sha=X)"
                                     " · may include other topics' changes"])
+
+
+class TestStateByWord(unittest.TestCase):
+    """Moving a topic by talking to the agent, along the workflows it has to carry: an
+    answer and a wait, a pushed fix defended or redone, a fix dropped while it is made. Each
+    move says where the topic stands after it, so one that changes nothing is noticed."""
+
+    def setUp(self):
+        mock.patch.dict(os.environ, {"REVIEW_UI_DRAWN": "1", T.PRESS_ENV: "1"}).start()
+        self.addCleanup(mock.patch.stopall)
+        T._WORKING.clear()
+        self.addCleanup(T._WORKING.clear)
+        self.state = TestRounds.state(1)
+        TestRounds.agree(self.state, "t1")
+        self.t1 = T.topic_for(self.state, "t1")
+        self.diff = mock.patch.object(T, "working_diff", return_value="").start()
+
+    def run_cmd(self, *argv, stdin=""):
+        with mock.patch.object(sys, "argv", ["threads.py", *argv, "--iid", "1"]), \
+                mock.patch.object(T, "load", return_value=self.state), \
+                mock.patch.object(T, "save"), mock.patch.object(T, "hold"), \
+                mock.patch.object(T, "state_file", return_value="/state"), \
+                mock.patch.object(T, "context", return_value={"slug": "g-p", "enc": "g%2Fp", "web": "https://gl/g/p"}), \
+                mock.patch("sys.stdin", io.StringIO(stdin)), \
+                mock.patch("sys.stdout", new_callable=io.StringIO) as out:
+            T.main()
+        return out.getvalue()
+
+    def reviewer_writes(self, body):
+        th = self.state["threads"]["d1"]
+        th["notes"].append({"author": "Robin", "body": body, "at": "2026-02-01T00:00:00Z", "mine": False})
+        th["awaiting"] = "you"
+        self.t1.pop("state", None)
+
+    def pushed(self):
+        self.t1.update(diff_url="https://gl/g/p/-/merge_requests/1/diffs?diff_id=2",
+                       pushes=[{"before": "A", "start": "A", "after": "B", "clean": True,
+                                "url": "https://gl/g/p/-/merge_requests/1/diffs?diff_id=2"}])
+
+    def test_an_outcome_alone_changes_the_plan_s_kind_and_says_where_it_stands(self):
+        out = self.run_cmd("set", "t1", "--outcome", "push-back")
+        self.assertEqual((self.t1["outcome"], self.t1["plan"]), ("push-back", "p"))
+        self.assertIn('t1 is now to reply: the plan agreed is "Push back"', out)
+
+    def test_a_move_that_changes_nothing_on_the_card_says_so(self):
+        """`set --state open` on t1 once left the card as it was, and nothing said why."""
+        self.assertIn("t1 is now to fix", self.run_cmd("set", "t1", "--state", "open"))
+
+    def test_a_plan_to_reply_is_refused_while_the_fix_is_in_the_tree(self):
+        self.t1["fix"] = {"did": "d"}
+        self.diff.return_value = "@@ -1 +1 @@\n-a\n+b\n"
+        with mock.patch("sys.stderr", new_callable=io.StringIO) as err, self.assertRaises(SystemExit):
+            self.run_cmd("set", "t1", "--outcome", "reply")
+        self.assertIn("drop-fix t1", err.getvalue())
+        self.assertEqual(self.t1["outcome"], "fix")
+
+    def test_a_question_back_waits_and_the_answer_brings_it_back_to_plan(self):
+        """Workflow 1: the answer goes up, the topic waits; the reviewer's clarification
+        reopens it, to be planned on the whole discussion."""
+        self.t1.update(outcome="question", reply="Meinst du A oder B?\n")
+        with mock.patch.object(T, "api_post", return_value={"id": 9}):
+            T.post_reply(self.state, {"enc": "g%2Fp", "web": "https://gl/g/p"}, 1, "t1", None)
+        self.assertEqual(T.step_of(self.state, self.t1), "none")
+        self.reviewer_writes("B, bitte.")
+        self.assertEqual(T.step_of(self.state, self.t1), "plan")
+
+    def test_your_own_comment_last_on_gitlab_offers_to_wait(self):
+        th = self.state["threads"]["d1"]
+        th["notes"].append({"author": "Me", "body": "Meinst du A?", "at": "2026-02-01T00:00:00Z", "mine": True})
+        th["awaiting"] = "reviewer"
+        self.assertTrue(T.state_json(self.state)["topics"][0]["you_last"])
+        self.run_cmd("wait", "t1")
+        self.assertFalse(T.state_json(self.state)["topics"][0]["you_last"])
+        self.t1.update(state=None, early_posted=True)     # a reply ahead of the fix: known
+        self.assertFalse(T.state_json(self.state)["topics"][0]["you_last"])
+
+    def test_a_pushed_fix_defended_is_a_reply_that_keeps_the_fix_and_links_no_fixed(self):
+        """Workflow 2: the reviewer disagrees with the pushed fix, and the plan is to defend it."""
+        self.pushed()
+        self.reviewer_writes("Anders, bitte.")
+        self.run_cmd("set", "t1", "--decision", "keep it", "--plan", "explain why", "--outcome", "push-back")
+        self.assertEqual(T.step_of(self.state, self.t1), "reply")
+        self.assertTrue(T.state_json(self.state)["topics"][0]["pushed"])
+        with mock.patch.object(T, "pushed_steps", return_value=["PUSHED"]):
+            parts = T._step_parts(self.state, self.t1)
+        self.assertIn("PUSHED", parts)
+        self.assertTrue(any("Agreed plan: Push back" in x for x in parts))
+        self.run_cmd("set", "t1", "--reply", "-", stdin="Bewusst so, weil …\n")
+        self.assertNotIn("Fixed", self.t1["reply"])
+
+    def test_a_pushed_fix_redone_is_a_new_fix_round(self):
+        self.pushed()
+        self.reviewer_writes("Anders, bitte.")
+        self.run_cmd("set", "t1", "--decision", "redo", "--plan", "do it as asked", "--outcome", "fix")
+        self.assertEqual(T.step_of(self.state, self.t1), "fix")
+        self.assertNotIn("diff_url", self.t1)
+        self.assertEqual(len(self.t1["pushes"]), 1)                # the earlier push stays
+
+
+class TestDropFix(unittest.TestCase):
+    """Workflow 3 in a real checkout: a fix found not wanted while it is made is kept in git,
+    the working tree put back, and the topic becomes the reply saying what was found."""
+
+    @classmethod
+    def setUpClass(cls):
+        from lib.test_checks import Repo
+        cls.Repo = Repo
+        cls._template = tempfile.TemporaryDirectory()
+        Repo.build(cls._template.name)
+
+    @classmethod
+    def tearDownClass(cls):
+        cls._template.cleanup()
+
+    def setUp(self):
+        from lib.test_checks import sh
+        self.sh = sh
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.r = self.Repo(self._tmp.name, self._template.name)
+        cwd = os.getcwd()
+        os.chdir(self.r.root)
+        self.addCleanup(os.chdir, cwd)
+        mock.patch.dict(os.environ, {"REVIEW_UI_DRAWN": "1"}).start()
+        self.addCleanup(mock.patch.stopall)
+        T._WORKING.clear()
+        self.addCleanup(T._WORKING.clear)
+        self.state = TestRounds.state(1)
+        TestRounds.agree(self.state, "t1")
+        self.t1 = T.topic_for(self.state, "t1")
+
+    def git(self, *a):
+        return self.sh(self.r.root, "git", *a)
+
+    def test_the_fix_is_kept_the_tree_put_back_and_the_plan_a_reply(self):
+        self.r.write("a.txt", "half a fix\n")
+        self.r.write("added.txt", "new\n")
+        self.r.write("notes.txt", "not the fix's\n")
+        T.drop_fix(self.state, 1, self.t1, "it breaks the cache", "say why it is not done here",
+                   "reply", new=["added.txt"])
+        self.assertEqual(self.git("status", "--porcelain"), "?? notes.txt")   # only the fix left
+        ref = "refs/rework-mr/mr1/t1/dropped1"
+        self.assertIn("+half a fix", self.git("diff", f"{ref}/before", f"{ref}/after"))
+        self.assertIn("added.txt", self.git("diff", "--stat", f"{ref}/before", f"{ref}/after"))
+        self.assertEqual((self.t1["outcome"], self.t1["plan"]), ("reply", "say why it is not done here"))
+        self.assertEqual(T.step_of(self.state, self.t1), "reply")
+        self.assertIn(f"dropped fix kept: `git diff {ref}/before {ref}/after`", T.render_plans(self.state))
+        self.assertTrue(T.state_json(self.state)["topics"][0]["dropped"])
+
+    def test_the_reviewer_s_answer_plans_again_and_a_new_fix_knows_the_kept_one(self):
+        self.r.write("a.txt", "half a fix\n")
+        T.drop_fix(self.state, 1, self.t1, "too big", "say it is too big for this MR", "reply")
+        with mock.patch.object(T, "api_post", return_value={"id": 9}), mock.patch.dict(os.environ, {T.PRESS_ENV: "1"}):
+            self.t1["reply"] = "Zu groß für diesen MR.\n"
+            T.post_reply(self.state, {"enc": "g%2Fp", "web": "https://gl/g/p"}, 1, "t1", None)
+        self.assertEqual(T.step_of(self.state, self.t1), "none")          # waits on the reviewer
+        th = self.state["threads"]["d1"]
+        th["notes"].append({"author": "Robin", "body": "Dann nur Teil A?", "at": "2026-02-01T00:00:00Z", "mine": False})
+        th["awaiting"] = "you"
+        self.t1.pop("state", None)
+        self.assertEqual(T.step_of(self.state, self.t1), "plan")
+        TestRounds.agree(self.state, "t1")                                 # a fix after all
+        self.assertEqual(T.step_of(self.state, self.t1), "fix")
+        self.assertTrue(T.state_json(self.state)["topics"][0]["dropped"])
+
+    def test_a_pushed_fix_with_nothing_in_the_tree_is_not_dropped_here(self):
+        self.t1["diff_url"] = "https://gl/x"
+        with mock.patch("sys.stderr", new_callable=io.StringIO) as err, self.assertRaises(SystemExit):
+            T.drop_fix(self.state, 1, self.t1, "w", "p", "reply")
+        self.assertIn("pushed", err.getvalue())
 
 
 class TestPushFixGit(unittest.TestCase):

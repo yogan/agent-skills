@@ -214,6 +214,8 @@ lands in the sidebar's inbox, and a background agent of the mod's prepares a pla
   CHANGE_EOF]
   python3 $SD/threads.py quote <t> --focus
   ```
+  `--outcome fix` for every plan that changes code, a push-back that also adds a comment
+  included: only a fix gets Fix it and a push. The others are for a plan that only replies.
   `--says fyi` (no outcome, no plan) for a comment that asks nothing of you. `--answer-now` on
   a fix whose plan answers the reviewer ahead of it (they asked a question, or offered options
   and the plan picks one): the card then recommends agreeing with a reply up front. The `--change` is
@@ -244,7 +246,10 @@ lands in the sidebar's inbox, and a background agent of the mod's prepares a pla
   the thread's language: what you will do (the option taken, where the reviewer offered
   several) and that the fix follows. Store it with `set <t> --reply - --early` (a quoted
   heredoc, as every reply) and show it with `reply-view <t>`. Posted, it resolves nothing and
-  the plan stands; after the push the thread gets a short `Fixed: <link>`.
+  the plan stands; after the push the thread gets a short `Fixed: <link>`. Where it asks the
+  reviewer something the fix waits on, run `set <t> --state waiting` once it is posted: their
+  answer brings the topic back at its fix. A plan that only replies has no reply ahead of a
+  fix: its reply is drafted without `--early`.
 - **A reviewer wrote again on an agreed plan.** Where their comment only acknowledges it
   ("sounds good", a thank-you) and changes nothing, the plan stands:
   `keep-plan <t> --why "<what they said>"`. Anything else is a new proposal.
@@ -256,6 +261,23 @@ lands in the sidebar's inbox, and a background agent of the mod's prepares a pla
   on GitLab is the user's press there, never yours.
 - **"Change the plan for <t>: <what>"** is the user's word on an agreed plan: rework it
   with them and store the new one (`set <t> --decision "…" --plan "…" --outcome <outcome>`).
+- **A topic moved by word.** Whatever the user and you agree on in the chat is carried out
+  with the commands, never left to the card: `set <t> --outcome <kind>` changes only the
+  plan's kind, `set <t> --state waiting|open` whose turn it is, `wait <t>` that it waits on
+  the reviewer. Each prints where the topic stands now; show it then (`quote <t> --focus`),
+  so its card and buttons match. Where the printed step is not the one you meant, say so,
+  never that it changed.
+- **A pushed fix the reviewer disagrees with** is planned like any comment: defend it (a
+  reply, `--outcome push-back`, which links no `Fixed`) or redo it (`--outcome fix`: a new
+  fix round, and its `Fixed` links the new push).
+- **A fix not wanted after all.** Where making it shows it would make things worse, cannot
+  be done, or is too much for this MR, stop and tell the user what you found; never drop it
+  on your own. On their word (in the chat, or a note in the diff viewer: "this whole idea is
+  wrong, stop"), run `drop-fix <t> --why "<what was found>" --plan "<one sentence: what the
+  reply says>" [--outcome reply|push-back|question] [--new <file the fix added>]…`: the fix is
+  kept in git, the working tree goes back to HEAD and the plan becomes that reply. Then draft
+  it (`set <t> --reply -`) and show it (`reply-view <t>`). A later fix of the topic may start
+  from the kept one: `plans` names it.
 - **Making the fix** (Phase 3 steps 1–2): run its checks (step 2, `verify`) until
   they pass, then show it with
   `diff-view.sh <t> --did "<one short sentence: the change in summary>" --fixup "<sha> <subject>" --as-agreed`,

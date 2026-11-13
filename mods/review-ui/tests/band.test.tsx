@@ -2121,6 +2121,24 @@ test('rework-mr: after the push, a "Fixed" resolved or not, or a reply', async (
   expect(w.ran.find(r => r.argv[2] === 'post')?.argv.slice(2).join(' ')).toBe('post t1 --fixed --iid 42')
 })
 
+test('rework-mr: a reply defending a pushed fix is drafted, never a second "Fixed"', async ($, on) => {
+  const w = world(on, [reworkState('t1', [reworkTopic('t1', 'reply', { pushed: true, fix_kept: true, outcome: 'push-back' })])])
+  await openRework($, w, reworkView('t1'))
+  const ui = await mountStep($, 'terminal')
+  expect(await labels(ui)).toEqual(['Reply', 'Check my post', 'Show fix in hunk', 'Next', 'Show sidebar'])
+  await ui.unmount()
+})
+
+test('rework-mr: a comment the person wrote last on GitLab offers to wait for the reviewer', async ($, on) => {
+  const w = world(on, [reworkState('t1', [reworkTopic('t1', 'plan', { you_last: true, proposal: { says: 'needs', outcome: 'fix', plan: 'Rename it.' } })], { pass: 'plan' })])
+  await openRework($, w, reworkView('t1'))
+  const ui = await mountStep($, 'terminal')
+  expect(await labels(ui)).toContain('Wait for reviewer')
+  await ui.press({ key: 'handled-Wait for reviewer' })
+  await ui.unmount()
+  expect(w.ran.find(r => r.argv[2] === 'wait')?.argv.slice(2).join(' ')).toBe('wait t1 --iid 42')
+})
+
 test('rework-mr: a pushed fix kept in git is shown in the diff viewer on a press, never as the recommendation', async ($, on) => {
   const w = world(on, [reworkState('t1', [reworkTopic('t1', 'reply', { pushed: true, fix_kept: true })])])
   await openRework($, w, reworkView('t1'))

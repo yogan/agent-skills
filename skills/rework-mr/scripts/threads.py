@@ -1155,9 +1155,11 @@ def _step_parts(state, t):
             body = _fenced_diff(p.get("change"))
             if body:
                 out += [*_change_blocks(body), ""]
-    elif is_pushed_fix(t) and st in ("reply", "none"):
+    elif is_pushed_fix(t) and st in ("reply", "none") and is_fix(t):
         out += [*pushed_steps(state, t), ""]
     elif st in ("fix", "reply") and t.get("plan") and t.get("decision"):
+        if is_pushed_fix(t):
+            out += [*pushed_steps(state, t), ""]      # the fix the reply defends
         word = OUTCOME_WORD.get(t.get("outcome") or "fix", "Fix")
         out += [ui.heading_md(ui.ASKED_ICON, f"Agreed plan: {word}"), "", t["plan"].strip(), ""]
         kept = t.get("kept") or {}
@@ -1209,8 +1211,9 @@ def _change_blocks(diff):
 
 
 def is_pushed_fix(t):
-    """Whether `t`'s fix is pushed: a fix agreed, its push made (the diff link is stored)."""
-    return (t.get("outcome") or "fix") == "fix" and bool(t.get("diff_url"))
+    """Whether a fix of `t`'s is pushed (its diff link is stored), whatever the plan agreed
+    since: a reply defending it still has the fix it defends."""
+    return bool(t.get("diff_url"))
 
 
 def push_key(tid, n):
@@ -1608,6 +1611,17 @@ def hunk_window():
     return {"open": True, "notes": None if notes is None else len(notes)}
 
 
+def you_last(state, t):
+    """Whether the user wrote last in `t`'s open threads (a comment made on GitLab by hand,
+    such as a question back) while nothing here says the topic waits: the card then offers
+    to wait. A reply posted ahead of the fix is known, and not asked about again."""
+    unresolved = [x for x in (state["threads"].get(i) for i in t["thread_ids"])
+                  if x and not x.get("resolved")]
+    return (bool(unresolved) and all(x.get("awaiting") == "reviewer" for x in unresolved)
+            and topic_status(state, t) == "open" and not t.get("early_posted")
+            and step_of(state, t) != "fixed")
+
+
 def state_json(state):
     """The rework as the review-ui mod reads it: one record per topic, the current one, the
     whole of the current topic's threads (every reply, every thread merged into it), and
@@ -1636,8 +1650,12 @@ def state_json(state):
             "fix_kept": bool(kept_fix(state, t, kept=kept)),
             "pushes": len(fixes_of(t)) if is_pushed_fix(t) else 0,
             # A reply drafted to post ahead of the fix, and whether one went up already.
-            "early": bool(t.get("reply_early") and t.get("reply")),
+            "early": early_reply(t) and bool(t.get("reply")),
             "early_posted": bool(t.get("early_posted")),
+            # You wrote last in its threads, by hand on GitLab, and nothing says it waits.
+            "you_last": you_last(state, t),
+            # A fix dropped earlier, kept in git: a new fix may start from it.
+            "dropped": any(d.get("key") for d in t.get("dropped") or []),
             # A reply posted by hand that no longer holds: its corrected version waits.
             "post_differs": differs_now(t),
             # Whether the fix differs from the plan agreed: a reply then explains it.
@@ -1780,6 +1798,11 @@ def render_plans(state):
             out += ["  change agreed:", *(f"    {ln}" for ln in change.strip("\n").splitlines())]
         if t.get("diff_url"):
             out.append(f"  pushed: {t['diff_url']}")
+        for d in t.get("dropped") or []:
+            if d.get("key"):
+                ref = f"{fix_refs.prefix(SKILL, state.get('iid'))}{d['key']}"
+                out.append(f"  dropped fix kept: `git diff {ref}/before {ref}/after` "
+                           f"(dropped because: {d.get('why')})")
         out.append("")
     return "\n".join(out).strip() or "(no recorded plans yet — grill first)"
 
@@ -1887,6 +1910,19 @@ def working_diff():
     return _WORKING["diff"]
 
 
+def is_fix(t):
+    """Whether `t`'s plan changes code. Any plan that does is a fix, a push-back included,
+    so its card offers Fix it, the push and a reply after it; the others are replies."""
+    return (t.get("outcome") or "fix") == "fix"
+
+
+def early_reply(t):
+    """Whether `t`'s draft is a reply ahead of its fix: one only a fix can have. On a
+    reply-only plan the reply is the topic's whole answer, and posted it waits on the
+    reviewer; taken as one ahead of a fix it left the topic "to reply" with nothing to come."""
+    return bool(t.get("reply_early")) and is_fix(t)
+
+
 def step_of(state, t, status=None):
     """Where `t` stands in the rework: `plan` (no plan agreed on what the reviewers said
     last), `fix` (a fix is agreed and not made yet), `fixed` (the fix is in the working tree,
@@ -1899,9 +1935,68 @@ def step_of(state, t, status=None):
         return "reply"
     if not plan_holds(t, reviewer_mark(state, t)):
         return "plan"
-    if (t.get("outcome") or "fix") != "fix" or t.get("diff_url"):
+    if not is_fix(t) or t.get("diff_url"):
         return "reply"
     return "fixed" if t.get("fix") and working_diff().strip() else "fix"
+
+
+STEP_WORDS = {
+    "plan": "to plan: no plan agreed on what the reviewers said last",
+    "fix": "to fix: the plan is agreed, the fix not made",
+    "fixed": "fix made, to push",
+}
+
+
+def step_report(state, t):
+    """Where `t` stands now, in one line, after a command the agent ran to move it: so a
+    move that changes nothing on the card says so instead of passing unnoticed."""
+    st = step_of(state, t)
+    if st in STEP_WORDS:
+        where = STEP_WORDS[st]
+    elif st == "reply":
+        where = ("to reply: its fix is pushed, the reply is left" if is_fix(t) else
+                 f"to reply: the plan agreed is \"{OUTCOME_WORD.get(t.get('outcome'), t.get('outcome'))}\"")
+    else:
+        where = {"waiting": "waiting on the reviewer", "done": "settled: its threads are resolved",
+                 "reply_pending": "nothing to do"}.get(topic_status(state, t), "nothing of yours to do")
+    return (f"{tref(t['id'])} is now {where}. Show it (`quote {t['id']} --focus`) so its card "
+            "matches.")
+
+
+def drop_fix(state, iid, t, why, plan, outcome, new=()):
+    """The fix for `t` not wanted after all, on the user's word: what is in the working tree
+    is kept in git under the topic (`<t>/dropped<N>`, beside its pushes; dropped with the
+    rest once the MR is merged or closed), the working tree goes back to HEAD, and the plan
+    becomes a reply saying what was found. A fix already pushed is not dropped here: taking
+    it back is a fix of its own, or a reply."""
+    root = (_git("rev-parse", "--show-toplevel") or "").strip() or die("not in a git checkout")
+    new = [p for p in dict.fromkeys([*new, *((t.get("checked") or {}).get("new") or [])])
+           if os.path.exists(os.path.join(root, p))]
+    diff = working_diff()
+    if is_pushed_fix(t) and is_fix(t) and not (diff.strip() or new):
+        die(f"{tref(t['id'])}'s fix is pushed, and nothing of it is in the working tree: "
+            "taking it back is a new fix (agree one), or a reply (`set --outcome`).")
+    kept = None
+    if diff.strip() or new:
+        head = (_git("rev-parse", "HEAD") or "").strip()
+        tree = checks.snapshot(root, new) or die("could not read the fix's files from the working tree")
+        commit = (_git("commit-tree", tree, "-p", head, "-m", f"rework-mr: dropped fix for {t['id']}")
+                  or "").strip() or die("could not keep the fix in git; nothing was changed")
+        kept = f"{t['id']}/dropped{len(t.get('dropped') or []) + 1}"
+        fix_refs.keep(root, SKILL, iid, kept, head, commit) or die(
+            "could not keep the fix in git; nothing was changed")
+        if _git("restore", "--source=HEAD", "--staged", "--worktree", "--", ":/") is None:
+            die(f"the fix is kept ({kept}), but the working tree could not be put back to "
+                "HEAD: `git status` says what is left")
+        for p in new:
+            os.remove(os.path.join(root, p))
+        _WORKING.clear()
+    for k in ("fix", "checked", "push_token", "push_from", "handed_from", "reply_early",
+              "agreed_change", "change", "kept", "answer_now"):
+        t.pop(k, None)
+    t.update(outcome=outcome, decision=why, plan=plan, plan_on=reviewer_mark(state, t))
+    t.pop("state", None)
+    t.setdefault("dropped", []).append({"key": kept, "why": why, "at": int(time.time())})
 
 
 def pass_of(state):
@@ -2115,7 +2210,9 @@ def judge_brief(state, iid, skip=()):
            "question --plan \"<one sentence: what to do>\"] [--answer-now] [--change - <<'CHANGE_EOF' … "
            "CHANGE_EOF]`.",
            "`fyi` where the comment asks nothing of the user (a thank-you, an OK on what they "
-           "did): no outcome then. `needs` takes `--outcome` and `--plan`; for a small fix "
+           "did): no outcome then. `needs` takes `--outcome` and `--plan`; `fix` for every "
+           "plan that changes code, a push-back that also adds a comment included, the others "
+           "for a plan that only replies. For a small fix "
            "add `--change -` with the change on stdin as `@@ <path>:<first>-<last>` blocks, "
            "each followed by the new lines that replace those lines (the diff is built from the "
            "file; never write one by hand): the idea and its main change at its origin (the "
@@ -2230,7 +2327,9 @@ def post_reply(state, ctx, iid, tid, expect, fixed=False, resolve=False):
     if hits:
         die(f"the draft of {tref(tid)} names internal topic handles ({', '.join(hits)}), "
             "which mean nothing on GitLab; nothing was posted. Reword it first.")
-    early = not fixed and bool(t.get("reply_early"))
+    early = not fixed and early_reply(t)
+    if not early:
+        t.pop("reply_early", None)
     if early and resolve:
         die(f"the reply drafted for {tref(tid)} comes before its fix: post it without resolving")
     if resolve and not fixed and t.get("diff_url"):
@@ -2752,6 +2851,15 @@ def main():
                     help="with --reply: a reply ahead of the fix (posted without resolving; "
                     "the plan stands)")
     # Rounds, where the review-ui mod draws (see "rounds" above).
+    pdf = sub.add_parser("drop-fix", help="on the user's word: <t>'s fix is not wanted after "
+                         "all; it is kept in git, the working tree cleaned, the plan a reply")
+    pdf.add_argument("topic")
+    pdf.add_argument("--why", required=True, help="what was found: why the fix is dropped")
+    pdf.add_argument("--plan", required=True, help="one sentence: what the reply says")
+    pdf.add_argument("--outcome", choices=[o for o in OUTCOMES if o != "fix"], default="reply")
+    pdf.add_argument("--new", action="append", default=[],
+                     help="a file the fix added (untracked); repeat for each")
+    pdf.add_argument("--iid", type=int)
     for name, hlp in (("open", "start a round, at <t> or the inbox's first"),
                       ("agree", "on a person's press: store <t>'s proposed plan as agreed"),
                       ("wait", "on a person's press: <t> needs nothing more of you until a "
@@ -2910,6 +3018,9 @@ def main():
                     "change of direction, significantly more or less>\"`")
             t.pop("push_token", None)
             t.pop("handed_from", None)
+            # Code changed on a plan that was to reply only: it is a fix now, which is pushed
+            # and answered as one. Left a reply, its card had no push and `push` refused it.
+            t["outcome"] = "fix"
             t["fix"] = {"did": args.did, "fixup": args.fixup, "new": args.new_commit, "stat": diff_stat(diff),
                         "notes": notes,
                         "compare": {"as_agreed": bool(args.as_agreed), "differs": args.differs}}
@@ -3040,6 +3151,7 @@ def main():
         t["state"] = "waiting"
         t["waiting_on"] = reviewer_mark(state, t)
         save(path, state)
+        print(step_report(state, t))
     elif cmd == "posted":
         # Mirrors findings.py's `posted`: the user posted the reply themselves, often
         # reworded; the agent compares it with the draft before it counts as posted.
@@ -3066,10 +3178,11 @@ def main():
                  + posted.card_md(t, "reply"), args.topic)
         elif args.ok:
             t.pop("post_differs", None)
-            if t.pop("reply_early", None):
+            if early_reply(t) and t.pop("reply_early"):
                 # Ahead of the fix: the plan stands, as after a Post press.
                 t["early_posted"] = True
             else:
+                t.pop("reply_early", None)
                 t["state"] = "waiting"
                 t.pop("waiting_on", None)
             t.pop("reply", None)
@@ -3119,7 +3232,7 @@ def main():
     elif cmd == "judge-brief":
         print(judge_brief(state, iid, args.skip))
     elif cmd == "post":
-        early = bool((topic_for(state, args.topic) or {}).get("reply_early")) and not args.fixed
+        early = early_reply(topic_for(state, args.topic) or {}) and not args.fixed
         url = post_reply(state, ctx, iid, args.topic, args.expect, args.fixed, args.resolve)
         if early and current_topic(state) == args.topic:
             CURRENT.leave(state)               # said; the round goes on, the fix comes later
@@ -3304,7 +3417,7 @@ def main():
                 v = v.rstrip("\n") + "\n"
                 # A reply after the fix ends on the line that links it, as `Fixed: <link>`
                 # alone would: the reviewer reads it there and resolves the thread.
-                if t.get("diff_url") and not args.early and t["diff_url"] not in v:
+                if is_pushed_fix(t) and is_fix(t) and not args.early and t["diff_url"] not in v:
                     v += "\n" + fixed_body(state, t)
                 t.pop("post_differs", None)   # a new draft: the old one's check is over
                 # When it was written: a reply the user posts by hand is one made after this.
@@ -3316,6 +3429,10 @@ def main():
             t[fld.get(f, f)] = v
             if f == "diff-url" and t.get("pushes") and not t["pushes"][-1].get("url"):
                 t["pushes"][-1]["url"] = v      # the link the push could not wait for
+        if args.outcome and not is_fix({"outcome": args.outcome}) and step_of(state, t) == "fixed":
+            die(f"{tref(args.topic)}'s fix is in the working tree: a plan that only replies "
+                f"would leave it there, to be pushed with the next topic's. Drop it first "
+                f"(`drop-fix {args.topic} --why \"…\" --plan \"…\"`).")
         if args.decision is not None:
             # A plan agreed in the chat: on what the reviewers said last, and on the change
             # shown for it, if one was (`change-view`).
@@ -3323,7 +3440,17 @@ def main():
             t["plan_on"] = reviewer_mark(state, t)
             t["agreed_change"] = t.get("change")
             start_fix_round(t)
+        elif args.outcome:
+            # The plan's kind changed in the chat, the plan itself kept.
+            t["outcome"] = args.outcome
+            start_fix_round(t)
         save(path, state)
+        print(step_report(state, t))
+    elif cmd == "drop-fix":
+        t = topic_for(state, args.topic) or die(f"no topic {args.topic}")
+        drop_fix(state, iid, t, args.why, args.plan, args.outcome, args.new)
+        save(path, state)
+        print(step_report(state, t))
     elif cmd == "merge":
         into = topic_for(state, args.into) or die(f"no topic {args.into}")
         for oid in args.others:
