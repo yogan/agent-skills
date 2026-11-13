@@ -197,6 +197,19 @@ def ensure_cache():
 # ---------------------------------------------------------------- project
 
 
+def silence_mail():
+    """Turn GitLab's notification mail off for every rig user, every reset.
+
+    The container has no sendmail, so every mail GitLab tries fails and is retried for days.
+    Each note and merge request queues several, and on the rig's small VM those doomed jobs
+    were most of GitLab's background work, competing for the CPUs and memory every later
+    request needs: resets grew slower one after another over a run of scenarios. Nothing here
+    reads a mail. Set on each reset rather than once at bootstrap, so a rig made before this
+    gets it too and a level changed by hand does not stay changed."""
+    for user in ("root", *IDENT):
+        api("notification_settings?level=disabled", "PUT", user=user)
+
+
 def project_path_enc():
     return E["E2E_PROJECT"].replace("/", "%2F")
 
@@ -1043,6 +1056,7 @@ def main():
 
     ensure_cache()
     started = time.time()
+    silence_mail()
     if "project" in want and not args.keep_project:
         reset_project()
     fresh_build()
