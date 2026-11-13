@@ -74,6 +74,15 @@ class TestWhatNeedNotRun(unittest.TestCase):
             with self.subTest(path=path):
                 self.assertEqual(picks(path), [])
 
+    def test_the_rig_s_parts_a_verify_never_runs_reach_nothing(self):
+        for path in ("e2e/screenshot.py", "e2e/bootstrap.py", "e2e/tmux-demo.sh"):
+            with self.subTest(path=path):
+                self.assertEqual(picks(path), [])
+        everything = [n for n, *_ in SCENS]
+        for path in ("e2e/drive.py", "e2e/rig.py", "e2e/docker-compose.yml"):   # what a verify does run
+            with self.subTest(path=path):
+                self.assertEqual(picks(path), everything)
+
     def test_skills_no_scenario_runs_and_code_only_they_use_reach_nothing(self):
         self.assertEqual(picks("skills/visualize/scripts/visualize.py"), [])
         self.assertEqual(picks("lib/diagram/palette.py"), [])

@@ -27,8 +27,9 @@ otherwise be recorded for something else than what gets pushed.
 
 Which scenarios a change reaches: a scenario reaches the skills whose slash command its steps
 type; a skill's scripts reach the `lib/` modules they import. The mod, the e2e harness and the
-paste-gate hook reach every scenario; documentation, the repo's own tooling and the skills no
-scenario runs reach none; and anything else reaches all of them, since a picker that skips the
+paste-gate hook reach every scenario, but for the rig's parts a verify never runs (drawing
+captures, the rig's one-time setup, the demo session); documentation, the repo's own tooling
+and the skills no scenario runs reach none; and anything else reaches all of them, since a picker that skips the
 scenario that would have failed is worse than a slow one.
 """
 import json
@@ -58,6 +59,9 @@ UNREACHED = (
     re.compile(r"^(?:\.githooks|docs|prototypes)/"),
     re.compile(r"^skills/(?:visualize|explain-diff|split-handoff|self-review)/"),
     re.compile(r"(?:^|/)test_[^/]*\.py$"),
+    # The rig's parts a verify never runs: drawing captures afterwards, the one-time setup of
+    # the rig, the demo session.
+    re.compile(r"^e2e/(?:screenshot\.py|bootstrap\.py|tmux-demo\.sh)$"),
 )
 # Skills a scenario reaches through another one: review-mr hands work to these.
 VIA = {"explain-branch": "review-mr", "review-branch": "review-mr"}
