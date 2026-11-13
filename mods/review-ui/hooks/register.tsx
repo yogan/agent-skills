@@ -1314,7 +1314,7 @@ const outcomeLine = ($: EngineInterface, e: Parameters<EngineInterface['ui']['re
     <Text dimColor>
       {o.icon ? `${o.icon} ` : ''}{o.text}
       {o.url && ' '}
-      {o.url && <Link href={o.url} label={`${o.label ?? 'open'} ↗`} />}
+      {o.url && <Link href={o.url} label={`${o.label ?? 'open'} ${LINK_ICON}`} />}
       {o.url && o.after ? ` ${o.after}` : ''}
     </Text>
   )
@@ -2673,10 +2673,15 @@ export const register: Register = on => {
                   <Text color={l.tone === 'needs' ? 'yellow' : undefined} dimColor={l.tone !== 'needs' || undefined}>
                     {l.tone === 'needs' ? INBOX_ICON.new : l.tone === 'busy' ? INBOX_ICON.judging : (l.kind && INBOX_ICON[l.kind]) || '·'}
                   </Text>
-                  {l.topic && <Text color={ACCENT} dimColor={l.tone === 'info' || undefined}>{l.topic}</Text>}
+                  {/* The topic's handle opens it here; the rest of the line goes to GitLab, and says so. */}
+                  {l.topic && (
+                    <Button key={`inbox-topic-${i}`} plain onPress={() => { void showTopic($, s, l.topic as string) }}>
+                      <Text color={ACCENT} dimColor={l.tone === 'info' || undefined}>{l.topic}</Text>
+                    </Button>
+                  )}
                   {/* A topic's line links to its thread on GitLab; a push's, to what it changed. */}
                   {l.url
-                    ? <Markdown text={`[${l.what}](${l.url})`} dimColor={l.tone !== 'needs' || undefined} />
+                    ? <Markdown text={`[${l.what} ${LINK_ICON}](${l.url})`} dimColor={l.tone !== 'needs' || undefined} />
                     : <Text dimColor={l.tone !== 'needs' || undefined} wrap="wrap">{l.what}</Text>}
                   {l.size && sizeOf(l.size) && <Text>{drawSize(Text, (sizeOf(l.size) as { size: DiffSize }).size, true)}</Text>}
                 </Box>

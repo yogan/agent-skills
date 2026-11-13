@@ -1303,7 +1303,7 @@ def _render_quote(state, tid, refine=False):
     if is_own_posted:
         mine = next((n for n in first.get("notes") or [] if n.get("mine")), None)
         when = when_of((mine or {}).get("at"))
-        link = f" · [its thread ↗]({mine['url']})" if (mine or {}).get("url") else ""
+        link = f" · [its thread {LINK_ICON}]({mine['url']})" if (mine or {}).get("url") else ""
         out += ["", ui.heading_md(ui.STATE_ICON["waiting"], "Your comment is posted"), "",
                 f"{when or 'On GitLab'}{link}"]
     for part in tail:
@@ -2947,7 +2947,7 @@ def explainer_line(path, opened=False):
     if not path:
         return None
     if ui.drawn():
-        line = (f"📖 **Explainer:** [{os.path.basename(path)}](file://{path})"
+        line = (f"📖 **Explainer:** [{os.path.basename(path)} {LINK_ICON}](file://{path})"
                 + (" · opened in your browser" if opened else ""))
     else:
         line = f"📖 **Explainer:** file://{path}"

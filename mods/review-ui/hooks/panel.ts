@@ -299,13 +299,15 @@ export const urlLabel = (url: string): string => {
 
 // Bare URLs in a line of text as links with a short label; links already written as such,
 // and code, are left alone. Spaces in a label are kept from breaking it across rows.
+// The label ends on md-open_in_new, as every click here that leaves for the browser does.
+const linkOf = (url: string): string => `[${urlLabel(url).replace(/ /g, '\u00a0')}\u00a0\u{f03cc}](${url})`
 const withLinks = (line: string): string =>
   line.split(/(`[^`]*`|\[[^\]]*\]\([^)]*\)|<https?:\/\/[^>]+>)/).map((part, k) => {
     if (k % 2 === 1) {
       const auto = /^<(https?:\/\/[^>]+)>$/.exec(part)
-      return auto ? `[${urlLabel(auto[1] as string).replace(/ /g, '\u00a0')}](${auto[1]})` : part
+      return auto ? linkOf(auto[1] as string) : part
     }
-    return part.replace(/https?:\/\/[^\s<>()]+[^\s<>().,;:!?'"]/g, u => `[${urlLabel(u).replace(/ /g, '\u00a0')}](${u})`)
+    return part.replace(/https?:\/\/[^\s<>()]+[^\s<>().,;:!?'"]/g, linkOf)
   }).join('')
 
 // How wide a line of markdown draws: a link as its label.

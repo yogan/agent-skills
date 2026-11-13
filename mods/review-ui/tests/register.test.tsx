@@ -664,7 +664,7 @@ test('a bare URL in a thread box is a short link, never broken across rows', () 
   const rows = boxRowsOf([`see ${url} for the commit, and ${'more words '.repeat(6)}`], 30, (i, b) => `k:${i}:${b}`, () => false, b => b, 'ts')
   const md = rows.filter(r => r.kind === 'md').map(r => (r as { text: string }).text)
   expect(md.filter(t => t.includes(url))).toHaveLength(1)
-  expect(md.join('\n')).toContain(`[!1017 · commit a03a1cd](${url})`)
+  expect(md.join('\n')).toContain(`[!1017 · commit a03a1cd 󰏌](${url})`)
   // Inline code and links already written as such stay as they are.
   const kept = boxRowsOf(['`https://x.example/a` and [docs](https://x.example/b)'], 80, (i, b) => `k:${i}:${b}`, () => false, b => b, 'ts')
   expect((kept[1] as { text: string }).text).toBe('`https://x.example/a` and [docs](https://x.example/b)')

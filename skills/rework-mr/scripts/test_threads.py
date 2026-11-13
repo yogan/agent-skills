@@ -1306,7 +1306,7 @@ class TestCodeContext(unittest.TestCase):
         self.assertNotIn("+const line10 = 100", out)
         self.assertNotIn("Agreed plan", out)
         self.assertIn(f"{T.ui.STEP_DONE_ICON} Plan agreed: Make it 100, as the reviewer asked, and say so in the docs too.", out)
-        self.assertIn(f"{T.ui.STEP_DONE_ICON} Fix pushed · {T.diffsize.text(1, 1, 1)} · [the diff ↗](http://gl/d)", out)
+        self.assertIn(f"{T.ui.STEP_DONE_ICON} Fix pushed · {T.diffsize.text(1, 1, 1)} · [the diff {T.LINK_ICON}](http://gl/d)", out)
         # Not posted yet: nothing waits on the reviewer.
         self.assertNotIn("Reply posted", out)
         self.assertNotIn("Waits on", out)
@@ -1318,8 +1318,8 @@ class TestCodeContext(unittest.TestCase):
                 mock.patch.object(T, "step_of", return_value="none"):
             out = T.render_quote(state, "t1")
         # Pushed before the fix was kept in git: the link alone, no size.
-        self.assertIn(f"{T.ui.STEP_DONE_ICON} Fix pushed · [the diff ↗](http://gl/d)", out)
-        self.assertIn(f"{T.ui.STEP_DONE_ICON} Reply posted · [your reply ↗](http://gl/n3)", out)
+        self.assertIn(f"{T.ui.STEP_DONE_ICON} Fix pushed · [the diff {T.LINK_ICON}](http://gl/d)", out)
+        self.assertIn(f"{T.ui.STEP_DONE_ICON} Reply posted · [your reply {T.LINK_ICON}](http://gl/n3)", out)
         self.assertIn(f"{T.ui.STEP_WAITS_ICON} Waits on Robin", out)
         state["threads"]["d1"]["resolved"] = True
         with mock.patch.dict(os.environ, {"REVIEW_UI_DRAWN": "1"}), \
@@ -1999,7 +1999,7 @@ class TestReplyAfterTheFix(unittest.TestCase):
     def test_the_fixed_line_is_drawn_as_a_short_link_and_posted_whole(self):
         self.set_reply("Took option B.\n")
         shown = T._quote_draft(self.t1["reply"])
-        self.assertIn(f"> Fixed: [the diff ↗]({self.t1['diff_url']})", shown)
+        self.assertIn(f"> Fixed: [the diff {T.LINK_ICON}]({self.t1['diff_url']})", shown)
         self.assertIn(f"Fixed: {self.t1['diff_url']}", self.t1["reply"])
 
     def test_a_reply_that_links_the_fix_already_gets_no_second_line(self):
@@ -2578,8 +2578,8 @@ class TestFixPerPush(unittest.TestCase):
         with mock.patch.object(T, "_git", return_value=""):
             out = T.pushed_steps(state, t)
         self.assertEqual(out[1:4], [f"{T.ui.STEP_DONE_ICON} Fix pushed · 2 pushes",
-                                    f"\u00a0\u00a0{T.ui.PUSHED_ICON} push 1 · [the diff ↗](G/diffs?diff_id=2&start_sha=A)",
-                                    f"\u00a0\u00a0{T.ui.PUSHED_ICON} push 2 · [the diff ↗](G/diffs?diff_id=4&start_sha=X)"
+                                    f"\u00a0\u00a0{T.ui.PUSHED_ICON} push 1 · [the diff {T.LINK_ICON}](G/diffs?diff_id=2&start_sha=A)",
+                                    f"\u00a0\u00a0{T.ui.PUSHED_ICON} push 2 · [the diff {T.LINK_ICON}](G/diffs?diff_id=4&start_sha=X)"
                                     " · may include other topics' changes"])
 
 

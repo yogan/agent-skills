@@ -309,7 +309,7 @@ test('a card a press finished ends with what happened, and a link to it', async 
   await card.unmount()
   const again = await $.ui.mount(cardRow('tu-open', view('t1', 'v7')))
   expect(JSON.stringify(await again.findAll({ type: 'Text' }))).toContain('\u{F048A} Posted to')   // the button's icon, one sentence
-  expect((await again.find({ type: 'Link' }))?.props).toMatchObject({ href: 'https://gl/g/p/-/merge_requests/42#note_9', label: 'its thread ↗' })
+  expect((await again.find({ type: 'Link' }))?.props).toMatchObject({ href: 'https://gl/g/p/-/merge_requests/42#note_9', label: 'its thread \u{f03cc}' })
   await again.unmount()
 })
 
@@ -901,6 +901,20 @@ test('between rounds news stays out of the chat: the band counts it, the box say
   await panel.unmount()
   expect(w.ran.map(r => r.argv.slice(2).join(' '))).toContain('open --iid 42')
   expect(w.placed.length).toBe(1)
+})
+
+test("a news line's topic handle opens the topic here; the rest of the line is the link to GitLab", async ($, on) => {
+  const news = { ...topic('t2', 'needs_ack'), inbox: 'new', news: ['reply'], verdict: 'settled', thread_url: 'https://gl/g/p/-/merge_requests/42#note_7' }
+  const idle = stateOf(null, [topic('t1', 'open'), news], { in_round: false, author: 'Jonas', inbox: inbox({ replies: ['t2'], first: 't2', waiting: 1 }) })
+  const opened = stateOf('t2', [topic('t1', 'open'), { ...news, inbox: 'yours' }], { in_round: true, inbox: inbox() })
+  const w = world(on, [idle, opened])
+  await openReview($, w, view('t1'))
+  const panel = await $.ui.mount({ ...PANEL, surface: 'terminal' })
+  const link = (await panel.findAll({ type: 'Markdown' })).map(m => String(m.props.text ?? '')).find(t => t.includes('note_7'))
+  expect(link).toBe('[Jonas answered: looks fixed \u{f03cc}](https://gl/g/p/-/merge_requests/42#note_7)')
+  await panel.press({ key: 'inbox-topic-0' })
+  await panel.unmount()
+  expect(w.ran.map(r => r.argv.slice(2).join(' ')).some(c => /\bt2\b/.test(c))).toBe(true)
 })
 
 test('an answer still being judged in the background offers nothing to decide, only the way on', async ($, on) => {
@@ -2020,7 +2034,7 @@ test("rework-mr: a push the model finished brings up the topic's next card, and 
   expect(w.placed.length).toBe(1)
   const old = await $.ui.mount(cardRow('tu-open', fixCard))
   expect(JSON.stringify(await old.findAll({ type: 'Text' }))).toContain('Pushed')
-  expect((await old.find({ type: 'Link' }))?.props).toMatchObject({ href: 'http://gl/g/p/-/merge_requests/42/diffs?diff_id=7', label: 'the fix ↗' })
+  expect((await old.find({ type: 'Link' }))?.props).toMatchObject({ href: 'http://gl/g/p/-/merge_requests/42/diffs?diff_id=7', label: 'the fix \u{f03cc}' })
   expect(await old.find({ type: 'Button', key: 'post-fixed' })).toBeUndefined()      // the buttons moved on
   await old.unmount()
 })
@@ -2413,7 +2427,7 @@ test("rework-mr: a draft's Copy sits beside its heading, reads Copied! a moment,
   expect((await card.findAll({ type: 'Button' })).some(b => b.key === 'copy-t1')).toBe(true)    // Copy again
   await card.unmount()
   const band = await $.ui.mount({ ...BAND, surface: 'terminal' })
-  expect((await band.find({ type: 'Link' }))?.props).toMatchObject({ href: 'https://gl/g/p/-/merge_requests/42#note_5', label: 'its thread ↗' })
+  expect((await band.find({ type: 'Link' }))?.props).toMatchObject({ href: 'https://gl/g/p/-/merge_requests/42#note_5', label: 'its thread \u{f03cc}' })
   await band.unmount()
 })
 

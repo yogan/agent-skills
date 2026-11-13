@@ -112,6 +112,7 @@ from lib.mr_common import (
 )
 from lib.fences import (  # noqa: E402
     FENCE_RE,
+    LINK_ICON,
     YOU,
     block_lang,
     code_block,
@@ -1333,7 +1334,7 @@ def pushed_steps(state, t):
     def said(f):
         stat = fix_refs.stat(root, f["ends"]) if f.get("ends") else None
         size = f" · {diffsize.of_stat(stat)}" if stat else ""
-        link = f" · [the diff ↗]({f['url']})" if f.get("url") else ""
+        link = f" · [the diff {LINK_ICON}]({f['url']})" if f.get("url") else ""
         return size + link + (" · may include other topics' changes" if f.get("mixed") else "")
 
     # A topic pushed before its pushes were kept one by one has its link alone.
@@ -1347,7 +1348,7 @@ def pushed_steps(state, t):
         out += [f"\u00a0\u00a0{ui.PUSHED_ICON} push {k}{said(f)}" for k, f in enumerate(fixes, 1)]
     url = reply_posted(state, t)
     if url:
-        out.append(f"{done} Reply posted · [your reply ↗]({url})")
+        out.append(f"{done} Reply posted · [your reply {LINK_ICON}]({url})")
     resolved = bool(t["thread_ids"]) and all(
         (state["threads"].get(x) or {}).get("resolved") for x in t["thread_ids"])
     if url and not resolved:
@@ -1431,7 +1432,7 @@ def _short_fixed(line):
     """A draft's `Fixed: <diff url>` line, where the mod draws, as a short link: the URL is
     long and says nothing to read. Display only; the text posted keeps the URL."""
     m = FIXED_LINE.match(line)
-    return f"Fixed: [the diff ↗]({m.group(1)})" if m and ui.drawn() else line
+    return f"Fixed: [the diff {LINK_ICON}]({m.group(1)})" if m and ui.drawn() else line
 
 
 def _quote_draft(body, path=None):

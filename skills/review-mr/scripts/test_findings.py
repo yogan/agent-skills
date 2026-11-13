@@ -1517,7 +1517,7 @@ class TestExplainerLine(Throwaway, unittest.TestCase):
                 patch.dict(os.environ, {"REVIEW_UI_DRAWN": "1"}):
             line = self._line(opened=True)
             again = self._line()
-        self.assertIn(f"[explainer.html](file://{path})", line)
+        self.assertIn(f"[explainer.html {F.LINK_ICON}](file://{path})", line)
         self.assertIn("opened in your browser", line)
         self.assertNotIn("opened", again)
 
@@ -2737,7 +2737,7 @@ class TestPostedCommentCard(unittest.TestCase):
         posted, resolved = out.index("Your comment is posted"), out.index("Resolved on GitLab by Jonas")
         self.assertLess(out.index("The section is stale."), posted)
         self.assertLess(posted, resolved)
-        self.assertIn(f"[its thread ↗]({url})", out)
+        self.assertIn(f"[its thread {F.LINK_ICON}]({url})", out)
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
