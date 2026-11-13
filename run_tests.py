@@ -295,15 +295,22 @@ def _imports(path, index):
     return out - {path}
 
 
-def _dependents(changed, files):
-    """Test files that reach any of `changed`, directly or through other repo modules."""
+def import_graph(files):
+    """Each of `files` -> the repo files it reaches in one step: its imports, and for a test,
+    the module its name says it covers. Parsing every file is most of `_dependents`' cost, so
+    a caller asking about many changes builds this once and passes it in."""
     index = _module_index(files)
     deps = {path: _imports(path, index) for path in files}
     for path in files:
         own = _conventional_test(path, files)
         if own:
             deps[own].add(path)
+    return deps
 
+
+def _dependents(changed, files, graph=None):
+    """Test files that reach any of `changed`, directly or through other repo modules."""
+    deps = graph if graph is not None else import_graph(files)
     reached = set(changed)
     while True:
         grown = {p for p, uses in deps.items() if uses & reached} | reached

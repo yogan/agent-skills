@@ -35,11 +35,12 @@ class TestSelectionCoversTheObviousCase(unittest.TestCase):
         """The floor. If `foo.py` changes and `test_foo.py` does not run, the feature is
         actively harmful."""
         missed = []
+        graph = rt.import_graph(EVERY)      # one parse of the repo, not one per module
         for src in sorted(EVERY):
             if src.name.startswith("test_"):
                 continue
             own = src.with_name("test_" + src.name)
-            if own.exists() and own not in rt._dependents({src}, EVERY):
+            if own.exists() and own not in rt._dependents({src}, EVERY, graph):
                 missed.append(str(src.relative_to(rt.REPO_ROOT)))
         self.assertEqual(missed, [])
 
