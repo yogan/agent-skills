@@ -5,9 +5,9 @@ has for a while.
     python3 rig.py up          # unpause or start it, wait until GitLab answers, note the use
     python3 rig.py up --no-wait [--no-start]   # the same without waiting (tmux-demo.sh waits itself)
     python3 rig.py used        # note a use, nothing else
-    python3 rig.py idle        # pause or stop it if unused long enough (what the agent runs)
+    python3 rig.py idle        # pause or stop it if unused long enough (what the idle check runs)
     python3 rig.py status
-    python3 rig.py install     # the launchd agent that runs `idle` every few minutes
+    python3 rig.py install     # the idle check: launchd runs `idle` every few minutes
     python3 rig.py uninstall
 
 GitLab runs alone in a Colima VM of its own (profile `gitlab`), not beside other containers:
@@ -185,8 +185,8 @@ def idle(log=print):
 
 
 def plist():
-    """The launchd agent: `idle` every CHECK_EVERY seconds, with a PATH that finds docker and
-    tmux (launchd starts agents with almost none)."""
+    """The idle check, as a launchd job: `idle` every CHECK_EVERY seconds, with a PATH that finds docker and
+    tmux (launchd starts its jobs with almost none)."""
     dirs = []
     for tool in ("docker", "tmux", "colima"):
         found = shutil.which(tool)
@@ -246,7 +246,7 @@ def main(argv):
         vm = "" if vm_running() else f" (the {PROFILE} VM is stopped)"
         print(f"{CONTAINER}: {state() or 'missing'}{vm}, last used "
               + ("never" if unused == float("inf") else f"{unused / 60:.0f} min ago")
-              + (", agent installed" if os.path.exists(PLIST) else ", agent not installed"))
+              + (", idle check installed" if os.path.exists(PLIST) else ", idle check not installed"))
         return 0
     print(__doc__, file=sys.stderr)
     return 2

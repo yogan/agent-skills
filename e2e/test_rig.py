@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Tests for rig.py: when the idle check pauses or stops GitLab, and the agent it installs.
+"""Tests for rig.py: when the idle check pauses or stops GitLab, and the launchd job it installs.
 
 Run: `python3 e2e/test_rig.py` (no docker, no launchctl: nothing is called).
 """
@@ -37,8 +37,8 @@ class TestIdleAction(unittest.TestCase):
         self.assertEqual(rig.idle_action(float("inf"), "running", busy=False), "stop")
 
 
-class TestAgent(unittest.TestCase):
-    def test_the_agent_runs_the_idle_check_of_this_file_with_a_path_to_docker(self):
+class TestIdleCheckJob(unittest.TestCase):
+    def test_the_launchd_job_runs_the_idle_check_of_this_file_with_a_path_to_docker(self):
         p = rig.plist()
         self.assertEqual(p["ProgramArguments"][1:], [os.path.abspath(rig.__file__), "idle"])
         self.assertEqual(p["StartInterval"], rig.CHECK_EVERY)

@@ -261,8 +261,8 @@ slower than the one before, from about 30 s to over 5 minutes across the 14 scen
 ### Paused and stopped when unused
 
 `rig.py` brings GitLab up when something needs it — `fixture.py`, `drive.py verify` on a rig
-scenario, `tmux-demo.sh` — starting the VM too if it is stopped, and a launchd agent
-(`python3 rig.py install`) runs its idle check every 5 minutes: unused for an hour GitLab is
+scenario, `tmux-demo.sh` — starting the VM too if it is stopped. An idle check, which launchd runs every 5 minutes
+(`python3 rig.py install`), does the rest: unused for an hour GitLab is
 **paused** (no CPU, back in a fraction of a second), unused for 8 hours its **VM is stopped**,
 which frees the memory; the next use then pays a cold start of under a minute. An open demo or
 `drive-*` tmux session counts as in use. `python3 rig.py status` says where it stands.
