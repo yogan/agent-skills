@@ -155,6 +155,7 @@ def new_state(ctx, mr):
         "iid": mr["iid"],
         "mr_web_url": mr.get("web_url"),
         "title": mr.get("title"),
+        "source_branch": mr.get("source_branch"),
         "threads": {},
         "topics": [],
     }
@@ -872,21 +873,61 @@ def _state_mtime(state_dir):
             return 0
 
 
+def _checked_out_branch():
+    """The branch checked out here, or the branch being rebased where HEAD is detached
+    mid-rebase (as the push's autosquash leaves it); "" where there is neither."""
+    branch = (_git("branch", "--show-current") or "").strip()
+    if branch:
+        return branch
+    for name in ("rebase-merge/head-name", "rebase-apply/head-name"):
+        path = (_git("rev-parse", "--git-path", name) or "").strip()
+        try:
+            with open(path, encoding="utf-8") as fh:
+                return fh.read().strip().removeprefix("refs/heads/")
+        except OSError:
+            continue
+    return ""
+
+
+def own_mr(slug):
+    """The MR number of this checkout's rework, read off the local state alone: the MR whose
+    source branch is the branch checked out, or None where no state says so.
+
+    Every MR of a project shares the one state folder, and sessions on two of them run side
+    by side, each in a worktree of its own. Picking the state touched last there handed a
+    session its sibling's MR, whose topics then went onto its cards and whose state took its
+    writes. A state that names another branch is therefore never taken; one that names none
+    (written before the branch was kept) is taken, the newest first, only where no state
+    names this branch.
+
+    Ranked by each state FILE's mtime, never the directory's: `save()` rewrites
+    `topics.json` in place, so a directory keeps the mtime it was created with."""
+    dirs = glob.glob(os.path.join(STATE_ROOT, f"{slug}--mr*"))
+    branch = _checked_out_branch()
+    mine, unknown = [], []
+    for d in dirs:
+        named = (load(os.path.join(d, "topics.json")) or {}).get("source_branch")
+        if not named:
+            unknown.append(d)
+        elif branch and named == branch:
+            mine.append(d)
+    pick = mine or unknown
+    if not pick:
+        return None
+    # basename first: splitting the full path would read any `--mr` that happens to sit
+    # in a directory name above it.
+    return os.path.basename(max(pick, key=_state_mtime)).rsplit("--mr", 1)[1]
+
+
 def window_label(default="diff"):
-    """The name to give this agent's viewer window: the MR number where it can be had
-    locally, the branch otherwise.
+    """The name to give this agent's viewer window: its MR's number where it can be had
+    locally (`own_mr`), the branch otherwise.
 
     Read off the state directory's own naming rather than by asking GitLab, and via
     `project_slug()` rather than `context()`, which would shell out to glab for the host's
     API scheme. `diff-view` is deliberately independent of glab and the network (see
     `main`), and a window's NAME is cosmetic enough that it must not be the thing that
     reintroduces a round-trip — or a hang, since that helper takes no timeout — per topic.
-
-    Ranked by each state FILE's mtime, never the directory's. A directory's mtime only
-    moves when an entry is added or removed, and `save()` rewrites `topics.json` in place,
-    so every reworked MR keeps the directory mtime it was created with: measured on a real
-    store, the MR being worked on today ranked BELOW one last touched days earlier, and the
-    wrong MR number went onto the very block a force-push is approved from.
     """
     try:
         # Checked before the slug is derived rather than caught after: with no origin
@@ -894,12 +935,9 @@ def window_label(default="diff"):
         # Catching the SystemExit would still leave that stray line in the terminal, on a
         # path where nothing is actually wrong.
         if (_git("remote", "get-url", "origin") or "").strip():
-            dirs = glob.glob(os.path.join(STATE_ROOT, f"{project_slug()}--mr*"))
-            if dirs:
-                # basename first: splitting the full path would read any `--mr` that
-                # happens to sit in a directory name above it.
-                newest = os.path.basename(max(dirs, key=_state_mtime))
-                return TOPIC_ICON + "!" + newest.rsplit("--mr", 1)[1]
+            iid = own_mr(project_slug())
+            if iid:
+                return TOPIC_ICON + "!" + iid
     except (Exception, SystemExit):  # noqa: BLE001 — no remote/state → use branch
         pass
     branch = (_git("rev-parse", "--abbrev-ref", "HEAD") or "").strip()
@@ -2516,18 +2554,16 @@ CURRENT = focus.Current(focus_status, NEEDS_YOU + ("need",), next_up,
 
 def local_state(iid=None):
     """This MR's state file and state, read without glab or the network, for the views that
-    are stateless otherwise (`change-view`, `diff-view`): the MR `iid` where given, else the
-    one this project reworked last (as `window_label` finds it). `(None, None)` where there
-    is none."""
+    are stateless otherwise (`change-view`, `diff-view`): the MR `iid` where given, else this
+    checkout's (`own_mr`). `(None, None)` where there is none."""
     try:
         if not (_git("remote", "get-url", "origin") or "").strip():
             return None, None
         slug = project_slug()
         if iid is None:
-            dirs = glob.glob(os.path.join(STATE_ROOT, f"{slug}--mr*"))
-            if not dirs:
+            iid = own_mr(slug)
+            if iid is None:
                 return None, None
-            iid = os.path.basename(max(dirs, key=_state_mtime)).rsplit("--mr", 1)[1]
         path = state_file(STATE_ROOT, slug, iid, "topics.json")
         return path, load(path)
     except (Exception, SystemExit):  # noqa: BLE001 — a view must render without it
@@ -2551,7 +2587,8 @@ def resolve_state(args):
         mr = mr or mr_object(ctx, iid)
         state = new_state(ctx, mr)
     elif mr:
-        state.update(mr_web_url=mr.get("web_url"), title=mr.get("title"))
+        state.update(mr_web_url=mr.get("web_url"), title=mr.get("title"),
+                     source_branch=mr.get("source_branch"))
     # Single override point: the MR's own web_url beats anything reconstructed from
     # the remote (scheme, port, install path). Doing it here means every consumer of
     # ctx["web"] — thread URLs, diff URLs — inherits it for free.
@@ -2972,7 +3009,10 @@ def main():
             return
         state["diff_base"] = mr_base(ctx, iid) or state.get("diff_base")
         # The MR as a whole: approved, auto-merge set, merged. Mirrors findings.py's.
-        status = mr_status(ctx, iid, me)
+        mr = mr_object(ctx, iid) or {}
+        # Kept on each check, so a state written before it was kept learns it too.
+        state["source_branch"] = mr.get("source_branch") or state.get("source_branch")
+        status = mr_status(ctx, iid, me, mr)
         state.setdefault("mr_news", []).extend(mr_news(state.get("mr_status"), status,
                                                     time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())))
         state["mr_status"] = status

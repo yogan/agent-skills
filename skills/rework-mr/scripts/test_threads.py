@@ -363,6 +363,70 @@ class TestDiffViewRouting(unittest.TestCase):
             ):
                 self.assertEqual(T.window_label(), T.TOPIC_ICON + "!123")
 
+    def own_mr_store(self, root, states):
+        """`states`: (iid, source branch or None), oldest first, written to `root`."""
+        for age, (iid, branch) in enumerate(reversed(states)):
+            d = os.path.join(root, f"acme-api--mr{iid}")
+            os.makedirs(d)
+            f = os.path.join(d, "topics.json")
+            with open(f, "w") as fh:
+                json.dump({"iid": iid, "source_branch": branch} if branch else {"iid": iid}, fh)
+            os.utime(f, (0, 10_000 - age))
+
+    def fake_git(self, branch, rebase_head=None):
+        def git(*a):
+            if a[:2] == ("branch", "--show-current"):
+                return branch + "\n"
+            if a[:2] == ("rev-parse", "--git-path"):
+                return (rebase_head or "/nonexistent") + "\n"
+            return "git@host:acme/api.git\n"
+        return git
+
+    def test_sessions_on_two_mrs_of_one_repo_each_get_their_own(self):
+        """Two sessions, two worktrees of one repo, one MR each, one state folder for the
+        project: the views of each must take its own MR's state however recently the
+        other's was written. Taking the newest put a sibling MR's topic on a card."""
+        with tempfile.TemporaryDirectory() as root:
+            self.own_mr_store(root, [(3, "feat-a"), (4, "feat-b")])
+            with (
+                mock.patch.object(T, "STATE_ROOT", root),
+                mock.patch.object(T, "project_slug", lambda: "acme-api"),
+            ):
+                for branch, iid in (("feat-a", 3), ("feat-b", 4)):
+                    with mock.patch.object(T, "_git", self.fake_git(branch)):
+                        self.assertEqual(T.local_state()[1]["iid"], iid)
+                        self.assertEqual(T.window_label(), T.TOPIC_ICON + f"!{iid}")
+                # A branch no state names: none of the states that name another.
+                with mock.patch.object(T, "_git", self.fake_git("other")):
+                    self.assertEqual(T.local_state(), (None, None))
+
+    def test_mid_rebase_the_branch_being_rebased_decides(self):
+        with tempfile.TemporaryDirectory() as root:
+            self.own_mr_store(root, [(3, "feat-a"), (4, "feat-b")])
+            head = os.path.join(root, "head-name")
+            with open(head, "w") as fh:
+                fh.write("refs/heads/feat-a\n")
+            with (
+                mock.patch.object(T, "STATE_ROOT", root),
+                mock.patch.object(T, "project_slug", lambda: "acme-api"),
+                mock.patch.object(T, "_git", self.fake_git("", rebase_head=head)),
+            ):
+                self.assertEqual(T.local_state()[1]["iid"], 3)
+
+    def test_a_state_naming_no_branch_yields_to_one_naming_this(self):
+        """A state written before the branch was kept says nothing either way: taken only
+        where no state names the branch checked out."""
+        with tempfile.TemporaryDirectory() as root:
+            self.own_mr_store(root, [(3, "feat-a"), (4, None)])
+            with (
+                mock.patch.object(T, "STATE_ROOT", root),
+                mock.patch.object(T, "project_slug", lambda: "acme-api"),
+            ):
+                with mock.patch.object(T, "_git", self.fake_git("feat-a")):
+                    self.assertEqual(T.local_state()[1]["iid"], 3)
+                with mock.patch.object(T, "_git", self.fake_git("feat-c")):
+                    self.assertEqual(T.local_state()[1]["iid"], 4)
+
     def test_naming_the_window_never_calls_glab(self):
         """`diff-view` is independent of glab and the network by design, and this label is
         cosmetic — it must not put a subprocess, or a hang, on every diff shown."""
@@ -1633,6 +1697,7 @@ class TestGitLabCannotSayWhoYouAre(unittest.TestCase):
                 mock.patch.object(T, "hold"), mock.patch.object(T, "current_user", return_value=me), \
                 mock.patch.object(T, "fetch_threads", return_value={}) as fetch, \
                 mock.patch.object(T, "mr_base", return_value=None), \
+                mock.patch.object(T, "mr_object", return_value={"source_branch": "feat"}), \
                 mock.patch.object(T, "mr_status", return_value={"state": "opened"}), \
                 mock.patch.object(sys, "argv", ["threads.py", "refresh", "--iid", "3"]), \
                 redirect_stdout(io.StringIO()) as out:
@@ -1652,6 +1717,13 @@ class TestGitLabCannotSayWhoYouAre(unittest.TestCase):
         state = {"topics": [], "threads": {}}
         self.refresh(state, "ana")
         self.assertEqual(state["me"], "ana")
+
+    def test_the_check_teaches_an_older_state_its_branch(self):
+        """A state written before the source branch was kept learns it on the mod's next
+        update check, so a session already running finds its own MR by branch."""
+        state = {"topics": [], "threads": {}}
+        self.refresh(state, "ana")
+        self.assertEqual(state["source_branch"], "feat")
 
 
 class TestRounds(unittest.TestCase):
