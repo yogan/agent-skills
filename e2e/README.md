@@ -35,11 +35,17 @@ Talk-day checklist and run of show: [RUNBOOK.md](RUNBOOK.md).
    sudo sh -c 'echo "127.0.0.1 gitlab.test" >> /etc/hosts'
    ```
 
-2. **start GitLab** — first boot is 3-5 min:
+2. **a VM of its own, then GitLab** — first boot is a few minutes:
 
    ```sh
-   cd e2e && docker compose up -d
+   brew install colima
+   colima start --profile gitlab --vm-type vz --cpu 4 --memory 8 --disk 40 --activate=false
+   cd e2e && python3 rig.py up && python3 rig.py install
    ```
+
+   `--activate=false` keeps your default Docker context where it was; the rig names its own
+   (`colima-gitlab`, see "VM memory" below), and later starts by `rig.py` keep that setting.
+   For a `docker` command of your own against the rig, add `--context colima-gitlab`.
 
 3. **bootstrap** — waits for readiness, then creates everything:
 
@@ -219,6 +225,7 @@ Decisions that are expensive to rediscover, and that look like cruft until you k
 ## Troubleshooting
 
 ```sh
+export DOCKER_CONTEXT=colima-gitlab              # the rig's own VM
 docker compose logs -f gitlab                    # boot progress
 docker exec e2e-gitlab gitlab-ctl status
 curl -sS -o /dev/null -w '%{http_code}\n' http://gitlab.test/users/sign_in   # want 200
@@ -241,23 +248,21 @@ cd ~/src/agent-skills-demo && glab api user      # should print frank
 
 ### VM memory
 
-The rig runs in a **12 GB / 4 CPU** Rancher Desktop VM with Kubernetes off:
+GitLab runs alone in a **Colima VM of its own** (profile `gitlab`, 8 GB / 4 CPU), not beside
+other containers in a shared Docker VM. On a Mac every container runs inside a Linux VM, and a
+stopped container's memory stays with that VM: only stopping the VM gives it back to macOS. In
+a VM of its own, GitLab can be stopped completely without taking anything else down.
 
-    rdctl set --virtual-machine.memory-in-gb 12 --virtual-machine.number-cpus 4 --kubernetes.enabled=false
-
-It restarts the VM and every container in it. At the old 6 GB / 2 CPU with Kubernetes on,
-GitLab had a few hundred MB to spare, and a run of scenarios used that up: each reset was
+Size matters as much as isolation. It first ran in a 6 GB / 2 CPU VM shared with Kubernetes,
+where GitLab had a few hundred MB to spare and a run of scenarios used that up: each reset was
 slower than the one before, from about 30 s to over 5 minutes across the 14 scenarios. At
-12 GB / 4 CPU six resets in a row each take about 30 s, with ~7 GB still free, and a cold
-start answers in well under a minute.
+8 GB / 4 CPU of its own, resets in a row each take about 30 s with ~4 GB still free.
 
 ### Paused and stopped when unused
 
-`rig.py` brings the container up when something needs it — `fixture.py`, `drive.py verify` on a
-rig scenario, `tmux-demo.sh` — and a launchd agent (`python3 rig.py install`) runs its idle
-check every 5 minutes: unused for an hour it is **paused** (no CPU, back in a fraction of a
-second), unused for 8 hours **stopped**. An open demo or `drive-*` tmux session counts as in use.
-`python3 rig.py status` says where it stands.
-
-Neither gives memory back to macOS: the VM keeps what it has used until the VM itself stops
-(`rdctl shutdown`).
+`rig.py` brings GitLab up when something needs it — `fixture.py`, `drive.py verify` on a rig
+scenario, `tmux-demo.sh` — starting the VM too if it is stopped, and a launchd agent
+(`python3 rig.py install`) runs its idle check every 5 minutes: unused for an hour GitLab is
+**paused** (no CPU, back in a fraction of a second), unused for 8 hours its **VM is stopped**,
+which frees the memory; the next use then pays a cold start of under a minute. An open demo or
+`drive-*` tmux session counts as in use. `python3 rig.py status` says where it stands.

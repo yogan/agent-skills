@@ -33,6 +33,9 @@ if _REPO_ROOT not in sys.path:
 
 from lib.cli import die  # noqa: E402
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import rig  # noqa: E402,F401  -- every `docker` below goes to the rig's own VM (rig.CONTEXT)
+
 HOST = "gitlab.test"
 URL = f"http://{HOST}"
 API = f"{URL}/api/v4"

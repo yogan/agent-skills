@@ -10,10 +10,15 @@ has for a while.
     python3 rig.py install     # the launchd agent that runs `idle` every few minutes
     python3 rig.py uninstall
 
-Starting GitLab cold costs about a minute on a 4-CPU VM, several on a smaller one, so it is
-not stopped soon after use. A pause freezes it in place: it costs no CPU and comes back at
-once, but keeps its memory. So after `PAUSE_AFTER` without use it is paused, and only after
-`STOP_AFTER` (a night) stopped, which frees the memory and costs the next use one boot.
+GitLab runs alone in a Colima VM of its own (profile `gitlab`), not beside other containers:
+a stopped container's memory stays with the VM it ran in, and only stopping the VM gives it
+back to macOS. Everything here talks to that VM's Docker context, whatever the person's own
+default is; `E2E_DOCKER_CONTEXT` names another one.
+
+Starting the VM and GitLab cold costs about two minutes, so it is not stopped soon after use.
+A pause freezes GitLab in place: it costs no CPU and comes back at once, but keeps its memory.
+So after `PAUSE_AFTER` without use it is paused, and only after `STOP_AFTER` (a night) is the
+VM stopped, which frees the memory and costs the next use one boot.
 
 A use is anything that calls `up` or `used`: `fixture.py`, `drive.py verify` on a rig
 scenario, `tmux-demo.sh`. A demo or driver session still open in tmux counts as in use, so a
@@ -30,6 +35,11 @@ import urllib.request
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 CONTAINER = "e2e-gitlab"
+PROFILE = "gitlab"
+CONTEXT = os.environ.get("E2E_DOCKER_CONTEXT") or f"colima-{PROFILE}"
+# For every docker call made here and by whatever this process starts (compose, bootstrap.py's
+# `docker exec`): never the person's default context, which holds other things.
+os.environ["DOCKER_CONTEXT"] = CONTEXT
 URL = "http://gitlab.test/users/sign_in"   # /-/readiness is allowlisted to 127.0.0.1 only
 STAMP = os.path.join(HERE, ".cache", "rig-last-used")
 LOG = os.path.join(HERE, ".cache", "rig-idle.log")
@@ -50,8 +60,24 @@ def docker(*args):
     return subprocess.run(["docker", *args], capture_output=True, text=True)
 
 
+def vm_running():
+    """Whether the GitLab VM is up. Only Colima's own profile is asked: another context named
+    by E2E_DOCKER_CONTEXT is someone else's to start and stop, and counts as up."""
+    if not CONTEXT.startswith("colima-"):
+        return True
+    try:
+        r = subprocess.run(["colima", "status", "--profile", PROFILE], capture_output=True,
+                           text=True)
+    except FileNotFoundError:
+        return False
+    return r.returncode == 0
+
+
 def state():
-    """running, paused, exited, … or None when there is no such container (or no docker)."""
+    """running, paused, exited, … or None when there is no such container (or no docker, or
+    the VM is down)."""
+    if not vm_running():
+        return None
     try:
         r = docker("inspect", "-f", "{{.State.Status}}", CONTAINER)
     except FileNotFoundError:
@@ -106,6 +132,15 @@ def answering():
 def up(wait=True, start=True, log=print):
     """Bring the container to running and note the use. False when it could not be."""
     note_use()
+    if not vm_running():
+        if not start:
+            return False
+        log(f"the {PROFILE} VM is stopped: starting it")
+        r = subprocess.run(["colima", "start", "--profile", PROFILE], capture_output=True,
+                           text=True)
+        if r.returncode:
+            log(r.stdout + r.stderr)
+            return False
     s = state()
     if s == "paused":
         log(f"{CONTAINER} was paused: unpausing")
@@ -142,6 +177,9 @@ def idle(log=print):
         if s == "paused":
             docker("unpause", CONTAINER)
         docker("stop", CONTAINER)
+        if CONTEXT.startswith("colima-"):
+            # The VM, not just the container: only that hands its memory back to macOS.
+            subprocess.run(["colima", "stop", "--profile", PROFILE], capture_output=True)
     if action:
         log(f"{time.strftime('%Y-%m-%d %H:%M')} {action}: unused for {unused_for() / 3600:.1f}h")
 
@@ -150,7 +188,7 @@ def plist():
     """The launchd agent: `idle` every CHECK_EVERY seconds, with a PATH that finds docker and
     tmux (launchd starts agents with almost none)."""
     dirs = []
-    for tool in ("docker", "tmux"):
+    for tool in ("docker", "tmux", "colima"):
         found = shutil.which(tool)
         if found and os.path.dirname(found) not in dirs:
             dirs.append(os.path.dirname(found))
@@ -205,7 +243,8 @@ def main(argv):
         return uninstall()
     if cmd == "status":
         unused = unused_for()
-        print(f"{CONTAINER}: {state() or 'missing'}, last used "
+        vm = "" if vm_running() else f" (the {PROFILE} VM is stopped)"
+        print(f"{CONTAINER}: {state() or 'missing'}{vm}, last used "
               + ("never" if unused == float("inf") else f"{unused / 60:.0f} min ago")
               + (", agent installed" if os.path.exists(PLIST) else ", agent not installed"))
         return 0

@@ -68,7 +68,7 @@ block it has to paste whole.
 |---|---|
 | !1 starts a subagent or a `review-branch` run | a prepared input did not resolve — Esc, then `./tmux-demo.sh --force` |
 | the explainer link 404s | `open ~/src/agent-skills/e2e/artifacts/explainer-mr1.html` |
-| 502 on every page | `docker exec e2e-gitlab gitlab-ctl restart puma`, wait ~60 s |
+| 502 on every page | `docker --context colima-gitlab exec e2e-gitlab gitlab-ctl restart puma`, wait ~60 s |
 | state looks wrong | `./tmux-demo.sh --force` — ~30 s. Kill the tmux session first: the re-clone leaves its panes on deleted directories |
 | GitLab feels slow | it is memory (README, "VM memory"). Do not restart it mid-talk |
 | running late | protect `!2` — pre-seeded, cheap, and the part nobody else has |

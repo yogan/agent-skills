@@ -25,6 +25,9 @@ WORK="$HOME/src/agent-skills-demo"
 SKILLS="$HOME/.claude/skills"
 SLUG=demo-bulletproof-react       # project slug the skills derive their state dir from
 URL=http://gitlab.test/users/sign_in
+# GitLab runs in a Colima VM of its own (rig.py): every docker call here goes there, whatever
+# the default context is.
+export DOCKER_CONTEXT="${E2E_DOCKER_CONTEXT:-colima-gitlab}"
 BOOT_TIMEOUT=300        # a cold GitLab boot is 3-5 min
 
 CHECK_ONLY=0
