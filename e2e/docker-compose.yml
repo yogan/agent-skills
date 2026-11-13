@@ -31,7 +31,7 @@ services:
 
         # -- memory discipline; see README "VM memory" --
         # A 6 GB Rancher VM shared with k3s died twice under fixture load at the
-        # defaults. Single-process puma is the big win (each worker is ~400-600 MB) and
+        # defaults (the VM is 12 GB now). Single-process puma is the big win (each worker is ~400-600 MB) and
         # a one-user demo instance has no use for more.
         # ONE worker, not zero. worker_processes = 0 is single mode: GitLab warns
         # "some features may not work", there is no worker supervision, and an observed
@@ -39,8 +39,12 @@ services:
         # reported it as running — a 502 that nothing recovers from. One cluster worker
         # keeps nearly all the memory saving AND the memory-killer/auto-restart.
         puma['worker_processes'] = 1
-        puma['per_worker_max_memory_mb'] = 1024
-        sidekiq['max_concurrency'] = 5
+        # Past this the worker is replaced. At 1024 it was replaced every ~6 minutes under
+        # a run of scenarios; a replacement is a fork, cheap, but each one starts cold.
+        puma['per_worker_max_memory_mb'] = 2048
+        # `concurrency`, not `max_concurrency`: GitLab 17+ ignores the old key without a
+        # word, and ran 20 job threads (and as many database connections) instead of 5.
+        sidekiq['concurrency'] = 5
         postgresql['shared_buffers'] = "128MB"
         postgresql['max_connections'] = 100
         gitaly['configuration'] = {

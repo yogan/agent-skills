@@ -241,8 +241,13 @@ cd ~/src/agent-skills-demo && glab api user      # should print frank
 
 ### VM memory
 
-The rig ran in a **6 GB / 2 CPU** Rancher Desktop VM with Kubernetes enabled, but steady-state
-GitLab sits at ~3.1 GiB with only ~1.3 GiB available. Enough for normal operation (git pushes
-and API calls are cheap; `review-branch` and `explain-branch` run on the host), but no headroom
-for a rails spike. For talk-day safety consider `rdctl set --virtual-machine.memory-in-gb 12`
-— it restarts the VM and therefore every other container in it, so not done automatically.
+The rig runs in a **12 GB / 4 CPU** Rancher Desktop VM with Kubernetes off:
+
+    rdctl set --virtual-machine.memory-in-gb 12 --virtual-machine.number-cpus 4 --kubernetes.enabled=false
+
+It restarts the VM and every container in it. At the old 6 GB / 2 CPU with Kubernetes on,
+GitLab had a few hundred MB to spare, and a run of scenarios used that up: each reset was
+slower than the one before, from about 30 s to over 5 minutes across the 14 scenarios. At
+12 GB / 4 CPU six resets in a row each take about 30 s, with ~7 GB still free, and a cold
+start answers in well under a minute.
+
