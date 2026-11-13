@@ -212,6 +212,11 @@ def _cached_pass(fingerprint):
     return record
 
 
+def record_timings(earlier, per_file):
+    """The timings to keep: `earlier` with this run's files' seconds replacing theirs."""
+    return {**earlier, **{r: round(a["seconds"], 2) for r, a in per_file.items()}}
+
+
 def _load_timings():
     try:
         return json.loads(TIMINGS.read_text(encoding="utf-8"))
@@ -577,9 +582,11 @@ def main():
         print(f"{'ok  ' if agg['ok'] else 'FAIL'}  {agg['wall']:6.1f}s  {rel}  "
               f"({agg['tests']} tests){split}")
 
+    # Merged into what earlier runs recorded: a filtered or `--changed` run times only the
+    # files it ran, and writing just those used to drop every other file's seconds, so the next
+    # whole run split none of the slow files and waited on them whole.
     try:
-        TIMINGS.write_text(json.dumps({r: round(a["seconds"], 2)
-                                       for r, a in per_file.items()}, indent=0),
+        TIMINGS.write_text(json.dumps(record_timings(timings, per_file), indent=0),
                            encoding="utf-8")
     except OSError:
         pass                                      # a missing cache only costs one slow run

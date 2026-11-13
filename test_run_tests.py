@@ -267,6 +267,12 @@ class TestDiscovery(unittest.TestCase):
         self.assertEqual(loose, [], "a module-level test would be dropped by sharding")
         self.assertGreater(in_classes, 0)
 
+    def test_a_run_of_some_files_keeps_the_other_files_timings(self):
+        """A filtered run used to replace the record with its own few files, so the next whole
+        run split nothing."""
+        kept = rt.record_timings({"a.py": 20.0, "b.py": 1.0}, {"b.py": {"seconds": 2.0}})
+        self.assertEqual(kept, {"a.py": 20.0, "b.py": 2.0})
+
     def test_a_pattern_filters_by_path_substring(self):
         picked = [p.name for p in rt.find_test_files(False, ["gates/"])]
         self.assertTrue(picked)
