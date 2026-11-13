@@ -23,11 +23,17 @@ kept for a commit that passed. Exit 0 only when every commit passed.
 
 A worktree gets what git does not carry: each mod's engine types, copied from this checkout,
 so its type check runs there too instead of skipping.
+
+A run that is stopped leaves nothing behind: a caught signal (TERM, HUP, INT) removes its
+worktrees before it exits, and a run killed outright is cleaned up by the next one, which
+removes the worktrees of every earlier run whose process is gone. A run still going, another
+session's, is told apart by the process id it records, and never touched.
 """
 import json
 import os
 import re
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -39,6 +45,8 @@ sys.path.insert(0, HERE)
 from lib import parallel  # noqa: E402
 
 RUNNER_WORKERS = 8      # what `run_tests.py` runs with by default; shared out among the commits
+PREFIX = "check-commits-"   # a run's folder of worktrees, in the temp folder
+OWNER = "owner.pid"         # in it: the process id of the run it belongs to
 
 
 def git(*args, cwd=HERE):
@@ -127,6 +135,62 @@ def check(commit, root, steps, repo=HERE):
                        capture_output=True)
 
 
+def _alive(pid):
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except OSError:
+        return True                       # someone else's process, alive
+    return True
+
+
+def _owner_gone(root):
+    """Whether the run that made `root` has ended: its process is gone. A folder from before
+    runs recorded their process counts as ended once it is an hour old."""
+    try:
+        with open(os.path.join(root, OWNER), encoding="utf-8") as fh:
+            return not _alive(int(fh.read().strip()))
+    except (OSError, ValueError):
+        try:
+            return time.time() - os.path.getmtime(root) > 3600
+        except OSError:
+            return True
+
+
+def remove_worktrees(repo, roots):
+    """Remove the worktrees `repo` has registered inside any of `roots`, then forget the
+    missing ones. A root keeps its failure logs; one with nothing else left goes too."""
+    listing = git("worktree", "list", "--porcelain", cwd=repo) or ""
+    trees = [ln[len("worktree "):] for ln in listing.splitlines() if ln.startswith("worktree ")]
+    for tree in trees:
+        if os.path.dirname(os.path.realpath(tree)) in {os.path.realpath(r) for r in roots}:
+            subprocess.run(["git", "worktree", "remove", "--force", tree], cwd=repo,
+                           capture_output=True)
+    subprocess.run(["git", "worktree", "prune"], cwd=repo, capture_output=True)
+    for root in roots:
+        left = [f for f in (os.listdir(root) if os.path.isdir(root) else []) if f != OWNER]
+        if not left:
+            shutil.rmtree(root, ignore_errors=True)
+
+
+def sweep(repo=HERE, tmp=None):
+    """The worktrees of earlier runs that ended without cleaning up (killed outright)."""
+    tmp = tmp or tempfile.gettempdir()
+    roots = [os.path.join(tmp, d) for d in os.listdir(tmp) if d.startswith(PREFIX)]
+    remove_worktrees(repo, [r for r in roots if _owner_gone(r)])
+
+
+def on_stop(repo, root):
+    """A caught signal: this run's worktrees removed, then out. The checks still running in
+    them fail at once, their folder gone; nothing waits for them."""
+    def stop(signum, _frame):
+        remove_worktrees(repo, [root])
+        os._exit(128 + signum)
+    for sig in (signal.SIGTERM, signal.SIGHUP, signal.SIGINT):
+        signal.signal(sig, stop)
+
+
 PASSED = os.path.join(HERE, ".check_commits_passed.json")
 
 
@@ -158,7 +222,11 @@ def main(argv):
     known = passed_today()
     todo = [c for c in commits if c not in known]
     steps = checks(max(1, RUNNER_WORKERS // max(1, len(todo))))
-    root = tempfile.mkdtemp(prefix="check-commits-")
+    sweep()
+    root = tempfile.mkdtemp(prefix=PREFIX)
+    with open(os.path.join(root, OWNER), "w", encoding="utf-8") as fh:
+        fh.write(str(os.getpid()))
+    on_stop(HERE, root)
     ran = dict(zip(todo, parallel.each(lambda c: check(c, root, steps), todo,
                                        workers=max(1, len(todo)))))
     results = [ran.get(c, (True, ["passed today already: not checked again"], None))

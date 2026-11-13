@@ -91,6 +91,37 @@ class TestEachCommitAlone(unittest.TestCase):
             C.check(c, self.root, self.steps, self.repo)
         self.assertEqual(sh(self.repo, "git", "worktree", "list").count("\n"), 0)
 
+    def run_folder(self, pid):
+        root = tempfile.mkdtemp(prefix=C.PREFIX, dir=self._tmp.name)
+        with open(os.path.join(root, C.OWNER), "w") as fh:
+            fh.write(str(pid))
+        tree = os.path.join(root, "tree")
+        sh(self.repo, "git", "worktree", "add", "-q", "--detach", tree, self.commits[0])
+        return root, tree
+
+    def test_a_run_killed_outright_is_cleaned_up_by_the_next_and_a_live_one_left_alone(self):
+        gone = subprocess.run([sys.executable, "-c", "import os; print(os.getpid())"],
+                              capture_output=True, text=True).stdout.strip()
+        dead_root, dead = self.run_folder(int(gone))
+        _, live = self.run_folder(os.getpid())
+        C.sweep(self.repo, self._tmp.name)
+        trees = sh(self.repo, "git", "worktree", "list")
+        self.assertNotIn(dead, trees)
+        self.assertFalse(os.path.exists(dead_root))           # nothing but its record was left
+        self.assertIn(os.path.realpath(live), {os.path.realpath(ln.split()[0]) for ln in trees.splitlines()})
+
+    def test_a_stopped_run_removes_its_worktrees(self):
+        root, tree = self.run_folder(0)
+        code = (f"import sys, time; sys.path.insert(0, {C.HERE!r}); import check_commits as C; "
+                f"C.on_stop({self.repo!r}, {root!r}); print('ready', flush=True); time.sleep(30)")
+        p = subprocess.Popen([sys.executable, "-c", code], stdout=subprocess.PIPE, text=True)
+        self.assertEqual(p.stdout.readline().strip(), "ready")
+        p.terminate()
+        self.assertEqual(p.wait(timeout=10), 128 + 15)
+        p.stdout.close()
+        self.assertNotIn(tree, sh(self.repo, "git", "worktree", "list"))
+        self.assertFalse(os.path.exists(root))
+
     def test_the_ruff_it_runs_is_the_one_the_hook_pins(self):
         with open(os.path.join(C.HERE, ".githooks", "pre-commit")) as fh:
             self.assertIn(f"RUFF={C.ruff_version()}\n", fh.read())
