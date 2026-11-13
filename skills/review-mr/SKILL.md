@@ -267,10 +267,12 @@ into what looks like the MR's own diff. `REVIEW_BRANCH_BASE` makes review-branch
 own merge-base verbatim instead.
 
 Then run the `review-branch` skill against the worktree (foreground). It
-returns a prioritized critique. Turn each finding into a JSON object and import them:
+returns a prioritized critique. Turn each finding into a JSON object and import them on
+stdin, in a quoted heredoc: **never write them to a file** (the Write tool shows what it
+writes, and the findings stay out of sight until the user's own review is in):
 
 ```jsonc
-// /tmp/seed.json — one object per review-branch finding
+// one object per review-branch finding
 [{"kind":"issue","severity":"high","source":"llm","file":"src/x.ts","line":42,
   "summary":"one short line, plain words, ENGLISH — see the language rule below",
   "why":"2–4 English sentences: what goes wrong, when, and why it matters.\n\n**Recommendation:** raise it / drop it, and the fix in a few words"}]
@@ -283,8 +285,9 @@ is markdown, above), and end it on a
 `**Recommendation:**` paragraph. `set <t> --why "…"` rewrites it, and so does a stored view of
 another reviewer's thread (below).
 ```bash
-python3 $SD/findings.py import /tmp/seed.json --iid <n>
-python3 $SD/findings.py seed --iid <n> --set /tmp/seed.json   # so a re-run is instant
+python3 $SD/findings.py import - --seed --iid <n> <<'SEED_EOF'   # --seed: a re-run is instant
+[…the findings…]
+SEED_EOF
 python3 $SD/findings.py present --iid <n>    # paste verbatim as the top of your reply
 ```
 

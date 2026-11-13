@@ -1614,6 +1614,25 @@ class TestReviewBegun(unittest.TestCase):
             F.main()
         self.assertTrue(F.review_begun(state))
 
+    def test_findings_on_stdin_are_imported_and_kept_as_the_seed(self):
+        """Written to a file with the Write tool, the findings were on screen before the
+        user's own review; on stdin they never are, and a re-run still finds its seed."""
+        state = new_state()
+        seed = '[{"kind": "issue", "summary": "s", "why": "w", "file": "a.py", "line": 1}]'
+        with tempfile.TemporaryDirectory() as d, \
+                patch.object(F, "resolve_state", return_value=({"slug": "x"}, 1, "/s", state)), \
+                patch.object(F, "save"), patch.object(F, "wrong_checkout_warning", return_value=None), \
+                patch.object(F, "current_user", return_value="ana"), patch.object(F, "mr_head", return_value="abc"), \
+                patch.object(F, "STATE_ROOT", d), patch.object(F, "set_prepared") as prepared, \
+                patch.object(sys, "argv", ["findings.py", "import", "-", "--seed", "--iid", "1"]), \
+                patch.object(sys, "stdin", io.StringIO(seed)), redirect_stdout(io.StringIO()):
+            F.main()
+            self.assertEqual([t["summary"] for t in state["topics"]], ["s"])
+            slug, iid, what, path, head = prepared.call_args.args
+            self.assertEqual((slug, iid, what, head), ("x", 1, "seed", "abc"))
+            with open(path) as fh:
+                self.assertEqual(fh.read(), seed)
+
     def test_importing_closes_an_explainer_question_answered_in_words(self):
         """Typed, not pressed, the answer was never recorded, and the question's buttons
         stayed on every card after it: the review moving on closes it."""

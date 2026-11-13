@@ -3183,7 +3183,9 @@ def main():
                           "input, to summarise in a few bullets")
 
     pi = sub.add_parser("import")
-    pi.add_argument("file")
+    pi.add_argument("file", help="the findings' JSON; `-` reads it from stdin (a quoted heredoc)")
+    pi.add_argument("--seed", action="store_true",
+                    help="also keep them as this MR's prepared seed, so a re-run is instant")
     pi.add_argument("--iid", type=int)
 
     pa = sub.add_parser("add")
@@ -3604,8 +3606,16 @@ def main():
         if state.get("author"):
             print(f"MR author: {state['author']} (call them that)")
     elif cmd == "import":
-        with open(args.file) as f:
-            items = json.load(f)
+        # On stdin, through a quoted heredoc in a shell call, the findings stay out of the
+        # chat until the user's own review is in: the review-ui mod hides the scripts' quiet
+        # calls whole, where a file written for them was shown by the tool that wrote it.
+        text = sys.stdin.read() if args.file == "-" else open(args.file).read()
+        items = json.loads(text)
+        if args.seed:
+            seed = state_file(STATE_ROOT, ctx["slug"], iid, "seed-findings.json")
+            with open(seed, "w") as f:
+                f.write(text)
+            set_prepared(ctx["slug"], iid, "seed", seed, mr_head(ctx, iid))
         added = [add_topic(state, **it)["id"] for it in items]
         state["imported"] = True              # the first pass is through (`review_begun`)
         c = state.get("explainer_choice")
