@@ -54,6 +54,7 @@ import os
 import re
 import subprocess
 import sys
+import tempfile
 import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -116,15 +117,58 @@ def test_tmpdir():
     return folder
 
 
+# No test may reach the person's real GitLab. A `glab` that refuses goes first on every test's
+# PATH, and the test that called it fails, naming the call: a test that left GitLab unstubbed
+# talked to the real instance with the real login, and hung the whole run whenever that call
+# hung. A test that puts a fake `glab` of its own on its PATH finds that one instead. The test
+# box has no `glab` at all, so this is also the Mac answering as the box does.
+NO_GLAB = REPO_ROOT / ".cache" / "no-glab"
+REACHED_ENV = "AGENT_SKILLS_GLAB_REACHED"
+NO_GLAB_SCRIPT = f"""#!/bin/sh
+echo "$*" >> "${REACHED_ENV}"
+echo "a test reached the real glab: stub it" >&2
+exit 1
+"""
+
+
+def no_glab():
+    """The folder holding the refusing `glab`, written where missing or out of date."""
+    stub = NO_GLAB / "glab"
+    try:
+        if stub.read_text(encoding="utf-8") == NO_GLAB_SCRIPT:
+            return NO_GLAB
+    except OSError:
+        pass
+    NO_GLAB.mkdir(parents=True, exist_ok=True)
+    stub.write_text(NO_GLAB_SCRIPT, encoding="utf-8")
+    stub.chmod(0o755)
+    return NO_GLAB
+
+
 def run_one(job, tmpdir=None):
     path, klass = job
     argv = [sys.executable, str(path)] + ([klass] if klass else [])
     env = {k: v for k, v in os.environ.items() if not SESSION_ENV.match(k)}
     if tmpdir:
         env["TMPDIR"] = f"{tmpdir}/"
-    started = time.monotonic()
-    proc = subprocess.run(argv, capture_output=True, text=True, env=env)
-    return job, proc, time.monotonic() - started
+    env["PATH"] = f"{no_glab()}{os.pathsep}{env.get('PATH', '')}"
+    fd, reached = tempfile.mkstemp(prefix="glab-reached-", dir=tmpdir)
+    os.close(fd)
+    env[REACHED_ENV] = reached
+    try:
+        started = time.monotonic()
+        proc = subprocess.run(argv, capture_output=True, text=True, env=env)
+        seconds = time.monotonic() - started
+        with open(reached, encoding="utf-8") as fh:
+            calls = fh.read().splitlines()
+    finally:
+        os.unlink(reached)
+    if calls:
+        proc = subprocess.CompletedProcess(
+            proc.args, proc.returncode or 1, proc.stdout,
+            proc.stderr + "\nreached the real glab, which no test may: "
+            + "; ".join(f"glab {c}" for c in calls) + "\n")
+    return job, proc, seconds
 
 
 def _classes(path):

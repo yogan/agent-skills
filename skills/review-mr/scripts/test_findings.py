@@ -1608,6 +1608,7 @@ class TestReviewBegun(unittest.TestCase):
         self.addCleanup(os.remove, f.name)
         with patch.object(F, "resolve_state", return_value=({"slug": "x"}, 1, "/s", state)), \
                 patch.object(F, "save"), patch.object(F, "wrong_checkout_warning", return_value=None), \
+                patch.object(F, "current_user", return_value="ana"), \
                 patch.object(sys, "argv", ["findings.py", "import", f.name, "--iid", "1"]), \
                 redirect_stdout(io.StringIO()):
             F.main()
@@ -1623,6 +1624,7 @@ class TestReviewBegun(unittest.TestCase):
         self.addCleanup(os.remove, f.name)
         with patch.object(F, "resolve_state", return_value=({"slug": "x"}, 1, "/s", state)), \
                 patch.object(F, "save"), patch.object(F, "wrong_checkout_warning", return_value=None), \
+                patch.object(F, "current_user", return_value="ana"), \
                 patch.object(sys, "argv", ["findings.py", "import", f.name, "--iid", "1"]), \
                 redirect_stdout(io.StringIO()):
             F.main()

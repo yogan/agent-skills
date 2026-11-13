@@ -192,6 +192,21 @@ class TestIsolation(unittest.TestCase):
         self.assertNotIn("REVIEW_UI_DRAWN", seen)
         self.assertIn("HOME", seen)
 
+    def test_a_test_that_reaches_glab_fails_naming_the_call(self):
+        """A test that left GitLab unstubbed called the real instance with the real login,
+        and the whole run hung whenever that call did. It passed, so only a hang said so."""
+        with tempfile.TemporaryDirectory() as tmp:
+            test = Path(tmp) / "test_x.py"
+            with mock.patch.object(rt, "NO_GLAB", Path(tmp) / "no-glab"):
+                for body, fails in (("subprocess.run(['glab', 'api', 'user'])", True),
+                                    ("subprocess.run(['true'])", False)):
+                    test.write_text(f"import subprocess\n{body}\n")
+                    _, proc, _ = rt.run_one((test, None), tmp)
+                    self.assertEqual(proc.returncode != 0, fails, proc.stderr)
+                    self.assertEqual("glab api user" in proc.stderr, fails)
+            self.assertEqual(sorted(p.name for p in Path(tmp).iterdir()),
+                             ["no-glab", "test_x.py"])          # no call log left behind
+
 
 class TestTempFolder(unittest.TestCase):
     def test_the_named_folder_is_every_tests_temp_folder_and_none_without_the_file(self):
