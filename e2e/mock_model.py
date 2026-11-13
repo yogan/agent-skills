@@ -368,7 +368,12 @@ class Mock:
                         renamed.update((a, z) for a, z in zip(then, now)
                                        if a != z and (ID.fullmatch(a) or ID.fullmatch(z)))
                     continue
-                then, now = recorded.get(b.get("tool_use_id")), ID.findall(_result_text(b))
+                text = _result_text(b)
+                then, now = recorded.get(b.get("tool_use_id")), ID.findall(text)
+                if then and len(now) < len(then):
+                    # A recording from before `hexes`: an id this run made can come out all
+                    # digits, which ID does not take; every hex token here may line up instead.
+                    now = HEX.findall(text)
                 if then and len(then) == len(now):
                     renamed.update((a, z) for a, z in zip(then, now) if a != z)
         return renamed

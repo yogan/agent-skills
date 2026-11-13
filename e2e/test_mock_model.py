@@ -215,6 +215,12 @@ class RunMadeIds(unittest.TestCase):
                                                                            "content": "index 3826373..fbee0f2\n7998180 feat"}])))
         self.assertEqual(got[0]["input"]["command"], "git commit --fixup=7998180")
 
+    def test_an_older_recording_follows_a_hash_that_came_out_all_digits_too(self):
+        """A recording made before `hexes` holds only ids with a letter in them: a run whose
+        new commit's short hash was all digits showed none, and the stale hash went on."""
+        got = self.mock.answer(self.history("posted 196752950 on line 12"))
+        self.assertEqual(got[0]["input"]["command"], "python3 findings.py propose 196752950 --into t1")
+
     def test_words_and_numbers_are_not_ids(self):
         self.assertEqual(M.ID.findall("added a facade, 1287 lines, deadbeef"), [])
 
