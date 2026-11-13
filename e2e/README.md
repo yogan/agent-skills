@@ -39,13 +39,13 @@ Talk-day checklist and run of show: [RUNBOOK.md](RUNBOOK.md).
 
    ```sh
    brew install colima
-   colima start --profile gitlab --vm-type vz --cpu 4 --memory 8 --disk 40 --activate=false
    cd e2e && python3 rig.py up && python3 rig.py install
    ```
 
-   `--activate=false` keeps your default Docker context where it was; the rig names its own
-   (`colima-gitlab`, see "VM memory" below), and later starts by `rig.py` keep that setting.
-   For a `docker` command of your own against the rig, add `--context colima-gitlab`.
+   `rig.py up` makes the Colima VM the first time (8 GB, 4 CPU; `rig.VM_ARGS`), leaving your
+   default Docker context and `~/.ssh/config` as they were: the rig names its own context
+   (`colima-gitlab`, see "VM memory" below). For a `docker` command of your own against the
+   rig, add `--context colima-gitlab`.
 
 3. **bootstrap** — waits for readiness, then creates everything:
 

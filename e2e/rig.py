@@ -37,6 +37,11 @@ from lib import launchd  # noqa: E402
 HERE = os.path.dirname(os.path.abspath(__file__))
 CONTAINER = "e2e-gitlab"
 PROFILE = "gitlab"
+# How the VM is made the first time `up` finds none (a new machine): its size, and leaving the
+# person's default Docker context and ~/.ssh/config as they are. On an existing profile Colima
+# keeps these as its settings.
+VM_ARGS = ["--vm-type", "vz", "--cpu", "4", "--memory", "8", "--disk", "40",
+           "--activate=false", "--ssh-config=false"]
 CONTEXT = os.environ.get("E2E_DOCKER_CONTEXT") or f"colima-{PROFILE}"
 # For every docker call made here and by whatever this process starts (compose, bootstrap.py's
 # `docker exec`): never the person's default context, which holds other things.
@@ -130,8 +135,8 @@ def up(wait=True, start=True, log=print):
         if not start:
             return False
         log(f"the {PROFILE} VM is stopped: starting it")
-        r = subprocess.run(["colima", "start", "--profile", PROFILE], capture_output=True,
-                           text=True)
+        r = subprocess.run(["colima", "start", "--profile", PROFILE, *VM_ARGS],
+                           capture_output=True, text=True)
         if r.returncode:
             log(r.stdout + r.stderr)
             return False

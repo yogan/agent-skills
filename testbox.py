@@ -42,7 +42,9 @@ from lib import launchd  # noqa: E402
 PROFILE = "tests"
 CONTEXT = f"colima-{PROFILE}"
 CONTAINER = "agent-skills-tests"
-VM_ARGS = ["--vm-type", "vz", "--cpu", "6", "--memory", "4", "--disk", "20", "--activate=false"]
+# The person's default Docker context and ~/.ssh/config stay as they are.
+VM_ARGS = ["--vm-type", "vz", "--cpu", "6", "--memory", "4", "--disk", "20", "--activate=false",
+           "--ssh-config=false"]
 DOCKERFILE = """FROM python:3.14-slim
 RUN apt-get update -qq && apt-get install -y -qq git >/dev/null && rm -rf /var/lib/apt/lists/* \\
  && git config --global user.name box && git config --global user.email box@example.invalid \\
