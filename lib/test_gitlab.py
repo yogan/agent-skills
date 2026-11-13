@@ -12,6 +12,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from lib import gitlab as G
 
+_real_run = G.run
+
 
 def fake_result(returncode=0, stdout="", stderr=""):
     class R:
@@ -69,6 +71,47 @@ class TestApi(unittest.TestCase):
         G.run = lambda cmd: fake_result(returncode=1, stderr="boom")
         with self.assertRaises(SystemExit):
             G.api("whatever")
+
+
+class TestTimeLimit(unittest.TestCase):
+    """A GitLab call that never answers ends, as a failure that says so."""
+
+    def setUp(self):
+        import subprocess
+        self.subprocess = subprocess
+
+    def sleeper(self, seconds):
+        import tempfile
+        d = tempfile.mkdtemp()
+        self.addCleanup(__import__("shutil").rmtree, d)
+        path = os.path.join(d, "glab")
+        with open(path, "w") as fh:
+            fh.write(f"#!/bin/sh\nsleep {seconds}\n")
+        os.chmod(path, 0o755)
+        return path
+
+    def test_a_glab_call_that_runs_out_of_time_fails_saying_so(self):
+        from unittest import mock
+        glab = self.sleeper(5)
+        real = self.subprocess.run
+        with mock.patch.object(G, "GLAB_TIMEOUT", 0.3), \
+                mock.patch.object(G.subprocess, "run", side_effect=lambda cmd, **kw: real([glab, *cmd[1:]], **kw)):
+            r = _real_run(["glab", "api", "user"])
+        self.assertEqual(r.returncode, G.TIMED_OUT)
+        self.assertIn("did not answer within 0.3 seconds", r.stderr)
+
+    def test_a_post_that_ran_out_of_time_says_it_may_have_gone_through(self):
+        from unittest import mock
+        with mock.patch.object(G, "run", return_value=self.subprocess.CompletedProcess([], G.TIMED_OUT, "", "late")), \
+                mock.patch.object(G, "die", side_effect=SystemExit) as die, self.assertRaises(SystemExit):
+            G.api_post("projects/x/notes", {"body": "b"})
+        self.assertIn("may or may not have gone through", die.call_args.args[0])
+
+    def test_git_has_no_limit(self):
+        from unittest import mock
+        with mock.patch.object(G.subprocess, "run") as run:
+            _real_run(["git", "status"])
+        self.assertIsNone(run.call_args.kwargs["timeout"])
 
 
 class TestMrView(unittest.TestCase):

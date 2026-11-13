@@ -14,8 +14,22 @@ from urllib.parse import quote
 from lib.cli import die
 
 
-def run(cmd):
-    return subprocess.run(cmd, capture_output=True, text=True)
+# How long a GitLab call may take before it counts as failed, in seconds. Without a limit a
+# call that never answers (a network gone, a VPN half up) held a view, a press or the mod's
+# update check for good, and nothing on screen said why.
+GLAB_TIMEOUT = 60
+TIMED_OUT = 124       # the exit status a call that ran out of time is given, as timeout(1) does
+
+
+def run(cmd, input=None):
+    """`cmd`'s result, its output as text. A `glab` call that runs out of time comes back as a
+    failure (`TIMED_OUT`) that says so, which every caller already handles."""
+    timeout = GLAB_TIMEOUT if cmd and cmd[0] == "glab" else None
+    try:
+        return subprocess.run(cmd, capture_output=True, text=True, input=input, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        return subprocess.CompletedProcess(
+            cmd, TIMED_OUT, "", f"GitLab did not answer within {GLAB_TIMEOUT} seconds")
 
 
 def remote_url():
@@ -106,7 +120,12 @@ def api_post(endpoint, body, method="POST"):
     """
     cmd = ["glab", "api", "-X", method, "-H", "Content-Type: application/json",
            endpoint, "--input", "-"]
-    r = subprocess.run(cmd, input=json.dumps(body), capture_output=True, text=True)
+    r = run(cmd, input=json.dumps(body))
+    if r.returncode == TIMED_OUT:
+        # A write that ran out of time may have been made all the same: posting it again could
+        # post it twice.
+        die(f"glab api {method} {endpoint}: {r.stderr} — it may or may not have gone through: "
+            "check on GitLab before trying again")
     if r.returncode != 0:
         die(f"glab api {method} {endpoint} failed: {r.stderr.strip() or r.stdout.strip()}")
     out = r.stdout.strip()

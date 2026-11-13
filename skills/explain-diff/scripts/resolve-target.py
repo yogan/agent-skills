@@ -117,9 +117,13 @@ def resolve_mr(value: str) -> dict:
     if not shutil.which("glab"):
         die("glab CLI not found. Install/auth glab to resolve MRs (see README).")
 
-    mr_result = subprocess.run(
-        ["glab", "mr", "view", num, "-F", "json"], capture_output=True, text=True
-    )
+    try:
+        # Limited: a GitLab that never answers would hold the explainer's start for good.
+        mr_result = subprocess.run(
+            ["glab", "mr", "view", num, "-F", "json"], capture_output=True, text=True, timeout=60
+        )
+    except subprocess.TimeoutExpired:
+        die(f"glab could not fetch MR !{num}: GitLab did not answer within 60 seconds")
     if mr_result.returncode != 0:
         combined = (mr_result.stdout + mr_result.stderr).strip()
         die(f"glab could not fetch MR !{num}: {combined}")
