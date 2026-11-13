@@ -208,6 +208,7 @@ that are usually thrown away.
   `scripts/` holds its Python implementation.
 - `hooks/` — cross-skill runtime infra (the paste-gate Stop hook). See
   [hooks/README.md](hooks/README.md).
+- `testbox.py` — the Linux test box the loop and commit levels run most tests in.
 - `lib/` — Python shared repo-wide (skill scripts and `e2e/` both import from it).
   Only for logic that's provably identical across its consumers, modulo a trivial
   parameter — see below.
@@ -258,6 +259,13 @@ The checks come in three levels, each paid as rarely as it can be:
 | **loop** | every edit | `run_tests.py --changed` (or a path filter), and the one scenario a change shows in |
 | **commit** | every commit, and `check_commits.py` after a rewrite | ruff, private words, the tests the commit's own change reaches |
 | **push** | once per top commit, before pushing | `check_push.py`: the commit level for every unpushed commit, the whole unit suite, the scenarios the change reaches |
+
+**Most unit tests run in the test box**, a Linux container in a Colima VM of its own
+(`testbox.py`): on this Mac the security software inspects every process and file a test makes,
+and a git-heavy test file runs about 20 times faster in Linux. The loop and commit levels use
+it; the push level runs everything on the Mac (`run_tests.py --host`), because Linux's git and
+shell tools are not the Mac's. `testbox.py` lists what runs there and why; a test file not on
+its list runs on the Mac, so put a new one on the list only once it passes there.
 
 `.githooks/pre-commit` is the commit level; `.githooks/pre-push` refuses a push whose top
 commit's tree has no recorded pass of `check_push.py`. Enable both once per clone with

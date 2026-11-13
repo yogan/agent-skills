@@ -7,6 +7,11 @@
     python3 run_tests.py compact spec  # only files whose path contains one of these
     python3 run_tests.py --slow        # fast + slow. TWO MINUTES. See below.
     python3 run_tests.py -j1           # serial, for when a parallel failure is confusing
+    python3 run_tests.py --host        # every test on the Mac: no test box (the push level)
+
+Most test files run in the test box, a Linux container (`testbox.py` says which and why), at
+the same time as the rest run here; `--host` runs them all here, which is what the push level
+does before anything is pushed.
 
 `--changed` reads the working tree against HEAD, resolves each changed module through the
 repo's own import graph, and runs every test that reaches it transitively. It declines and
@@ -52,6 +57,8 @@ import sys
 import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+
+import testbox
 
 REPO_ROOT = Path(__file__).resolve().parent
 RAN_RE = re.compile(r"Ran (\d+) tests?")
@@ -234,6 +241,27 @@ def _jobs(files, timings):
         else:
             jobs.append((path, None))
     return jobs
+
+
+def _rel(path):
+    return str(Path(path).relative_to(REPO_ROOT))
+
+
+def box_jobs(jobs):
+    """The jobs the test box takes (testbox.py), with a split file counted by its classes."""
+    return [j for j in _split_for_box(jobs) if testbox.in_box(_rel(j[0]), j[1])] \
+        if testbox.usable() else []
+
+
+def _split_for_box(jobs):
+    """A file only some of whose classes run in the box is run class by class, always."""
+    out = []
+    for path, klass in jobs:
+        if klass is None and _rel(path) in testbox.SPLIT:
+            out += [(path, name) for name in _classes(path)]
+        else:
+            out.append((path, klass))
+    return out
 
 
 def _module_index(files):
@@ -449,7 +477,7 @@ def main():
     workers = 8
     patterns = []
     for arg in args:
-        if arg in ("--slow", "--changed", "--force") or arg.startswith("--changed-since="):
+        if arg in ("--slow", "--changed", "--force", "--host") or arg.startswith("--changed-since="):
             continue
         if arg.startswith("-j"):
             try:
@@ -484,7 +512,9 @@ def main():
     # files stand in for the suite. A `--changed` run that declined IS the whole run, so it
     # reads and writes the record too: the hook's run after a full pass is then free.
     whole = not patterns and selected is None
-    fingerprint = _fingerprint("slow" if include_slow else "fast") if whole else None
+    on_host = "--host" in args
+    fingerprint = _fingerprint(("slow" if include_slow else "fast") + ("-host" if on_host else "")) \
+        if whole else None
     if not force:
         record = _cached_pass(fingerprint)
         if record:
@@ -500,8 +530,24 @@ def main():
     jobs = _jobs(files, timings)
     wall = time.monotonic()
     tmpdir = test_tmpdir()
-    with ThreadPoolExecutor(max_workers=workers) as pool:
-        results = list(pool.map(lambda job: run_one(job, tmpdir), jobs))
+    boxed = [] if on_host else box_jobs(jobs)
+    if boxed and not testbox.up():
+        boxed = []                                # no box to be had: everything on the Mac
+    if boxed:
+        jobs = _split_for_box(jobs)
+        boxed = [j for j in jobs if testbox.in_box(_rel(j[0]), j[1])]
+    here = [j for j in jobs if j not in boxed]
+    box_out = []
+    with ThreadPoolExecutor(max_workers=workers + 1) as pool:
+        box_run = pool.submit(lambda: testbox.run([(_rel(p), k) for p, k in boxed], REPO_ROOT))
+        results = list(pool.map(lambda job: run_one(job, tmpdir), here))
+        box_out = box_run.result()
+    if boxed and box_out is None:                 # the box failed to answer: run them here
+        results += [run_one(job, tmpdir) for job in boxed]
+    elif boxed:
+        results += [((REPO_ROOT / rel, klass),
+                     subprocess.CompletedProcess([rel], rc, out, err), seconds)
+                    for rel, klass, rc, out, err, seconds in box_out]
     wall = time.monotonic() - wall
 
     # Shards are reported as the one file they came from: the split is a scheduling detail,

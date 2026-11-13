@@ -25,13 +25,14 @@ scenario, `tmux-demo.sh`. A demo or driver session still open in tmux counts as 
 person trying a kept session is never frozen under their hands.
 """
 import os
-import plistlib
-import shutil
 import subprocess
 import sys
 import time
 import urllib.error
 import urllib.request
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from lib import launchd  # noqa: E402
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 CONTAINER = "e2e-gitlab"
@@ -50,7 +51,7 @@ CHECK_EVERY = 5 * 60
 BOOT_TIMEOUT = 900
 
 LABEL = "agent-skills.e2e-rig-idle"
-PLIST = os.path.expanduser(f"~/Library/LaunchAgents/{LABEL}.plist")
+PLIST = launchd.plist_path(LABEL)
 
 # Mirrors drive.py's DEMO_SESSION and its `drive-<scenario>` sessions.
 DEMO_SESSION = "agentic-review-skills-demo"
@@ -86,18 +87,11 @@ def state():
 
 
 def note_use():
-    os.makedirs(os.path.dirname(STAMP), exist_ok=True)
-    with open(STAMP, "a"):
-        pass
-    os.utime(STAMP)
+    launchd.note_use(STAMP)
 
 
 def unused_for():
-    """Seconds since the last use; never used counts as unused since forever."""
-    try:
-        return time.time() - os.path.getmtime(STAMP)
-    except OSError:
-        return float("inf")
+    return launchd.unused_for(STAMP)
 
 
 def sessions_open():
@@ -185,34 +179,13 @@ def idle(log=print):
 
 
 def plist():
-    """The idle check, as a launchd job: `idle` every CHECK_EVERY seconds, with a PATH that finds docker and
-    tmux (launchd starts its jobs with almost none)."""
-    dirs = []
-    for tool in ("docker", "tmux", "colima"):
-        found = shutil.which(tool)
-        if found and os.path.dirname(found) not in dirs:
-            dirs.append(os.path.dirname(found))
-    return {
-        "Label": LABEL,
-        "ProgramArguments": [sys.executable, os.path.abspath(__file__), "idle"],
-        "StartInterval": CHECK_EVERY,
-        "RunAtLoad": True,
-        "EnvironmentVariables": {"PATH": ":".join(dirs + ["/usr/bin", "/bin"])},
-        "StandardOutPath": LOG,
-        "StandardErrorPath": LOG,
-    }
+    """The idle check, as a launchd job: `idle` every CHECK_EVERY seconds."""
+    return launchd.plist(LABEL, [os.path.abspath(__file__), "idle"], CHECK_EVERY, LOG,
+                         ("docker", "tmux", "colima"))
 
 
 def install():
-    os.makedirs(os.path.dirname(LOG), exist_ok=True)
-    os.makedirs(os.path.dirname(PLIST), exist_ok=True)
-    domain = f"gui/{os.getuid()}"
-    subprocess.run(["launchctl", "bootout", domain, PLIST], capture_output=True)
-    with open(PLIST, "wb") as fh:
-        plistlib.dump(plist(), fh)
-    r = subprocess.run(["launchctl", "bootstrap", domain, PLIST], capture_output=True, text=True)
-    if r.returncode:
-        print(r.stderr.strip(), file=sys.stderr)
+    if not launchd.install(plist()):
         return 1
     print(f"installed {PLIST}: pauses {CONTAINER} after {PAUSE_AFTER // 60} min unused, stops "
           f"it after {STOP_AFTER // 3600} h; log {LOG}")
@@ -220,10 +193,7 @@ def install():
 
 
 def uninstall():
-    subprocess.run(["launchctl", "bootout", f"gui/{os.getuid()}", PLIST], capture_output=True)
-    if os.path.exists(PLIST):
-        os.remove(PLIST)
-    print(f"removed {PLIST}")
+    print(f"removed {launchd.uninstall(LABEL)}")
     return 0
 
 

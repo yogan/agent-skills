@@ -14,7 +14,8 @@ every loop (CLAUDE.md, "Testing"):
   * **commit** — the commit hook, and `check_commits.py` after a rewrite: ruff, private words,
     the tests each commit's own change reaches;
   * **push**   — this: the commit level for every unpushed commit, the whole unit suite on the
-    top commit, and the recorded scenarios the change can reach (`e2e/drive.py verify`).
+    top commit on the Mac itself (no test box), and the recorded scenarios the change can
+    reach (`e2e/drive.py verify`).
 
 A pass is recorded against the top commit's TREE, so an amend that changes nothing, or a
 second run, is free; and after an amend that does change something, the scenarios are picked
@@ -218,7 +219,8 @@ def main(argv):
         return 0
 
     ok = run("every unpushed commit, commit level", [sys.executable, "check_commits.py", base])
-    ok = run("the whole unit suite", [sys.executable, "run_tests.py"]) and ok
+    # On the Mac, every file: the test box is Linux, and this is the one run in the real thing.
+    ok = run("the whole unit suite, on the Mac", [sys.executable, "run_tests.py", "--host"]) and ok
     if picked:
         ok = run(f"{len(picked)} scenario(s)",
                  [sys.executable, "e2e/drive.py", "verify", *picked]) and ok

@@ -8,4 +8,5 @@ e2e/.runs/
 .run_tests_passed.json
 .check_push_passed.json
 .run_tests_tmpdir
+/.cache/
 .DS_Store
