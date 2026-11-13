@@ -177,6 +177,35 @@ class TestItDeclinesRatherThanGuess(unittest.TestCase):
         self.assertIn("nothing changed", note)
 
 
+class TestADocumentIsReadWhereCodeNamesIt(unittest.TestCase):
+    """A document's name in a docstring or a comment is prose about it, not a read: counted,
+    a CLAUDE.md edit selected the tests of the eight modules whose docstrings cite it."""
+
+    def readers(self, rel, sources):
+        with tempfile.TemporaryDirectory() as d:
+            files = set()
+            for name, text in sources.items():
+                path = Path(d) / name
+                path.write_text(text)
+                files.add(path)
+            return sorted(p.name for p in rt._readers(rel, files))
+
+    def test_only_code_that_uses_the_name_reads_a_document(self):
+        sources = {
+            "cites.py": '"""See NOTES.md on why."""\n# and NOTES.md again\nx = 1\n',
+            "reads.py": 'def f():\n    """Checks the notes."""\n    return open("docs/NOTES.md").read()\n',
+            "formats.py": 'def g(d):\n    return f"{d}/NOTES.md"\n',
+        }
+        self.assertEqual(self.readers("docs/NOTES.md", sources), ["formats.py", "reads.py"])
+
+    def test_any_other_file_is_still_read_wherever_it_is_named(self):
+        """A spec or a shell view, cited in a comment, may be what the code runs: kept."""
+        self.assertEqual(self.readers("view.sh", {"a.py": "# runs view.sh\nx = 1\n"}), ["a.py"])
+
+    def test_a_file_that_does_not_parse_counts_as_naming_it(self):
+        self.assertEqual(self.readers("NOTES.md", {"broken.py": '"""NOTES.md"""\ndef (\n'}), ["broken.py"])
+
+
 class TestIsolation(unittest.TestCase):
     def test_no_test_sees_the_session_that_runs_the_suite(self):
         seen = {}

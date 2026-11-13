@@ -289,7 +289,8 @@ run less:
   graph and runs every test that reaches them. Touching `lib/gitlab.py` runs 4 files in 1s;
   touching `lib/diagram/palette.py` runs 21, because that is genuinely how far it reaches. A
   non-Python file counts as a change to every Python file that names it (a SKILL.md, a JSON
-  spec), and a mod's files select `mods/test_mods.py`. A document nothing names (a README, a
+  spec), a document only where the code uses its name, not where a comment or docstring cites
+  it; and a mod's files select `mods/test_mods.py`. A document nothing names (a README, a
   picture) selects nothing. It **declines and runs everything** whenever it cannot map any
   other changed file, since a selector that quietly skips the failing test is worse than a
   slow one. `--changed-since=REV` selects by the difference from REV instead. `test_run_tests.py` exists to pin

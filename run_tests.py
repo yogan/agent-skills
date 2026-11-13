@@ -445,13 +445,35 @@ def _readers(rel, files):
         if bridge in files:
             out.add(bridge)
     name = re.compile(r"(?<![\w.-])" + re.escape(Path(rel).name) + r"(?![\w-])")
+    # A document is read where the code names it in a string it uses (a test opening a
+    # SKILL.md); its name in a comment or a docstring is prose about it, and counted, it made
+    # a CLAUDE.md edit select every test of eight modules whose docstrings cite it.
+    is_doc = Path(rel).suffix.lower() in DOCS
     for path in files:
         try:
-            if name.search(path.read_text(encoding="utf-8", errors="replace")):
-                out.add(path)
+            text = path.read_text(encoding="utf-8", errors="replace")
         except OSError:
             continue
+        if name.search(text) and (not is_doc or any(name.search(x) for x in _code_strings(text))):
+            out.add(path)
     return out
+
+
+def _code_strings(text):
+    """The string constants a module's code uses: docstrings and comments left out. A file
+    that does not parse gives its whole text, so it is never read as naming less."""
+    try:
+        tree = ast.parse(text)
+    except SyntaxError:
+        return [text]
+    docs = set()
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
+            body = node.body
+            if body and isinstance(body[0], ast.Expr) and isinstance(body[0].value, ast.Constant):
+                docs.add(id(body[0].value))
+    return [n.value for n in ast.walk(tree)
+            if isinstance(n, ast.Constant) and isinstance(n.value, str) and id(n) not in docs]
 
 
 # Documents: prose and pictures for people. One a test names (a SKILL.md, an icon table) selects
