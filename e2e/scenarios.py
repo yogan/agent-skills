@@ -240,7 +240,7 @@ SCENARIOS = [
 
     Scenario(
         "rework-rounds", "MR !3: the plan pass, two plans agreed with a press and a reply instead of the third", WORK,
-        needs_rig=True, mods=[MOD], steps=[
+        needs_rig=True, mods=[MOD], fast_check=True, steps=[
             # The reviewer has approved meanwhile; the sidebar's heading says so once the
             # update check has run, which it does on its first tick of the review.
             Check(f"{NEWS} approve", r"approved"),
@@ -266,19 +266,19 @@ SCENARIOS = [
 
     Scenario(
         "rework-fix", "MR !3: a fix pushed and resolved, a fix pushed and replied to, a reply instead of a fix, the merge", WORK,
-        needs_rig=True, mods=[MOD], steps=[*REWORK_FIX]),
+        needs_rig=True, mods=[MOD], fast_check=True, steps=[*REWORK_FIX]),
 
     Scenario(
         "try-pushed-fix", "MR !3 up to t1's pushed fix in four files, for a person to try (--keep)", WORK,
-        needs_rig=True, mods=[MOD], recording="rework-fix", steps=REWORK_FIX[:21]),
+        needs_rig=True, mods=[MOD], fast_check=True, recording="rework-fix", steps=REWORK_FIX[:21]),
 
     Scenario(
         "rework-twice", "MR !3: t1 fixed again after t2's push, two pushes on its card, the sidebar and its reply", WORK,
-        needs_rig=True, mods=[MOD], steps=[*REWORK_TWICE]),
+        needs_rig=True, mods=[MOD], fast_check=True, steps=[*REWORK_TWICE]),
 
     Scenario(
         "try-pushed-twice", "MR !3 up to t1's second push, t2's between, for a person to try (--keep)", WORK,
-        needs_rig=True, mods=[MOD], recording="rework-twice", steps=REWORK_TWICE[:TRY_TWICE]),
+        needs_rig=True, mods=[MOD], fast_check=True, recording="rework-twice", steps=REWORK_TWICE[:TRY_TWICE]),
 
     Scenario(
         "try-scrolling", "MR !4: every sidebar area with more than it shows, beside ones that fit, for a person to try (--keep)",

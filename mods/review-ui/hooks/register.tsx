@@ -103,6 +103,10 @@ const SMALL_MOST = 10
 // person's own review is open, so their comments come in as they post them).
 const TICK_MS = 30_000
 const CHECK_TICKS = 6
+// The tick in use: REVIEW_UI_TICK_MS replaces it when set, read once as a session starts. A
+// recorded e2e run sets it to seconds, so a step waiting for the update check does not sit
+// out the minutes a person's session waits.
+let tickMs = TICK_MS
 // What the band says while the person's `check now` runs.
 const CHECKING = 'checking GitLab'
 // The background of the lines a comment is about: a muted blue, under which every syntax
@@ -310,7 +314,7 @@ const check = async ($: EngineInterface) => {
     else await startJudging($, s, r)   // one the last check could not start, a turn ran
     const now = await $.clock.now()
     const left = r.own_review === 'pending' || (isFirst && !(await read($, checks)).last) ? 1 : CHECK_TICKS - (n % CHECK_TICKS)
-    await update($, checks, c => ({ ...c, next: now + left * TICK_MS }))
+    await update($, checks, c => ({ ...c, next: now + left * tickMs }))
   } catch {
     // the next period tries again
   }
@@ -1613,7 +1617,9 @@ export const register: Register = on => {
     // while the person's own review is open (their comments show in the sidebar as they
     // post them), every 3 minutes otherwise; never while a turn runs, since the model's
     // own commands write the same state file.
-    $.clock.every(TICK_MS, () => { void check($) })
+    const tick = Number(await $.env.get('REVIEW_UI_TICK_MS'))
+    if (tick > 0) tickMs = tick
+    $.clock.every(tickMs, () => { void check($) })
     await $.tool.register({
       name: SHOW_TOPIC,
       description:

@@ -203,6 +203,10 @@ class Scenario:
     allow: tuple = VERIFY_ALLOW
     needs_rig: bool = False     # the local GitLab must be up and reset (tmux-demo.sh --check)
     recording: str = ""         # another scenario's recording to play, where this one is a part of it
+    # The mod's update check every 12 s instead of every 3 minutes, for a scenario whose steps
+    # wait for what it brings in. Only where its recording was made with it: the check judges
+    # news with the model, and a recording made without that has no answer for it.
+    fast_check: bool = False
 
 
 class StepFailed(Exception):
@@ -458,6 +462,8 @@ def claude_command(sc, model, verify, plugins=(), mock=None):
     env = dict(mock[0]) if mock else {}
     if verify:
         env["REVIEW_UI_NO_OPEN"] = "1"   # a verify run opens nothing: no explainer in a browser
+    if verify and sc.fast_check:
+        env["REVIEW_UI_TICK_MS"] = "2000"      # see Scenario.fast_check
     prefix = "env " + " ".join(f"{k}={shlex.quote(v)}" for k, v in env.items()) + " " if env else ""
     return prefix + shlex.join(argv)
 
