@@ -343,7 +343,7 @@ const wrapLine = (line: string, width: number): string[] => {
 // (views.ts's `withSuggestions`, given the file); `isOpen` says which blocks the person opened.
 export const boxRowsOf = (
   bodies: string[], width: number, keyOf: (note: number, block: number) => string,
-  isOpen: (key: string) => boolean, suggest: (block: string) => string, ext: string,
+  isOpen: (key: string, byDefault: boolean) => boolean, suggest: (block: string) => string, ext: string,
 ): BoxRow[] => {
   const rows: BoxRow[] = []
   bodies.forEach((body, i) => {
@@ -370,7 +370,10 @@ export const boxRowsOf = (
       const code = lines.slice(j + 1, close)
       const key = keyOf(i, block)
       block += 1
-      const shown = isOpen(key)
+      // A suggestion that is the whole comment is what the comment says: open, until folded.
+      // One beside prose stays folded, the prose saying what it is about.
+      const isWhole = isSuggestion && lines.every((ln, k) => (k >= j && k <= close) || !ln.trim())
+      const shown = isOpen(key, isWhole)
       const lang = isSuggestion ? '' : info
       const label = `${shown ? '\u{F47C}' : '\u{F460}'} ${isSuggestion ? 'suggestion' : 'code'}${lang ? ` · ${lang}` : ''} · ${code.length} line${code.length === 1 ? '' : 's'}`
       rows.push({ kind: 'fold', key, label, isOpen: shown })

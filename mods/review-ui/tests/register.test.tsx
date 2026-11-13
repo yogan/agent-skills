@@ -670,6 +670,18 @@ test('a bare URL in a thread box is a short link, never broken across rows', () 
   expect((kept[1] as { text: string }).text).toBe('`https://x.example/a` and [docs](https://x.example/b)')
 })
 
+test('a comment that is only a suggestion shows it open; one beside prose stays folded, and a click folds either', () => {
+  const folds = (body: string, opened: Record<string, boolean> = {}) =>
+    boxRowsOf([body], 60, (i, b) => `k:${i}:${b}`, (k, byDefault) => opened[k] ?? byDefault, b => b, 'ts')
+      .filter(r => r.kind === 'fold').map(r => (r as { isOpen: boolean }).isOpen)
+  const only = '```suggestion\nconst a = 1\n```'
+  expect(folds(only)).toEqual([true])
+  expect(folds(`\n${only}\n\n`)).toEqual([true])
+  expect(folds(`Maybe so:\n\n${only}`)).toEqual([false])
+  expect(folds('```ts\nconst a = 1\n```')).toEqual([false])           // code, not a suggestion
+  expect(folds(only, { 'k:0:0': false })).toEqual([false])               // folded by a click
+})
+
 test("a comment's GitLab emoji shortcodes are drawn as the emoji; code and unknown ones are left as written", () => {
   expect(withEmoji('good catch :ok_hand: :+1:')).toBe('good catch 👌 👍')
   expect(withEmoji('keep `:ok_hand:` and :no_such_one:')).toBe('keep `:ok_hand:` and :no_such_one:')

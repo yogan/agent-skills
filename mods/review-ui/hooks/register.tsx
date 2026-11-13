@@ -2133,7 +2133,7 @@ export const register: Register = on => {
     const ext = (code?.view.file ?? '').split('.').pop() ?? ''
     const rowsAt = (width: number): BoxRow[] => isOpen && !findingRow && notes.length > 0
       ? boxRowsOf(notes.map(n => withEmoji(n.body ?? '')), Math.max(8, width), (i, b) => `${openKey}:${i}:${b}`,
-        k => opened[k] === true, blk => withSuggestions(blk, code?.view.file, anchor, fileLines), ext)
+        (k, byDefault) => opened[k] ?? byDefault, blk => withSuggestions(blk, code?.view.file, anchor, fileLines), ext)
       : []
     let openRows = rowsAt(inner - 1)
     // `tag`: the keys' prefix, one per area drawing such rows: the thread box and the comments
@@ -2187,7 +2187,7 @@ export const register: Register = on => {
     const mrComments = isReview ? [] : (r.mr_comments ?? [])
     const mrAt = (width: number) => mrComments.length > 0
       ? boxRowsOf(mrComments.map(n => withEmoji(n.body ?? '')), Math.max(8, width), (i, b) => `mr:${i}:${b}`,
-        k => opened[k] === true, blk => blk, '')
+        (k, byDefault) => opened[k] ?? byDefault, blk => blk, '')
       : []
     let mrFull = mrAt(cols)
     if (mrFull.length > smallCap) mrFull = mrAt(cols - BAR)
@@ -2593,7 +2593,7 @@ export const register: Register = on => {
     // place, as a thread box draws it, scrolling inside its area where it is taller.
     const freeAt = (width: number) => !code && notes.length > 0
       ? boxRowsOf(notes.map(n => withEmoji(n.body ?? '')), Math.max(8, width), (i, b) => `${openKey}:${i}:${b}`,
-        k => opened[k] === true, blk => blk, '')
+        (k, byDefault) => opened[k] ?? byDefault, blk => blk, '')
       : []
     let freeRows = freeAt(cols)
     if (freeRows.length > Math.max(1, rest - 1)) freeRows = freeAt(cols - BAR)
