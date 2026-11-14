@@ -1635,6 +1635,99 @@ class TestWorktreeCleanup(unittest.TestCase):
                              {"main": main, "path": f"{main}.wt/fix-x", "branch": "fix/x"})
 
 
+class TestCleanUpLocally(unittest.TestCase):
+    """Clean up locally, once the MR is merged: what it removes where, and what it refuses."""
+
+    FACTS = {"linked": True, "main": "/r/app", "path": "/r/app.wt/fix-x", "branch": "fix/x",
+             "state": "merged", "source": "fix/x", "target": "main", "mr_sha": "abc",
+             "tip": "abc", "dirty": False}
+
+    def plan(self, **kw):
+        return T.cleanup_plan(dict(self.FACTS, **kw))
+
+    def test_a_worktree_goes_with_its_branch_and_the_main_checkout_is_not_touched(self):
+        self.assertEqual(self.plan()["steps"], [("worktree", "remove", "/r/app.wt/fix-x"), ("branch", "-D", "fix/x")])
+
+    def test_the_main_checkout_goes_back_to_the_target_pulled(self):
+        p = self.plan(linked=False, main="/r/app", path="/r/app")
+        self.assertEqual(p["steps"], [("switch", "--quiet", "main"), ("pull", "--quiet", "--ff-only"),
+                                      ("branch", "-D", "fix/x")])
+
+    def test_a_checkout_on_another_branch_is_left_and_says_why(self):
+        for linked in (True, False):
+            p = self.plan(linked=linked, branch="feature/other", dirty=True)
+            self.assertEqual(p["steps"], [])
+            self.assertIn("feature/other", p["left"])
+
+    def test_it_refuses_while_anything_is_not_on_gitlab(self):
+        for linked in (True, False):
+            self.assertIn("uncommitted", self.plan(linked=linked, dirty=True)["refuse"])
+            self.assertIn("differs", self.plan(linked=linked, tip="def")["refuse"])
+        self.assertIn("not merged", self.plan(state="opened")["refuse"])
+
+    def test_the_main_checkout_is_cleaned_up_in_git_and_the_reviews_state_goes(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = os.path.realpath(tmp)
+            origin, main = os.path.join(tmp, "origin.git"), os.path.join(tmp, "app")
+            ident = ("-c", "user.email=t@example.com", "-c", "user.name=t")
+            for args in (("init", "-q", "--bare", "-b", "main", origin),
+                         ("clone", "-q", origin, main),
+                         ("-C", main, *ident, "commit", "-q", "--allow-empty", "-m", "one"),
+                         ("-C", main, "push", "-q", "origin", "main"),
+                         ("-C", main, "switch", "-q", "-c", "fix/x"),
+                         ("-C", main, *ident, "commit", "-q", "--allow-empty", "-m", "two"),
+                         ("-C", main, "update-ref", "refs/rework-mr/3/t1/push1", "HEAD")):
+                subprocess.run(["git", *args], check=True, capture_output=True)
+            tip = subprocess.run(["git", "-C", main, "rev-parse", "HEAD"], capture_output=True, text=True).stdout.strip()
+            state_dir = os.path.join(tmp, "state", "g-app--mr3")
+            os.makedirs(state_dir)
+            path = os.path.join(state_dir, "topics.json")
+            open(path, "w").close()
+            here = os.getcwd()
+            self.addCleanup(os.chdir, here)
+            os.chdir(main)
+            mr = {"state": "merged", "source_branch": "fix/x", "target_branch": "main", "sha": tip}
+            # Through the command, as the mod's press runs it.
+            with mock.patch.object(T, "mr_object", return_value=mr), \
+                    mock.patch.object(T, "resolve_state", return_value=({}, 3, path, {})), \
+                    mock.patch.object(T, "current_user", return_value="frank"), \
+                    mock.patch.object(T.hunk, "installed", return_value=False), \
+                    mock.patch.object(T.fix_refs, "prefix", return_value="refs/rework-mr/3/"), \
+                    mock.patch.object(sys, "argv", ["threads.py", "cleanup", "--iid", "3"]), \
+                    redirect_stdout(io.StringIO()) as out:
+                T.main()
+            said = out.getvalue()
+            self.assertIn("All cleaned up. You can close this session.", said)
+            git = lambda *a: subprocess.run(["git", "-C", main, *a], capture_output=True, text=True).stdout.strip()  # noqa: E731
+            self.assertEqual(git("branch", "--show-current"), "main")
+            self.assertEqual(git("branch", "--list", "fix/x"), "")
+            self.assertEqual(git("for-each-ref", "refs/rework-mr/"), "")
+            self.assertFalse(os.path.exists(state_dir))
+
+
+class TestTheMergeWatched(unittest.TestCase):
+    """The merge pressed, as each update check finds it."""
+
+    def test_a_failure_found_later_is_kept_with_gitlabs_reason(self):
+        state = {"merge": {"how": "merge", "sha": "abc", "error": None}}
+        T.watch_merge(state, {"state": "opened", "sha": "abc", "merge_error": "Merge conflicts"})
+        self.assertEqual(state["merge"]["error"], "Merge conflicts")
+
+    def test_a_push_since_or_auto_merge_taken_off_offers_the_merge_again(self):
+        state = {"merge": {"how": "merge", "sha": "abc"}}
+        T.watch_merge(state, {"state": "opened", "sha": "def"})
+        self.assertNotIn("merge", state)
+        state = {"merge": {"how": "auto", "sha": "abc"}}
+        T.watch_merge(state, {"state": "opened", "sha": "abc", "merge_when_pipeline_succeeds": False})
+        self.assertNotIn("merge", state)
+
+    def test_auto_merge_waiting_and_a_merged_mr_keep_it(self):
+        state = {"merge": {"how": "auto", "sha": "abc"}}
+        T.watch_merge(state, {"state": "opened", "sha": "abc", "merge_when_pipeline_succeeds": True})
+        self.assertIn("merge", state)
+        T.watch_merge(state, {"state": "merged", "sha": "zzz"})
+        self.assertIn("merge", state)
+
 class TestWhereTheModDraws(unittest.TestCase):
     """lib/ui.py, rework-mr's side: the shared state words, the opener without the table,
     and the state the review-ui panel reads."""

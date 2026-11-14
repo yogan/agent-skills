@@ -112,7 +112,7 @@ from lib import code_view, critical_manifest, diffsize, fix_refs, focus, hunk, p
 from lib.fences import (LINK_ICON, SUGGESTION_INFO, YOU, block_lang, fence, suggestion_reach,  # noqa: E402
                         diff_info, lang_for, note_md, quoted_fence, segments,
                         suggestion_diff, when_of)
-from lib.gitlab import (api, api_post, context, current_user, die, file_at, mr_base, remember_user,  # noqa: E402
+from lib.gitlab import (api, api_post, approve, context, current_user, die, file_at, mr_base, remember_user,  # noqa: E402
                         mr_head, mr_object, mr_status, mr_view, versions, web_base)
 from lib.mr_common import (DEFAULT_LANG, LANG_GIVEAWAYS, MR_LEVEL, TOPIC_ICON, first_name, people,  # noqa: E402
                            hold, load, mr_json, mr_news, topic_handles, loc_md, num, plain_text, reads_as,
@@ -3464,6 +3464,8 @@ def main():
                    "that needs them becomes current, or none").add_argument("--iid", type=int)
     sub.add_parser("refresh", help="sync quietly and print the state as JSON (the mod's "
                    "update check)").add_argument("--iid", type=int)
+    sub.add_parser("approve-mr", help="on a person's press only: approve the MR on GitLab, "
+                   "then print the state as JSON").add_argument("--iid", type=int)
     pn = sub.add_parser("open", help="on a press: move the review worktree to the MR's newest "
                         "push and start a round, at <t> or the first topic that needs you")
     pn.add_argument("topic", nargs="?")
@@ -4057,6 +4059,14 @@ def main():
             state["mr_status"] = status
             keep_author_fixes(state, get_worktree(state.get("slug") or ctx["slug"], iid), iid)
         state["diff_base"] = base or state.get("diff_base")
+        save(path, state)
+        print(json.dumps(state_json(state)))
+    elif cmd == "approve-mr":
+        # The Done box's Approve, once every topic is settled: the person's press alone.
+        why = approve(ctx, iid)
+        if why:
+            die(f"GitLab did not take the approval: {why}")
+        state["mr_status"] = mr_status(ctx, iid, me)
         save(path, state)
         print(json.dumps(state_json(state)))
     elif cmd == "open":

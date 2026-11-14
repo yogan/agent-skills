@@ -147,9 +147,18 @@ REWORK_FIX = [
             Click("\U000f0156"),
             Check(thread_on("updateDiscussion.ts", 'len(d["notes"]), d["notes"][-1]["author"]["username"]'),
                   r"^2 frank$"),
-            # The MR merged meanwhile: the sidebar says so once the update check has run.
-            Check(f"{NEWS} merge", r"merged"),
-            Expect(r"[Mm]erged", region="panel", wait=240),
+            # The reviewer settles the threads that wait on them and approves: every topic is
+            # settled, and the box takes the MR to its end, each step a press with no turn.
+            Check(f"{NEWS} settle", r"resolved its threads"),
+            Expect(button('Merge'), region="panel", wait=240),
+            press('Merge', region="panel"),
+            Expect(r"You merged the MR", region="panel", wait=60),
+            Expect(button('Clean up locally'), region="panel"),
+            Check("glab api 'projects/demo%2Fbulletproof-react/merge_requests/3'"
+                  " | python3 -c 'import json,sys; print(json.load(sys.stdin)[\"state\"])'", r"^merged$"),
+            press('Clean up locally', region="panel"),
+            Expect(r"All cleaned up\. You can close this session\.", region="panel", wait=60),
+            Check("git branch --show-current", r"^main$"),
 ]
 
 # The same MR, with t1 asked for more after its push, t2's push between: t1's second fix is a

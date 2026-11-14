@@ -4,6 +4,7 @@ this, unlike the two skills' own rendering/state logic, moved here wholesale.
 
 Run: `python3 lib/test_gitlab.py` (stdlib only).
 """
+import json
 import os
 import sys
 import unittest
@@ -13,6 +14,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from lib import gitlab as G
 
 _real_run = G.run
+_real_mr_object = G.mr_object
 
 
 def fake_result(returncode=0, stdout="", stderr=""):
@@ -187,6 +189,58 @@ class TestVersions(unittest.TestCase):
         self.assertEqual(out, [{"id": 2}, {"id": 1}])
         self.assertIn("--paginate", seen["cmd"])
         self.assertTrue(any("merge_requests/7/versions" in c for c in seen["cmd"]))
+
+
+
+class TestTheEndOfTheMr(unittest.TestCase):
+    """What the Done box's merge and approval read from GitLab and send to it."""
+
+    def setUp(self):
+        G.mr_object = _real_mr_object     # other tests here leave a stand-in behind
+
+    def tearDown(self):
+        G.run = _real_run
+
+    def test_a_pipeline_is_running_until_it_passed_or_failed(self):
+        of = lambda status: G.pipeline_of({"head_pipeline": {"status": status, "web_url": "u"}})  # noqa: E731
+        self.assertEqual(of("running"), {"status": "running", "url": "u"})
+        self.assertEqual(of("manual")["status"], "running")
+        self.assertEqual(of("success")["status"], "passed")
+        self.assertEqual(of("canceled")["status"], "failed")
+        self.assertIsNone(G.pipeline_of({"head_pipeline": None}))
+
+    def test_gitlabs_reason_is_its_message(self):
+        self.assertEqual(G.refusal_of(fake_result(1, '{"message":"405 Method Not Allowed"}', "glab: 405 (HTTP 405)")),
+                         "405 Method Not Allowed")
+        self.assertEqual(G.refusal_of(fake_result(1, '{"message":{"sha":["does not match"]}}')), "sha does not match")
+        self.assertEqual(G.refusal_of(fake_result(1, "", "glab: connection refused\nmore")), "connection refused")
+
+    def merged(self, mr):
+        sent = []
+
+        def fake_run(cmd, input=None):
+            if "-X" in cmd:
+                sent.append((cmd[cmd.index("-X") + 1], cmd[-3], json.loads(input)))
+                return fake_result(stdout="{}")
+            return fake_result(stdout=json.dumps(mr))
+        G.run = fake_run
+        return G.merge({"enc": "g%2Fp"}, 3), sent
+
+    def test_merge_follows_the_mrs_own_settings_on_the_head_it_was_asked_on(self):
+        (how, why), sent = self.merged({"sha": "abc", "squash": True, "force_remove_source_branch": True})
+        self.assertEqual((how, why), ("merge", None))
+        self.assertEqual(sent, [("PUT", "projects/g%2Fp/merge_requests/3/merge",
+                                 {"sha": "abc", "squash": True, "should_remove_source_branch": True})])
+
+    def test_a_running_pipeline_sets_auto_merge_instead(self):
+        (how, _), sent = self.merged({"sha": "abc", "head_pipeline": {"status": "running"}})
+        self.assertEqual(how, "auto")
+        self.assertTrue(sent[0][2]["auto_merge"] and sent[0][2]["merge_when_pipeline_succeeds"])
+
+    def test_a_refused_merge_says_gitlabs_reason(self):
+        G.run = lambda cmd, input=None: (fake_result(1, '{"message":"Branch cannot be merged"}') if "-X" in cmd
+                                         else fake_result(stdout='{"sha": "abc"}'))
+        self.assertEqual(G.merge({"enc": "g%2Fp"}, 3), ("merge", "Branch cannot be merged"))
 
 
 if __name__ == "__main__":

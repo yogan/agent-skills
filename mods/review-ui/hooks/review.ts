@@ -60,6 +60,11 @@ export type Press =
   | { kind: 'settle'; thread: string; how: 'merge' | 'separate' | 'link'; into: string }
   // Whether to generate an explainer for the MR, answering the agent's recommendation.
   | { kind: 'explainer'; how: 'skip' | 'generate' }
+  // The end of the MR, from the Done box: rework-mr merges (or sets auto-merge while the
+  // pipeline runs) and cleans up locally once merged; review-mr approves.
+  | { kind: 'merge-mr' }
+  | { kind: 'cleanup' }
+  | { kind: 'approve-mr' }
 
 export type BandButton = { key: string; label: string; press: Press; isPrimary?: true }
 
@@ -185,6 +190,11 @@ const ICON: Record<string, string> = {
   'Show sidebar': '\u{F06FE}', // md-page_layout_sidebar_right
   'Skip explainer': '\u{F04AD}', // md-skip_next
   'My review is done': '\u{F0BE2}', // md-account_check_outline
+  'Merge': '\u{F062D}', // md-source_merge
+  'Set to auto-merge': '\u{F051F}', // md-timer_sand, the auto-merge mark's
+  'Clean up locally': '\u{F00E2}', // md-broom
+  'Approve': '\u{F0514}', // md-thumb_up_outline, the approval mark's
+  'Analyze CI failure': '\u{F0EAF}', 'Analyze failed merge': '\u{F0EAF}', // md-text_box_search_outline
 }
 
 export const iconOf = (label: string): string | undefined =>
@@ -576,6 +586,12 @@ export const argsFor = (press: Press, topic: string, card: ReviewCard | null): s
       return ['merge', press.into, topic]
     case 'explainer':
       return ['explainer', '--choose', press.how]
+    case 'merge-mr':
+      return ['merge-mr']
+    case 'cleanup':
+      return ['cleanup']
+    case 'approve-mr':
+      return ['approve-mr']
     case 'leave':
     case 'next':
     case 'keep-waiting':
@@ -710,6 +726,81 @@ export const waitingOf = (review: ReviewState | null): { count: number; who: str
   }
 }
 
+// The end of the MR, as the Done box's last line says it: what is happening, or what is
+// missing, and the one press that takes it on where there is one. `tone`: `busy` while
+// GitLab works on it, `needs` where something failed, `info` otherwise.
+export type EndLine = { text: string; tone: 'info' | 'busy' | 'needs'; button?: BandButton }
+
+// The prompts of the two analyses: each a turn of the model's, started by its press.
+export const CI_PROMPT = "The MR's pipeline failed. Find the failing job, read its log, say what broke and why, " +
+  'and propose a fix. If this project has a skill of its own for CI failures, use it; otherwise use ' +
+  '`glab ci view` and the job logs. A fix goes the usual way: shown to me and checked first, then ' +
+  'committed as a commit of its own and pushed only on my word.'
+export const MERGE_PROMPT = 'Merging the MR failed. Look at the failed merge on GitLab, analyse why it failed, ' +
+  'and recommend what to do.'
+
+// What GitLab's `detailed_merge_status` says is missing, where it is not something the line
+// says on its own (approvals, the pipeline). Anything else: GitLab's own word, spaced.
+const MERGE_MISSING: Record<string, string> = {
+  conflict: 'Has conflicts', need_rebase: 'Needs a rebase', draft_status: 'Still a draft',
+  discussions_not_resolved: 'Threads still open on GitLab', blocked_status: 'Blocked by another MR',
+  checking: 'GitLab is checking it', unchecked: 'GitLab is checking it', preparing: 'GitLab is checking it',
+  ci_must_pass: 'Needs a passing pipeline', ci_still_running: 'Waits for the pipeline',
+  not_approved: 'Waits for approval', jira_association_missing: 'Needs a Jira issue',
+  requested_changes: 'Changes were requested', security_policy_violations: 'Blocked by a security policy',
+}
+
+// Approved: someone approved it, and GitLab counts no approval still missing. A project that
+// requires none still needs one here: a merge from the session follows a reviewer's yes.
+const isApproved = (mr: NonNullable<ReviewState['mr']>): boolean =>
+  (mr.approved_by?.length ?? 0) > 0 && !((mr.approvals_left ?? 0) > 0)
+
+// `settled`: every topic is settled (nothing waits on the other side). A failed pipeline, or
+// a merge that failed, is said whether or not anything still waits; the merge itself only
+// once nothing does.
+export const endOf = (review: ReviewState | null, settled: boolean): EndLine | undefined => {
+  const mr = review?.mr
+  if (!review || !mr || mr.state === 'closed') return undefined
+  if (review.skill === 'review-mr') {
+    if (mr.state !== 'opened' || !settled) return undefined
+    if (mr.approved_by?.includes('You')) return { text: 'Approved by you', tone: 'info' }
+    return { text: '', tone: 'info', button: { key: 'approve-mr', label: 'Approve', press: { kind: 'approve-mr' }, isPrimary: true } }
+  }
+  // Who merged it, and when, is the box's last step line: the press alone here.
+  if (mr.state === 'merged') {
+    return { text: '', tone: 'info', button: { key: 'cleanup', label: 'Clean up locally', press: { kind: 'cleanup' }, isPrimary: true } }
+  }
+  const m = mr.merge
+  const failed = m?.error ?? null
+  if (failed) {
+    return { text: `Merge failed: ${failed}`, tone: 'needs', button: { key: 'analyze-merge', label: 'Analyze failed merge', press: ask(MERGE_PROMPT), isPrimary: true } }
+  }
+  if (mr.pipeline?.status === 'failed') {
+    return { text: 'Pipeline failed', tone: 'needs', button: { key: 'analyze-ci', label: 'Analyze CI failure', press: ask(CI_PROMPT), isPrimary: true } }
+  }
+  if (!settled) return undefined
+  if (mr.auto_merge) return { text: 'Waits for the pipeline', tone: 'busy' }
+  if (m?.how === 'merge') return { text: 'Merging…', tone: 'busy' }
+  if (!isApproved(mr)) return { text: 'Waits for approval', tone: 'info' }
+  if (mr.can_merge === false) return { text: 'You may not merge it', tone: 'info' }
+  if (mr.pipeline?.status === 'running') {
+    return { text: '', tone: 'info', button: { key: 'merge-mr', label: 'Set to auto-merge', press: { kind: 'merge-mr' }, isPrimary: true } }
+  }
+  if (mr.merge_status === 'mergeable') {
+    return { text: '', tone: 'info', button: { key: 'merge-mr', label: 'Merge', press: { kind: 'merge-mr' }, isPrimary: true } }
+  }
+  const s = mr.merge_status ?? ''
+  return s ? { text: MERGE_MISSING[s] ?? `${s[0]?.toUpperCase()}${s.slice(1).replaceAll('_', ' ')}`, tone: 'info' } : undefined
+}
+
+// Whether the update check watches the merge: GitLab is asked every tick while it merges or
+// waits for the pipeline, so the box's line follows it.
+export const isMergeWatched = (review: ReviewState | null): boolean => {
+  const mr = review?.mr
+  return review?.skill === 'rework-mr' && mr?.state === 'opened' && !mr.merge?.error
+    && (mr.merge?.how === 'merge' || (!!mr.merge && !!mr.auto_merge))
+}
+
 // What the band says while the review waits and the sidebar, which says more, is closed.
 export const waitingLine = (w: { count: number; who: string }): string =>
   w.count > 0
@@ -728,7 +819,8 @@ export const waitingLine = (w: { count: number; who: string }): string =>
 // `tone`: `needs` (theirs to act on, yellow), `busy` (being judged), `info` (dim).
 // `kind`: what a line only to know of is about (a push, an approval…), drawn as its icon, plain
 // (panel.ts's `INBOX_ICON`); a line that needs the person, or is being judged, has its mark.
-export type InboxLine = { tone: 'needs' | 'busy' | 'info'; what: string; topic?: string; url?: string; size?: string; kind?: string }
+// `at`: when it happened, where a reliable time exists, drawn first as a card's step is.
+export type InboxLine = { tone: 'needs' | 'busy' | 'info'; what: string; topic?: string; url?: string; size?: string; kind?: string; at?: string | null }
 export type Inbox = { lines: InboxLine[]; more: number; count: number; hasNews: boolean; since: string | null; first: string | null; button: string | null }
 
 // Topic lines shown before the rest are summed up as "+n more": the sidebar lists them all.
@@ -786,7 +878,7 @@ export const inboxOf = (review: ReviewState | null, judging: { topics: string[];
   for (const id of left?.left ?? []) topicLine(id, 'left it open as the MR closed')
   for (const id of left?.drafts ?? []) info.push({ tone: 'info', topic: id, kind: 'draft', what: 'its draft was never posted' })
   // The MR's own news, in the order it happened. Auto-merge once the MR merged is no news;
-  // who merged or closed it is the box's title.
+  // who merged or closed it is the box's last line.
   const isMerged = (box.mr ?? []).some(m => m.kind === 'merged')
   const timeline: { at: string; line: InboxLine }[] = [
     // Every push, dim: what it did to the MR in a few words. One that left the code as it was,
@@ -801,10 +893,16 @@ export const inboxOf = (review: ReviewState | null, judging: { topics: string[];
       return { at: p.at, line: {
         tone: 'info' as const, kind: p.rebase ? 'rebase' : 'push', url: isSame || isRebaseOnly ? undefined : p.url ?? undefined,
         size: what || p.rebase ? undefined : p.stat?.replace(/`/g, '') || undefined,
-        what: `${author} ${p.rebase ? 'rebased' : 'pushed'} ${clockOf(p.at)}${what ? ` · ${what}` : ''}${p.topics.length ? ` · touches ${p.topics.join(', ')}` : ''}` } }
+        at: p.at, what: `${author} ${p.rebase ? 'rebased' : 'pushed'}${what ? ` · ${what}` : ''}${p.topics.length ? ` · touches ${p.topics.join(', ')}` : ''}` } }
     }),
     ...(box.mr ?? []).filter(m => m.kind === 'approved' || (m.kind === 'auto-merge' && !isMerged)).map(m => ({ at: m.at, line: {
-      tone: 'info' as const, kind: m.kind, what: m.kind === 'approved' ? `${m.by ?? 'someone'} approved the MR ${clockOf(m.at)}` : `auto-merge set ${clockOf(m.at)}` } })),
+      tone: 'info' as const, kind: m.kind, at: m.at, what: m.kind === 'approved' ? `${m.by ?? 'Someone'} approved the MR` : 'Auto-merge set' } })),
+    // Merged or closed, and by whom: the last of the MR's story, under the box's heading.
+    ...(review.mr?.state === 'merged' || review.mr?.state === 'closed' ? [{
+      // Without a time it still comes last.
+      at: (review.mr.state === 'merged' ? review.mr.merged_at : review.mr.closed_at) ?? '9999-12-31T00:00:00Z',
+      line: { tone: 'info' as const, kind: review.mr.state, at: review.mr.state === 'merged' ? review.mr.merged_at : review.mr.closed_at,
+        what: `${(review.mr.state === 'merged' ? review.mr.merged_by : review.mr.closed_by) ?? 'Someone'} ${review.mr.state} the MR` } }] : []),
   ]
   timeline.sort((a, b) => Date.parse(a.at) - Date.parse(b.at))
   info.push(...timeline.map(x => x.line))

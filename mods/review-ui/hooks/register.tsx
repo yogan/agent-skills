@@ -3,7 +3,7 @@ import type { EngineInterface, Register } from 'claude-code'
 
 import type { ReviewCard, ReviewHost, ReviewOutcome, ReviewJudging, ReviewNote, ReviewNotice, ReviewPlaced, ReviewSession, ReviewState } from '../types'
 import {
-  argsFor, buttonsFor, checkPrompt, hasNext, iconOf, isHeldTopic, outcomeOf, earlyPrompt, replyPrompt, clockOf, currentTopic, didText, inboxOf, noteForModel, stepOf, untilOf, waitingLine, waitingOf,
+  argsFor, buttonsFor, checkPrompt, endOf, hasNext, iconOf, isHeldTopic, isMergeWatched, outcomeOf, earlyPrompt, replyPrompt, clockOf, currentTopic, didText, inboxOf, noteForModel, stepOf, untilOf, waitingLine, waitingOf,
   type BandButton,
 } from './review.ts'
 import {
@@ -77,6 +77,9 @@ const judging = atom({ plugin: 'review-ui', key: 'judging' } as const, { agentId
 // What the person was told of already, by the notification, so each piece of news is told once.
 const notified = atom({ plugin: 'review-ui', key: 'notified' } as const, [] as string[], { shape: 'notified-1' })
 const working = atom({ plugin: 'review-ui', key: 'working' } as const, false, { shape: 'working-1' })
+// rework-mr: what Clean up locally said once it removed the review's own state. Nothing runs
+// the review's scripts after it: the box says it, and the session is done.
+const cleanedUp = atom({ plugin: 'review-ui', key: 'cleaned-up' } as const, null as string | null, { shape: 'cleaned-up-1' })
 const sidebar = atom({ plugin: 'review-ui', key: 'sidebar' } as const, { isClosedByPerson: false }, { shape: 'sidebar-1' })
 
 const explained = atom({ plugin: 'review-ui', key: 'explained' } as const, [] as string[], { shape: 'explained-1' })
@@ -133,9 +136,14 @@ const mrMarksOf = (mr: ReviewState['mr']): string[] => {
     ...(mr?.state === 'closed' ? ['closed'] : []),
     ...(!isOver && mr?.auto_merge ? ['auto-merge'] : []),
     ...(!isOver && (mr?.approved_by?.length ?? 0) > 0 ? ['approved'] : []),
+    // The head pipeline, beside the approval: nothing where the MR has none.
+    ...(!isOver && mr?.pipeline?.status ? [`pipeline-${mr.pipeline.status}`] : []),
   ]
 }
-const MR_WORD: Record<string, string> = { closed: 'MR closed', 'auto-merge': 'auto-merge set', approved: 'approved' }
+const MR_WORD: Record<string, string> = {
+  closed: 'MR closed', 'auto-merge': 'auto-merge set', approved: 'approved',
+  'pipeline-running': 'pipeline running', 'pipeline-passed': 'pipeline passed', 'pipeline-failed': 'pipeline failed',
+}
 
 // The sidebar's and the cards' own controls, which only change the view: plain, in the glyphs
 // the person picked (Nerd Fonts names beside each), one per control wherever it is drawn.
@@ -301,7 +309,7 @@ const check = async ($: EngineInterface) => {
     // Never alongside a turn or a press: both write the state, and a check started next to
     // one would only queue behind it (the scripts take turns on the state file) and draw an
     // answer older than the press. The next period checks.
-    if (!s || !r || (await read($, working)) || (await read($, busy))) return
+    if (!s || !r || (await read($, working)) || (await read($, busy)) || (await read($, cleanedUp))) return
     // A fix open in the diff viewer: the person's notes there make reading them the
     // recommended press, so the state is read again (locally; GitLab is not asked).
     if (r.hunk?.open) await refresh($, s)
@@ -312,14 +320,48 @@ const check = async ($: EngineInterface) => {
     // The first tick of a review checks at once: what changed while it waited (a push made
     // before the review was resumed) belongs in the inbox from the start.
     const isFirst = !(await read($, checks)).last
-    const isDue = r.own_review === 'pending' || isFirst || n % CHECK_TICKS === 0
+    // A merge under way is watched as closely: the box's last line follows it.
+    const isClose = r.own_review === 'pending' || isMergeWatched(r)
+    const isDue = isClose || isFirst || n % CHECK_TICKS === 0
     if (isDue) await checkNow($, s)
     else await startJudging($, s, r)   // one the last check could not start, a turn ran
     const now = await $.clock.now()
-    const left = r.own_review === 'pending' || (isFirst && !(await read($, checks)).last) ? 1 : CHECK_TICKS - (n % CHECK_TICKS)
+    const left = isClose || (isFirst && !(await read($, checks)).last) ? 1 : CHECK_TICKS - (n % CHECK_TICKS)
     await update($, checks, c => ({ ...c, next: now + left * tickMs }))
   } catch {
     // the next period tries again
+  }
+}
+
+// A press on the Done box's last line: the merge, the approval, the cleanup, each the
+// script's with no model turn; an analysis, the model's turn. What GitLab refused is said in
+// the band, as any press's failure is; a merge it refused is the box's own line.
+const pressEnd = async ($: EngineInterface, s: ReviewSession, b: BandButton) => {
+  if (b.press.kind === 'ask') {
+    await update($, notice, () => null)
+    await $.prompt.submit({ text: b.press.prompt })
+    return
+  }
+  const args = argsFor(b.press, '', null)
+  if (!args || (await read($, busy))) return
+  await update($, busy, () => b.label)
+  try {
+    const ran = await runScript($, s, args, { REVIEW_UI_PRESS: '1' })
+    if (ran.exitCode !== 0) {
+      await update($, notice, () => ({ text: lastLine(ran.stderr) || `${b.label} failed`, isError: true }))
+      return
+    }
+    if (b.press.kind === 'cleanup') {
+      await update($, cleanedUp, () => ran.stdout.trim())
+      await update($, notice, () => null)
+    } else {
+      await update($, review, () => JSON.parse(ran.stdout) as ReviewState)
+    }
+    await $.session.append({
+      message: { type: 'user', content: [{ type: 'text', text: `[review-ui] The user pressed a button: ${b.label}. ${ran.stdout.trim().startsWith('{') ? 'The sidebar shows how it stands.' : ran.stdout.trim()}` }] },
+    })
+  } finally {
+    await update($, busy, () => null)
   }
 }
 
@@ -2722,6 +2764,10 @@ export const register: Register = on => {
       ? <Text color="yellow">{checkWords}</Text>
       : <Text dimColor>{checkWords}</Text>)
     const opener = box?.first ?? (r.inbox?.own.length ? 'yours' : null)
+    // Never while a round's step waits: the box is not drawn then (`waiting`).
+    const end = waiting ? endOf(r, waiting.count === 0) : undefined
+    const boxWhen = Math.max(0, ...(box?.lines ?? []).map(l => (l.at ? [...whenOf(l.at)].length : 0)))
+    const cleaned = waiting ? await read($, cleanedUp) : null
     const openerLabel = isOver ? 'Check the answers' : box?.button ?? (opener === 'yours' ? 'Open your comment' : 'Start the round')
     // When GitLab is asked next, and a small press to ask it now, at the sidebar's foot while
     // the box is drawn: rarely pressed, so out of the box and out of the way. Merged or
@@ -2743,13 +2789,12 @@ export const register: Register = on => {
     const waitPart = waiting && (
       <Box key="waiting" flexGrow={1} flexDirection="column" justifyContent="center" alignItems="center">
         <Box borderStyle="round" borderDimColor paddingX={2} flexDirection="column" alignItems="center">
+          {/* One word for where the MR stands, as a card's heading names its part: who did
+              what, and when, is in the step lines under it. The line under it says what
+              waits, and on whom: the heading does not say it again. */}
           <Text bold>
-            {r.mr?.state === 'merged' || r.mr?.state === 'closed'
-              ? `${r.mr.state === 'merged' ? 'Merged' : 'Closed'}${(r.mr.merged_at ?? r.mr.closed_at) ? ` ${whenOf(r.mr.merged_at ?? r.mr.closed_at)}` : ''}${(r.mr.merged_by ?? r.mr.closed_by) ? ` by ${r.mr.merged_by ?? r.mr.closed_by}` : ''}`
-              : box?.hasNews
-                ? (clockOf(box.since) ? `Since ${clockOf(box.since)}` : 'News')
-                // The line under it says what waits, and on whom: the title does not say it again.
-                : waiting.count > 0 ? 'Done for now' : 'Done'}
+            {r.mr?.state === 'merged' ? 'Merged' : r.mr?.state === 'closed' ? 'Closed'
+              : box?.hasNews ? 'News' : waiting.count > 0 ? 'Done for now' : 'Done'}
           </Text>
           {/* One line a topic: who did what, and the agent's verdict where it judged. The mark
               says whether it needs the person (yellow), is being judged, or is only to know of
@@ -2758,6 +2803,9 @@ export const register: Register = on => {
             <Box flexDirection="column" marginTop={1}>
               {box?.lines.map((l, i) => (
                 <Box key={`inbox-${i}`} flexDirection="row" gap={1}>
+                  {/* Its time first, dim, in a column as wide as the box's widest, as a
+                      card's steps are; a line with no reliable time leaves it blank. */}
+                  {boxWhen > 0 && <Box flexShrink={0}><Text dimColor>{(l.at ? whenOf(l.at) : '').padEnd(boxWhen)}</Text></Box>}
                   {/* What needs the person in yellow; what is only to know of by its kind's
                       icon, plain and dim: it reads with the words beside it, no legend needed. */}
                   <Text color={l.tone === 'needs' ? 'yellow' : undefined} dimColor={l.tone !== 'needs' || undefined}>
@@ -2790,8 +2838,33 @@ export const register: Register = on => {
               </Text>
             </Box>
           )}
+          {/* The end of the MR: what is happening or missing, and the one press that
+              takes it on. Once cleaned up, only that it is. */}
+          {cleaned
+            ? (
+              // What was removed (and left) dim, each line centred, the closing word last.
+              <Box flexDirection="column" alignItems="center" marginTop={1}>
+                {cleaned.split('\n').map((line, i, all) => (
+                  <Text key={`cleaned-${i}`} dimColor={i < all.length - 1 || undefined} wrap="wrap">{line}</Text>
+                ))}
+              </Box>
+            )
+            : end && (
+              <Box flexDirection="column" alignItems="center" marginTop={1}>
+                {end.text && (
+                  <Text color={end.tone === 'needs' ? 'yellow' : undefined} dimColor={end.tone === 'info' || undefined}>
+                    {end.tone === 'busy' ? `${INBOX_ICON.judging} ${end.text}` : end.text}
+                  </Text>
+                )}
+                {end.button && (
+                  <Box flexDirection="row" justifyContent="center" marginTop={end.text ? 1 : 0}>
+                    {drawChip({ Box, Button, Text }, end.button, () => { void pressEnd($, s, end.button as BandButton) })}
+                  </Box>
+                )}
+              </Box>
+            )}
           {/* The way into the topics, as a step's button is: named for what it starts. */}
-          {opener && (
+          {!cleaned && opener && (
             <Box flexDirection="row" justifyContent="center" marginTop={1}>
               {drawChip({ Box, Button, Text }, { key: 'open-round', label: openerLabel, press: { kind: 'next' }, isPrimary: true },
                 () => { void (async () => { if (!(await isHeld($, r, opener === 'yours' ? undefined : opener))) await openRound($, s) })() })}

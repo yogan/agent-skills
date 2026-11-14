@@ -133,11 +133,19 @@ export type ReviewState = {
   // rework-mr, a fix waiting for its push: the diff viewer's window for it, and how many
   // notes the user left there (null where the viewer could not be asked).
   hunk?: { open: boolean; notes: number | null } | null
-  // review-mr: where the MR stands as a whole, from the update check.
+  // Where the MR stands as a whole, from the update check.
   mr?: {
     state: 'opened' | 'merged' | 'closed' | 'locked' | null; merged_at?: string | null; closed_at?: string | null
     merged_by?: string | null; closed_by?: string | null; auto_merge?: boolean
     approved_by?: string[]; approvals_left?: number | null
+    // What the end of the MR offers: GitLab's word on merging now (`detailed_merge_status`),
+    // the head pipeline, whether the user may merge, and GitLab's reason a merge failed.
+    merge_status?: string | null
+    pipeline?: { status: 'running' | 'passed' | 'failed'; url?: string | null } | null
+    can_merge?: boolean | null
+    merge_error?: string | null
+    // rework-mr: the merge the user pressed for, until GitLab merged it or it no longer applies.
+    merge?: { how: 'merge' | 'auto'; at: string; sha?: string | null; error?: string | null } | null
   } | null
   // review-mr: what a merged or closed MR left: the topics still to see to, the drafts never
   // posted, and how many closed quietly.
@@ -268,6 +276,8 @@ declare module 'claude-code' {
       // The file picked from a fix's list, by the item's code key without a pick.
       'file-pick': Shaped<Record<string, string>>
       'push-pick': Shaped<Record<string, number>>
+      // rework-mr: what Clean up locally said, once it removed the review's state.
+      'cleaned-up': Shaped<string | null>
     }
   }
 }

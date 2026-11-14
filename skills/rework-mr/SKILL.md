@@ -364,9 +364,20 @@ wrote them — author those first (`bodies`, then `set <t> --summary "…"`), re
 that. The hook blocks the table otherwise, and rightly: a status answer whose Summary column
 is somebody else's truncated sentence tells the user nothing.
 
+## The end of the MR (where cards are drawn)
+
+Once every topic is settled, the sidebar's box takes the MR to its end, each step the user's
+press: Merge (or Set to auto-merge while the pipeline runs) once the MR is approved, then
+Clean up locally once it is merged, which removes the worktree or switches the main checkout
+back, and deletes this review's own state. **Never merge, set auto-merge or clean up
+yourself**, and never offer to. After a `Clean up locally` note the session is over: run
+nothing more in it. A failed pipeline or a failed merge comes to you as the user's prompt
+asking for an analysis; the prompt says what to do, and a fix for a failed pipeline is shown,
+checked and pushed only on the user's word, as a commit of its own.
+
 ## Merged MR in a worktree
 
-When the MR is merged and this session runs in a linked worktree on its branch, `present`,
+Where cards are drawn, the box's Clean up locally does this instead. Elsewhere: when the MR is merged and this session runs in a linked worktree on its branch, `present`,
 `sync` and `todo` add a **MR merged** line under the table. Paste it with the table, as always.
 
 - **"can be removed"**: ask the user whether to remove the worktree and its local branch. On

@@ -132,6 +132,50 @@ def api_post(endpoint, body, method="POST"):
     return json.loads(out) if out else {}
 
 
+def refusal_of(r):
+    """GitLab's own reason a call failed, as one line: the `message` of its JSON answer
+    (`glab api` prints it on stdout and a summary on stderr), else what glab said."""
+    try:
+        msg = json.loads(r.stdout or "").get("message")
+    except (json.JSONDecodeError, AttributeError):
+        msg = None
+    if isinstance(msg, dict):
+        msg = "; ".join(f"{k} {' '.join(map(str, v)) if isinstance(v, list) else v}" for k, v in msg.items())
+    elif isinstance(msg, list):
+        msg = "; ".join(map(str, msg))
+    text = str(msg or (r.stderr or "").strip().removeprefix("glab: ") or "no answer")
+    return text.splitlines()[0] if text else text
+
+
+def api_try(endpoint, body, method="POST"):
+    """`(answer, None)` for a write GitLab took, `(None, its reason)` for one it refused.
+    For a press whose refusal is something to show, not a failure of the script (a merge
+    GitLab will not do now). A write that ran out of time says it may have gone through."""
+    cmd = ["glab", "api", "-X", method, "-H", "Content-Type: application/json",
+           endpoint, "--input", "-"]
+    r = run(cmd, input=json.dumps(body))
+    if r.returncode == TIMED_OUT:
+        return None, f"{r.stderr} — it may or may not have gone through"
+    if r.returncode != 0:
+        return None, refusal_of(r)
+    out = r.stdout.strip()
+    return (json.loads(out) if out else {}), None
+
+
+# A pipeline's status on GitLab, as the sidebar tells it: running (and everything before it
+# runs, a manual job waiting included, since nothing has passed yet), passed, or failed. A
+# canceled pipeline counts as failed: it did not pass, and auto-merge will not go on from it.
+PIPELINE_OF = {"success": "passed", "skipped": "passed", "failed": "failed", "canceled": "failed"}
+
+
+def pipeline_of(mr):
+    """The MR's head pipeline as `{status, url}`, or None where it has none."""
+    p = mr.get("head_pipeline") or None
+    if not p or not p.get("status"):
+        return None
+    return {"status": PIPELINE_OF.get(p["status"], "running"), "url": p.get("web_url")}
+
+
 @functools.lru_cache(maxsize=64)
 def file_at(project, sha, path):
     """The text of `path` at commit `sha` as GitLab holds it, or None — never fatal.
@@ -180,12 +224,44 @@ def mr_status(ctx, iid, me=None, mr=None):
         "state": mr.get("state"),
         "merged_at": mr.get("merged_at"),
         "merged_by": (mr.get("merged_by") or mr.get("merge_user") or {}).get("name"),
+        "merged_by_me": bool(me) and (mr.get("merged_by") or mr.get("merge_user") or {}).get("username") == me,
         "closed_at": mr.get("closed_at"),
         "closed_by": (mr.get("closed_by") or {}).get("name"),
         "auto_merge": bool(mr.get("merge_when_pipeline_succeeds") or mr.get("auto_merge_enabled")),
         "approved_by": [{"name": u.get("name"), "me": bool(me) and u.get("username") == me} for u in users],
         "approvals_left": ap.get("approvals_left"),
+        # What the end of the MR offers (the Done box's Merge, Set to auto-merge, or what is
+        # missing): GitLab's own word on whether it can merge now, the head pipeline, and
+        # whether the user may merge at all.
+        "merge_status": mr.get("detailed_merge_status"),
+        "pipeline": pipeline_of(mr),
+        "can_merge": (mr.get("user") or {}).get("can_merge"),
+        "merge_error": mr.get("merge_error"),
     }
+
+
+def merge(ctx, iid):
+    """Merge the MR now, or set it to auto-merge while its pipeline runs: a person's press.
+    Squash and branch deletion follow the MR's own settings, and the head it was asked on is
+    the one merged (a push in between makes GitLab refuse). `(how, None)`, `how` being
+    `merge` or `auto`, or `(how, GitLab's reason)` where it refused."""
+    mr = mr_object(ctx, iid)
+    is_auto = (pipeline_of(mr) or {}).get("status") == "running"
+    body = {"sha": mr.get("sha"), "squash": bool(mr.get("squash")),
+            "should_remove_source_branch": bool(mr.get("force_remove_source_branch"))}
+    if is_auto:
+        # `auto_merge` from GitLab 17, `merge_when_pipeline_succeeds` before it: each ignores
+        # the other's.
+        body.update(auto_merge=True, merge_when_pipeline_succeeds=True)
+    _, why = api_try(f"projects/{ctx['enc']}/merge_requests/{iid}/merge", body, method="PUT")
+    return ("auto" if is_auto else "merge"), why
+
+
+def approve(ctx, iid):
+    """Approve the MR as the user: a person's press. GitLab's reason where it refused, else
+    None."""
+    _, why = api_try(f"projects/{ctx['enc']}/merge_requests/{iid}/approve", {})
+    return why
 
 
 def mr_head(ctx, iid):

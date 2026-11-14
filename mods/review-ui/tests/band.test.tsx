@@ -1,7 +1,7 @@
 import type { On } from 'claude-code'
 import type { Engine } from 'claude-code/testing'
 import { expect, mock, test } from 'claude-code/testing'
-import { buttonsFor, iconOf, inboxOf, untilOf } from '../hooks/review.ts'
+import { buttonsFor, CI_PROMPT, endOf, iconOf, inboxOf, isMergeWatched, untilOf } from '../hooks/review.ts'
 
 // The test runtime's timer, which the engine's types leave out (a mod has no timers of its own).
 declare const setTimeout: (run: () => void, ms: number) => unknown
@@ -930,12 +930,15 @@ test('between rounds news stays out of the chat: the band counts it, the box say
   expect(w.placed.length).toBe(0)
   const panel = await $.ui.mount({ ...PANEL, surface: 'terminal' })
   const texts = (await panel.findAll({ type: 'Text' })).map(t => String(t.text ?? ''))
-  expect(texts.some(t => /^Since /.test(t))).toBe(true)
+  // The heading is one word for where the MR stands; when things happened is each line's.
+  expect(texts).toContain('News')
+  expect(texts.some(t => /^Since /.test(t))).toBe(false)
   // One line a topic, who did what and the verdict, marked as needing the person.
   expect(texts).toContain('Jonas answered: looks fixed')
   expect((await panel.findAll({ type: 'Text' })).find(t => t.text === 'Jonas answered: looks fixed')?.props.dimColor).toBeUndefined()
-  // A push: who, when, what it touches, and its size, dim: the topics carry what to do.
-  expect(texts.some(t => /^Jonas pushed \d\d:\d\d · touches t2$/.test(t))).toBe(true)
+  // A push: when first, then who, what it touches, and its size, dim: the topics carry what to do.
+  expect(texts).toContain('Jonas pushed · touches t2')
+  expect(texts.some(t => /^\d\d:\d\d +$/.test(t) || /^Nov 5, \d\d:\d\d$/.test(t))).toBe(true)
   expect((await panel.find({ type: 'Button', key: 'open-round' }))?.props.label).toBe('Check t2')
   await panel.press({ key: 'open-round' })
   await panel.unmount()
@@ -2609,8 +2612,10 @@ test('a merged MR says so at the top and in its box, with what still matters and
   await openReview($, w, view('t1'))
   const panel = await $.ui.mount({ ...PANEL, surface: 'terminal' })
   const texts = (await panel.findAll({ type: 'Text' })).map(t => t.text ?? '')
-  // Who merged it is the box's title, said once.
-  expect(texts.filter(t => t.includes('by Jan'))).toEqual([expect.stringMatching(/^Merged .* by Jan$/)])
+  // The heading says it is merged; who did it, and when, is the box's last step, said once.
+  expect(texts).toContain('Merged')
+  expect(texts.filter(t => t.includes('Jan merged'))).toEqual(['Jan merged the MR'])
+  expect(texts.some(t => / by Jan$/.test(t))).toBe(false)
   expect(texts).toContain('\u{f062d}')
   const md = (await panel.findAll({ type: 'Markdown' })).map(m => String(m.props.text))
   expect(md.some(m => m.startsWith('[Jan pushed ') && m.endsWith(`](${push.url})`))).toBe(true)
@@ -2632,12 +2637,12 @@ test('every push is a dim line of the box saying what it did; auto-merge goes on
     ],
     mr: [{ kind: 'auto-merge', at: '2026-11-09T15:11:00Z', by: null }, { kind: 'merged', at: '2026-11-09T15:20:00Z', by: 'Jan' }],
   }) }))
-  const lines = inboxOf(r)?.lines.map(l => `${l.tone} ${l.what.replace(/\d\d:\d\d/, 'hh:mm')}${l.size ? ` [${l.size}]` : ''}`)
+  const lines = inboxOf(r)?.lines.map(l => `${l.at?.slice(11, 16)} ${l.tone} ${l.what}${l.size ? ` [${l.size}]` : ''}`)
   expect(lines).toEqual([
-    'info Jan pushed hh:mm · no change to the code',
-    'info Jan pushed hh:mm · touches t1 [\u{f4d2} 1 file +2 −0]',
-    'info Jan rebased hh:mm · no change to the MR',          // no size: it would count the target's commits
-    'info Jan rebased hh:mm · changes 1 of its files',
+    '15:10 info Jan pushed · no change to the code',
+    '15:12 info Jan pushed · touches t1 [\u{f4d2} 1 file +2 −0]',
+    '15:13 info Jan rebased · no change to the MR',          // no size: it would count the target's commits
+    '15:14 info Jan rebased · changes 1 of its files',
   ])
 })
 
@@ -2713,6 +2718,27 @@ test("the MR's own news: icons in the heading, the same icon and colour with its
   await panel.unmount()
 })
 
+test("the MR's head pipeline is an icon beside the approval: running, passed, failed, none without one", async ($, on) => {
+  const icons = { running: ['\u{f0996}', 'yellow'], passed: ['\u{f0995}', 'green'], failed: ['\u{f110a}', 'red'] }
+  const w = world(on, [
+    ...Object.keys(icons).map(status => stateOf('t1', [topic('t1', 'draft', 'abc')], { mr: { state: 'opened', approved_by: ['Jan'], pipeline: { status } } })),
+    stateOf('t1', [topic('t1', 'draft', 'abc')], { mr: { state: 'opened', approved_by: ['Jan'], pipeline: null } }),
+  ])
+  await openReview($, w, view('t1'))
+  const all = Object.values(icons).flat().filter((_, i) => i % 2 === 0)
+  for (const [icon, color] of Object.values(icons)) {
+    const panel = await $.ui.mount({ ...PANEL, surface: 'terminal' })
+    const texts = await panel.findAll({ type: 'Text' })
+    expect(texts.find(t => t.text === icon)?.props.color).toBe(color)
+    expect(texts.find(t => t.text === '\u{f0514}')).toBeDefined()
+    await panel.unmount()
+    await $.tool.call({ tool: 'Bash', command: 'python3 $SD/findings.py drop t9 --iid 42' } as never)
+  }
+  const panel = await $.ui.mount({ ...PANEL, surface: 'terminal' })
+  expect((await panel.findAll({ type: 'Text' })).some(t => all.includes(String(t.text ?? '')))).toBe(false)
+  await panel.unmount()
+})
+
 test("between rounds the box lists the MR's own news as dim lines: an approval, auto-merge set", async ($, on) => {
   const mr = { state: 'opened', auto_merge: true, approved_by: ['Jan'] }
   const news = [{ kind: 'auto-merge', at: '2026-11-09T15:00:00Z', by: null }, { kind: 'approved', at: '2026-11-09T15:05:00Z', by: 'Jan' }]
@@ -2720,8 +2746,8 @@ test("between rounds the box lists the MR's own news as dim lines: an approval, 
   await openReview($, w, view('t1'))
   const panel = await $.ui.mount({ ...PANEL, surface: 'terminal' })
   const all = await panel.findAll({ type: 'Text' })
-  expect(all.find(t => /^auto-merge set /.test(t.text ?? ''))?.props.dimColor).toBe(true)
-  expect(all.find(t => /^Jan approved the MR /.test(t.text ?? ''))?.props.dimColor).toBe(true)
+  expect(all.find(t => t.text === 'Auto-merge set')?.props.dimColor).toBe(true)
+  expect(all.find(t => t.text === 'Jan approved the MR')?.props.dimColor).toBe(true)
   // A box whose news carries no time says News alone, never "since –".
   expect(all.some(t => (t.text ?? '').includes('since –'))).toBe(false)
   // Each led by its kind's icon, plain and dim: the colour is the heading's marks'.
@@ -2766,4 +2792,82 @@ test('every step button has its icon, one per action in both skills', () => {
   // The same action, the same icon.
   expect(iconOf('Reply now')).toBe(iconOf('Reply…'))
   expect(iconOf('“Fixed” + resolve')).toBe(iconOf('Post + resolve'))
+})
+
+
+// The end of the MR: the Done box's last line, and the one press it offers.
+const ended = (skill: 'rework-mr' | 'review-mr', mr: object) =>
+  ({ skill, iid: 3, title: 'x', current: null, topics: [], mr: { state: 'opened', approved_by: ['Robin'], approvals_left: 0, merge_status: 'mergeable', can_merge: true, ...mr } }) as never
+const endText = (skill: 'rework-mr' | 'review-mr', mr: object, settled = true) => {
+  const e = endOf(ended(skill, mr), settled)
+  return e ? [e.text, e.button?.label ?? null] : undefined
+}
+
+test('rework-mr: the end of the MR offers Merge only once it is approved and GitLab can merge it', () => {
+  expect(endText('rework-mr', {})).toEqual(['', 'Merge'])
+  expect(endText('rework-mr', { pipeline: { status: 'running' } })).toEqual(['', 'Set to auto-merge'])
+  expect(endText('rework-mr', { pipeline: { status: 'passed' } })).toEqual(['', 'Merge'])
+  // A project that requires no approval still needs one from the session.
+  expect(endText('rework-mr', { approved_by: [], approvals_left: null })).toEqual(['Waits for approval', null])
+  expect(endText('rework-mr', { approvals_left: 1 })).toEqual(['Waits for approval', null])
+  expect(endText('rework-mr', { approved_by: [], pipeline: { status: 'running' } })).toEqual(['Waits for approval', null])
+  expect(endText('rework-mr', { merge_status: 'conflict' })).toEqual(['Has conflicts', null])
+  expect(endText('rework-mr', { merge_status: 'some_new_status' })).toEqual(['Some new status', null])
+  expect(endText('rework-mr', { can_merge: false })).toEqual(['You may not merge it', null])
+  // Nothing about the merge while a topic still waits.
+  expect(endText('rework-mr', {}, false)).toBeUndefined()
+})
+
+test('rework-mr: the merge pressed is followed to its end, and a failure offers its analysis', () => {
+  const at = '2026-11-14T12:00:00Z'
+  expect(endText('rework-mr', { merge: { how: 'merge', at } })).toEqual(['Merging…', null])
+  expect(endText('rework-mr', { merge: { how: 'auto', at }, auto_merge: true, pipeline: { status: 'running' } })).toEqual(['Waits for the pipeline', null])
+  expect(endText('rework-mr', { merge: { how: 'merge', at, error: 'Branch cannot be merged' } })).toEqual(['Merge failed: Branch cannot be merged', 'Analyze failed merge'])
+  // Who merged it is the box's step line: the end line is the press alone.
+  expect(endText('rework-mr', { state: 'merged' })).toEqual(['', 'Clean up locally'])
+  // A failed pipeline is said, and its analysis offered, while topics still wait too.
+  const failed = endOf(ended('rework-mr', { pipeline: { status: 'failed' } }), false)
+  expect([failed?.text, failed?.button?.label]).toEqual(['Pipeline failed', 'Analyze CI failure'])
+  expect(failed?.button?.press).toEqual({ kind: 'ask', prompt: CI_PROMPT })
+  expect(endText('rework-mr', { state: 'closed' })).toBeUndefined()
+})
+
+test('the update check follows a merge pressed, and stops once GitLab merged it or refused', () => {
+  const at = '2026-11-14T12:00:00Z'
+  expect(isMergeWatched(ended('rework-mr', { merge: { how: 'merge', at } }))).toBe(true)
+  expect(isMergeWatched(ended('rework-mr', { merge: { how: 'auto', at }, auto_merge: true }))).toBe(true)
+  expect(isMergeWatched(ended('rework-mr', {}))).toBe(false)
+  expect(isMergeWatched(ended('rework-mr', { merge: { how: 'merge', at, error: 'no' } }))).toBe(false)
+  expect(isMergeWatched(ended('rework-mr', { state: 'merged', merge: { how: 'merge', at } }))).toBe(false)
+})
+
+test("review-mr: the end of someone else's MR is Approve, never a merge, and says once you approved", () => {
+  expect(endText('review-mr', { approved_by: [] })).toEqual(['', 'Approve'])
+  expect(endText('review-mr', { approved_by: ['You'] })).toEqual(['Approved by you', null])
+  expect(endText('review-mr', { approved_by: [] }, false)).toBeUndefined()
+  expect(endText('review-mr', { state: 'merged' })).toBeUndefined()
+})
+
+test('rework-mr: Merge in the box runs the script with no model turn; Clean up locally ends the review', async ($, on) => {
+  const mr = { state: 'opened', approved_by: ['Robin'], approvals_left: 0, merge_status: 'mergeable', can_merge: true }
+  const idle = reworkState(null, [reworkTopic('t1', 'none', { state: 'done' })], { in_round: false, mr, inbox: inbox() })
+  const merged = reworkState(null, [reworkTopic('t1', 'none', { state: 'done' })], { in_round: false, mr: { ...mr, state: 'merged' }, inbox: inbox() })
+  const w = world(on, [idle], { 'merge-mr': { stdout: merged }, cleanup: { stdout: 'Removed the branch fix/x.\nAll cleaned up. You can close this session.' } })
+  await openRework($, w, reworkView('t1'))
+  let panel = await $.ui.mount({ ...PANEL, surface: 'terminal' })
+  expect((await panel.find({ type: 'Button', key: 'merge-mr' }))?.props.label).toBe('Merge')
+  await panel.press({ key: 'merge-mr' })
+  await panel.unmount()
+  expect(w.ran.map(r => r.argv.slice(2).join(' '))).toContain('merge-mr --iid 42')
+  expect(w.prompts).toEqual([])
+  panel = await $.ui.mount({ ...PANEL, surface: 'terminal' })
+  expect((await panel.findAll({ type: 'Text' })).map(t => String(t.text ?? ''))).toContain('Merged')
+  expect(await panel.find({ type: 'Button', key: 'cleanup' })).toBeDefined()
+  await panel.press({ key: 'cleanup' })
+  await panel.unmount()
+  expect(w.ran.map(r => r.argv.slice(2).join(' '))).toContain('cleanup --iid 42')
+  panel = await $.ui.mount({ ...PANEL, surface: 'terminal' })
+  expect((await panel.findAll({ type: 'Text' })).map(t => String(t.text ?? '')).join('\n')).toContain('All cleaned up. You can close this session.')
+  expect(await panel.find({ type: 'Button', key: 'cleanup' })).toBeUndefined()
+  await panel.unmount()
 })

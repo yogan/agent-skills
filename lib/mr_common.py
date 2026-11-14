@@ -315,7 +315,8 @@ def mr_json(st):
     from lib.fences import YOU
     if not st:
         return None
-    return {**{k: st.get(k) for k in ("state", "merged_at", "closed_at", "auto_merge", "approvals_left")},
-            "merged_by": first_name(st.get("merged_by")) or None,
+    return {**{k: st.get(k) for k in ("state", "merged_at", "closed_at", "auto_merge", "approvals_left",
+                                       "merge_status", "pipeline", "can_merge", "merge_error")},
+            "merged_by": (YOU if st.get("merged_by_me") else first_name(st.get("merged_by"))) or None,
             "closed_by": first_name(st.get("closed_by")) or None,
             "approved_by": [YOU if a.get("me") else first_name(a.get("name")) for a in st.get("approved_by") or []]}

@@ -668,6 +668,10 @@ author` / `Accept anyway` / `Analyse more`. On `Analyse more`, a verdict you cha
 prints a card of the change itself: leave the topic unshown, your reply carries the details. A verdict lasts until a new answer arrives, and so
 does a follow-up draft: a newer answer, or `wait`, drops it.
 
+**Approving is the user's press alone.** Where cards are drawn, once every topic is settled
+the sidebar's box offers Approve; it runs `approve-mr` and the box then says "Approved by
+you". Never approve the MR yourself, and never merge it: merging stays the author's.
+
 ## Status glyphs
 
 `✎ draft` (post it) · `○ open` (author's turn) · `◐ needs-ack` (your turn) · `● acked`.

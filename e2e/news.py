@@ -9,6 +9,8 @@ as a whole: approved by its reviewer, then merged.
     python3 e2e/news.py fix     # author-bot pushes the auth.ts fix and says it is fixed now
     python3 e2e/news.py approve # reviewer-bot approves MR !3, frank's own
     python3 e2e/news.py merge   # frank merges MR !3
+    python3 e2e/news.py settle  # reviewer-bot resolves MR !3's open threads and approves it
+    python3 e2e/news.py pipeline running|success|failed   # a pipeline on MR !3's head
     python3 e2e/news.py more    # reviewer-bot reopens MR !3's naming thread and asks for more
     python3 e2e/news.py doubt   # reviewer-bot reopens it and doubts the pushed rename
 
@@ -104,6 +106,29 @@ def approve():
     fx.info(f"!{REWORK_IID}: reviewer-bot approved it")
 
 
+def settle():
+    """reviewer-bot resolves every thread still open on MR !3, then approves it: every topic
+    settled, and the MR ready for the Done box's Merge."""
+    enc = fx.project_path_enc()
+    for d in fx.api(f"projects/{enc}/merge_requests/{REWORK_IID}/discussions?per_page=100"):
+        first = (d.get("notes") or [{}])[0]
+        if first.get("resolvable") and not first.get("resolved"):
+            fx.api(f"projects/{enc}/merge_requests/{REWORK_IID}/discussions/{d['id']}?resolved=true",
+                   "PUT", {}, user="reviewer-bot")
+    approve()
+    fx.info(f"!{REWORK_IID}: reviewer-bot resolved its threads")
+
+
+def pipeline(status):
+    """A pipeline on MR !3's head in `status` (running, success, failed), from an external
+    commit status: the rig has no runner, and GitLab makes a pipeline of a status all the same."""
+    enc = fx.project_path_enc()
+    mr = fx.api(f"projects/{enc}/merge_requests/{REWORK_IID}")
+    fx.api(f"projects/{enc}/statuses/{mr['sha']}", "POST",
+           {"state": status, "name": "ci", "ref": mr["source_branch"]})
+    fx.info(f"!{REWORK_IID}: pipeline {status}")
+
+
 def merge():
     fx.api(f"projects/{fx.project_path_enc()}/merge_requests/{REWORK_IID}/merge", "PUT",
            {}, user="frank")
@@ -141,9 +166,12 @@ def more(text=MORE):
 
 def main():
     what = sys.argv[1] if len(sys.argv) > 1 else ""
-    if what in ("approve", "merge", "more", "doubt"):
+    if what == "pipeline" and len(sys.argv) > 2:
         fx.E = fx.env()
-        return {"approve": approve, "merge": merge, "more": more,
+        return pipeline(sys.argv[2])
+    if what in ("approve", "merge", "more", "doubt", "settle"):
+        fx.E = fx.env()
+        return {"approve": approve, "merge": merge, "more": more, "settle": settle,
                 "doubt": lambda: more(DOUBT)}[what]()
     if what not in ("reply", "push", "both", "fix"):
         die(__doc__.strip())

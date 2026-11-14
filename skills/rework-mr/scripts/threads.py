@@ -84,6 +84,7 @@ from lib.gitlab import (
     file_at,
     mr_base,
     mr_object,
+    merge,
     mr_status,
     mr_view,  # noqa: E402
     project_slug,
@@ -1756,7 +1757,7 @@ def state_json(state):
             "hunk": hunk_window() if t and step_of(state, t) == "fixed" else None,
             "round": round_order(state) if ui.drawn() else [],
             "pass": pass_now(state), "in_round": bool(state.get("in_round")),
-            "mr": mr_json(state.get("mr_status")),
+            "mr": mr_json(state.get("mr_status")) and {**mr_json(state.get("mr_status")), "merge": state.get("merge")},
             "inbox": inbox_json(state, topics), "judge": judge_list(state),
             "mr_comments": [{**n, "author": YOU if n.get("mine") else first_name(n.get("author"))}
                             for n in state.get("mr_comments") or []]}
@@ -1826,6 +1827,106 @@ def cleanup_worktree(ctx, iid):
         if r.returncode != 0:
             die(f"git {' '.join(args)}: {r.stderr.strip()}")
     return f"Removed {f['path']} and branch {f['branch']}."
+
+
+def merge_mr(state, ctx, iid):
+    """The Done box's Merge, or Set to auto-merge while the pipeline runs: a person's press.
+    Kept in `state["merge"]` (how, when, on which head, GitLab's refusal if any), which the
+    box's last line is read from until the MR is merged."""
+    how, why = merge(ctx, iid)
+    mr = mr_object(ctx, iid) or {}
+    state["merge"] = {"how": how, "at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                      "sha": mr.get("sha"), "error": why}
+    state["mr_status"] = mr_status(ctx, iid, state.get("me"), mr)
+    watch_merge(state, mr)
+
+
+def watch_merge(state, mr):
+    """The merge asked for, as the update check finds it: the reason GitLab gives where it
+    failed afterwards; gone where it no longer applies (a push since, which the person
+    merges anew, or auto-merge taken off on GitLab), so the box offers the merge again."""
+    m = state.get("merge")
+    if not m or mr.get("state") != "opened":
+        return
+    if m.get("sha") and mr.get("sha") and m["sha"] != mr["sha"]:
+        state.pop("merge")
+    elif m["how"] == "auto" and not m.get("error") and not (
+            mr.get("merge_when_pipeline_succeeds") or mr.get("auto_merge_enabled")):
+        state.pop("merge")
+    elif mr.get("merge_error") and not m.get("error"):
+        m["error"] = mr["merge_error"]
+
+
+def checkout_facts(ctx, iid):
+    """What decides what Clean up locally may remove, in a linked worktree or the main
+    checkout alike: where this runs, the branch it is on, and the MR as GitLab holds it."""
+    wt = linked_worktree()
+    path = (_git("rev-parse", "--show-toplevel") or "").strip()
+    mr = mr_object(ctx, iid) or {}
+    return {"linked": bool(wt), "main": wt["main"] if wt else path, "path": path,
+            "branch": (_git("branch", "--show-current") or "").strip(),
+            "state": mr.get("state"), "source": mr.get("source_branch"),
+            "target": mr.get("target_branch"), "mr_sha": mr.get("sha"),
+            "tip": (_git("rev-parse", "HEAD") or "").strip(),
+            "dirty": bool((_git("status", "--porcelain") or "").strip())}
+
+
+def cleanup_plan(f):
+    """What Clean up locally does, from `checkout_facts`: `{"refuse": why}` where something
+    is not on GitLab yet (it then removes nothing at all), else the git steps, each run
+    from the main checkout, and what it leaves and why.
+
+    A linked worktree on the MR's branch goes with its branch; the main checkout is never
+    touched from there, since other work may be going on in it. The main checkout itself,
+    on the MR's branch and clean, goes back to the MR's target branch, pulled, and the MR's
+    branch goes. On another branch it is somebody's other work: left as it is."""
+    if f["state"] != "merged":
+        return {"refuse": "the MR is not merged"}
+    on_branch = f["branch"] == f["source"]
+    if on_branch:
+        blocker = cleanup_blocker(f)
+        if blocker:
+            return {"refuse": blocker}
+    if f["linked"]:
+        if not on_branch:
+            return {"steps": [], "left": f"This worktree ({f['path']}) is on {f['branch'] or 'no branch'}, "
+                                         f"not the MR's branch {f['source']}: it stays."}
+        return {"steps": [("worktree", "remove", f["path"]), ("branch", "-D", f["source"])],
+                "left": None, "gone": f"Worktree and branch {f['source']} removed."}
+    if not on_branch:
+        return {"steps": [], "left": f"The checkout is on {f['branch'] or 'no branch'}, not the MR's "
+                                     f"branch {f['source']}: it and the branch are left as they are."}
+    return {"steps": [("switch", "--quiet", f["target"]), ("pull", "--quiet", "--ff-only"),
+                      ("branch", "-D", f["source"])],
+            "left": None, "gone": f"Branch {f['source']} removed, back on {f['target']}."}
+
+
+def clean_up_locally(ctx, iid, path):
+    """Clean up locally once the MR is merged: the press of that name. The checkout as
+    `cleanup_plan` says, then this review's own: its saved state, the fixes kept in git and
+    the diff viewer's window. Dies, removing nothing, where something is not on GitLab."""
+    f = checkout_facts(ctx, iid)
+    plan = cleanup_plan(f)
+    if "refuse" in plan:
+        die(f"Nothing cleaned up: {plan['refuse']}.")
+    for args in plan["steps"]:
+        r = run(["git", "-C", f["main"], *args])
+        # A pull that cannot go on (no upstream, a diverged target) leaves the checkout on
+        # the target branch as it was: that is worth saying, not a reason to stop.
+        if r.returncode != 0 and args[0] != "pull":
+            die(f"git {' '.join(args)}: {r.stderr.strip()}")
+        if r.returncode != 0:
+            plan["left"] = f"{f['target']} could not be pulled ({r.stderr.strip().splitlines()[-1] if r.stderr.strip() else 'git pull failed'})."
+    owner = hunk.owner_id()
+    sid = f["path"] and hunk.installed() and hunk.find_session(f["path"], owner)
+    if sid:
+        hunk.close_session(sid, owner)
+    fix_refs.drop(f["main"], SKILL, iid)
+    import shutil
+    shutil.rmtree(os.path.dirname(path), ignore_errors=True)
+    return "\n".join(x for x in (
+        plan.get("gone"), plan["left"],
+        "All cleaned up. You can close this session.") if x)
 
 
 def render_present(state, cleanup=""):
@@ -2845,7 +2946,7 @@ def main():
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
     sub = ap.add_subparsers(dest="cmd")
-    for name in ("sync", "todo", "present", "bodies", "plans", "path", "cleanup-worktree",
+    for name in ("sync", "todo", "present", "bodies", "plans", "path", "cleanup-worktree", "cleanup", "merge-mr",
                  "state", "leave"):
         sub.add_parser(name).add_argument("--iid", type=int)
     pk = sub.add_parser("code", help="a topic's file as JSON for the mod's sidebar: the "
@@ -3270,6 +3371,7 @@ def main():
         state.setdefault("mr_news", []).extend(mr_news(state.get("mr_status"), status,
                                                     time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())))
         state["mr_status"] = status
+        watch_merge(state, mr)
         keep_pushed_fixes(state, ctx, iid)
         save(path, state)
         print(json.dumps(state_json(state)))
@@ -3504,7 +3606,8 @@ def main():
     elif cmd == "present":
         if ui.drawn() and not state.get("in_round"):
             start_round(state)            # the opener carries on where the rework stands
-        cleanup = render_cleanup(cleanup_facts(ctx, iid))
+        # Where the mod draws, the box's Clean up locally says it and does it.
+        cleanup = "" if ui.drawn() else render_cleanup(cleanup_facts(ctx, iid))
         emit(state, render_present(state, cleanup), current_topic(state))
         if ui.drawn():
             chat_opens(state, current_topic(state))
@@ -3515,6 +3618,13 @@ def main():
         print(render_bodies(state))
     elif cmd == "cleanup-worktree":
         print(cleanup_worktree(ctx, iid))
+    elif cmd == "merge-mr":               # the mod's Merge / Set to auto-merge: a press only
+        merge_mr(state, ctx, iid)
+        save(path, state)
+        print(json.dumps(state_json(state)))
+    elif cmd == "cleanup":                # the mod's Clean up locally: the state goes too
+        print(clean_up_locally(ctx, iid, path))
+        return
     elif cmd == "plans":
         print(render_plans(state))
     elif cmd in ("sync", "todo"):
@@ -3530,7 +3640,7 @@ def main():
             "mine" if cmd == "todo" else "all",
             show_done=getattr(args, "all", False),
         )
-        cleanup = render_cleanup(cleanup_facts(ctx, iid))
+        cleanup = "" if ui.drawn() else render_cleanup(cleanup_facts(ctx, iid))
         if ui.drawn():
             table = ""                     # the sidebar is the table; the payload carries it
         emit(state, "\n\n".join(x for x in (table, cleanup) if x))

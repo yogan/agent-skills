@@ -30,11 +30,18 @@ export const INBOX_ICON: Record<string, string> = {
   closed: '\u{f015a}', // md-close_circle_outline
   'auto-merge': '\u{f051f}', // md-timer_sand
   approved: '\u{f0514}', // md-thumb_up_outline
+  // The MR's head pipeline, one family of icons: running, passed, failed.
+  'pipeline-running': '\u{f0996}', // md-progress_clock
+  'pipeline-passed': '\u{f0995}', // md-progress_check
+  'pipeline-failed': '\u{f110a}', // md-progress_close
   left: '\u{f05d6}', // md-alert_circle_outline
 }
 // What happened to the MR as a whole, each kind in one colour wherever it is drawn: the
 // sidebar's heading (the icon alone) and the News box (the icon and what it says).
-export const MR_COLOR: Record<string, string> = { merged: 'magenta', closed: 'red', 'auto-merge': 'yellow', approved: 'green' }
+export const MR_COLOR: Record<string, string> = {
+  merged: 'magenta', closed: 'red', 'auto-merge': 'yellow', approved: 'green',
+  'pipeline-running': 'yellow', 'pipeline-passed': 'green', 'pipeline-failed': 'red',
+}
 export const INBOX_WORD: Record<string, string> = {
   new: 'news', judging: 'being judged', unjudged: 'not judged',
   draft: 'draft to post',

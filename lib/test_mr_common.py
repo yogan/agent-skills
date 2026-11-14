@@ -251,5 +251,16 @@ class TestStateFile(unittest.TestCase):
             self.assertEqual(os.path.dirname(a), os.path.dirname(b))
 
 
+
+class TestMrJson(unittest.TestCase):
+    def test_the_user_is_you_where_they_merged_or_approved_it(self):
+        from lib.mr_common import mr_json
+        st = {"state": "merged", "merged_by": "Frank Example", "merged_by_me": True,
+              "approved_by": [{"name": "Robin Example", "me": False}]}
+        self.assertEqual(mr_json(st)["merged_by"], "You")
+        self.assertEqual(mr_json(st)["approved_by"], ["Robin"])
+        self.assertEqual(mr_json({**st, "merged_by_me": False})["merged_by"], "Frank")
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
