@@ -1961,6 +1961,28 @@ class TestOwnReviewFirst(unittest.TestCase):
             out = F.close_own_review(self.state, "done")
         self.assertTrue(out.startswith("_Every comment of yours is on a topic already"))
 
+    def test_the_first_pass_is_a_round_whose_end_the_box_splits_its_news_at(self):
+        """A push that arrived while the user went through the topics the first time is
+        older than the pass's end: the box lists it apart, as arrived during the round."""
+        state = new_state()
+        for i in (1, 2):
+            F.add_topic(state, summary=f"point {i}", file="a.ts", line=i)
+        state["own_review"] = "matching"
+        with self.drawn("1"), patch.object(F, "anchor_notes"):
+            F.close_own_review(state, "done")
+            self.assertTrue(state["in_round"])
+            state["pushes"] = [{"at": F.now_iso(), "stat": None, "topics": [], "rebase": False}]
+            for i, t in enumerate(state["topics"], 1):      # each comment posted
+                state["threads"][f"d{i}"] = {"mine": True, "file": "a.ts", "line": i, "resolved": False,
+                                             "awaiting": "author", "notes": []}
+                t["thread_ids"] = [f"d{i}"]
+                F.current_topic(state)
+            self.assertIsNone(F.current_topic(state))
+            self.assertFalse(state["in_round"])
+            box = F.state_json(state)["inbox"]
+        self.assertTrue(box["round_end"])
+        self.assertLessEqual(box["pushes"][0]["at"], box["round_end"])
+
     def drawn(self, value):
         return patch.dict(os.environ, {"REVIEW_UI_DRAWN": value})
 
@@ -2210,6 +2232,11 @@ class TestVerdict(unittest.TestCase):
                              "on": F.answer_mark(self.state, self.t)}
         with self.drawn():
             self.assertEqual(F.topic_status(self.state, self.t), "open")
+            # Only to know of until the user opens it: marked, listed, never a round's stop.
+            self.assertEqual(F.inbox_of(self.state, self.t), "fyi")
+            self.assertEqual(F.news_of(self.state, self.t)[0], ["reply"])
+            self.assertIsNone(F.round_pick(self.state))
+            self.t["seen"] = F.answer_mark(self.state, self.t)
             self.assertIsNone(F.inbox_of(self.state, self.t))
             self.assertEqual(F.needs_verdict(self.state), [])
             self.state["threads"]["d1"]["last_at"] = "2026-11-05T11:00:00Z"
@@ -2314,6 +2341,9 @@ class TestRounds(unittest.TestCase):
         self.ack("t1")
         self.assertIsNone(F.current_topic(self.state))
         self.assertFalse(self.state["in_round"])
+        # When it ended, for the box: what arrived before it came in while the user worked.
+        self.assertTrue(self.state["round_end"])
+        self.assertEqual(F.state_json(self.state)["inbox"]["round_end"], self.state["round_end"])
 
     def test_news_after_a_round_ended_waits_for_the_next(self):
         self.answer(1)

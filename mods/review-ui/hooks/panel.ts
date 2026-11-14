@@ -22,6 +22,7 @@ export const INBOX_ICON: Record<string, string> = {
   thread: '\u{f05cb}', // md-account_voice
   own: '\u{f017c}', // md-comment_account_outline
   new: '\u{f09de}', // md-circle_medium
+  fyi: '\u{f09de}', // md-circle_medium, dim: news only to know of
   judging: '\u{f01d8}', // md-dots_horizontal
   unjudged: '\u{f05d6}', // md-alert_circle_outline
   draft: '\u{f0cb6}', // md-pencil_outline
@@ -30,6 +31,7 @@ export const INBOX_ICON: Record<string, string> = {
   closed: '\u{f015a}', // md-close_circle_outline
   'auto-merge': '\u{f051f}', // md-timer_sand
   approved: '\u{f0514}', // md-thumb_up_outline
+  waits: '\u{f051f}', // md-timer_sand: an answer that leaves the next move to the author
   // The MR's head pipeline, one family of icons: running, passed, failed.
   'pipeline-running': '\u{f0996}', // md-progress_clock
   'pipeline-passed': '\u{f0995}', // md-progress_check
@@ -43,7 +45,7 @@ export const MR_COLOR: Record<string, string> = {
   'pipeline-running': 'yellow', 'pipeline-passed': 'green', 'pipeline-failed': 'red',
 }
 export const INBOX_WORD: Record<string, string> = {
-  new: 'news', judging: 'being judged', unjudged: 'not judged',
+  new: 'news', fyi: 'FYI', judging: 'being judged', unjudged: 'not judged',
   draft: 'draft to post',
 }
 // A row's inbox mark: the slot is there on every row, so titles line up.
@@ -61,6 +63,9 @@ export const inboxMark = (t: ReviewTopic, unjudged: string[], judging: string[])
       : { key: 'judging', icon: INBOX_ICON.judging as string, isDim: true }
   }
   if (t.inbox === 'new') return { key: 'new', icon: INBOX_ICON.new as string, color: 'yellow' }
+  // Only to know of (another reviewer's FYI thread, an answer that leaves the next move to
+  // the author): news's mark, dim, until the topic is opened.
+  if (t.inbox === 'fyi') return { key: 'fyi', icon: INBOX_ICON.new as string, isDim: true }
   return isDraft ? { key: 'draft', icon: INBOX_ICON.draft as string } : undefined
 }
 

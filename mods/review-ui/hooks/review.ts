@@ -821,7 +821,8 @@ export const waitingLine = (w: { count: number; who: string }): string =>
 // (panel.ts's `INBOX_ICON`); a line that needs the person, or is being judged, has its mark.
 // `at`: when it happened, where a reliable time exists, drawn first as a card's step is.
 export type InboxLine = { tone: 'needs' | 'busy' | 'info'; what: string; topic?: string; url?: string; size?: string; kind?: string; at?: string | null }
-export type Inbox = { lines: InboxLine[]; more: number; count: number; hasNews: boolean; since: string | null; first: string | null; button: string | null }
+// `during`: what arrived while the user worked through the last round, listed apart.
+export type Inbox = { lines: InboxLine[]; during: InboxLine[]; more: number; count: number; hasNews: boolean; since: string | null; first: string | null; button: string | null }
 
 // Topic lines shown before the rest are summed up as "+n more": the sidebar lists them all.
 const BOX_TOPICS = 5
@@ -858,12 +859,18 @@ export const inboxOf = (review: ReviewState | null, judging: { topics: string[];
   const topicLine = (id: string, did: string, isFyi = false) => {
     if (seen.has(id)) return
     seen.add(id)
-    const v = isFyi ? null : verdictOf(id)
+    const t = review.topics.find(x => x.id === id)
+    // An answer judged to leave the next move to the author: only to know of, as an FYI
+    // thread is, until the user opens it (findings.py's `inbox_of`).
+    const isWait = !isFyi && !isRework && t?.inbox === 'fyi'
+    const v = isFyi || isWait ? null : verdictOf(id)
     const isResolved = did.startsWith('resolved')
     topicLines.push({
-      tone: isFyi ? 'info' : v?.tone ?? 'needs', topic: id, ...(isFyi ? { kind: 'thread' } : {}),
-      url: review.topics.find(t => t.id === id)?.thread_url ?? undefined,
-      what: `${byOf(id)} ${did}${v ? (isResolved && v.text === 'not fixed' ? ', not fixed' : `: ${v.text}`) : ''}${isFyi ? ' (FYI)' : ''}`,
+      // Its kind, as an icon: the list's own marks say whether it needs the person.
+      tone: isFyi || isWait ? 'info' : v?.tone ?? 'needs', topic: id,
+      kind: isFyi || did.startsWith('opened') ? 'thread' : isWait ? 'waits' : isResolved ? 'resolved' : did.startsWith('left') ? 'left' : 'reply',
+      url: t?.thread_url ?? undefined, at: t?.news_at ?? null,
+      what: `${byOf(id)} ${did}${isWait ? ': fix to come' : v ? (isResolved && v.text === 'not fixed' ? ', not fixed' : `: ${v.text}`) : ''}${isFyi ? ' (FYI)' : ''}`,
     })
   }
   for (const id of box.replies) topicLine(id, isRework ? 'replied' : 'answered')
@@ -871,8 +878,8 @@ export const inboxOf = (review: ReviewState | null, judging: { topics: string[];
   for (const id of box.resolved) topicLine(id, 'resolved')
   for (const x of box.threads) topicLine(x.id, 'opened a new thread', x.fyi === true)
   // The person's own comments, posted on GitLab since, and what the agent matched them to.
-  for (const p of box.own) topicLines.push({ tone: 'needs', what: `your comment: the same as ${p.into}?` })
-  if (box.matching) topicLines.push({ tone: 'busy', what: `${box.matching} comment${box.matching === 1 ? '' : 's'} of yours: matching…` })
+  for (const p of box.own) topicLines.push({ tone: 'needs', kind: 'own', what: `your comment: the same as ${p.into}?` })
+  if (box.matching) topicLines.push({ tone: 'busy', kind: 'own', what: `${box.matching} comment${box.matching === 1 ? '' : 's'} of yours: matching…` })
   // Merged or closed: what is still the person's, and the drafts nobody saw.
   const left = review.merged
   for (const id of left?.left ?? []) topicLine(id, 'left it open as the MR closed')
@@ -906,8 +913,13 @@ export const inboxOf = (review: ReviewState | null, judging: { topics: string[];
   ]
   timeline.sort((a, b) => Date.parse(a.at) - Date.parse(b.at))
   info.push(...timeline.map(x => x.line))
+  // What arrived before the last round ended came in while the user worked: apart, dim.
+  const end = box.round_end ? Date.parse(box.round_end) : NaN
+  const isDuring = (l: InboxLine) => !Number.isNaN(end) && !!l.at && Date.parse(l.at) <= end
   const shown = topicLines.slice(0, BOX_TOPICS)
-  const lines = [...shown, ...info]
+  const all = [...shown, ...info]
+  const lines = all.filter(l => !isDuring(l))
+  const during = all.filter(isDuring)
   const needs = topicLines.filter(l => l.tone !== 'info')
   const count = review.topics.filter(t => t.inbox === 'new' || t.inbox === 'yours').length + box.own.length
   // The button names the work it opens.
@@ -917,5 +929,5 @@ export const inboxOf = (review: ReviewState | null, judging: { topics: string[];
     : answers.length === 1 ? `Check ${answers[0]?.topic}`
     : answers.length > 1 ? `Check ${answers.length} answers`
     : box.first ? 'Start the round' : null
-  return { lines, more: topicLines.length - shown.length, count, hasNews: lines.length > 0, since: box.since, first: box.first, button }
+  return { lines, during, more: topicLines.length - shown.length, count, hasNews: all.length > 0, since: box.since, first: box.first, button }
 }

@@ -4,7 +4,7 @@ import type { EngineInterface, Register } from 'claude-code'
 import type { ReviewCard, ReviewHost, ReviewOutcome, ReviewJudging, ReviewNote, ReviewNotice, ReviewPlaced, ReviewSession, ReviewState } from '../types'
 import {
   argsFor, buttonsFor, checkPrompt, endOf, hasNext, iconOf, isHeldTopic, isMergeWatched, outcomeOf, earlyPrompt, replyPrompt, clockOf, currentTopic, didText, inboxOf, noteForModel, stepOf, untilOf, waitingLine, waitingOf,
-  type BandButton,
+  type BandButton, type InboxLine,
 } from './review.ts'
 import {
   boxRowsOf, fitTitle, plainTitle, INBOX_ICON, MR_COLOR, INBOX_WORD, inboxMark, kindSlot, legendFor, oneLineNote, reflow, sectionsOf, STATE_ICON,
@@ -2766,7 +2766,7 @@ export const register: Register = on => {
     const opener = box?.first ?? (r.inbox?.own.length ? 'yours' : null)
     // Never while a round's step waits: the box is not drawn then (`waiting`).
     const end = waiting ? endOf(r, waiting.count === 0) : undefined
-    const boxWhen = Math.max(0, ...(box?.lines ?? []).map(l => (l.at ? [...whenOf(l.at)].length : 0)))
+    const boxWhen = Math.max(0, ...[...(box?.lines ?? []), ...(box?.during ?? [])].map(l => (l.at ? [...whenOf(l.at)].length : 0)))
     const cleaned = waiting ? await read($, cleanedUp) : null
     const openerLabel = isOver ? 'Check the answers' : box?.button ?? (opener === 'yours' ? 'Open your comment' : 'Start the round')
     // When GitLab is asked next, and a small press to ask it now, at the sidebar's foot while
@@ -2786,6 +2786,28 @@ export const register: Register = on => {
         </Box>
       </Box>
     )
+    // One line of the box: its time, its mark, the topic's handle, what happened.
+    const boxRow = (l: InboxLine, i: number, part: string) => (
+      <Box key={`${part}-${i}`} flexDirection="row" gap={1}>
+        {/* Its time first, dim, in a column as wide as the box's widest, as a
+            card's steps are; a line with no reliable time leaves it blank. */}
+        {boxWhen > 0 && <Box flexShrink={0}><Text dimColor>{(l.at ? whenOf(l.at) : '').padEnd(boxWhen)}</Text></Box>}
+        {/* Its kind's icon, plain: the list beside it marks what needs the person, so the
+            box does not mark it again. What needs them is drawn bright, the rest dim. */}
+        <Text dimColor={l.tone !== 'needs' || undefined}>{(l.kind && INBOX_ICON[l.kind]) || '·'}</Text>
+        {/* The topic's handle opens it here; the rest of the line goes to GitLab, and says so. */}
+        {l.topic && (
+          <Button key={`${part}-topic-${i}`} plain onPress={() => { void showTopic($, s, l.topic as string) }}>
+            <Text color={ACCENT} dimColor={l.tone === 'info' || undefined}>{l.topic}</Text>
+          </Button>
+        )}
+        {/* A topic's line links to its thread on GitLab; a push's, to what it changed. */}
+        {l.url
+          ? <Markdown text={`[${l.what} ${LINK_ICON}](${l.url})`} dimColor={l.tone !== 'needs' || undefined} />
+          : <Text dimColor={l.tone !== 'needs' || undefined} wrap="wrap">{l.what}</Text>}
+        {l.size && sizeOf(l.size) && <Text>{drawSize(Text, (sizeOf(l.size) as { size: DiffSize }).size, true)}</Text>}
+      </Box>
+    )
     const waitPart = waiting && (
       <Box key="waiting" flexGrow={1} flexDirection="column" justifyContent="center" alignItems="center">
         <Box borderStyle="round" borderDimColor paddingX={2} flexDirection="column" alignItems="center">
@@ -2801,30 +2823,16 @@ export const register: Register = on => {
               (dim); a push carries its size and links to what it changed. */}
           {(box?.lines.length ?? 0) > 0 && (
             <Box flexDirection="column" marginTop={1}>
-              {box?.lines.map((l, i) => (
-                <Box key={`inbox-${i}`} flexDirection="row" gap={1}>
-                  {/* Its time first, dim, in a column as wide as the box's widest, as a
-                      card's steps are; a line with no reliable time leaves it blank. */}
-                  {boxWhen > 0 && <Box flexShrink={0}><Text dimColor>{(l.at ? whenOf(l.at) : '').padEnd(boxWhen)}</Text></Box>}
-                  {/* What needs the person in yellow; what is only to know of by its kind's
-                      icon, plain and dim: it reads with the words beside it, no legend needed. */}
-                  <Text color={l.tone === 'needs' ? 'yellow' : undefined} dimColor={l.tone !== 'needs' || undefined}>
-                    {l.tone === 'needs' ? INBOX_ICON.new : l.tone === 'busy' ? INBOX_ICON.judging : (l.kind && INBOX_ICON[l.kind]) || '·'}
-                  </Text>
-                  {/* The topic's handle opens it here; the rest of the line goes to GitLab, and says so. */}
-                  {l.topic && (
-                    <Button key={`inbox-topic-${i}`} plain onPress={() => { void showTopic($, s, l.topic as string) }}>
-                      <Text color={ACCENT} dimColor={l.tone === 'info' || undefined}>{l.topic}</Text>
-                    </Button>
-                  )}
-                  {/* A topic's line links to its thread on GitLab; a push's, to what it changed. */}
-                  {l.url
-                    ? <Markdown text={`[${l.what} ${LINK_ICON}](${l.url})`} dimColor={l.tone !== 'needs' || undefined} />
-                    : <Text dimColor={l.tone !== 'needs' || undefined} wrap="wrap">{l.what}</Text>}
-                  {l.size && sizeOf(l.size) && <Text>{drawSize(Text, (sizeOf(l.size) as { size: DiffSize }).size, true)}</Text>}
-                </Box>
-              ))}
+              {box?.lines.map((l, i) => boxRow(l, i, 'inbox'))}
               {(box?.more ?? 0) > 0 && <Text dimColor>{`+${box?.more} more, in the list above`}</Text>}
+            </Box>
+          )}
+          {/* What arrived while the person worked through the last round: apart, under a dim
+              word of its own, so it does not read as news of after it. */}
+          {(box?.during.length ?? 0) > 0 && (
+            <Box flexDirection="column" marginTop={1}>
+              <Text dimColor>During your round</Text>
+              {box?.during.map((l, i) => boxRow(l, i, 'during'))}
             </Box>
           )}
           {/* What waits, and on whom; merged or closed, the title and the lines say it all,

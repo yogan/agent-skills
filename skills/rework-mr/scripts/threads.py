@@ -2320,6 +2320,8 @@ def next_up(state):
     t = round_pick(state, state.get("focus") if state["pass"] == was else None, state["pass"])
     if t is None:
         state["in_round"] = False     # nothing left: the round is over
+        # When: the box lists what arrived during the round apart from what came after.
+        state["round_end"] = datetime.datetime.now(datetime.timezone.utc).isoformat()
     return t
 
 
@@ -2374,6 +2376,8 @@ def inbox_json(state, topics):
                     for x in fresh if "thread" in x["news"]],
         "pushes": [], "own": [], "matching": 0,
         "mr": state.get("mr_news") or [],
+        # When the last round ended: news from before it arrived while the user worked.
+        "round_end": state.get("round_end"),
         "waiting": sum(1 for x in topics if x["status"] == "waiting"),
         "first": first["id"] if first else None,
         "newer_push": False,

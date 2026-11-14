@@ -1518,6 +1518,10 @@ def inbox_of(state, t, status=None):
     if v and v["says"] == "fyi" and t.get("state") != "acked":
         # Listed for the user's information until they open it; never part of a round.
         return None if t.get("seen") == answer_mark(state, t) else "fyi"
+    if waits_on_author(state, t) and t["thread_ids"]:
+        # An answer judged to leave the next move to the author (they agreed, the fix is to
+        # come): only to know of, until the user opens it; never part of a round.
+        return None if t.get("seen") == answer_mark(state, t) else "fyi"
     if status not in NEEDS_YOU:
         return None
     if not t["thread_ids"] or t.get("follow_up") == "offer":
@@ -1563,6 +1567,8 @@ def next_up(state):
     t = round_pick(state, state.get("focus"))
     if t is None:
         state["in_round"] = False     # nothing left: the round is over
+        # When: the box lists what arrived during the round apart from what came after.
+        state["round_end"] = datetime.datetime.now(datetime.timezone.utc).isoformat()
     return t
 
 
@@ -2124,6 +2130,8 @@ def inbox_json(state, topics):
                     for x in fresh if "thread" in x["news"]],
         "pushes": [{k: p.get(k) for k in ("at", "stat", "topics", "rebase", "url", "same", "own")} for p in pushes],
         "mr": state.get("mr_news") or [],
+        # When the last round ended: news from before it arrived while the user worked.
+        "round_end": state.get("round_end"),
         "own": proposals, "matching": len(own),
         "waiting": sum(1 for x in topics if x["status"] == "open"),
         "first": first["id"] if first else None,

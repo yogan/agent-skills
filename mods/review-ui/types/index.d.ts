@@ -100,6 +100,8 @@ export type ReviewInbox = {
   first: string | null
   // A push came after the round opened: the sidebar's code is from before it.
   newer_push: boolean
+  // When the last round ended: what arrived before it came in while the user worked.
+  round_end?: string | null
 }
 
 // One comment of a thread, or on the MR itself (rework-mr).

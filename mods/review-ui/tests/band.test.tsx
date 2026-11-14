@@ -1,6 +1,7 @@
 import type { On } from 'claude-code'
 import type { Engine } from 'claude-code/testing'
 import { expect, mock, test } from 'claude-code/testing'
+import { inboxMark } from '../hooks/panel.ts'
 import { buttonsFor, CI_PROMPT, endOf, iconOf, inboxOf, isMergeWatched, untilOf } from '../hooks/review.ts'
 
 // The test runtime's timer, which the engine's types leave out (a mod has no timers of its own).
@@ -936,6 +937,11 @@ test('between rounds news stays out of the chat: the band counts it, the box say
   // One line a topic, who did what and the verdict, marked as needing the person.
   expect(texts).toContain('Jonas answered: looks fixed')
   expect((await panel.findAll({ type: 'Text' })).find(t => t.text === 'Jonas answered: looks fixed')?.props.dimColor).toBeUndefined()
+  // Its kind's icon leads it, plain: the list's row carries the yellow news mark, the box does not repeat it.
+  const all = await panel.findAll({ type: 'Text' })
+  expect(all.find(t => t.text === '\u{f0189}')).toBeDefined()
+  expect(all.find(t => t.text === '\u{f0189}')?.props.color).toBeUndefined()
+  expect(all.filter(t => t.text === '\u{f09de}' && t.props.color === 'yellow').length).toBe(0)
   // A push: when first, then who, what it touches, and its size, dim: the topics carry what to do.
   expect(texts).toContain('Jonas pushed · touches t2')
   expect(texts.some(t => /^\d\d:\d\d +$/.test(t) || /^Nov 5, \d\d:\d\d$/.test(t))).toBe(true)
@@ -2870,4 +2876,33 @@ test('rework-mr: Merge in the box runs the script with no model turn; Clean up l
   expect((await panel.findAll({ type: 'Text' })).map(t => String(t.text ?? '')).join('\n')).toContain('All cleaned up. You can close this session.')
   expect(await panel.find({ type: 'Button', key: 'cleanup' })).toBeUndefined()
   await panel.unmount()
+})
+
+
+test('the box lists what arrived during the last round apart from what came after it', () => {
+  const r = JSON.parse(stateOf(null, [topic('t1', 'open')], { author: 'Jan', inbox: inbox({
+    round_end: '2026-11-09T12:00:00Z',
+    pushes: [
+      { at: '2026-11-09T11:30:00Z', stat: '\u{f4d2} 3 files +9 −1', topics: [], rebase: false },
+      { at: '2026-11-09T12:30:00Z', stat: '\u{f4d2} 1 file +1 −1', topics: [], rebase: false },
+    ],
+    mr: [{ kind: 'approved', at: '2026-11-09T11:45:00Z', by: 'Robin' }],
+  }) }))
+  const box = inboxOf(r)
+  expect(box?.lines.map(l => [l.at, l.what])).toEqual([['2026-11-09T12:30:00Z', 'Jan pushed']])
+  expect(box?.during.map(l => [l.at, l.what])).toEqual([['2026-11-09T11:30:00Z', 'Jan pushed'], ['2026-11-09T11:45:00Z', 'Robin approved the MR']])
+  expect(box?.hasNews).toBe(true)
+  // Before any round ended, everything is news as before.
+  const fresh = inboxOf(JSON.parse(stateOf(null, [topic('t1', 'open')], { author: 'Jan', inbox: inbox({ pushes: [{ at: '2026-11-09T11:30:00Z', topics: [], rebase: false }] }) })))
+  expect([fresh?.lines.length, fresh?.during.length]).toEqual([1, 0])
+})
+
+test("review-mr: an answer that leaves the next move to the author is a dim line and a dim mark, never a round's stop", () => {
+  const waits = { ...topic('t2', 'open'), inbox: 'fyi', news: ['reply'], news_at: '2026-11-09T12:10:00Z' }
+  const r = JSON.parse(stateOf(null, [topic('t1', 'open'), waits], { author: 'Jonas', inbox: inbox({ replies: ['t2'] }) }))
+  const box = inboxOf(r)
+  expect(box?.lines.map(l => [l.topic, l.what, l.tone, l.kind, l.at])).toEqual([['t2', 'Jonas answered: fix to come', 'info', 'waits', '2026-11-09T12:10:00Z']])
+  expect(box?.count).toBe(0)
+  expect(box?.button).toBeNull()
+  expect(inboxMark(waits as never, [], [])).toEqual({ key: 'fyi', icon: '\u{f09de}', isDim: true })
 })
