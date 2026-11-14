@@ -1306,7 +1306,8 @@ def _render_quote(state, tid, refine=False):
         mine = next((n for n in first.get("notes") or [] if n.get("mine")), None)
         when = ui.at_md((mine or {}).get("at"))
         link = f" · [its thread {LINK_ICON}]({mine['url']})" if (mine or {}).get("url") else ""
-        out += ["", f"{ui.STEP_DONE_ICON} Comment posted{f' · {when}' if when else ''}{link}"]
+        out += ["", f"{ui.STEP_DONE_ICON} Comment posted{f' · {when}' if when else ''}{link}",
+                *answer_steps(state, t)]
         if not closing and topic_status(state, t) == "open":
             out.append(f"{ui.STEP_WAITS_ICON} Waits on {first_name(state.get('author')) or 'the author'}")
     v = verdict_of(state, t)
@@ -1344,7 +1345,8 @@ def closing_line(state, t):
         if c.get("how") == "accepted":
             return ui.closed_md(f"You accepted {author}'s answer and resolved it", at, url)
         if c.get("how") == "fixed":
-            return ui.closed_md(f"Fixed by {author} · you acked it", at, url)
+            push = f" (push {c['push']})" if (c.get("push") or 0) > 1 else ""
+            return ui.closed_md(f"Fixed by {author}{push} · you acked it", at, url)
         if who == "you":
             return ui.closed_md("Resolved and acked by you", at, url)
         if who:
@@ -1360,26 +1362,42 @@ def closing_line(state, t):
     return ui.closed_md(f"Resolved by {who}", res.get("resolved_at"), url)
 
 
-def answer_line(state, t):
-    """The author's answer an answered topic's card ends on, where nothing closed it: their
-    latest reply or the push that changed its lines, whichever came last, and when. The
-    reply's words are the sidebar's thread; the verdict above is the agent's judgment of it."""
+def answer_steps(state, t):
+    """What the author did since the comment, as a card's step lines, oldest first: each of
+    their fixes (one per push that changed its lines, with its size and GitLab link), then
+    their latest reply where it came after the last fix. The reply's words are the sidebar's
+    thread; the verdict above them is the agent's judgment of it."""
     author = first_name(state.get("author")) or "the author"
-    said = [n for x in t["thread_ids"] for n in (state["threads"].get(x) or {}).get("notes") or []
-            if not n.get("mine")]
+
     def stamp(v):
         when = _ts(v)
         return when.timestamp() if when else 0
-    note = max(said, key=lambda n: stamp(n.get("at")), default=None)
-    push = t.get("pushed")
-    if push and (not note or stamp(push.get("at")) >= stamp(note.get("at"))):
-        when = ui.at_md(push.get("at"))
-        return f"{ui.PUSHED_ICON} {author} pushed a change to its lines" + (f" · {when}" if when else "")
-    if note:
+
+    out = []
+    fixes = kept_fixes(state, t)
+    wt = get_worktree(state.get("slug") or "", state.get("iid")) if fixes else None
+
+    def said(f):
+        when = ui.at_md(f.get("at"))
+        stat = fix_refs.stat(wt, f["ends"]) if wt and f.get("ends") else None
+        return ((f" · {when}" if when else "") + (f" · {diffsize.of_stat(stat)}" if stat else "")
+                + (f" · [the diff {LINK_ICON}]({f['url']})" if f.get("url") else "")
+                + (" · may include other changes" if f.get("mixed") else ""))
+
+    if len(fixes) == 1:
+        out.append(f"{ui.STEP_DONE_ICON} {author} pushed a fix{said(fixes[0])}")
+    elif fixes:
+        out.append(f"{ui.STEP_DONE_ICON} {author} pushed a fix · {len(fixes)} pushes")
+        # Indented by no-break spaces: a card's markdown drops the plain ones leading a line.
+        out += [f"\u00a0\u00a0{ui.PUSHED_ICON} push {k}{said(f)}" for k, f in enumerate(fixes, 1)]
+    said_by = [n for x in t["thread_ids"] for n in (state["threads"].get(x) or {}).get("notes") or []
+               if not n.get("mine")]
+    note = max(said_by, key=lambda n: stamp(n.get("at")), default=None)
+    if note and (not fixes or stamp(note.get("at")) > stamp(fixes[-1].get("at"))):
         when = ui.at_md(note.get("at"))
-        return f"{ui.STATE_ICON['answered']} {first_name(note.get('author')) or author} replied" + \
-            (f" · {when}" if when else "")
-    return None
+        out.append(f"{ui.STATE_ICON['answered']} {first_name(note.get('author')) or author} replied"
+                   + (f" · {when}" if when else ""))
+    return out
 
 
 def author_resolved(state, t):
@@ -1395,7 +1413,7 @@ def author_resolved(state, t):
     name = thr[0].get("resolved_username")
     if not name or name != state.get("author_username") or thr[0].get("resolved_mine"):
         return None
-    return "pushed" if t.get("pushed") or kept_fix(state, t) else "unpushed"
+    return "pushed" if fixes_of(t) else "unpushed"
 
 
 def render_answered(state, t, summ, v):
@@ -1427,9 +1445,12 @@ def render_answered(state, t, summ, v):
         out += part
     out += ["", ui.heading_md(ui.VERDICT_ICON, f"Verdict: {verdict_word(state, t, v)}"), "",
             v["text"].strip()]
-    latest = closing_line(state, t) or answer_line(state, t)
-    if latest:
-        out += ["", latest]
+    steps = answer_steps(state, t)
+    if steps:
+        out += ["", *steps]
+    closing = closing_line(state, t)
+    if closing:
+        out += ["", closing]
     out += _draft_block(state, t, t.get("draft"), follow_up=True)
     t["shown"] = _digest(out)
     return "\n".join(out).strip()
@@ -2214,7 +2235,9 @@ def state_json(state):
             "summary": t.get("summary"), "file": t.get("file"), "line": t.get("line"),
             "posted": bool(t["thread_ids"]), "draft": draft_version(body) if body else None,
             # The author's push that changed its lines, kept in git: Show fix in hunk opens it.
-            "fix_kept": t["id"] in kept,
+            "fix_kept": bool((kept_fixes(state, t, kept) or [{}])[-1].get("ends")),
+            # How many fixes of the author's it has, one per push: the sidebar picks between them.
+            "pushes": len(fixes_of(t)),
             "follow_up": t.get("follow_up"),
             # Posted by the user's own hand: being checked against the draft.
             "post_check": bool(t.get("post_check")),
@@ -2845,12 +2868,108 @@ def move_worktree(state, ctx, iid):
     keep_author_fixes(state, wt, iid)
 
 
+def walk_fixes(state, ctx, iid, vs=None):
+    """Note each push of the author's that changed a topic's lines since its comment, one
+    record per push (`t["fixes"]`), open topics and closed ones alike, the thread resolved or
+    not: whatever happens in the thread, the code says whether the author fixed it.
+
+    The MR's versions are GitLab's record of every push (force pushes included), so the walk
+    goes from the version the comment was posted on to the newest, one pair of consecutive
+    versions at a time, and carries the comment's lines through each (`code_view.touched`).
+    A push that only moved them is no fix; one that changed them is, with its GitLab link
+    (that version against the one before). Where a rebase came with it, the head-to-head
+    diff holds the target branch's changes too: the file counts only where the MR's own
+    change to it differs between the two versions, as `_author_touch` decides for the
+    `updates` report, and the record says it may include other changes. Each topic keeps
+    where it got to (`t["fix_walk"]`), so a check walks only the versions new since.
+
+    Where the versions cannot tell (the comment's commit is no version's head), one record
+    spans the comment's commit to the head, marked as possibly holding other changes, and
+    follows the head until the topic is closed here."""
+    vs = versions(ctx, iid) if vs is None else vs
+    chron = list(reversed(vs or []))
+    if not chron:
+        return
+    at = {v.get("head_commit_sha"): k for k, v in enumerate(chron)}
+    head = chron[-1].get("head_commit_sha")
+    web = _mr_web(state, ctx, iid)
+    cache = {}
+
+    def compare(frm, to):
+        if (frm, to) not in cache:
+            cache[(frm, to)] = _compare(ctx, frm, to)
+        return cache[(frm, to)]
+
+    def own_change(v, path):
+        diffs = compare(v.get("base_commit_sha"), v.get("head_commit_sha"))
+        if diffs is None:
+            return None
+        d = _file_diff(diffs, path)
+        return _HUNK_HEADER_RE.sub("", (d or {}).get("diff") or "")
+
+    for t in state["topics"]:
+        if not t["thread_ids"] or t.get("source") in ("peer", "author") or t.get("state") == "dropped":
+            continue
+        x = state["threads"].get(t["thread_ids"][0]) or {}
+        if not (x.get("file") and x.get("line") and x.get("side") == "new" and x.get("head_sha")):
+            continue
+        w = t.setdefault("fix_walk", {"sha": x["head_sha"], "file": x["file"],
+                                      "first": x.get("line_start") or x["line"], "last": x["line"]})
+        k = at.get(w["sha"])
+        if k is None:
+            if w["sha"] == head or w.get("lost") and topic_status(state, t) == "acked":
+                continue
+            diffs = compare(w["sha"], head)
+            d = _file_diff(diffs or [], w["file"])
+            if diffs is not None and code_view.touched((d or {}).get("diff"), w["first"], w["last"])[0]:
+                w["lost"] = True
+                t["fixes"] = [{"before": w["sha"], "after": head, "at": now_iso(), "mixed": True,
+                               "url": f"{ctx['web']}/-/compare/{w['sha']}...{head}"}]
+            continue
+        for prev, cur in zip(chron[k:], chron[k + 1:]):
+            diffs = compare(prev.get("head_commit_sha"), cur.get("head_commit_sha"))
+            if diffs is None:
+                break                             # GitLab could not say: the next check tries
+            d = _file_diff(diffs, w["file"])
+            hit, first, last = code_view.touched((d or {}).get("diff"), w["first"], w["last"])
+            mixed = False
+            if hit and cur.get("base_commit_sha") != prev.get("base_commit_sha"):
+                before, after = own_change(prev, w["file"]), own_change(cur, w["file"])
+                if before is not None and before == after:
+                    hit = False                   # the rebase moved it, not the author
+                else:
+                    mixed = True
+            if hit:
+                t.setdefault("fixes", []).append({
+                    "before": prev.get("head_commit_sha"), "after": cur.get("head_commit_sha"),
+                    "at": cur.get("created_at") or now_iso(), "mixed": mixed,
+                    "url": f"{web}/diffs?diff_id={cur.get('id')}&start_sha={prev.get('head_commit_sha')}"})
+            w.update(sha=cur.get("head_commit_sha"), first=first, last=last,
+                     file=(d or {}).get("new_path") or w["file"])
+
+
+def fixes_of(t):
+    """The author's fixes to `t` since its comment, oldest first: one per push that changed
+    its lines (`walk_fixes`). A topic from before they were recorded has its one noted push,
+    if any (`t["pushed"]`)."""
+    if t.get("fixes"):
+        return t["fixes"]
+    p = t.get("pushed") or {}
+    return [{"before": p["from"], "after": p["to"], "at": p.get("at"), "mixed": False, "url": None,
+             "legacy": True}] if p.get("from") and p.get("to") else []
+
+
+def fix_key(t, n):
+    """Where the topic's `n`th fix (1-based) is kept in git, under the MR's prefix."""
+    return f"{t['id']}/push{n}"
+
+
 def keep_author_fixes(state, wt, iid):
-    """Each push that changed a topic's lines, kept in git as the author's fix to it
-    (`lib/fix_refs.py`): the code it changed them from and the head it made, which a force
-    push would otherwise leave to `git gc`. Once the MR is merged or closed they all go.
-    Where git does not have both commits yet (the worktree not fetched since), nothing is
-    kept, and the next fetch tries again."""
+    """Each of the author's fixes to a topic kept in git (`lib/fix_refs.py`), one per push:
+    the head before it and the head it made, which a force push would otherwise leave to
+    `git gc`. Once the MR is merged or closed they all go. Where git does not have both
+    commits yet (the worktree not fetched since), nothing is kept, and the next fetch tries
+    again."""
     if not (wt and os.path.isdir(wt)):
         return
     if (state.get("mr_status") or {}).get("state") in ("merged", "closed"):
@@ -2858,15 +2977,30 @@ def keep_author_fixes(state, wt, iid):
         return
     have = fix_refs.kept(wt, SKILL, iid)
     for t in state["topics"]:
-        p = t.get("pushed") or {}
-        if p.get("from") and p.get("to") and have.get(t["id"]) != (p["from"], p["to"]):
-            fix_refs.keep(wt, SKILL, iid, t["id"], p["from"], p["to"])
+        for n, f in enumerate(fixes_of(t), 1):
+            key = t["id"] if f.get("legacy") else fix_key(t, n)
+            if have.get(key) != (f["before"], f["after"]):
+                fix_refs.keep(wt, SKILL, iid, key, f["before"], f["after"])
 
 
-def kept_fix(state, t):
-    """The author's fix to `t` as kept in git, or None."""
-    wt = get_worktree(state.get("slug") or "", state.get("iid"))
-    return fix_refs.kept(wt, SKILL, state.get("iid")).get(t["id"]) if wt and os.path.isdir(wt) else None
+def kept_fixes(state, t, kept=None):
+    """`fixes_of(t)`, each with `ends`: its two commits as kept in git, or None where they
+    are not. `kept`: the MR's kept fixes, where the caller read them for every topic."""
+    fixes = fixes_of(t)
+    if kept is None:
+        wt = get_worktree(state.get("slug") or "", state.get("iid"))
+        kept = fix_refs.kept(wt, SKILL, state.get("iid")) if fixes and wt and os.path.isdir(wt) else {}
+    return [{**f, "ends": kept.get(t["id"] if f.get("legacy") else fix_key(t, n))}
+            for n, f in enumerate(fixes, 1)]
+
+
+def kept_fix(state, t, n=None):
+    """The author's `n`th fix to `t` (1-based) as kept in git, else its latest; None where
+    it is not kept."""
+    fixes = kept_fixes(state, t)
+    if not fixes or (n is not None and not 1 <= n <= len(fixes)):
+        return None
+    return fixes[(n or len(fixes)) - 1]["ends"]
 
 
 # ------------------------------------------------- prepared inputs (explainer, seed)
@@ -3324,6 +3458,8 @@ def main():
     ph.add_argument("topic")
     ph.add_argument("--pushed", action="store_true", help="the only kind there is here; "
                     "accepted as rework-mr's `hunk-show` takes it")
+    ph.add_argument("--push", type=int, help="which of the author's fixes (1-based); the latest "
+                    "where none is given")
     ph.add_argument("--iid", type=int)
     pc = sub.add_parser("code", help="a topic's file, or one of your threads', as JSON for "
                         "the mod's sidebar")
@@ -3333,6 +3469,8 @@ def main():
                     help="the change since the comment was posted, not the MR's whole change")
     pc.add_argument("--file", help="one of the author's fix's files to show (the sidebar's "
                     "pick), not the comment's")
+    pc.add_argument("--push", type=int, help="which of the author's fixes (1-based) to list; "
+                    "the latest where none is given")
     pc.add_argument("--iid", type=int)
 
     po = sub.add_parser("own-review", help="the user's own review, before the topics: "
@@ -3479,8 +3617,8 @@ def main():
     if cmd == "hunk-show":                # on a press: the author's fix in the diff viewer
         t = topic_for(state, args.topic) or die(f"no topic {args.topic}")
         wt = get_worktree(state.get("slug") or "", state.get("iid"))
-        ends = kept_fix(state, t) or die(f"{tref(args.topic)} has no push of the author's kept "
-                                         "in git to show")
+        ends = kept_fix(state, t, args.push) or die(f"{tref(args.topic)} has no push of the author's "
+                                                    "kept in git to show")
         shown = fix_refs.show(wt, ends, state_file(STATE_ROOT, ctx["slug"], iid, f"fix-{args.topic}.patch"), f"{TOPIC_ICON}!{iid}")
         if not shown:
             die(hunk.not_shown())
@@ -3509,7 +3647,7 @@ def main():
             v["mode"] = "since" if mine else "mr"
             push = pushed_of(state, t) if not args.thread else None
             v["since_at"] = (push or {}).get("at")
-            ends = kept_fix(state, t) if not args.thread else None
+            ends = kept_fix(state, t, args.push) if not args.thread else None
             files = [[f, a, r] for f, a, r in fix_refs.stat(wt, ends)] if ends else []
             if files and args.file and args.file != code_view.commented(wt, x or {}):
                 # Another file of the author's fix, picked in the sidebar: its change in it.
@@ -3758,8 +3896,8 @@ def main():
             if args.state == "acked" and topic_status(state, t) != "acked":
                 # How it was closed, for the line its card ends on: on the author's fix where
                 # a push changed its lines since the comment, else on what stands.
-                t["closed"] = {"how": "fixed" if t.get("pushed") or kept_fix(state, t) else "acked",
-                               "at": now_iso()}
+                t["closed"] = {"how": "fixed" if fixes_of(t) else "acked", "at": now_iso(),
+                               "push": len(fixes_of(t))}
             t["state"] = args.state
             # Stamped so a later author note can be recognised as newer than the ack.
             t["acked_at"] = now_iso() if args.state == "acked" else None
@@ -3891,6 +4029,7 @@ def main():
         if ui.drawn():
             check_pushes(state, ctx, iid, base)
             link_pushes(state, ctx, iid)
+            walk_fixes(state, ctx, iid)
             status = mr_status(ctx, iid, me)
             state.setdefault("mr_news", []).extend(mr_news(state.get("mr_status"), status, now_iso()))
             state["mr_status"] = status
@@ -3902,6 +4041,10 @@ def main():
         # The user opens the inbox (or a topic in it): the review worktree moves to the MR's
         # newest push, so the sidebar shows what the round is about, and the round starts.
         # Here and not in the update check, so the code never changes under a turn.
+        # The author's fixes since the comments first: the card about to come up says them,
+        # and the worktree keeps them in git as it moves.
+        if ui.drawn():
+            walk_fixes(state, ctx, iid)
         move_worktree(state, ctx, iid)
         state["pushes"] = []
         state["mr_news"] = []

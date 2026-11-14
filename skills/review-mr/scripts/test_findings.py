@@ -2195,7 +2195,8 @@ class TestVerdict(unittest.TestCase):
         self.t["pushed"] = {"from": "a", "to": "b", "at": "2026-11-05T11:30:00Z"}
         with self.drawn(), patch.object(F, "verdict_of", return_value=self.t["verdict"]):
             card = F.render_quote(self.state, "t1")
-        self.assertRegex(card.splitlines()[-1], rf"^{F.ui.PUSHED_ICON} Alex pushed a change to its lines · ")
+        self.assertRegex(card.splitlines()[-1], rf"^{F.ui.STEP_DONE_ICON} Alex pushed a fix · ")
+        self.assertNotIn("replied", card)          # the push came after the reply
 
     def test_a_verdict_without_a_recap_goes_straight_to_what_was_done(self):
         self.t["verdict"] = {"says": "settled", "text": "Done.", "did": "Pushed it.",
@@ -2803,6 +2804,109 @@ class TestPostedCommentCard(unittest.TestCase):
                 self.assertRegex(self.last_line(out), rf"^{F.ui.STEP_DONE_ICON} {re.escape(said)} · (Nov 10, )?\d\d:\d\d · \[its thread .\]\(.+\)$")
                 self.assertNotIn("Waits on", out)
                 self.assertNotIn("toggle", out)
+
+
+class TestAuthorFixes(unittest.TestCase):
+    """The author's fixes to a topic, one per push that changed its lines, found from the
+    MR's versions on GitLab whatever happened in the thread. The example from the plan: a
+    comment on line 40 at commit A; B fixes line 40, C changes another file, D touches line
+    40 again. B and D are its fixes, each with its own link; C is not."""
+
+    CTX = {"enc": "g%2Fp", "web": "https://gl/g/p", "slug": "g-p"}
+    FIX = "@@ -40 +40 @@\n-old\n+new\n"
+    AGAIN = "@@ -40 +40 @@\n-new\n+newer\n"
+    ELSEWHERE = "@@ -3 +3 @@\n-x\n+y\n"
+
+    def setUp(self):
+        mock = patch.dict(os.environ, {"REVIEW_UI_DRAWN": "1"})
+        mock.start()
+        self.addCleanup(mock.stop)
+        self.state = {"iid": 7, "author": "Robin", "author_username": "robin.l",
+                      "mr_web_url": "https://gl/g/p/-/merge_requests/7",
+                      "threads": {"d1": {"mine": True, "file": "a.ts", "line": 40, "side": "new",
+                                         "head_sha": "A", "resolved": False, "url": "https://gl/n1",
+                                         "notes": [{"body": "Off by one.", "mine": True,
+                                                    "at": "2026-11-05T09:00:00Z"}]}},
+                      "topics": [{"id": "t1", "thread_ids": ["d1"], "summary": "off by one",
+                                  "state": None, "source": "llm"}]}
+        self.t = self.state["topics"][0]
+        self.versions = [{"id": 1, "head_commit_sha": "A", "base_commit_sha": "M", "created_at": "2026-11-05T08:00:00Z"}]
+        self.diffs = {}
+
+    def push(self, sha, vid, diffs, base="M"):
+        prev = self.versions[0]["head_commit_sha"]
+        self.versions.insert(0, {"id": vid, "head_commit_sha": sha, "base_commit_sha": base,
+                                 "created_at": f"2026-11-05T1{vid}:00:00Z"})
+        self.diffs[(prev, sha)] = diffs
+
+    def walk(self):
+        with patch.object(F, "_compare", side_effect=lambda ctx, a, b: self.diffs.get((a, b))), \
+                patch.object(F, "get_worktree", return_value=None):
+            F.walk_fixes(self.state, self.CTX, 7, vs=list(self.versions))
+
+    def test_a_fix_pushed_then_resolved_before_any_check_is_a_pushed_fix(self):
+        """The usual order: the author pushes the fix, then ticks the thread off, and the
+        update check runs only after both. Its card must say the fix is there and recommend
+        the ack, never "nothing pushed for it yet"."""
+        self.push("B", 2, [{"new_path": "a.ts", "old_path": "a.ts", "diff": self.FIX}])
+        self.state["threads"]["d1"].update(resolved=True, resolved_by="Lang, Robin",
+                                           resolved_username="robin.l")
+        self.walk()
+        with patch.object(F, "get_worktree", return_value=None), \
+                patch.object(F, "topic_status", return_value="needs_ack"):
+            self.assertEqual(F.author_resolved(self.state, self.t), "pushed")
+            self.assertEqual(F.closing_line(self.state, self.t),
+                             f"{F.ui.RESOLVED_ICON} Robin resolved it on GitLab and pushed a fix.")
+
+    def test_each_push_that_changed_its_lines_is_a_fix_of_its_own_and_no_other_push_is(self):
+        self.push("B", 2, [{"new_path": "a.ts", "old_path": "a.ts", "diff": self.FIX}])
+        self.push("C", 3, [{"new_path": "b.ts", "old_path": "b.ts", "diff": self.ELSEWHERE}])
+        self.push("D", 4, [{"new_path": "a.ts", "old_path": "a.ts", "diff": self.AGAIN}])
+        self.walk()
+        fixes = F.fixes_of(self.t)
+        self.assertEqual([(f["before"], f["after"]) for f in fixes], [("A", "B"), ("C", "D")])
+        self.assertEqual([f["url"] for f in fixes],
+                         ["https://gl/g/p/-/merge_requests/7/diffs?diff_id=2&start_sha=A",
+                          "https://gl/g/p/-/merge_requests/7/diffs?diff_id=4&start_sha=C"])
+        self.assertEqual([f["mixed"] for f in fixes], [False, False])
+        self.walk()                                    # a later check adds nothing twice
+        self.assertEqual(len(F.fixes_of(self.t)), 2)
+        with patch.object(F, "get_worktree", return_value=None):
+            self.assertEqual(F.state_json(self.state)["topics"][0]["pushes"], 2)
+
+    def test_a_push_that_only_moved_its_lines_is_no_fix_and_the_lines_are_followed(self):
+        self.push("B", 2, [{"new_path": "a.ts", "old_path": "a.ts", "diff": "@@ -1,0 +2,2 @@\n+a\n+b\n"}])
+        self.push("C", 3, [{"new_path": "a.ts", "old_path": "a.ts", "diff": "@@ -42 +42 @@\n-old\n+new\n"}])
+        self.walk()
+        self.assertEqual([(f["before"], f["after"]) for f in F.fixes_of(self.t)], [("B", "C")])
+
+    def test_a_rebase_that_only_moved_the_file_is_no_fix_one_with_a_change_may_hold_more(self):
+        # B: a rebase onto a new base; the MR's own change to a.ts is the same as before.
+        self.push("B", 2, [{"new_path": "a.ts", "old_path": "a.ts", "diff": self.FIX}], base="N")
+        self.diffs[("M", "A")] = [{"new_path": "a.ts", "diff": "@@ -1 +1 @@\n-p\n+q\n"}]
+        self.diffs[("N", "B")] = [{"new_path": "a.ts", "diff": "@@ -1 +1 @@\n-p\n+q\n"}]
+        self.walk()
+        self.assertEqual(F.fixes_of(self.t), [])
+        # C: another rebase, carrying a change of the author's own to the file.
+        self.push("C", 3, [{"new_path": "a.ts", "old_path": "a.ts", "diff": self.FIX}], base="O")
+        self.diffs[("O", "C")] = [{"new_path": "a.ts", "diff": "@@ -1 +1 @@\n-p\n+r\n"}]
+        self.walk()
+        self.assertEqual([(f["after"], f["mixed"]) for f in F.fixes_of(self.t)], [("C", True)])
+
+    def test_where_the_versions_cannot_tell_one_fix_spans_the_comment_to_the_head(self):
+        self.versions = [{"id": 9, "head_commit_sha": "Z", "base_commit_sha": "M"}]
+        self.diffs[("A", "Z")] = [{"new_path": "a.ts", "old_path": "a.ts", "diff": self.FIX}]
+        self.walk()
+        (f,) = F.fixes_of(self.t)
+        self.assertEqual((f["before"], f["after"], f["mixed"]), ("A", "Z", True))
+
+    def test_acking_after_two_fixes_says_which_push_closed_it(self):
+        self.push("B", 2, [{"new_path": "a.ts", "old_path": "a.ts", "diff": self.FIX}])
+        self.push("C", 3, [{"new_path": "a.ts", "old_path": "a.ts", "diff": self.AGAIN}])
+        self.walk()
+        self.t.update(state="acked", closed={"how": "fixed", "push": 2, "at": "2026-11-05T15:00:00Z"})
+        with patch.object(F, "topic_status", return_value="acked"):
+            self.assertIn("Fixed by Robin (push 2) · you acked it", F.closing_line(self.state, self.t))
 
 
 if __name__ == "__main__":

@@ -330,6 +330,11 @@ SCENARIOS = [
             Expect(r"\bSince \d\d:\d\d\b|\bNews\b", region="panel"),
             Expect(r"\bt1\b", region="panel"),
             Expect(r"\bt4\b", region="panel"),
+            # The author's push that changed t1's lines is its fix, found from the MR's
+            # versions: on its card with the push's link, its files in the sidebar.
+            Click(" t1 ", offset=1, region="panel"),
+            Expect(r"Alex pushed a fix · .*the diff", region="screen", wait=60),
+            Expect(r"Show in hunk", region="panel"),
         ]),
     Scenario(
         "rework-3", "MR !3, rework: three reviewer threads", WORK,
