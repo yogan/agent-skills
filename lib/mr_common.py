@@ -235,13 +235,14 @@ def people(state, first=None):
     """Everyone but the user who writes in the MR's threads, by first name, once each: `first`
     (review-mr's MR author) ahead, then the others as their first comments come. The review-ui
     mod gives each a colour of their own by this order, so a second reviewer stands apart
-    from the author wherever a name is drawn."""
+    from the author wherever a name is drawn. Those who only comment on the MR as a whole
+    come last."""
     out = [first] if first else []
-    for x in (state.get("threads") or {}).values():
-        for n in x.get("notes") or []:
-            name = first_name(n.get("author"))
-            if name and not n.get("mine") and name not in out:
-                out.append(name)
+    notes = [n for x in (state.get("threads") or {}).values() for n in x.get("notes") or []]
+    for n in notes + list(state.get("mr_comments") or []):
+        name = first_name(n.get("author"))
+        if name and not n.get("mine") and name not in out:
+            out.append(name)
     return out
 
 

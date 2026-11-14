@@ -87,7 +87,11 @@ const world = (on: On, states: string[], extra: Record<string, Out> = {}, store:
   on('fs.exists', ($, e) => ({ value: written.includes(e.path) || e.path in files }))
   on('fs.write', ($, e) => { written.push(e.path); files[e.path] = e.text; return { value: undefined } })
   on('fs.read', ($, e) => ({ value: files[e.path] ?? '' }))
-  mock.store(on, store)
+  // The mod's store, kept in the object the test passed, so a test reads what the mod wrote.
+  on('store.get', ($, e) => ({ value: store[e.key] }))
+  on('store.set', ($, e) => { store[e.key] = e.value; return { value: undefined } })
+  on('store.delete', ($, e) => { delete store[e.key]; return { value: undefined } })
+  on('store.keys', () => ({ value: Object.keys(store) }))
   on('session.cwd', () => ({ value: '/wt' }))
   // The engine's clock, which a test moves by setting `w.clock.now`.
   const clock = { now: Date.parse('2026-11-05T12:00:00Z') }
@@ -1321,22 +1325,31 @@ test('"Check my post" links the comment, and the agent checks it before the roun
   expect(w.ran.map(r => r.argv.slice(2).join(' '))).toContain('posted t3 --ok --iid 42')
 })
 
-test("rework-mr's comments on the MR itself are an area under the file's, in full, never folded", async ($, on) => {
+test("rework-mr's comments on the MR itself: folded to their line with the count and what is new, open a box each", async ($, on) => {
   const long = `overall fine, ${'and some more words '.repeat(8)}`
   const state = JSON.stringify({
     skill: 'rework-mr', iid: 42, title: 'x', current: 't1', topics: [topic('t1', 'open')],
-    thread: [], mr_comments: [{ author: 'Kim', body: long, at: '2026-11-05T12:09:00' }, { author: 'Sam', body: 'agree' }],
+    thread: [], mr_comments: [
+      { author: 'Kim', body: long, at: '2026-11-05T12:09:00', url: 'http://gl/x#note_7' },
+      { author: 'Sam', body: 'agree', url: 'http://gl/x#note_8' }],
   })
   const w = world(on, [state], { code: { stdout: JSON.stringify(codeOf(50, [17, 17])) } })
   await openReview($, w, view('t1'))
   const ui = await $.ui.mount({ ...PANEL, surface: 'terminal' })
   const md = async () => (await ui.findAll({ type: 'Markdown' })).map(m => String(m.props.text))
   const texts = async () => (await ui.findAll({ type: 'Text' })).map(t => String(t.text ?? ''))
-  expect(await texts()).toEqual(expect.arrayContaining(['On the MR', ' · 2 comments']))
-  // In full: each comment with its own line for who wrote it and when; no fold key.
+  // Folded at first: the line alone, how many and how many are new.
+  expect(await texts()).toEqual(expect.arrayContaining(['On the MR', ' · 2 comments', ' · 2 new']))
+  expect((await md()).some(t => t.includes('and some more words'))).toBe(false)
+  // Open: a box each, in full, with its own line for who wrote it and when, and new.
+  await ui.press({ key: 'mr-fold' })
   expect((await md()).some(t => t.includes('and some more words and some more words'))).toBe(true)
   expect(await texts()).toContain('Nov 5, 12:09')
-  expect(await ui.find({ type: 'Button', key: 'mr-open' })).toBeUndefined()
+  expect((await texts()).filter(t => t === ' new').length).toBe(2)
+  const boxes = (await ui.findAll({ type: 'Box' })).filter(b => String(b.props.key ?? '').startsWith('mr-box-'))
+  expect(boxes.length).toBe(2)
+  await ui.press({ key: 'mr-fold' })
+  expect((await md()).some(t => t.includes('and some more words'))).toBe(false)
   await ui.unmount()
 })
 
@@ -1351,6 +1364,7 @@ test("rework-mr: a thread under the code and the comments on the MR are drawn to
   await openReview($, w, view('t1'))
   // Mounted at all: a key drawn twice has the engine refuse the whole sidebar.
   const ui = await $.ui.mount({ ...PANEL, surface: 'terminal' })
+  await ui.press({ key: 'mr-fold' })
   const md = (await ui.findAll({ type: 'Markdown' })).map(m => String(m.props.text))
   expect(md.some(t => t.startsWith('odd'))).toBe(true)
   expect(md.some(t => t.startsWith('overall'))).toBe(true)
@@ -2686,6 +2700,201 @@ test("a merged MR's topic shown by its thread alone, with no file, closes by the
   await panel.press({ key: 'leave' })
   await panel.unmount()
   expect(w.ran.map(r => r.argv[2])).toContain('leave')
+})
+
+test('a thread with no file is the thread box, always in full, scrolling on its own', async ($, on) => {
+  const long = Array.from({ length: 40 }, (_, i) => `Paragraph ${i + 1}, about the README and the flags drifting apart.`).join(' ')
+  const thread = [{ url: 'http://gitlab.test/x#note_1', notes: [{ author: 'Ana', body: long }, { author: 'You', body: 'will check', mine: true }] }]
+  const w = world(on, [stateOf('t1', [topic('t1', 'open')], { thread })])
+  await openReview($, w, view('t1'))
+  const panel = await $.ui.mount({ ...PANEL, surface: 'terminal' })
+  expect(await panel.find({ type: 'Text', text: 'Thread' })).toBeDefined()    // the area's line
+  const box = (await panel.findAll({ type: 'Box' })).find(b => b.props.borderStyle === 'round' && b.props.borderDimColor)
+  expect(box).toBeDefined()
+  expect(await panel.find({ type: 'Button', key: 'thread-open' })).toBeUndefined()   // never folded
+  // Taller than its area: its own scrollbar, its rows a window of the thread, the reply
+  // further down coming into view as it scrolls.
+  expect(await panel.find({ type: 'Box', key: 'box-bar' })).toBeDefined()
+  const md = async () => (await panel.findAll({ type: 'Markdown' })).map(m => String(m.props.text))
+  expect(await md()).not.toContain('will check')
+  await toEnd(panel, 'box')
+  expect(await md()).toContain('will check')
+  expect((await md()).some(t => t.includes('Paragraph 1,'))).toBe(false)
+  await panel.unmount()
+})
+
+test('a thread with no file: the second comment under a thin rule, its code block open with no key to fold it', async ($, on) => {
+  const mine = { author: 'You', body: 'like:\n\n```ts\nexport const FLAGS = {}\n```', mine: true }
+  const w2 = world(on, [stateOf('t1', [topic('t1', 'open')], { thread: [{ url: 'http://gitlab.test/x#note_1', notes: [{ author: 'Ana', body: 'docs?' }, mine] }] })])
+  await openReview($, w2, view('t1'))
+  const short = await $.ui.mount({ ...PANEL, surface: 'terminal' })
+  expect((await short.findAll({ type: 'Text' })).some(t => /^─{10,}$/.test(String(t.text ?? '')))).toBe(true)
+  expect((await short.findAll({ type: 'Code' })).map(c => String(c.props.source))).toContain('export const FLAGS = {}')
+  expect((await short.findAll({ type: 'Button' })).some(b => String(b.props.key ?? '').includes('fold-'))).toBe(false)
+  await short.unmount()
+})
+
+// A thread and the comments on the MR, as the sidebar shows them for each look the person
+// meets: one comment or several, from different people, short and long, with a list, a code
+// block and a suggestion; the comments on the MR folded, open, scrolled and read. What the
+// terminal paints is the engine's; these pin what the mod hands it.
+type Drawn = Awaited<ReturnType<Awaited<ReturnType<Engine['ui']['mount']>>['find']>>
+const note = (author: string, n: number, body: string, extra: object = {}) => ({ author, body, url: `http://gl/x#note_${n}`, ...extra })
+const sentences = (what: string, n: number) => Array.from({ length: n }, (_, i) => `${what} ${i + 1} says a little more about it.`).join(' ')
+type Sidebar = { find: (q: { type: string; key?: string; text?: string | RegExp }) => Promise<Drawn>; findAll: (q: { type: string; key?: string; text?: string | RegExp }) => Promise<NonNullable<Drawn>[]> }
+const textsOf = async (ui: Sidebar) => (await ui.findAll({ type: 'Text' })).map(t => String(t.text ?? ''))
+// A writer's name as drawn, in their colour: the Text that is the name alone, not its line.
+const colourOf = async (ui: Sidebar, name: string) => (await ui.findAll({ type: 'Text', text: name })).filter(t => t.text === name).map(t => t.props.color)[0]
+const hrefsOf = async (ui: Sidebar) => (await ui.findAll({ type: 'Link' })).map(l => String(l.props.href))
+// The rows the person sees of each area, its line and borders included: the thread's (its
+// line, the box's two borders, its rows) and the comments' on the MR (their line, the window).
+const threadHeight = async (ui: Sidebar) => 3 + ((await ui.find({ type: 'Box', key: 'box-text' }))?.children.length ?? 0)
+const mrHeight = async (ui: Sidebar) => 1 + Number((await ui.find({ type: 'Box', key: 'mr-window' }))?.props.height ?? 0)
+const newMarks = async (ui: Sidebar) => (await textsOf(ui)).filter(t => t === ' new').length
+// The update check's clock, held: each `tick` lets one period run, as the 30 seconds passing.
+const heldClock = (on: Parameters<typeof world>[0]) => {
+  let release = () => {}
+  on('clock.every' as never, (() => new Promise(done => { release = () => done({ value: undefined }) })) as never)
+  return async () => {
+    release()
+    await new Promise<void>(done => setTimeout(() => done(), 30))
+  }
+}
+// Pages an area down until its scrollbar's thumb reaches the end of its track.
+const toEnd = async (ui: Scrolls, tag: string) => {
+  for (let i = 0; i < 40 && (await bar(ui, tag))?.at(-1) !== 'thumb'; i += 1) await page(ui, tag, 'down')
+}
+
+test('a thread with no file from several people: one box, a thin rule between comments, each its link and its writer in colour', async ($, on) => {
+  const notes = [
+    note('Ana', 1, 'The README and the flags drift apart.\n\nA second paragraph, which says why that matters.', { at: '2026-11-05T09:00:00' }),
+    note('Kim', 2, 'Agreed. Two ideas:\n\n- generate the table\n- check it in CI'),
+    note('You', 3, 'like this:\n\n```ts\nexport const FLAGS = { cache: true }\n```', { mine: true }),
+    note('Lee', 4, '```suggestion:-0+0\nexport const FLAGS = { cache: false }\n```'),
+  ]
+  const w = world(on, [reworkState('t1', [reworkTopic('t1', 'plan')], { thread: [{ url: 'http://gl/x#note_1', notes }], people: ['Ana', 'Kim', 'Lee'] })])
+  await openRework($, w, reworkView('t1'))
+  const ui = await $.ui.mount({ ...PANEL, props: { ...PANEL.props, scroll: { offset: 0, bodyRows: 60 } }, surface: 'terminal' })
+  // One box for the thread, its comments under thin rules: three rules for four comments.
+  expect((await ui.findAll({ type: 'Box' })).filter(b => b.props.borderStyle === 'round').length).toBe(1)
+  expect((await textsOf(ui)).filter(t => /^─{10,}$/.test(t)).length).toBe(3)
+  // Each comment's line: its link, its writer, each writer a colour of their own.
+  expect(await hrefsOf(ui)).toEqual(expect.arrayContaining(notes.map(n => n.url)))
+  const colours = await Promise.all(['Ana', 'Kim', 'Lee', 'You'].map(a => colourOf(ui, a)))
+  expect(new Set(colours).size).toBe(4)
+  expect(colours).not.toContain(undefined)
+  // Paragraphs stay apart, a row between them, as GitLab shows them; a list keeps its items.
+  const rows = (await ui.find({ type: 'Box', key: 'box-text' }))?.children as NonNullable<Drawn>[]
+  const textOf = (n: unknown): string => typeof n === 'string' ? n
+    : [String((n as Drawn)?.props?.text ?? ''), ...((n as Drawn)?.children ?? []).map(textOf)].join('')
+  const rowOf = (s: string) => rows.findIndex(r => textOf(r).includes(s))
+  expect(rowOf('A second paragraph') - rowOf('drift apart')).toBe(2)
+  expect(rowOf('check it in CI') - rowOf('generate the table')).toBe(1)
+  // The code block and the suggestion open, highlighted in the block's language, nothing to fold.
+  const code = await ui.findAll({ type: 'Code' })
+  expect(code.find(c => String(c.props.source).includes('cache: true'))?.props.language).toBe('ts')
+  expect(code.some(c => String(c.props.source).includes('cache: false'))).toBe(true)
+  expect((await ui.findAll({ type: 'Button' })).some(b => /fold-|thread-open/.test(String(b.key ?? '')))).toBe(false)
+  // With no comment on the MR itself there is no line for them at all.
+  expect(await textsOf(ui)).not.toContain('On the MR')
+  await ui.unmount()
+})
+
+test('a thread under the code puts the same thin rule between its comments', async ($, on) => {
+  const thread = [{ url: 'u', file: 'src/cache.ts', line: 17, notes: [note('Ana', 1, 'odd'), note('Kim', 2, 'agreed')] }]
+  const w = world(on, [reworkState('t1', [reworkTopic('t1', 'plan')], { thread })], { code: { stdout: JSON.stringify(codeOf(50, [17, 17])) } })
+  await openRework($, w, reworkView('t1'))
+  const ui = await $.ui.mount({ ...PANEL, surface: 'terminal' })
+  expect((await textsOf(ui)).filter(t => /^─{10,}$/.test(t)).length).toBe(1)
+  await ui.unmount()
+})
+
+// The comments on the MR beside a thread with no file: Sam's short one, then Jo's and Sam's
+// longer ones, the last with a code block.
+const MR_COMMENTS = [
+  note('Sam', 7, 'Looks good overall.', { at: '2026-11-05T10:00:00' }),
+  note('Jo', 8, sentences('Point', 4)),
+  note('Sam', 9, `${sentences('Detail', 3)}\n\n\`\`\`sh\nmake docs\n\`\`\``),
+]
+const withComments = (thread: object[], comments: object[]) =>
+  reworkState('t1', [reworkTopic('t1', 'plan')], { thread: [{ url: 'http://gl/x#note_1', notes: thread }], mr_comments: comments, people: ['Ana', 'Sam', 'Jo'] })
+
+test('the comments on the MR: folded to their line at first, open a box each, half the room each with a long thread, read once whole on screen', async ($, on) => {
+  const tick = heldClock(on)
+  on('tool.register' as never, (() => ({ value: undefined })) as never)
+  on('session.start' as never, ((_: unknown, e: object) => e) as never)
+  // What the mod keeps past the session, as it last wrote it.
+  const kept: Record<string, unknown> = {}
+  const w = world(on, [withComments([note('Ana', 1, sentences('Paragraph', 40))], MR_COMMENTS)], {}, kept)
+  await (($ as unknown as { session: { start: (e: object) => Promise<unknown> } }).session.start({ source: 'startup', cwd: '/wt' }))
+  await openRework($, w, reworkView('t1'))
+  const ui = await $.ui.mount({ ...PANEL, surface: 'terminal' })
+  // Folded: its line alone, how many and how many are new.
+  expect(await textsOf(ui)).toEqual(expect.arrayContaining(['On the MR', ' · 3 comments', ' · 3 new']))
+  expect(await ui.find({ type: 'Box', key: 'mr-window' })).toBeUndefined()
+  // Open: a box each, its link and its writer in their colour.
+  await ui.press({ key: 'mr-fold' })
+  for (const i of [0, 1, 2]) expect(await ui.find({ type: 'Box', key: `mr-box-${i}` })).toBeDefined()
+  expect(await hrefsOf(ui)).toEqual(expect.arrayContaining(MR_COMMENTS.map(c => c.url)))
+  const sam = await colourOf(ui, 'Sam')
+  const jo = await colourOf(ui, 'Jo')
+  expect(sam).toBeDefined()
+  expect(jo).toBeDefined()
+  expect(sam).not.toBe(jo)
+  // Both need more than half the room: half each, each scrolling on its own.
+  expect(await bar(ui, 'box')).not.toBeNull()
+  expect(await bar(ui, 'mr')).not.toBeNull()
+  expect(Math.abs((await threadHeight(ui)) - (await mrHeight(ui)))).toBeLessThanOrEqual(1)
+  // Every comment new until the update check says what was whole on screen: the first two.
+  expect(await newMarks(ui)).toBe(3)
+  await tick()
+  expect(await textsOf(ui)).toContain(' · 1 new')
+  expect(await newMarks(ui)).toBe(1)
+  // Scrolled to the last, it is read at the next check, and the line says nothing is new.
+  await toEnd(ui, 'mr')
+  await tick()
+  expect((await textsOf(ui)).some(t => / new$/.test(t))).toBe(false)
+  // Kept for the MR past the session: open, and what was read.
+  expect(kept['mr-comments-1:!42']).toEqual({ open: true, seen: MR_COMMENTS.map(c => c.url) })
+  // Minimized: back to its line, still counting the comments.
+  await ui.press({ key: 'mr-fold' })
+  expect(await ui.find({ type: 'Box', key: 'mr-window' })).toBeUndefined()
+  expect(await textsOf(ui)).toContain(' · 3 comments')
+  expect(kept['mr-comments-1:!42']).toMatchObject({ open: false })
+  await ui.unmount()
+})
+
+test('the comments on the MR come back as the person left them for that MR: open, the ones read not new', async ($, on) => {
+  const store = { 'mr-comments-1:!42': { open: true, seen: ['http://gl/x#note_7'] } }
+  const w = world(on, [withComments([note('Ana', 1, 'docs?')], MR_COMMENTS)], {}, store)
+  await openRework($, w, reworkView('t1'))
+  const ui = await $.ui.mount({ ...PANEL, surface: 'terminal' })
+  expect(await ui.find({ type: 'Box', key: 'mr-window' })).toBeDefined()
+  expect(await textsOf(ui)).toContain(' · 2 new')
+  await ui.unmount()
+})
+
+test('one short comment on the MR takes only its rows, a long thread the rest', async ($, on) => {
+  const w = world(on, [withComments([note('Ana', 1, sentences('Paragraph', 40))], MR_COMMENTS.slice(0, 1))], {}, { 'mr-comments-1:!42': { open: true } })
+  await openRework($, w, reworkView('t1'))
+  const ui = await $.ui.mount({ ...PANEL, surface: 'terminal' })
+  // Its line and its box: two borders, the head and one line of text.
+  expect(await mrHeight(ui)).toBe(1 + 4)
+  expect(await bar(ui, 'mr')).toBeNull()
+  expect(await threadHeight(ui)).toBeGreaterThan(2 * (await mrHeight(ui)))
+  await ui.unmount()
+})
+
+test('a short thread leaves its spare room to the comments on the MR', async ($, on) => {
+  const long = [0, 1, 2, 3].map(i => note(i % 2 ? 'Jo' : 'Sam', 10 + i, sentences('Point', 8)))
+  const w = world(on, [withComments([note('Ana', 1, 'docs?')], long)], {}, { 'mr-comments-1:!42': { open: true } })
+  await openRework($, w, reworkView('t1'))
+  const ui = await $.ui.mount({ ...PANEL, surface: 'terminal' })
+  // The thread is its line and a box of one comment's two rows; the comments take the rest.
+  expect(await threadHeight(ui)).toBe(3 + 2)
+  expect(await mrHeight(ui)).toBeGreaterThan(2 * (await threadHeight(ui)))
+  expect(await bar(ui, 'mr')).not.toBeNull()
+  await ui.unmount()
 })
 
 test("a press on a merged MR whose review worktree is gone runs from the session's folder", async ($, on) => {

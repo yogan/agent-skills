@@ -1755,6 +1755,21 @@ class TestWhereTheModDraws(unittest.TestCase):
                    "notes": [them, me_note, them]},
         }, "mr_comments": [{"author": "Haas, Miriam - EF13579", "body": "LGTM otherwise"}]}
 
+    def test_a_comment_on_the_mr_carries_its_link_and_its_writer_a_colour(self):
+        """The sidebar heads each comment on the MR as a thread's: the link glyph, and the
+        writer in a colour of their own, though they wrote in no thread."""
+        note = {"resolvable": False, "id": 42, "author": {"name": "Chidi Obi"}, "body": "Thanks"}
+        orig = T.api
+        T.api = lambda *a, **k: [{"id": "d9", "notes": [note]}]
+        got = []
+        try:
+            T.fetch_threads({"enc": "x", "web": "http://gl"}, 4, "me", got)
+        finally:
+            T.api = orig
+        self.assertEqual(got[0]["url"], "http://gl/-/merge_requests/4#note_42")
+        self.state["mr_comments"] += got
+        self.assertEqual(T.state_json(self.state)["people"], ["Miriam", "Chidi"])
+
     def test_your_move_is_new_until_you_have_replied_then_answered(self):
         self.assertEqual(T.ui_state(self.state, self.state["topics"][0]), "new")
         self.assertEqual(T.ui_state(self.state, self.state["topics"][1]), "answered")

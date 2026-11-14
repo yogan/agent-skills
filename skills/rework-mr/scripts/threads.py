@@ -223,7 +223,8 @@ def fetch_threads(ctx, iid, me, mr_comments=None):
         first = notes[0]
         if not first.get("resolvable"):
             if mr_comments is not None:
-                mr_comments += [_note(n, me) for n in notes]
+                mr_comments += [_note(n, me, f"{ctx['web']}/-/merge_requests/{iid}#note_{n.get('id')}")
+                                for n in notes]
             continue
         resolvable = [n for n in notes if n.get("resolvable")]
         resolved = bool(resolvable) and all(n.get("resolved") for n in resolvable)

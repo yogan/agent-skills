@@ -307,6 +307,7 @@ export type BoxRow =
   | { kind: 'head'; note: number }
   | { kind: 'md'; text: string }
   | { kind: 'blank' }
+  | { kind: 'rule' }
   | { kind: 'fold'; key: string; label: string; isOpen: boolean }
   | { kind: 'code'; key: string; line: string; lang?: string; diff?: { old: number; new: number } }
 
@@ -369,13 +370,17 @@ const wrapLine = (line: string, width: number): string[] => {
 
 // `suggest` turns a suggestion's block into the fenced diff (or code) the sidebar shows of it
 // (views.ts's `withSuggestions`, given the file); `isOpen` says which blocks the person opened.
+// One comment follows another under a thin rule (`rule`). `isFull`: every code block drawn
+// open with no row to fold it, as GitLab shows a comment, where nothing else competes for
+// the room.
 export const boxRowsOf = (
   bodies: string[], width: number, keyOf: (note: number, block: number) => string,
   isOpen: (key: string, byDefault: boolean) => boolean, suggest: (block: string) => string, ext: string,
+  isFull = false,
 ): BoxRow[] => {
   const rows: BoxRow[] = []
   bodies.forEach((body, i) => {
-    if (i > 0) rows.push({ kind: 'blank' })
+    if (i > 0) rows.push({ kind: 'rule' })
     rows.push({ kind: 'head', note: i })
     const lines = reflow(body).split('\n')
     let block = 0
@@ -401,10 +406,10 @@ export const boxRowsOf = (
       // A suggestion that is the whole comment is what the comment says: open, until folded.
       // One beside prose stays folded, the prose saying what it is about.
       const isWhole = isSuggestion && lines.every((ln, k) => (k >= j && k <= close) || !ln.trim())
-      const shown = isOpen(key, isWhole)
+      const shown = isFull || isOpen(key, isWhole)
       const lang = isSuggestion ? '' : info
       const label = `${shown ? '\u{F47C}' : '\u{F460}'} ${isSuggestion ? 'suggestion' : 'code'}${lang ? ` · ${lang}` : ''} · ${code.length} line${code.length === 1 ? '' : 's'}`
-      rows.push({ kind: 'fold', key, label, isOpen: shown })
+      if (!isFull) rows.push({ kind: 'fold', key, label, isOpen: shown })
       if (shown) {
         const fenced = (isSuggestion ? suggest(lines.slice(j, close + 1).join('\n')) : '').split('\n')
         const isDiff = /^`{3,}diff\b/.test(fenced[0] ?? '') && /^@@ -(\d+)(?:,\d+)? \+(\d+)/.test(fenced[1] ?? '')
