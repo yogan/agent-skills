@@ -51,6 +51,8 @@ const world = (on: On, states: string[], extra: Record<string, Out> = {}, store:
     ran.push({ argv: e.argv, env: e.init?.env, cwd: e.init?.cwd })
     const cmd = e.argv[2] ?? ''
     if (cmd === 'state') return answer({ stdout: states[Math.min(at, states.length - 1)] ?? '' })
+    // `quote moves`: a view that moves its topic on as it is shown, to the next state.
+    if (cmd === 'quote' && extra['quote moves']) { at += 1; return answer(extra['quote moves']) }
     if (cmd === 'quote') return answer({ stdout: view(e.argv[3] ?? '') })
     // A file or a push picked in the sidebar is answered apart where the test gives it
     // (`code --file <f>`, `code --push <n>`).
@@ -2065,6 +2067,37 @@ test('rework-mr: a fix offers Ack and push, and the diff viewer; nothing to put 
   await ui.press({ key: 'hunk' })
   await ui.unmount()
   expect(w.ran.map(r => r.argv.slice(2).join(' '))).toContain('hunk-show t1 --iid 42')
+})
+
+test('rework-mr: a fix made while another topic was current can be put aside, with no model turn', async ($, on) => {
+  const fixed = reworkTopic('t1', 'fixed', { checks: 'passed', made_on: 't3' })
+  const w = world(on, [reworkState('t1', [fixed, reworkTopic('t3', 'fix')]),
+    reworkState('t3', [{ ...fixed, step: 'fix', made_on: null }, reworkTopic('t3', 'fix')])])
+  await openRework($, w, reworkView('t1'))
+  const ui = await mountStep($, 'terminal')
+  expect(await labels(ui)).toEqual(['Ack and push', 'Review in hunk', 'Put aside', 'Show sidebar'])
+  await ui.press({ key: 'aside' })
+  await ui.unmount()
+  expect(w.ran.find(r => r.argv[2] === 'drop-fix')?.argv.slice(2).join(' '))
+    .toBe('drop-fix t1 --aside --why made while another topic was current; put aside for later --iid 42')
+  expect(w.prompts).toEqual([])
+  expect(w.ran.map(r => r.argv.slice(2).join(' '))).toContain('quote t3 --iid 42')
+})
+
+test('rework-mr: a fix put aside that comes back as its card comes up gets the fix\'s buttons', async ($, on) => {
+  // Real run: the card showed the fix back, its buttons were Fix it's, from the state before.
+  const t3 = reworkTopic('t3', 'reply', { draft: 'v1', pushed: true })
+  const w = world(on, [reworkState('t3', [reworkTopic('t1', 'fix'), t3]),
+    reworkState('t1', [reworkTopic('t1', 'fix'), { ...t3, step: 'none' }]),
+    reworkState('t1', [reworkTopic('t1', 'fixed', { checks: 'stale' }), { ...t3, step: 'none' }])],
+  { 'quote moves': { stdout: reworkView('t1', undefined, 'fixed') }, code: { stdout: '' } })
+  await openRework($, w, reworkView('t3', 'v1'))
+  const ui = await mountStep($, 'terminal')
+  await ui.press({ key: 'post' })
+  await ui.unmount()
+  const next = await mountStep($, 'terminal')
+  expect(await labels(next)).toEqual(['Run the checks', 'Review in hunk', 'Show sidebar'])
+  await next.unmount()
 })
 
 test('rework-mr: with the fix open in the diff viewer, its notes are read on a press', async ($, on) => {

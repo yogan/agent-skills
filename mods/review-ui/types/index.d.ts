@@ -71,6 +71,8 @@ export type ReviewTopic = {
   // rework-mr: whether the fix differs from the plan agreed, and whether that plan answers
   // the reviewer: either way a reply after the push has something to explain.
   differs?: boolean
+  // rework-mr: a fix made while another topic was current: that topic, to go back to on Put aside.
+  made_on?: string | null
   // A comment posted by hand that the agent found no longer holds: a corrected version waits.
   post_differs?: boolean
   answer_now?: boolean

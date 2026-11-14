@@ -136,6 +136,8 @@ RESOLVED_ICON = "\U000f05e1"
 # rework-mr's fix card: a fix that differs from the plan agreed, headed as a warning
 # (md-alert_outline), so it is seen before the push.
 DIFFERS_ICON = "\U000f002a"
+# A fix made while another topic was current (md-run_fast): the agent went ahead.
+AHEAD_ICON = "\U000f046e"
 # rework-mr's fix card: the commits a fix goes into, one rewritten by a fixup
 # (md-source_commit_local) or a new one (md-source_commit_next_local). The review-ui mod
 # draws a line led by either as a commit: the hash as code, the subject dim and italic.

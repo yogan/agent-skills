@@ -498,6 +498,16 @@ const shownCard = async ($: EngineInterface, id: string, stdout: string) => {
   await update($, hostCard, () => ({ id, topic: view.topic ?? null, step: view.step ?? null }))
 }
 
+// Showing a topic can move it on (rework-mr brings a fix put aside back when its topic comes
+// up): the buttons go by the state, so it is read again where the view's step is not the one
+// the state had. Only where the current topic's card comes up: a press's own card drawn again
+// is read before the press compares where the round was with where it went, and a state read
+// early there made it see no move, and bring up no next card.
+const readIfMoved = async ($: EngineInterface, s: ReviewSession, view: { topic?: string; step?: string } | undefined) => {
+  const known = view?.topic ? (await read($, review))?.topics.find(t => t.id === view.topic)?.step : undefined
+  if (view?.step && known && view.step !== known) await refresh($, s)
+}
+
 // Any view the script prints, as a row of its own at the transcript's end.
 const placeView = async ($: EngineInterface, s: ReviewSession, args: string[]) => {
   const q = await runScript($, s, args)
@@ -543,6 +553,7 @@ const placeTopic = async ($: EngineInterface, s: ReviewSession, tid: string, foc
   const q = await runScript($, s, ['quote', tid, ...(focus ? ['--focus'] : [])])
   const view = viewOf(q.stdout)
   if (q.exitCode !== 0 || !view) return false
+  await readIfMoved($, s, view)
   const id = `card-${Object.keys(await read($, placed)).length + 1}`
   await update($, placed, m => ({ ...m, [id]: view.text }))
   await update($, placedOf, m => ({ ...m, [id]: { topic: view.topic, draft: view.draft } }))

@@ -1572,11 +1572,18 @@ def emit(state, block, topic=None):
         # The step it shows the topic at: a turn that moved the topic on without a view of
         # its own (the model finishing a push it was handed) leaves the card a step behind.
         extra["step"] = step_of(state, t)
-    ui.record({"review": extra["review"], "topic": topic, "focus": current_topic(state),
+    focus = current_topic(state)
+    if t and t["id"] == focus:
+        # The card the user has in front of them, whatever the current topic moved on to
+        # meanwhile: agreeing the last plan moves that to the fix pass's first at once. Only a
+        # view of the current topic is a card: one of another topic is the model's research,
+        # which the mod draws no card for (views.ts, `viewOf`).
+        state["shown"] = t["id"]
+    ui.record({"review": extra["review"], "topic": topic, "focus": focus,
                "draft": extra.get("draft")})
     print(
         critical_manifest.with_manifest(
-            block, topic=topic, focus=current_topic(state), extra=extra
+            block, topic=topic, focus=focus, extra=extra
         )
     )
 
@@ -1661,6 +1668,9 @@ def state_json(state):
             "post_differs": differs_now(t),
             # Whether the fix differs from the plan agreed: a reply then explains it.
             "differs": bool((f.get("compare") or {}).get("differs")),
+            # A fix made while another topic was current: the one it was made from, to go
+            # back to on Put aside.
+            "made_on": f.get("made_on") if step_of(state, t) == "fixed" else None,
             # Whether the plan agreed answers the reviewer: a reply then says what was chosen.
             "answer_now": bool(t.get("answer_now")),
             "checks": checks_of(t) if step_of(state, t) == "fixed" else None,
@@ -1802,8 +1812,9 @@ def render_plans(state):
         for d in t.get("dropped") or []:
             if d.get("key"):
                 ref = f"{fix_refs.prefix(SKILL, state.get('iid'))}{d['key']}"
-                out.append(f"  dropped fix kept: `git diff {ref}/before {ref}/after` "
-                           f"(dropped because: {d.get('why')})")
+                what = "fix put aside" if d.get("aside") else "dropped fix kept"
+                out.append(f"  {what}: `git diff {ref}/before {ref}/after` "
+                           f"({'put aside' if d.get('aside') else 'dropped'} because: {d.get('why')})")
         out.append("")
     return "\n".join(out).strip() or "(no recorded plans yet — grill first)"
 
@@ -1964,12 +1975,15 @@ def step_report(state, t):
             "matches.")
 
 
-def drop_fix(state, iid, t, why, plan, outcome, new=()):
+def drop_fix(state, iid, t, why, plan, outcome, new=(), aside=False):
     """The fix for `t` not wanted after all, on the user's word: what is in the working tree
     is kept in git under the topic (`<t>/dropped<N>`, beside its pushes; dropped with the
     rest once the MR is merged or closed), the working tree goes back to HEAD, and the plan
     becomes a reply saying what was found. A fix already pushed is not dropped here: taking
-    it back is a fix of its own, or a reply."""
+    it back is a fix of its own, or a reply. `aside`: the fix is not wanted yet (made while
+    the user was on another topic): kept and taken out the same way, the plan left as it
+    is, and the topic it was made from current again. It comes back by itself when its
+    topic is current next (`restore_aside`)."""
     root = (_git("rev-parse", "--show-toplevel") or "").strip() or die("not in a git checkout")
     new = [p for p in dict.fromkeys([*new, *((t.get("checked") or {}).get("new") or [])])
            if os.path.exists(os.path.join(root, p))]
@@ -1978,6 +1992,9 @@ def drop_fix(state, iid, t, why, plan, outcome, new=()):
         die(f"{tref(t['id'])}'s fix is pushed, and nothing of it is in the working tree: "
             "taking it back is a new fix (agree one), or a reply (`set --outcome`).")
     kept = None
+    was = {k: t[k] for k in ("fix", "checked") if k in t}
+    if aside and not (diff.strip() or new):
+        die(f"nothing of {tref(t['id'])}'s fix is in the working tree to put aside")
     if diff.strip() or new:
         head = (_git("rev-parse", "HEAD") or "").strip()
         tree = checks.snapshot(root, new) or die("could not read the fix's files from the working tree")
@@ -1992,12 +2009,55 @@ def drop_fix(state, iid, t, why, plan, outcome, new=()):
         for p in new:
             os.remove(os.path.join(root, p))
         _WORKING.clear()
-    for k in ("fix", "checked", "push_token", "push_from", "handed_from", "reply_early",
-              "agreed_change", "change", "kept", "answer_now"):
+    for k in ("fix", "checked", "push_token", "push_from", "handed_from", "kept",
+              *(() if aside else ("reply_early", "agreed_change", "change", "answer_now"))):
         t.pop(k, None)
-    t.update(outcome=outcome, decision=why, plan=plan, plan_on=reviewer_mark(state, t))
+    if not aside:
+        t.update(outcome=outcome, decision=why, plan=plan, plan_on=reviewer_mark(state, t))
     t.pop("state", None)
-    t.setdefault("dropped", []).append({"key": kept, "why": why, "at": int(time.time())})
+    t.setdefault("dropped", []).append({"key": kept, "why": why, "at": int(time.time()),
+                                        **({"aside": True} if aside else {})})
+    if aside:
+        t["aside"] = {"key": kept, **was}
+        back = topic_for(state, (was.get("fix") or {}).get("made_on"))
+        if back:
+            CURRENT.jump(state, back["id"])
+
+
+def restore_aside(state, iid, t):
+    """`t`'s fix put aside, back in the working tree once `t` is current and nothing else
+    is in flight: shown again as a fix made, ready to review and push. Its commits are found
+    again by subject, as a push of another topic in between rewrote them; its checks are the
+    ones it had, which the card shows as stale where the files moved on. Where it no longer
+    applies, it stays kept, and the next Fix it starts from it (`plans` names it)."""
+    a = t.get("aside")
+    if not a or working_diff().strip() or any(
+            o is not t and step_of(state, o) == "fixed" for o in state.get("topics", [])):
+        return False
+    ref = f"{fix_refs.prefix(SKILL, iid)}{a['key']}"
+    # The prefixes said, whatever the user's `diff.noprefix`: `git apply` takes the default.
+    patch = _git("diff", "--binary", "--no-ext-diff", "--src-prefix=a/", "--dst-prefix=b/",
+                 f"{ref}/before", f"{ref}/after")
+    if not patch or run(["git", "apply", "--3way", "-"], input=patch).returncode != 0:
+        _git("restore", "--source=HEAD", "--staged", "--worktree", "--", ":/")
+        t.pop("aside", None)
+        return False
+    _git("reset", "-q")
+    _WORKING.clear()
+    by_subject = {}
+    for line in (_git("log", "--format=%h %s", "-200", "HEAD") or "").splitlines():
+        sha, _, subject = line.partition(" ")
+        by_subject.setdefault(subject, sha)
+    fix = dict(a.get("fix") or {})
+    fix["fixup"] = [f"{by_subject.get(x.partition(' ')[2], x.partition(' ')[0])} {x.partition(' ')[2]}"
+                    for x in fix.get("fixup") or []]
+    fix.pop("made_on", None)
+    fix["restored"] = True
+    t["fix"] = fix
+    if a.get("checked"):
+        t["checked"] = a["checked"]
+    t.pop("aside", None)
+    return True
 
 
 def pass_of(state):
@@ -2261,6 +2321,13 @@ def render_fix(state, tid):
     # What changed, in short: the plan is above it and the thread in the sidebar, so neither
     # is told again; the checks only where they did not pass, as passing is what a shown
     # fix means.
+    if f.get("made_on"):
+        # Above all else: whether the person wants it now comes before how it looks.
+        out += [ui.heading_md(ui.AHEAD_ICON, f"Made while you were on {f['made_on']}"), "",
+                f"Ack and push keeps it; Put aside keeps it for later and goes back to {f['made_on']}.", ""]
+    elif f.get("restored"):
+        out += [ui.heading_md(ui.AHEAD_ICON, "The fix you put aside"), "",
+                "Back in the working tree, to review and push.", ""]
     c = f.get("compare") or {}
     if c.get("differs"):
         # Above the change: it is what the user reviews in the diff viewer before pushing.
@@ -2856,7 +2923,10 @@ def main():
                          "all; it is kept in git, the working tree cleaned, the plan a reply")
     pdf.add_argument("topic")
     pdf.add_argument("--why", required=True, help="what was found: why the fix is dropped")
-    pdf.add_argument("--plan", required=True, help="one sentence: what the reply says")
+    pdf.add_argument("--plan", help="one sentence: what the reply says (not with --aside)")
+    pdf.add_argument("--aside", action="store_true",
+                     help="the fix is wanted later, not now: kept and taken out of the working "
+                          "tree, the plan left as it is; it comes back when its topic is next")
     pdf.add_argument("--outcome", choices=[o for o in OUTCOMES if o != "fix"], default="reply")
     pdf.add_argument("--new", action="append", default=[],
                      help="a file the fix added (untracked); repeat for each")
@@ -3028,6 +3098,13 @@ def main():
             if drawn:
                 # Where the mod draws, the fix is a card and its diff the sidebar's: the diff
                 # viewer opens only on the user's press (`hunk-show`), with these notes.
+                # Made while the user was on another topic's card: a model may well go ahead
+                # on its own, which is fine, but the card says so, as the model often does not.
+                # Not the current topic: that moves on to the fix pass's first the moment the
+                # last plan is agreed, while the card on screen is still the one agreed.
+                was = state.get("shown")
+                if was and was != args.topic and step_of(state, topic_for(state, was)) != "fixed":
+                    t["fix"]["made_on"] = was
                 CURRENT.jump(state, args.topic)
                 reload_open_viewer(notes)
                 emit(state, render_fix(state, args.topic), args.topic)
@@ -3335,6 +3412,8 @@ def main():
         )
         if note:
             print(note, file=sys.stderr)
+        if ui.drawn() and args.topic == current_topic(state):
+            restore_aside(state, iid, topic_for(state, args.topic))
         emit(state, render_quote(state, args.topic), args.topic)
         if args.topic == current_topic(state) and (note := proposal_note(state, args.topic)):
             print(note, file=sys.stderr)
@@ -3449,7 +3528,9 @@ def main():
         print(step_report(state, t))
     elif cmd == "drop-fix":
         t = topic_for(state, args.topic) or die(f"no topic {args.topic}")
-        drop_fix(state, iid, t, args.why, args.plan, args.outcome, args.new)
+        if args.aside == bool(args.plan):
+            die("drop-fix needs --plan (the reply it becomes), or --aside (the plan stays)")
+        drop_fix(state, iid, t, args.why, args.plan, args.outcome, args.new, aside=args.aside)
         save(path, state)
         print(step_report(state, t))
     elif cmd == "merge":

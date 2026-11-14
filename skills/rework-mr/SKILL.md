@@ -278,6 +278,13 @@ lands in the sidebar's inbox, and a background agent of the mod's prepares a pla
   kept in git, the working tree goes back to HEAD and the plan becomes that reply. Then draft
   it (`set <t> --reply -`) and show it (`reply-view <t>`). A later fix of the topic may start
   from the kept one: `plans` names it.
+- **A fix for another topic than the current one** (you went on to an agreed plan while the
+  user was on a different topic) is shown like any fix, as its own topic's
+  (`diff-view.sh <t>`), so its state stays right: the card switches to it, says which topic
+  the user was on, and offers Put aside beside Ack and push. Say in a line that you went
+  ahead. On the user's word to put it aside, `drop-fix <t> --why "<why not now>" --aside`
+  does what the button does: kept in git, the working tree as before, the plan unchanged,
+  back to the topic they were on; it returns by itself when its topic is next.
 - **Making the fix** (Phase 3 steps 1–2): run its checks (step 2, `verify`) until
   they pass, then show it with
   `diff-view.sh <t> --did "<one short sentence: the change in summary>" --fixup "<sha> <subject>" --as-agreed`,

@@ -2248,6 +2248,28 @@ class TestFixAgainstThePlan(unittest.TestCase):
         self.assertLess(out.index("Differs from the plan"), out.index("Changes**"))
         self.assertTrue(T.state_json(self.state)["topics"][0]["differs"])
 
+    def test_a_fix_made_while_another_topic_was_current_says_so_first(self):
+        """Real runs: on t2's card, the model went on to t1's fix, said nothing of it, and
+        the card switched to t1 as if it had been asked for. The current topic had moved on
+        to t1 already, as the last plan was agreed: only the card shown tells."""
+        two = TestRounds.state(2)
+        self.state["threads"]["d2"] = two["threads"]["d2"]
+        self.state["topics"].append(two["topics"][1])
+        self.state["focus"] = "t1"
+        self.state["shown"] = "t2"
+        out = self.show("--as-agreed")
+        self.assertIn("Made while you were on t2**", out)
+        self.assertLess(out.index("Made while you were on"), out.index("Changes**"))
+        self.assertEqual(T.state_json(self.state)["topics"][0]["made_on"], "t2")
+        # A look at another topic is research, not a card: it changes nothing.
+        with mock.patch("sys.stdout", new_callable=io.StringIO):
+            T.emit(self.state, "a view", "t2")
+        self.assertEqual(self.state["shown"], "t1")
+        # Shown again from its own card (notes read, a change asked for): nothing to say.
+        self.assertEqual(self.state["shown"], "t1")
+        self.assertNotIn("Made while", self.show("--as-agreed"))
+        self.assertIsNone(T.state_json(self.state)["topics"][0]["made_on"])
+
     def test_the_summary_names_its_commits_and_leaves_passed_checks_unsaid(self):
         """The plan is above it and the thread in the sidebar: the card says what changed,
         how big, and which commits it rewrites or adds; checks only where they did not pass."""
@@ -2729,6 +2751,66 @@ class TestDropFix(unittest.TestCase):
         self.assertEqual(T.step_of(self.state, self.t1), "reply")
         self.assertIn(f"dropped fix kept: `git diff {ref}/before {ref}/after`", T.render_plans(self.state))
         self.assertTrue(T.state_json(self.state)["topics"][0]["dropped"])
+
+    def test_a_fix_put_aside_goes_back_to_its_topic_and_returns_with_its_own(self):
+        """A fix made while t2 was current, put aside: out of the working tree, kept in git,
+        t2 current again; once t1 is current, the fix is back, ready to push, its commit
+        found again after another push rewrote it."""
+        two = TestRounds.state(2)
+        self.state["threads"]["d2"] = two["threads"]["d2"]
+        self.state["topics"].append(two["topics"][1])
+        head = self.git("log", "-1", "--format=%h %s")
+        self.t1.update(agreed_change="@@ a.txt:1-1\nfixed\n",
+                       fix={"did": "d", "fixup": [head], "made_on": "t2"}, checked={"ok": True})
+        self.r.write("a.txt", "an early fix\n")
+        with mock.patch.object(T.CURRENT, "jump") as jump:
+            T.drop_fix(self.state, 1, self.t1, "made while t2 was current", None, None, aside=True)
+        jump.assert_called_once_with(self.state, "t2")
+        self.assertEqual(self.git("status", "--porcelain"), "")
+        self.assertEqual((self.t1["outcome"], self.t1["plan"]), ("fix", "p"))
+        self.assertIn("agreed_change", self.t1)
+        self.assertEqual(T.step_of(self.state, self.t1), "fix")
+        self.assertIn("fix put aside: `git diff refs/rework-mr/mr1/t1/dropped1/before",
+                      T.render_plans(self.state))
+        # Another topic pushed meanwhile: the commit the fix goes into has a new hash.
+        self.git("commit", "-q", "--amend", "--no-verify", "--no-edit", "--date=2001-01-01")
+        new = self.git("log", "-1", "--format=%h %s")
+        self.assertNotEqual(new, head)
+        self.assertTrue(T.restore_aside(self.state, 1, self.t1))
+        self.assertEqual(self.git("status", "--porcelain"), "M a.txt")
+        self.assertEqual(T.step_of(self.state, self.t1), "fixed")
+        self.assertEqual(self.t1["fix"]["fixup"], [new])
+        self.assertTrue(self.t1["fix"]["restored"])
+        self.assertNotIn("made_on", self.t1["fix"])
+        self.assertIn("The fix you put aside", T.render_fix(self.state, "t1"))
+
+    def test_a_fix_put_aside_comes_back_when_its_card_comes_up(self):
+        self.t1.update(fix={"did": "d"}, checked={"ok": True})
+        self.r.write("a.txt", "an early fix\n")
+        T.drop_fix(self.state, 1, self.t1, "not now", None, None, aside=True)
+        self.assertEqual(self.git("status", "--porcelain"), "")
+        with mock.patch.object(sys, "argv", ["threads.py", "quote", "t1", "--focus", "--iid", "1"]), \
+                mock.patch.object(T, "load", return_value=self.state), \
+                mock.patch.object(T, "save"), mock.patch.object(T, "hold"), \
+                mock.patch.object(T, "state_file", return_value="/state"), \
+                mock.patch.object(T, "context", return_value={"slug": "g-p", "enc": "g%2Fp", "web": "https://gl/g/p"}), \
+                mock.patch.object(T, "refuse_leaving_fix"), mock.patch.object(T, "chat_opens"), \
+                mock.patch.object(T.CURRENT, "view", return_value=None), \
+                mock.patch.object(T, "current_topic", return_value="t1"), \
+                mock.patch.object(T, "render_quote", return_value=""), mock.patch.object(T, "emit"), \
+                mock.patch("sys.stdout", new_callable=io.StringIO):
+            T.main()
+        self.assertEqual(self.git("status", "--porcelain"), "M a.txt")
+        self.assertEqual(T.step_of(self.state, self.t1), "fixed")
+
+    def test_a_fix_put_aside_waits_while_another_is_in_the_tree(self):
+        self.t1.update(fix={"did": "d"}, checked={"ok": True})
+        self.r.write("a.txt", "an early fix\n")
+        T.drop_fix(self.state, 1, self.t1, "not now", None, None, aside=True)
+        self.r.write("b.txt", "another topic's fix\n")
+        T._WORKING.clear()
+        self.assertFalse(T.restore_aside(self.state, 1, self.t1))
+        self.assertIn("aside", self.t1)
 
     def test_the_reviewer_s_answer_plans_again_and_a_new_fix_knows_the_kept_one(self):
         self.r.write("a.txt", "half a fix\n")

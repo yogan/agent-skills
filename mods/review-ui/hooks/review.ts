@@ -35,6 +35,9 @@ export type Press =
   // rework-mr: the checked fix committed as a fixup, squashed and force-pushed by the
   // script, with no model turn. Only that: what is said in the thread is the next card's.
   | { kind: 'push' }
+  // rework-mr: a fix made while another topic was current, kept in git and taken out of the
+  // working tree, the plan as agreed, and back to that topic; the fix returns with its own.
+  | { kind: 'aside' }
   | { kind: 'copy' }
   | { kind: 'drop' }
   // Into the topic the agent named: merging is offered only where it advised it.
@@ -165,6 +168,7 @@ const ICON: Record<string, string> = {
   'Redo…': '\u{F099B}', // md-restore
   'Run the checks': '\u{F0096}', 'Fix the checks': '\u{F0096}', // md-flask_outline
   'Push': '\u{F0552}', 'Push and resolve': '\u{F0552}', 'Ack and push': '\u{F0552}', // md-upload
+  'Put aside': '\u{F125A}', // md-archive_arrow_down_outline
   'Drop': '\u{F0A7A}', // md-trash_can_outline
   'Summarize': '\u{F0279}', // md-format_list_bulleted
   'Keep separate': '\u{F093C}', // md-arrow_split_vertical
@@ -475,6 +479,8 @@ const reworkButtons = (review: ReviewState): BandButton[] => {
         const isReviewFirst = hasNotes || (topic.differs === true && !isOpen)
         bs = [{ key: 'push', label: 'Ack and push', press: { kind: 'push' }, ...(isReviewFirst ? {} : { isPrimary: true as const }) }, hunk]
       }
+      // Made while another topic was current: keeping it is Ack and push, and this the other way.
+      if (topic.made_on) bs = [...bs, { key: 'aside', label: 'Put aside', press: { kind: 'aside' } }]
       // A fix made and not pushed holds the topic: nothing to put off, and no other topic
       // until it is pushed or undone.
       return ordered(bs)
@@ -532,6 +538,8 @@ export const argsFor = (press: Press, topic: string, card: ReviewCard | null): s
       return ['hunk-show', topic, '--pushed', ...(press.push ? ['--push', String(press.push)] : [])]
     case 'push':
       return ['push', topic]
+    case 'aside':
+      return ['drop-fix', topic, '--aside', '--why', 'made while another topic was current; put aside for later']
     case 'drop':
       return ['drop', topic]
     case 'ack':
@@ -600,6 +608,8 @@ export const outcomeOf = (press: Press, stdout: string): ReviewOutcome | null =>
     }
     case 'push':
       return said('Push', 'Pushed', { label: 'the fix' })
+    case 'aside':
+      return said('Put aside', 'Put aside, kept in git for later')
     case 'apply-edit':
       return said('Apply edit', 'Edited', { label: 'your comment', after: 'on GitLab' })
     case 'resolve':
@@ -632,6 +642,7 @@ export const didText = (press: Press, topic: string, into?: string): string => {
   if (press.kind === 'hunk') return `${topic}: opened the fix in the diff viewer`
   if (press.kind === 'hunk-pushed') return `${topic}: opened the pushed fix in the diff viewer`
   if (press.kind === 'push') return `${topic}: pushed the fix`
+  if (press.kind === 'aside') return `${topic}: put its fix aside (kept in git, the working tree as before), to come back when ${topic} is next; the plan stands`
   if (press.kind === 'post' && press.fixed) return `${topic}: posted “Fixed” with the diff link${press.resolve ? ' and resolved the thread' : ''}`
   if (press.kind === 'post' && press.resolve) return `${topic}: posted the reply and resolved the thread`
   if (press.kind === 'post' && press.reply) return `${topic}: posted the reply in its thread`
