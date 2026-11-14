@@ -52,6 +52,8 @@ def current(t):
 
 # MR !3's third thread asks for more than the MR is about, and says so: the agent proposes
 # to decline it, the card drafts that reply with one press, and it is posted at once.
+# How long a check that only looks keeps asking GitLab for what the press before it posts.
+SOON = 30
 THREADS = "glab api 'projects/demo%2Fbulletproof-react/merge_requests/3/discussions'"
 
 
@@ -71,7 +73,7 @@ REPLY_INSTEAD = [
     Expect(button('Post + resolve'), region="screen"),
     press('Post'),
     Check(thread_on("discussions/api/query-keys.ts", 'len(d["notes"]), d["notes"][-1]["author"]["username"]'),
-          r"^2 frank$"),
+          r"^2 frank$", wait=SOON),
 ]
 
 REVIEW1 = "~/src/agent-skills-demo-review-mr1"
@@ -193,7 +195,7 @@ REWORK_TWICE += [
             Check(thread_on("comments/api/query-keys.ts",
                             '(lambda f: (len(set(f)), sum(b.count("diff_id=") for b in f)))'
                             '([n["body"] for n in d["notes"] if n["body"].startswith("Fixed")])'),
-                  r"^\(2, 2\)$"),
+                  r"^\(2, 2\)$", wait=SOON),
 ]
 
 # The same MR, the plan pass ended in the chat, as real runs went: with t3's plan typed in
@@ -220,11 +222,11 @@ T3_FIXED = [
             Expect(button('Post'), region="screen"),
             press('Post'),
             Check("git fetch -q && git show @{u}:src/features/discussions/api/query-keys.ts | grep -c TODO",
-                  r"^[1-9]"),
+                  r"^[1-9]", wait=SOON),
             Check(thread_on("discussions/api/query-keys.ts", 'len(d["notes"]), d["notes"][-1]["author"]["username"]'),
-                  r"^2 frank$"),
+                  r"^2 frank$", wait=SOON),
 ]
-T1_RESOLVED = Check(thread_on("comments/api/query-keys.ts", 'd["notes"][0]["resolved"]'), r"^True$")
+T1_RESOLVED = Check(thread_on("comments/api/query-keys.ts", 'd["notes"][0]["resolved"]'), r"^True$", wait=SOON)
 
 REWORK_AHEAD = [
             *MIND_START,
@@ -295,7 +297,7 @@ REWORK_MIND = [
             press('Post'),
             Check(thread_on("comments/api/query-keys.ts",
                             'sum(n["body"].startswith("Fixed") for n in d["notes"]), d["notes"][-1]["author"]["username"]'),
-                  r"^1 frank$"),
+                  r"^1 frank$", wait=SOON),
             Check("git rev-list --count origin/main..@{u}", r"^2$"),   # the TODO folded in too
 ]
 
@@ -439,7 +441,7 @@ SCENARIOS = [
             Expect(button('Post'), region="screen"),
             press('Post'),
             Check("glab api 'projects/demo%2Fbulletproof-react/merge_requests/1/discussions'",
-                  r'"new_path":"[^"]*db\.ts"'),
+                  r'"new_path":"[^"]*db\.ts"', wait=SOON),
         ]),
 
     Scenario(
@@ -462,7 +464,7 @@ SCENARIOS = [
             press('Post'),                 # a reply below the user's own comment
             Check("glab api 'projects/demo%2Fbulletproof-react/merge_requests/1/discussions'"
                   " | python3 -c 'import json,sys; print(max(len(d[\"notes\"]) for d in json.load(sys.stdin)))'",
-                  r"^2$"),
+                  r"^2$", wait=SOON),
         ]),
     Scenario(
         "review-panel", "MR !2: the topic panel, closed and opened again with its buttons", REVIEW2,

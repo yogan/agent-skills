@@ -191,11 +191,22 @@ whole fixture, ~28 s, where the rig is not whole), because the run before it wro
 state and posted to the merge request; `--no-reset` skips that. After every step the screen is
 saved as text and with colours under `.runs/<time>-<scenario>/`, and a failed run adds what
 the session ran (`transcript.txt`, from `transcript.py`) and, on the recording, what each
-request was answered with (`mock.log`). Every run also leaves a `timing.json`: `python3 timing.py` adds them up by part,
-and `python3 timing.py BEFORE AFTER` compares two `--out` folders (its docstring is the
-method). `screenshot.py` turns those colour captures into PNGs
+request was answered with (`mock.log`). `screenshot.py` turns those colour captures into PNGs
 drawn as Ghostty draws them, so a change to the cards or the sidebar can be looked at without
 running a session by hand.
+
+**The driver waits for the screen, not for a fixed time.** A step that looks for something
+keeps looking for ten seconds, which costs nothing where it is there at once. A button is
+clicked once it has stood unmoved for half a second. After a press, the sign that the mod took
+it is the mod's own: it takes its buttons off the screen while a press runs and draws the next
+step's when the press is through, so once the pressed button has left its place the next step
+can only find the new state. A press that leaves its text standing (a row of the topic list, a
+key that fills the prompt) gives no such sign and gets a pause of 1.5 s, as does any press
+before a step that looks only once: one that says something is NOT there, or one that types.
+A check that only reads GitLab takes `wait=`, and asks again until the press before it has
+landed; one that changes something runs once. Every run leaves a `timing.json`;
+`python3 timing.py` adds them up by part, and `python3 timing.py BEFORE AFTER` compares two
+`--out` folders (its docstring is the method).
 
 **showcase** opens a window in the tmux session you are in (or `--session NAME`), with your
 settings, on the recording, and waits for Enter before each step; the recording stops

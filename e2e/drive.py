@@ -64,6 +64,13 @@ RUNS = E2E / ".runs"
 BUSY = "esc to interrupt"
 VERIFY_SIZE = (160, 50)
 
+# How the driver waits. Nothing here is a pause of a fixed length where the screen can say
+# when to go on, and each limit costs nothing where what is waited for arrives early.
+GRACE = 10          # seconds a step keeps looking for what the action before it brings
+STANDS = 0.5        # seconds a button stands unmoved before it is clicked
+PRESS_TAKEN = 1.5   # seconds a press that says nothing on screen is given to be through
+TURN_QUIET = 1.5    # seconds of unchanged screen after a turn before it counts as ended
+
 # The engine's own questions that can come up mid-run, and the key a person would answer each
 # with. They take the band above the prompt, where the mod yields to them, so the cards'
 # buttons vanish until one is answered: four real-model runs failed on the first of these.
@@ -172,6 +179,9 @@ class Check(Step):
     command: str
     pattern: str
     timeout: int = 120  # seconds the command may run: one that waits for something, longer
+    # Seconds to keep asking until the output matches: for a command that only looks (a
+    # thread's comments after a press posted one), never for one that changes something.
+    wait: int = 0
 
     def label(self):
         return f"check {self.command[:40]!r}"
@@ -415,8 +425,57 @@ class Pane:
         the mod answers itself) counts as ended once the screen settles."""
         end = time.time() + 8
         while time.time() < end and BUSY not in self.screen():
-            time.sleep(0.3)
-        return self.settle(timeout=timeout, quiet=3)
+            time.sleep(0.15)
+        return self.settle(timeout=timeout, quiet=TURN_QUIET)
+
+    def standing(self, text, region, timeout=GRACE):
+        """Where `text` is, once it has stood there unmoved for STANDS seconds; None when it
+        never shows. A button that has only just appeared may still be redrawn (a background
+        agent's result filling its card), and a click into that is lost. One that keeps
+        moving is clicked where it is when the time is up."""
+        end, at = time.time() + timeout, None
+        while True:
+            before = self.screen()
+            at = find_text(before, text, region)
+            if at is not None:
+                time.sleep(STANDS)
+                now = self.screen()
+                if find_text(now, text, region) == at and \
+                        now.split("\n")[at[0]] == before.split("\n")[at[0]]:
+                    return at
+            if time.time() >= end:
+                return at
+            time.sleep(0.2)
+
+    def pressed(self, at, text, region, hurry):
+        """Wait until a press without a turn is through.
+
+        The mod takes its buttons off the screen for as long as a press of one runs, and
+        draws the next step's when it is through: once the pressed one has left its place,
+        whatever the next step looks for can only be the new state's, and that step does the
+        waiting (`hurry`). A press that leaves its text standing (a row of the list, a key
+        that turns a page, one that fills the prompt) says nothing, and gets PRESS_TAKEN; so
+        does any press before a step that looks once."""
+        end = time.time() + PRESS_TAKEN
+        while hurry and time.time() < end:
+            if find_text(self.screen(), text, region) != at:
+                time.sleep(0.3)         # the redraw it was part of
+                return
+            time.sleep(0.1)
+        time.sleep(max(0, end - time.time()))
+
+    def quiet(self, quiet=TURN_QUIET, timeout=4):
+        """Wait until the screen has stood unchanged for `quiet` seconds, at most `timeout`:
+        before judging that something is NOT there, which only a finished screen can say. No
+        failure when it never stands still: a background agent's line ticks on."""
+        end, last, since = time.time() + timeout, None, time.time()
+        while time.time() < end:
+            now = self.screen()
+            if now != last:
+                last, since = now, time.time()
+            elif time.time() - since >= quiet:
+                return
+            time.sleep(0.2)
 
 
 # ── running ──────────────────────────────────────────────────────────────────
@@ -576,7 +635,18 @@ def improvised(session):
     return seen
 
 
-def run_step(pane, step, verify):
+def waits(step):
+    """Whether `step` keeps looking until what it wants is there: the action before it then
+    need not wait for the screen on its behalf."""
+    if isinstance(step, Expect):
+        return not step.absent and step.region != "transcript"
+    if isinstance(step, Check):
+        return step.wait > 0
+    return isinstance(step, Panel)
+
+
+def run_step(pane, step, verify, nxt=None):
+    """`nxt`: the step after it, which may do the waiting for what this one brings."""
     if isinstance(step, Prompt):
         pane.type(step.text)
         time.sleep(0.3)
@@ -593,10 +663,7 @@ def run_step(pane, step, verify):
             time.sleep(0.5)
             pane.settle()
     elif isinstance(step, Click):
-        # A button that has only just appeared may still be redrawn (a background agent's
-        # result filling its card): a click into that is lost. Let it stand first.
-        time.sleep(2)
-        at = find_text(pane.screen(), step.text, step.region)
+        at = pane.standing(step.text, step.region)
         if at is None:
             raise StepFailed(f"nothing on screen reads {step.text!r}")
         pane.click(at[0], at[1] + step.offset)
@@ -604,32 +671,38 @@ def run_step(pane, step, verify):
             pane.wait_turn(step.timeout)
         else:
             # Not settled: a background agent's line ticks on while the press is long done.
-            # What the press brings is the next Expect's to wait for.
-            time.sleep(1.5)
+            pane.pressed(at, step.text, step.region, hurry=waits(nxt))
     elif isinstance(step, Expect):
-        end = time.time() + step.wait
+        looks = step.region != "transcript"     # the transcript is paged through on every look
+        if step.absent and not step.wait:
+            pane.quiet()
+        end = time.time() + (max(step.wait, GRACE) if looks and not step.absent else step.wait)
         while True:
-            if step.region == "transcript":
-                text = pane.transcript()
-            else:
-                text = region_of(pane.screen(), step.region)
+            text = region_of(pane.screen(), step.region) if looks else pane.transcript()
             hit = re.search(step.pattern, text, re.M)
             if bool(hit) != step.absent or time.time() >= end:
                 break
-            time.sleep(1)
+            time.sleep(0.3 if looks else 1)
         if bool(hit) == step.absent:
             raise StepFailed(f"{'found' if hit else 'did not find'} {step.pattern!r} in the {step.region}")
     elif isinstance(step, Panel):
-        col = divider_column(pane.screen())
-        if (col is not None) != step.open:
-            raise StepFailed(f"the panel is {'open' if col is not None else 'closed'}")
+        end = time.time() + GRACE
+        while (col := divider_column(pane.screen()) is not None) != step.open and time.time() < end:
+            time.sleep(0.3)
+        if col != step.open:
+            raise StepFailed(f"the panel is {'open' if col else 'closed'}")
     elif isinstance(step, Check):
-        # A check that runs a skill's script must not name the window the driver runs in.
-        r = subprocess.run(step.command, shell=True, capture_output=True, text=True,
-                           cwd=pane.cwd, timeout=step.timeout, env={**os.environ, "AGENT_TAB_OFF": "1"})
-        if not re.search(step.pattern, r.stdout + r.stderr, re.M):
-            raise StepFailed(f"{step.pattern!r} not in the output of {step.command!r}: "
-                             f"{(r.stdout + r.stderr).strip()[-300:]}")
+        end = time.time() + step.wait
+        while True:
+            # A check that runs a skill's script must not name the window the driver runs in.
+            r = subprocess.run(step.command, shell=True, capture_output=True, text=True,
+                               cwd=pane.cwd, timeout=step.timeout, env={**os.environ, "AGENT_TAB_OFF": "1"})
+            if re.search(step.pattern, r.stdout + r.stderr, re.M):
+                break
+            if time.time() >= end:
+                raise StepFailed(f"{step.pattern!r} not in the output of {step.command!r}: "
+                                 f"{(r.stdout + r.stderr).strip()[-300:]}")
+            time.sleep(0.5)
     elif isinstance(step, Say):
         pane.log(f"   ·  {step.text}")
     else:
@@ -724,7 +797,7 @@ def verify(sc, model, out_root, keep, reset, record=False):
             if isinstance(step, Handover):
                 break
             t = time.time()
-            run_step(pane, step, verify=True)
+            run_step(pane, step, verify=True, nxt=sc.steps[n] if n < len(sc.steps) else None)
             save(pane, out, n, step)
             sidebar_drawn_right(pane)
             off_script(mock)
@@ -810,7 +883,7 @@ def showcase(sc, model, session, pace):
                 print(f"   {n:2d} {step.label()}")
                 time.sleep(pace)
         try:
-            run_step(pane, step, verify=False)
+            run_step(pane, step, verify=False, nxt=sc.steps[n] if n < len(sc.steps) else None)
             off_script(mock)
         except StepFailed as err:
             print(f"   !! {n:2d} {step.label()}: {err}")

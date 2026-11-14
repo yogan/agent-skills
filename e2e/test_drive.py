@@ -220,6 +220,102 @@ class OutputTest(unittest.TestCase):
         self.assertIn(b"smoke", written)
 
 
+class Clock:
+    """Time that only passes when the driver sleeps, and a screen that changes with it."""
+
+    def __init__(self, test, screens):
+        """`screens`: (from this second on, the screen), in order."""
+        self.now, self.screens, self.clicks = 0.0, screens, []
+        for name, fake in (("time", lambda: self.now), ("sleep", self.sleep)):
+            test.addCleanup(setattr, drive.time, name, getattr(drive.time, name))
+            setattr(drive.time, name, fake)
+        test.addCleanup(setattr, drive, "tmux", drive.tmux)
+        drive.tmux = self.tmux
+
+    def sleep(self, seconds):
+        self.now += seconds
+
+    def tmux(self, *args, check=True):
+        if args[0] == "capture-pane":
+            return [s for t, s in self.screens if t <= self.now][-1]
+        self.clicks.append(self.now)
+        return ""
+
+
+class WaitTest(unittest.TestCase):
+    """The driver waits for what the screen says, not for a fixed time."""
+    BUTTON = " Agree plan \ue0b4"
+
+    def card(self, row):
+        return "\n".join(["╭─ t1"] + [""] * row + [f"│ {self.BUTTON}"])
+
+    def test_a_button_is_clicked_once_it_has_stood_still(self):
+        # Drawn at second 1, moved down by a redraw at 1.2: found only where it stays.
+        Clock(self, [(0, "╭─ t1"), (1, self.card(2)), (1.2, self.card(5))])
+        self.assertEqual(drive.Pane("t").standing(self.BUTTON, "screen"), (6, 2))
+
+    def test_a_button_whose_row_is_redrawn_is_not_standing_yet(self):
+        busy = self.card(2) + "  ⠋"
+        clock = Clock(self, [(0, busy), (0.3, self.card(2))])
+        drive.Pane("t").standing(self.BUTTON, "screen")
+        self.assertGreaterEqual(clock.now, 0.3 + drive.STANDS)
+
+    def test_a_button_that_never_shows_is_none_after_the_grace(self):
+        clock = Clock(self, [(0, "╭─ t1")])
+        self.assertIsNone(drive.Pane("t").standing(self.BUTTON, "screen"))
+        self.assertGreaterEqual(clock.now, drive.GRACE)
+
+    def test_a_press_is_through_when_its_button_has_left_the_screen(self):
+        clock = Clock(self, [(0, self.card(2)), (0.2, "╭─ t1")])
+        drive.Pane("t").pressed((3, 2), self.BUTTON, "screen", hurry=True)
+        self.assertLess(clock.now, 1)
+
+    def test_a_press_that_leaves_its_text_standing_gets_the_whole_pause(self):
+        clock = Clock(self, [(0, self.card(2))])
+        drive.Pane("t").pressed((3, 2), self.BUTTON, "screen", hurry=True)
+        self.assertGreaterEqual(clock.now, drive.PRESS_TAKEN)
+
+    def test_a_press_before_a_step_that_looks_once_gets_the_whole_pause(self):
+        clock = Clock(self, [(0, self.card(2)), (0.2, "╭─ t1")])
+        drive.Pane("t").pressed((3, 2), self.BUTTON, "screen", hurry=False)
+        self.assertGreaterEqual(clock.now, drive.PRESS_TAKEN)
+
+    def test_only_a_step_that_keeps_looking_does_the_waiting_for_a_press(self):
+        self.assertTrue(drive.waits(drive.Expect("x", region="screen")))
+        self.assertTrue(drive.waits(drive.Panel(False)))
+        self.assertTrue(drive.waits(drive.Check("glab api x", "y", wait=30)))
+        # Not there yet is "not there" to these, and typing or clicking on is no look at all.
+        self.assertFalse(drive.waits(drive.Expect("x", region="screen", absent=True)))
+        self.assertFalse(drive.waits(drive.Expect("x")))
+        self.assertFalse(drive.waits(drive.Check("news.py approve", "approved")))
+        self.assertFalse(drive.waits(drive.Prompt("x")))
+        self.assertFalse(drive.waits(drive.Click("x")))
+        self.assertFalse(drive.waits(None))
+
+    def test_what_a_press_brings_is_found_when_it_arrives_late(self):
+        Clock(self, [(0, "╭─ t1"), (4, self.card(2))])
+        drive.run_step(drive.Pane("t"), drive.Expect("Agree plan", region="screen"), verify=True)
+
+    def test_something_absent_is_judged_on_a_screen_that_stands_still(self):
+        # Not there at first, drawn half a second later: found, where one early look would not.
+        Clock(self, [(0, "╭─ t1"), (0.5, self.card(2))])
+        with self.assertRaises(drive.StepFailed):
+            drive.run_step(drive.Pane("t"), drive.Expect("Agree plan", region="screen", absent=True),
+                           verify=True)
+
+    def test_a_check_that_only_looks_asks_again_until_its_time_is_up(self):
+        clock = Clock(self, [(0, "")])
+        outputs = ["1 miriam", "1 miriam", "2 frank"]
+        run = mock.Mock(side_effect=lambda *a, **k: mock.Mock(stdout=outputs.pop(0), stderr=""))
+        with mock.patch.object(drive.subprocess, "run", run):
+            drive.run_step(drive.Pane("t"), drive.Check("look", r"^2 frank$", wait=30), verify=True)
+            self.assertEqual(run.call_count, 3)
+            outputs[:] = ["1 miriam"]
+            with self.assertRaises(drive.StepFailed):      # and one that acts runs once
+                drive.run_step(drive.Pane("t"), drive.Check("act", r"^2 frank$"), verify=True)
+        self.assertLess(clock.now, 30)
+
+
 class ResetTest(unittest.TestCase):
     def test_every_rig_scenario_names_the_merge_request_it_works_on(self):
         # One that named none would get the whole reset: slower, and nothing says so.
