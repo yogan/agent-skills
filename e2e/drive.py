@@ -462,6 +462,7 @@ def claude_command(sc, model, verify, plugins=(), mock=None):
     env = dict(mock[0]) if mock else {}
     if verify:
         env["REVIEW_UI_NO_OPEN"] = "1"   # a verify run opens nothing: no explainer in a browser
+        env["AGENT_TAB_OFF"] = "1"       # ...renames no window and asks no model for a tab title
     if verify and sc.fast_check:
         env["REVIEW_UI_TICK_MS"] = "2000"      # see Scenario.fast_check
     prefix = "env " + " ".join(f"{k}={shlex.quote(v)}" for k, v in env.items()) + " " if env else ""
@@ -611,8 +612,9 @@ def run_step(pane, step, verify):
         if (col is not None) != step.open:
             raise StepFailed(f"the panel is {'open' if col is not None else 'closed'}")
     elif isinstance(step, Check):
+        # A check that runs a skill's script must not name the window the driver runs in.
         r = subprocess.run(step.command, shell=True, capture_output=True, text=True,
-                           cwd=pane.cwd, timeout=step.timeout)
+                           cwd=pane.cwd, timeout=step.timeout, env={**os.environ, "AGENT_TAB_OFF": "1"})
         if not re.search(step.pattern, r.stdout + r.stderr, re.M):
             raise StepFailed(f"{step.pattern!r} not in the output of {step.command!r}: "
                              f"{(r.stdout + r.stderr).strip()[-300:]}")
@@ -757,14 +759,15 @@ def showcase(sc, model, session, pace):
     cwd, _ = workdir(sc)        # a showcase folder outlives the driver: claude stays in it
     # claude runs inside the window's shell, so the window survives claude exiting and the
     # person can start it again where it was.
+    # Addressed by its id, not its name: the skills rename the window they run in (lib/tab.py).
     if subprocess.run(["tmux", "has-session", "-t", session], capture_output=True).returncode:
-        tmux("new-session", "-d", "-s", session, "-n", window, "-c", cwd)
+        wid = tmux("new-session", "-d", "-P", "-F", "#{window_id}", "-s", session, "-n", window, "-c", cwd)
     else:
-        tmux("new-window", "-d", "-t", f"{session}:", "-n", window, "-c", cwd)
-    pane = Pane(f"{session}:{window}", cwd=cwd)
-    # `env -u`: a caller may have switched the mod's rendering off for its own checks
-    # (tmux-demo.sh does), and a tmux server it started hands that on to every window.
-    pane.type("clear; env -u REVIEW_UI_DRAWN " + claude_command(
+        wid = tmux("new-window", "-d", "-P", "-F", "#{window_id}", "-t", f"{session}:", "-n", window, "-c", cwd)
+    pane = Pane(wid.strip(), cwd=cwd)
+    # `env -u`: a caller may have switched the mod's rendering and the tab names off for its
+    # own checks (tmux-demo.sh does), and a tmux server it started hands that on to every window.
+    pane.type("clear; env -u REVIEW_UI_DRAWN -u AGENT_TAB_OFF " + claude_command(
         sc, model, verify=False, mock=mock.command if mock else None))
     pane.keys("Enter")
     print(f"── {sc.name}: {sc.about}  (window {session}:{window})")

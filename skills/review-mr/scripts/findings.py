@@ -108,13 +108,13 @@ _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(
 if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
 
-from lib import code_view, critical_manifest, diffsize, fix_refs, focus, hunk, posted, ui  # noqa: E402
+from lib import code_view, critical_manifest, diffsize, fix_refs, focus, hunk, posted, tab, ui  # noqa: E402
 from lib.fences import (LINK_ICON, SUGGESTION_INFO, YOU, block_lang, fence, suggestion_reach,  # noqa: E402
                         diff_info, lang_for, note_md, quoted_fence, segments,
                         suggestion_diff, when_of)
 from lib.gitlab import (api, api_post, approve, context, current_user, die, file_at, mr_base, remember_user,  # noqa: E402
                         mr_head, mr_object, mr_status, mr_view, versions, web_base)
-from lib.mr_common import (DEFAULT_LANG, LANG_GIVEAWAYS, MR_LEVEL, TOPIC_ICON, first_name, people,  # noqa: E402
+from lib.mr_common import (DEFAULT_LANG, LANG_GIVEAWAYS, MR_LEVEL, first_name, people,  # noqa: E402
                            hold, load, mr_json, mr_news, topic_handles, loc_md, num, plain_text, reads_as,
                            short_summary, state_file, topic_for, tref)
 from lib.mr_common import save as _save                          # noqa: E402
@@ -2812,6 +2812,16 @@ def topic_patch(picked):
     return "\n".join(out) + "\n"
 
 
+def viewer_label(ctx, iid):
+    """This review's diff viewer window's name (lib/tab.py): the MR's short title, from its
+    saved state, else its number."""
+    try:
+        title = (load(state_file(STATE_ROOT, ctx["slug"], iid, "findings.json")) or {}).get("title")
+    except (OSError, ValueError):
+        title = None                      # a state being written, or none yet: its number
+    return tab.viewer_label(title or f"!{iid}", fallback=f"!{iid}")
+
+
 def _show_in_viewer(ctx, iid, tid, picked):
     """The pointer lines when the topic's diff is now in this agent's viewer window, or
     None to show it inline — no tmux, no viewer, or a window that came back holding
@@ -2820,7 +2830,7 @@ def _show_in_viewer(ctx, iid, tid, picked):
     path = state_file(STATE_ROOT, ctx["slug"], iid, f"diff-{tid}.patch")
     with open(path, "w") as fh:
         fh.write(patch)
-    shown = hunk.show_patch(path, f"{TOPIC_ICON}!{iid}",
+    shown = hunk.show_patch(path, viewer_label(ctx, iid),
                             get_worktree(ctx["slug"], iid) or os.getcwd())
     if not shown:
         return None
@@ -3650,7 +3660,7 @@ def main():
         ends = (f or {}).get("ends") or die(f"{tref(args.topic)} has no push of the author's "
                                             "kept in git to show")
         shown = fix_refs.show(wt, ends, state_file(STATE_ROOT, ctx["slug"], iid, f"fix-{args.topic}.patch"),
-                              f"{TOPIC_ICON}!{iid}", f.get("paths"))
+                              viewer_label(ctx, iid), f.get("paths"))
         if not shown:
             die(hunk.not_shown())
         hunk.focus_window(shown[0])
@@ -3727,6 +3737,8 @@ def main():
         ex = explainer_line(exp, opened)
         emit(state, (f"{ex}\n\n" if ex else "") + render_present(state),
              current_topic(state))
+        # The session's tab says it reviews this MR, until the MR is over or the session ends.
+        tab.take_mr(tab.REVIEW_ICON, iid, state.get("title"))
         # Again, after the render: `render_quote` records the context it just showed, and
         # `--refine` compares against that. Every command that renders a topic in full
         # saves for this reason, and it is the only reason a view writes at all.
@@ -3773,6 +3785,7 @@ def main():
         # does, and paste-gate.py needs it all in one place to check the whole thing.
         sync(state, fetch_threads(ctx, iid, me, author), ctx, iid)
         save(path, state)
+        tab.take_mr(tab.REVIEW_ICON, iid, state.get("title"))
         ex = explainer_line(explainer_path(ctx, iid))
         p = render_present(state)
         if ui.drawn():
@@ -4065,6 +4078,8 @@ def main():
             status = mr_status(ctx, iid, me)
             state.setdefault("mr_news", []).extend(mr_news(state.get("mr_status"), status, now_iso()))
             state["mr_status"] = status
+            if is_over(state):
+                tab.give_back()           # the session's tab, which `present` took
             keep_author_fixes(state, get_worktree(state.get("slug") or ctx["slug"], iid), iid)
         state["diff_base"] = base or state.get("diff_base")
         save(path, state)

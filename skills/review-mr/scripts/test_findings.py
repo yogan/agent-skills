@@ -22,6 +22,9 @@ sys.path.insert(0, HERE)
 
 import findings as F                                  # noqa: E402
 from lib import critical_manifest                      # noqa: E402
+
+# lib/tab.py: code under test never names the window the tests run in, nor asks the model.
+os.environ.setdefault("AGENT_TAB_OFF", "1")
 os.environ["REVIEW_UI_DRAWN"] = "0"   # the views as without the review-ui mod, whatever session runs this (lib/ui.py)
 
 

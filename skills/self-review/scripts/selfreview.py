@@ -33,11 +33,11 @@ _REPO_ROOT = os.path.dirname(
 if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
 
-from lib import hunk, tmux  # noqa: E402
+from lib import hunk, tab, tmux  # noqa: E402
 from lib.cli import die  # noqa: E402
 from lib.git import default_base, git  # noqa: E402
 
-LABEL = "self-review"
+LABEL = tab.label(tab.VIEWER_ICON, "self-review")
 # Recorded on the window: the tree-ish whose new side it shows — the commit, or a snapshot
 # of the working tree — so a reload can tell where each noted line went since.
 SHOWN = "@self-review-shown"

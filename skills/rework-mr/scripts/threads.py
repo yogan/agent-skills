@@ -71,7 +71,7 @@ _REPO_ROOT = os.path.dirname(
 if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
 
-from lib import change as change_of, checks, code_view, critical_manifest, diffsize, fix_refs, focus, hunk, posted, ui  # noqa: E402
+from lib import change as change_of, checks, code_view, critical_manifest, diffsize, fix_refs, focus, hunk, posted, tab, ui  # noqa: E402
 from lib.ui import analysis_heading  # noqa: E402
 from lib.hunk import diff_stat  # noqa: E402
 from lib.gitlab import (
@@ -98,7 +98,6 @@ from lib.mr_common import (
     topic_handles,
     DEFAULT_LANG,
     MR_LEVEL,
-    TOPIC_ICON,
     first_name,  # noqa: E402
     people,
     hold,
@@ -928,8 +927,8 @@ def own_mr(slug):
 
 
 def window_label(default="diff"):
-    """The name to give this agent's viewer window: its MR's number where it can be had
-    locally (`own_mr`), the branch otherwise.
+    """The name to give this agent's viewer window (lib/tab.py's viewer icon): its MR's short
+    title where the MR can be had locally (`own_mr`), else its number, else the branch.
 
     Read off the state directory's own naming rather than by asking GitLab, and via
     `project_slug()` rather than `context()`, which would shell out to glab for the host's
@@ -943,13 +942,15 @@ def window_label(default="diff"):
         # Catching the SystemExit would still leave that stray line in the terminal, on a
         # path where nothing is actually wrong.
         if (_git("remote", "get-url", "origin") or "").strip():
-            iid = own_mr(project_slug())
+            slug = project_slug()
+            iid = own_mr(slug)
             if iid:
-                return TOPIC_ICON + "!" + iid
+                title = (load(os.path.join(STATE_ROOT, f"{slug}--mr{iid}", "topics.json")) or {}).get("title")
+                return tab.viewer_label(title or f"!{iid}", fallback=f"!{iid}")
     except (Exception, SystemExit):  # noqa: BLE001 — no remote/state → use branch
         pass
     branch = (_git("rev-parse", "--abbrev-ref", "HEAD") or "").strip()
-    return f"{TOPIC_ICON} {branch or default}"
+    return tab.viewer_label(branch or default)
 
 
 def diff_view_block(tid, diff, plain=False, notes=()):
@@ -3646,6 +3647,8 @@ def main():
         # Where the mod draws, the box's Clean up locally says it and does it.
         cleanup = "" if ui.drawn() else render_cleanup(cleanup_facts(ctx, iid))
         emit(state, render_present(state, cleanup), current_topic(state))
+        # The session's tab says it reworks this MR, until Clean up locally or its end.
+        tab.take_mr(tab.REWORK_ICON, iid, state.get("title"))
         if ui.drawn():
             chat_opens(state, current_topic(state))
         if note := proposal_note(state, current_topic(state)):
@@ -3661,11 +3664,13 @@ def main():
         print(json.dumps(state_json(state)))
     elif cmd == "cleanup":                # the mod's Clean up locally: the state goes too
         print(clean_up_locally(ctx, iid, path))
+        tab.give_back()                   # the session's tab, which `present` took
         return
     elif cmd == "plans":
         print(render_plans(state))
     elif cmd in ("sync", "todo"):
         resync(state, ctx, iid)
+        tab.take_mr(tab.REWORK_ICON, iid, state.get("title"))
         # The MR's diff base, so the offline `code` command can show the MR's changes.
         state["diff_base"] = mr_base(ctx, iid) or state.get("diff_base")
         save(path, state)

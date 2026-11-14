@@ -26,6 +26,9 @@ sys.path.insert(0, HERE)
 import threads as T  # noqa: E402
 from lib import critical_manifest  # noqa: E402
 from lib.fences import LINK_ICON  # noqa: E402
+
+# lib/tab.py: code under test never names the window the tests run in, nor asks the model.
+os.environ.setdefault("AGENT_TAB_OFF", "1")
 os.environ["REVIEW_UI_DRAWN"] = "0"   # the views as without the review-ui mod, whatever session runs this (lib/ui.py)
 
 
@@ -362,7 +365,14 @@ class TestDiffViewRouting(unittest.TestCase):
                 mock.patch.object(T, "project_slug", lambda: "acme-api"),
                 mock.patch.object(T, "_git", lambda *a: "git@host:acme/api.git\n"),
             ):
-                self.assertEqual(T.window_label(), T.TOPIC_ICON + "!123")
+                self.assertEqual(T.window_label(), f"{T.tab.VIEWER_ICON} !123")
+                # Its MR's title where the state has it, once a model wrote its short form
+                # (lib/tab.py); its number until then, never the title cut mid-thought.
+                with open(os.path.join(root, "acme-api--mr123", "topics.json"), "w") as fh:
+                    fh.write('{"title": "Retry the payment call with backoff"}')
+                self.assertEqual(T.window_label(), f"{T.tab.VIEWER_ICON} !123")
+                with mock.patch.object(T.tab, "cached", lambda t: "payment retry"):
+                    self.assertEqual(T.window_label(), f"{T.tab.VIEWER_ICON} payment retry")
 
     def own_mr_store(self, root, states):
         """`states`: (iid, source branch or None), oldest first, written to `root`."""
@@ -396,7 +406,7 @@ class TestDiffViewRouting(unittest.TestCase):
                 for branch, iid in (("feat-a", 3), ("feat-b", 4)):
                     with mock.patch.object(T, "_git", self.fake_git(branch)):
                         self.assertEqual(T.local_state()[1]["iid"], iid)
-                        self.assertEqual(T.window_label(), T.TOPIC_ICON + f"!{iid}")
+                        self.assertEqual(T.window_label(), f"{T.tab.VIEWER_ICON} !{iid}")
                 # A branch no state names: none of the states that name another.
                 with mock.patch.object(T, "_git", self.fake_git("other")):
                     self.assertEqual(T.local_state(), (None, None))
@@ -438,7 +448,7 @@ class TestDiffViewRouting(unittest.TestCase):
             run.assert_not_called()
 
     def test_window_label_falls_back_to_the_branch(self):
-        self.assertEqual(T.window_label(), "◈ feat/x")
+        self.assertEqual(T.window_label(), f"{T.tab.VIEWER_ICON} feat/x")
 
     def test_both_shapes_satisfy_the_stop_hook_gate(self):
         """The gate has one signature and two renders to cover; pinning it to the old

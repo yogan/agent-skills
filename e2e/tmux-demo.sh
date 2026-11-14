@@ -14,6 +14,9 @@ set -u
 # Its checks read the scripts' plain views. Run from a session the review-ui mod draws (a
 # `! ./tmux-demo.sh` in Claude Code), they would render the mod's words instead (lib/ui.py).
 export REVIEW_UI_DRAWN=0
+# Nor may the skills' scripts the checks and the fixture run name the window this runs in
+# after the demo MRs (lib/tab.py); the demo's own sessions drop it again (drive.py).
+export AGENT_TAB_OFF=1
 
 SESSION=agentic-review-skills-demo
 E2E=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)

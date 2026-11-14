@@ -46,6 +46,9 @@ import rig  # noqa: E402
 # The rig is built by scripts, never in a session the review-ui mod draws: a fixture run from
 # such a session would otherwise seed MR !2 waiting for an own review nobody will do (lib/ui.py).
 os.environ["REVIEW_UI_DRAWN"] = "0"
+# Nor in a tmux window of the person's: the skills' scripts it runs would name that window
+# after the demo MRs (lib/tab.py).
+os.environ["AGENT_TAB_OFF"] = "1"
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ENV_FILE = os.path.join(HERE, ".env.local")
