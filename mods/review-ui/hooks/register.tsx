@@ -1754,9 +1754,12 @@ export const register: Register = on => {
     $.clock.every(tickMs, () => { void check($) })
     await $.tool.register({
       name: SHOW_TOPIC,
+      // The argument is spelled out here too: Claude Code may list the tool by name alone
+      // until its schema is loaded, and a call made from the name alone came with no topic.
       description:
-        'Shows one topic of the open review-mr review to the user as a card, and makes it the ' +
-        'current topic. Use it wherever the skill says `findings.py quote <t> --focus`. ' +
+        'Shows one topic of the open review (review-mr or rework-mr) to the user as a card, ' +
+        'and makes it the current topic. Takes one argument, `topic`: the topic\'s handle, ' +
+        'like {"topic": "t3"}. Use it wherever the skill says `quote <t> --focus`. ' +
         'Returns the view, which the user already sees.',
       inputSchema: {
         type: 'object',
@@ -1770,7 +1773,8 @@ export const register: Register = on => {
   on('tool.call', { tool: 'mcp__review-ui__show_topic' }, async ($, e) => {
     const s = await read($, session)
     if (!s) return { deny: 'No review is open in this session yet: run the opener first.' }
-    const topic = String((e as { topic?: unknown }).topic ?? '')
+    const topic = String((e as { topic?: unknown }).topic ?? '').trim()
+    if (!topic) return { deny: 'show_topic takes the topic to show: call it as {"topic": "t3"}, with the topic\'s handle.' }
     const r = await runScript($, s, ['quote', topic, '--focus'])
     if (r.exitCode !== 0) return { deny: lastLine(r.stderr) || `quote ${topic} failed` }
     await noteView($, r.stdout)

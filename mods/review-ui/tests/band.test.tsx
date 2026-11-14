@@ -2906,3 +2906,13 @@ test("review-mr: an answer that leaves the next move to the author is a dim line
   expect(box?.button).toBeNull()
   expect(inboxMark(waits as never, [], [])).toEqual({ key: 'fyi', icon: '\u{f09de}', isDim: true })
 })
+
+
+test('show_topic called without its topic says how to call it, and runs nothing', async ($, on) => {
+  const w = world(on, [stateOf('t1', [topic('t1', 'draft')])])
+  await openReview($, w, view('t1'))
+  const before = w.ran.length
+  const got = await $.tool.call({ tool: 'mcp__review-ui__show_topic' } as never) as { deny?: string }
+  expect(got.deny).toContain('{"topic": "t3"}')
+  expect(w.ran.slice(before).some(r => r.argv.includes('quote'))).toBe(false)
+})

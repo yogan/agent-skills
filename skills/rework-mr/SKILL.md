@@ -530,7 +530,9 @@ Per topic:
 ## Reply draft rules
 
 - **Language: the thread's, for the reply BODY only** (often German even in an English
-  session). **Everything else is English, always** — every `--summary`, so the table and every
+  session). The thread's language is the one its comments are written in, read from their
+  text: never from a name, which says nothing about it (a reviewer called Haas who writes in
+  English gets an English reply). **Everything else is English, always** — every `--summary`, so the table and every
   topic heading, the scaffolding around the draft (labels, the thread-URL line, the action
   prompt) and your own prose. The one other non-English text is a *quoted* note, which the
   scripts reproduce verbatim: never translate a reviewer's words while showing them back.
