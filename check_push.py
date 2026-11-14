@@ -74,12 +74,19 @@ def git(*args):
 
 def scenarios():
     """(name, skills it types, mods it loads, recording it plays) for every scenario a verify
-    runs: the ones handing over to a person are showcase only."""
+    runs: the ones handing over to a person are showcase only. Nor one that is the start of
+    another, playing the same recording through the first of its steps: kept for trying out
+    (`--keep`), it checks nothing the whole one does not."""
     import drive
     import scenarios as sc_mod
     out = []
     for sc in sc_mod.SCENARIOS:
         if any(isinstance(s, drive.Handover) for s in sc.steps):
+            continue
+        if any(o is not sc and len(o.steps) > len(sc.steps)
+               and (o.recording or o.name) == (sc.recording or sc.name)
+               and list(o.steps[:len(sc.steps)]) == list(sc.steps)
+               for o in sc_mod.SCENARIOS):
             continue
         typed = {m.group(1) for s in sc.steps if isinstance(s, drive.Prompt)
                  for m in [re.match(r"/([\w-]+)", s.text)] if m}

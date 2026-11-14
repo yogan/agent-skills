@@ -57,9 +57,14 @@ class TestWhatMustRun(unittest.TestCase):
 
     def test_a_recording_reaches_the_scenarios_playing_it(self):
         self.assertEqual(picks("e2e/recordings/smoke.json"), ["smoke"])
-        shared = picks("e2e/recordings/rework-fix.json")
-        self.assertIn("rework-fix", shared)
-        self.assertIn("try-pushed-fix", shared)
+        self.assertEqual(picks("e2e/recordings/rework-fix.json"), ["rework-fix"])
+
+    def test_a_scenario_that_is_the_start_of_another_is_left_to_the_whole_one(self):
+        for part, whole in (("try-pushed-fix", "rework-fix"), ("try-pushed-twice", "rework-twice")):
+            with self.subTest(part=part):
+                self.assertNotIn(part, NAMES)
+                self.assertIn(whole, NAMES)
+        self.assertIn("try-scrolling", NAMES, "a try scenario that is nobody's start")
 
     def test_anything_it_cannot_place_reaches_everything(self):
         self.assertEqual(picks("somewhere/new.txt"), NAMES)
