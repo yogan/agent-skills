@@ -430,7 +430,8 @@ SCENARIOS = [
             Expect(button('Comment', 'Drop'), region="screen"),
             press('Drop'),
             Expect(current("t2"), region="panel", wait=30),
-            Expect(button('Comment'), region="screen"),
+            # The sidebar moves to the next topic before the Drop press has drawn its card.
+            Expect(button('Comment'), region="screen", wait=30),
             Expect(r"^╭─"),
             press('Comment', turn=True),   # the one press here that needs the model
             # Copy stands beside the draft's heading, Post in the buttons under it.
