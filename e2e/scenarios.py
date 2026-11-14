@@ -335,12 +335,21 @@ SCENARIOS = [
         needs_rig=True, mods=[MOD], steps=[
             Prompt("/review-mr !2", timeout=600),
             NOT_PASTED,
+            # Where the mod draws, the opener's card is the current topic alone: the topic
+            # table lives in the sidebar.
+            Expect(r"State\s*│\s*Topic", absent=True),
             # The author's replies and pushes since the last review are the inbox's, not
             # the chat's: the sidebar opens with them, and the topics they touch.
             Panel(True),
             Expect(r"\bSince \d\d:\d\d\b|\bNews\b", region="panel"),
             Expect(r"\bt1\b", region="panel"),
             Expect(r"\bt4\b", region="panel"),
+            Expect(r"\bt5\b", region="panel"),
+            # Its own ✕ closes it; the band offers it back.
+            Click("✕"),
+            Panel(False),
+            Click("Show sidebar"),
+            Panel(True),
             # The author's push that changed t1's lines is its fix, found from the MR's
             # versions: on its card with the push's link, its files in the sidebar.
             Click(" t1 ", offset=1, region="panel"),
@@ -355,6 +364,11 @@ SCENARIOS = [
             CARD, NOT_PASTED,
             Panel(True),                # opened by itself
             Expect(r"\bt3\b", region="panel"),
+            # The current topic's thread, as a comment box on the code it is on: the link
+            # icon, its author.
+            Expect("\U000f03cc Miriam", region="panel"),
+            Click("✕"),                 # its own close
+            Panel(False),
         ]),
 
     Scenario(
@@ -465,32 +479,6 @@ SCENARIOS = [
             Check("glab api 'projects/demo%2Fbulletproof-react/merge_requests/1/discussions'"
                   " | python3 -c 'import json,sys; print(max(len(d[\"notes\"]) for d in json.load(sys.stdin)))'",
                   r"^2$", wait=SOON),
-        ]),
-    Scenario(
-        "review-panel", "MR !2: the topic panel, closed and opened again with its buttons", REVIEW2,
-        needs_rig=True, mods=[MOD], steps=[
-            Prompt("/review-mr !2", timeout=600),
-            # Where the mod draws, the opener's card is the current topic alone: the topic
-            # table lives in the panel.
-            Expect(r"State\s*│\s*Topic", absent=True),
-            Panel(True),                # the sidebar opens by itself
-            Expect(r"\bt1\b", region="panel"),
-            Expect(r"\bt5\b", region="panel"),
-            # Its own ✕ closes it; the band offers it back.
-            Click("✕"),
-            Panel(False),
-            Click("Show sidebar"),
-            Panel(True),
-        ]),
-    Scenario(
-        "rework-panel", "MR !3: the panel shows the current topic's whole thread", WORK,
-        needs_rig=True, mods=[MOD], steps=[
-            Prompt("/rework-mr !3", timeout=600),
-            Panel(True),                # opened by itself
-            # The thread, as a comment box on the code it is on: the link icon, its author.
-            Expect("\U000f03cc Miriam", region="panel"),
-            Click("✕"),                 # its own close
-            Panel(False),
         ]),
 
     # Talk day. Model and effort are per-session flags so the demo runs small and fast
