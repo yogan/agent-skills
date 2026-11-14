@@ -99,6 +99,7 @@ from lib.mr_common import (
     MR_LEVEL,
     TOPIC_ICON,
     first_name,  # noqa: E402
+    people,
     hold,
     load,
     loc_md,
@@ -1180,7 +1181,12 @@ def _step_parts(state, t):
         return out + [posted.card_md(t, "reply"), ""]
     closing = closing_line(state, t)
     if closing:
-        out += [closing, ""]              # the latest event, before a draft still to post
+        # The latest event: the timeline's last step where the card tells one, so it goes on
+        # under the steps with no gap; else apart. Before a draft still to post.
+        if len(out) > 1 and out[-1] == "" and _STEP.match(out[-2]):
+            out.insert(len(out) - 1, closing)
+        else:
+            out += [closing, ""]
     if st == "reply" and t.get("reply"):
         x = state["threads"].get((t["thread_ids"] or [None])[0]) or {}
         out += [ui.heading_md(ui.DRAFT_ICON, "Draft reply"), "",
@@ -1189,6 +1195,10 @@ def _step_parts(state, t):
 
 
 _FILE_LINE = re.compile(r"^(?:diff --git |index |--- |\+\+\+ |new file mode |deleted file mode )")
+
+
+# A line of a card's timeline (lib/ui.py's `step_md`): a time or a step's icon first.
+_STEP = re.compile(r"^(?:\d\d:\d\d |[A-Z][a-z]{2} \d{1,2}, \d\d:\d\d |\u00a0*[\U000f012c\U000f051f\U000f0552\U000f09e1\U000f05e1] )")
 
 
 def _change_blocks(diff):
@@ -1306,12 +1316,13 @@ def fixed_body(state, t):
     return "Fixed:\n" + "".join(f"- {u}\n" for u in links)
 
 
-def _one_line(text, width=72):
-    """The first line of `text`, cut at a word to `width` with an ellipsis."""
-    line = (text or "").strip().splitlines()[0] if (text or "").strip() else ""
-    if len(line) <= width:
-        return line
-    return line[:width].rsplit(" ", 1)[0].rstrip(" ,;:.") + "…"
+def _gist(text, width=360):
+    """`text` as one paragraph (its lines joined), cut at a word to `width` with an ellipsis:
+    about five lines of a card."""
+    flat = " ".join((text or "").split())
+    if len(flat) <= width:
+        return flat
+    return flat[:width].rsplit(" ", 1)[0].rstrip(" ,;:.") + "…"
 
 
 def reply_posted(state, t):
@@ -1340,8 +1351,9 @@ def pushed_steps(state, t):
     posted since and whom it waits on now. What the fix changed is the diff viewer's to
     show (Show fix in hunk), not a copy here."""
     done = ui.STEP_DONE_ICON
-    plan = _one_line(t.get("plan"))
-    out = [ui.step_md(done, f"You agreed the plan: {plan}" if plan else "You agreed the plan")]
+    # The plan whole up to about five lines of a card: it is what the fix is judged against.
+    plan = _gist(t.get("plan"))
+    out = [ui.step_md(done, f"You agreed the plan: {plan}" if plan else "You agreed the plan", t.get("plan_at"))]
     root = (_git("rev-parse", "--show-toplevel") or "").strip()
 
     def said(f):
@@ -1734,7 +1746,7 @@ def state_json(state):
                        "notes": [{**n, "author": YOU if n.get("mine") else first_name(n.get("author"))}
                                  for n in x.get("notes") or []]})
     return {"skill": "rework-mr", "iid": state.get("iid"), "title": state.get("title"),
-            "url": state.get("mr_web_url"),
+            "url": state.get("mr_web_url"), "people": people(state),
             "current": cur, "topics": topics, "thread": thread,
             "hunk": hunk_window() if t and step_of(state, t) == "fixed" else None,
             "round": round_order(state) if ui.drawn() else [],
@@ -2059,7 +2071,7 @@ def drop_fix(state, iid, t, why, plan, outcome, new=(), aside=False):
               *(() if aside else ("reply_early", "agreed_change", "change", "answer_now"))):
         t.pop(k, None)
     if not aside:
-        t.update(outcome=outcome, decision=why, plan=plan, plan_on=reviewer_mark(state, t))
+        t.update(outcome=outcome, decision=why, plan=plan, plan_on=reviewer_mark(state, t), plan_at=datetime.datetime.now(datetime.timezone.utc).isoformat())
     t.pop("state", None)
     t.setdefault("dropped", []).append({"key": kept, "why": why, "at": int(time.time()),
                                         **({"aside": True} if aside else {})})
@@ -3267,7 +3279,7 @@ def main():
         if p.get("says") == "fyi":
             die(f"{tref(args.topic)} asks nothing of you: `wait {args.topic}` closes it")
         t.update(decision=p.get("why"), plan=p.get("plan"), outcome=p.get("outcome") or "fix",
-                 agreed_change=p.get("change"), plan_on=reviewer_mark(state, t),
+                 agreed_change=p.get("change"), plan_on=reviewer_mark(state, t), plan_at=datetime.datetime.now(datetime.timezone.utc).isoformat(),
                  answer_now=bool(p.get("answer_now")))
         start_fix_round(t)
         save(path, state)
@@ -3569,6 +3581,7 @@ def main():
             # shown for it, if one was (`change-view`).
             t["outcome"] = args.outcome or t.get("outcome") or "fix"
             t["plan_on"] = reviewer_mark(state, t)
+            t["plan_at"] = datetime.datetime.now(datetime.timezone.utc).isoformat()             # when, for the step its card says it in
             t["agreed_change"] = t.get("change")
             start_fix_round(t)
         elif args.outcome:

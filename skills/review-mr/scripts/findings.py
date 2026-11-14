@@ -114,7 +114,7 @@ from lib.fences import (LINK_ICON, SUGGESTION_INFO, YOU, block_lang, fence, sugg
                         suggestion_diff, when_of)
 from lib.gitlab import (api, api_post, context, current_user, die, file_at, mr_base, remember_user,  # noqa: E402
                         mr_head, mr_object, mr_status, mr_view, versions, web_base)
-from lib.mr_common import (DEFAULT_LANG, LANG_GIVEAWAYS, MR_LEVEL, TOPIC_ICON, first_name,  # noqa: E402
+from lib.mr_common import (DEFAULT_LANG, LANG_GIVEAWAYS, MR_LEVEL, TOPIC_ICON, first_name, people,  # noqa: E402
                            hold, load, mr_json, mr_news, topic_handles, loc_md, num, plain_text, reads_as,
                            short_summary, state_file, topic_for, tref)
 from lib.mr_common import save as _save                          # noqa: E402
@@ -1300,22 +1300,25 @@ def _render_quote(state, tid, refine=False):
         out += (["", ui.analysis_heading(), "", ui.without_recommendation(t["why"])]
                 if is_own_posted else analysis_md(t["why"]))
     closing = closing_line(state, t)
-    if is_own_posted:
-        # The topic's story step by step, as rework-mr's pushed fix tells its own: the comment
-        # posted, then whom it waits on, or what closed it (below).
-        mine = next((n for n in first.get("notes") or [] if n.get("mine")), None)
-        link = f" · {ui.link_md('thread', mine['url'])}" if (mine or {}).get("url") else ""
-        out += ["", ui.step_md(ui.STEP_DONE_ICON, f"You posted the initial comment{link}", (mine or {}).get("at")),
-                *answer_steps(state, t)]
-        if not closing and topic_status(state, t) == "open":
-            out.append(ui.step_md(ui.STEP_WAITS_ICON, f"Waits on {first_name(state.get('author')) or 'the author'}"))
     v = verdict_of(state, t)
     if v:
         # The agent's judgment of the author's answer, stored when the answer came in: a
         # card a press brings up has no model turn beside it.
         out += ["", ui.heading_md(ui.VERDICT_ICON, f"Verdict: {verdict_word(state, t, v)}"), "",
                 v["text"].strip()]
-    if closing:
+    if is_own_posted:
+        # The topic's story step by step, as rework-mr's pushed fix tells its own: the comment
+        # posted, what the author did since, then whom it waits on or what closed it, the
+        # latest event last, right under the others.
+        mine = next((n for n in first.get("notes") or [] if n.get("mine")), None)
+        link = f" · {ui.link_md('thread', mine['url'])}" if (mine or {}).get("url") else ""
+        out += ["", ui.step_md(ui.STEP_DONE_ICON, f"You posted the initial comment{link}", (mine or {}).get("at")),
+                *answer_steps(state, t)]
+        if closing:
+            out.append(closing)
+        elif topic_status(state, t) == "open":
+            out.append(ui.step_md(ui.STEP_WAITS_ICON, f"Waits on {first_name(state.get('author')) or 'the author'}"))
+    elif closing:
         # The latest thing that happened to the topic, last before what is decided on it.
         out += ["", closing if ui.drawn() else f"_({closing})_"]
     out += _draft_block(state, t, t.get("draft"), follow_up=True)
@@ -1441,12 +1444,10 @@ def render_answered(state, t, summ, v):
         out += part
     out += ["", ui.heading_md(ui.VERDICT_ICON, f"Verdict: {verdict_word(state, t, v)}"), "",
             v["text"].strip()]
-    steps = answer_steps(state, t)
+    # What the author did, then what closed it: one timeline, the latest event last.
+    steps = answer_steps(state, t) + [x for x in [closing_line(state, t)] if x]
     if steps:
         out += ["", *steps]
-    closing = closing_line(state, t)
-    if closing:
-        out += ["", closing]
     out += _draft_block(state, t, t.get("draft"), follow_up=True)
     t["shown"] = _digest(out)
     return "\n".join(out).strip()
@@ -2280,6 +2281,7 @@ def state_json(state):
             "mr": mr_json(state.get("mr_status")),
             "merged": merge_left(state) if is_over(state) else None,
             "author": first_name(state.get("author")) or None,
+            "people": people(state, first_name(state.get("author")) or None),
             # An explainer recommendation the user has not answered yet: the band asks it.
             "explainer": ({k: state["explainer_choice"][k] for k in ("recommend", "why")}
                           if (state.get("explainer_choice") or {}).get("chosen") is None

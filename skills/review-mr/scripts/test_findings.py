@@ -2770,6 +2770,12 @@ class TestPostedCommentCard(unittest.TestCase):
                          + re.escape(f" · [thread {F.LINK_ICON}]({self.URL})") + "$")
         self.assertNotIn("toggle", out)
 
+    def test_the_close_goes_on_under_the_timeline_with_no_gap(self):
+        out = self.card({"resolved": True, "resolved_by": "Jonas Keller", "resolved_username": "jonas"})
+        lines = out.strip().splitlines()
+        self.assertIn("You posted the initial comment", lines[-2])
+        self.assertIn("Jonas resolved it", lines[-1])
+
     def test_an_open_comment_ends_on_whom_it_waits_on(self):
         out = self.card()
         self.assertEqual(self.last_line(out), f"{F.ui.STEP_WAITS_ICON} Waits on Robin")

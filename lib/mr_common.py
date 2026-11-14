@@ -231,6 +231,20 @@ def first_name(name):
     return parts[0] if parts else (name or "")
 
 
+def people(state, first=None):
+    """Everyone but the user who writes in the MR's threads, by first name, once each: `first`
+    (review-mr's MR author) ahead, then the others as their first comments come. The review-ui
+    mod gives each a colour of their own by this order, so a second reviewer stands apart
+    from the author wherever a name is drawn."""
+    out = [first] if first else []
+    for x in (state.get("threads") or {}).values():
+        for n in x.get("notes") or []:
+            name = first_name(n.get("author"))
+            if name and not n.get("mine") and name not in out:
+                out.append(name)
+    return out
+
+
 def short_summary(state, t, width=64):
     """Falls back to the first-thread body when no authored `summary` exists yet — a
     topic just surfaced from a live GitLab discussion, in whatever language and wording

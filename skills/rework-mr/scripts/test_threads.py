@@ -1368,10 +1368,12 @@ class TestCodeContext(unittest.TestCase):
             T.fix_refs.drop(self.repo, "rework-mr", 3)
             self._git("reset", "-q", "--hard", self.sha)
 
-    def test_the_plan_is_cut_to_one_line_at_a_word(self):
-        self.assertEqual(T._one_line("Rename the hook to useQueryKeys everywhere it is imported, and keep the old name.\nMore."),
-                         "Rename the hook to useQueryKeys everywhere it is imported, and keep the…")
-        self.assertEqual(T._one_line("Short.\nSecond line."), "Short.")
+    def test_the_plan_is_one_paragraph_of_about_five_lines_cut_at_a_word(self):
+        self.assertEqual(T._gist("Rename the hook to useQueryKeys.\nKeep the old name."),
+                         "Rename the hook to useQueryKeys. Keep the old name.")
+        long = " ".join(["word"] * 200)
+        self.assertLessEqual(len(T._gist(long)), 361)
+        self.assertTrue(T._gist(long).endswith("word…"))
 
     def test_a_reply_posted_by_hand_is_the_thread_s_last_comment(self):
         state = self.pushed_state(state="waiting")
@@ -2729,6 +2731,17 @@ class TestStateByWord(unittest.TestCase):
         self.assertTrue(T.closing_line(self.state, self.t1).endswith(f" · [thread {LINK_ICON}]({th['url']})"))
         th.update(resolved=False)
         self.assertIsNone(T.closing_line(self.state, self.t1))
+
+    def test_a_closed_pushed_fix_is_one_timeline_the_agreed_plan_timed_the_close_last(self):
+        self.pushed()
+        self.t1["plan_at"] = "2026-02-01T12:00:00Z"
+        th = self.state["threads"]["d1"]
+        th.update(resolved=True, resolved_by="Haas, Miriam - X1", resolved_at="2026-02-01T13:02:00Z")
+        with mock.patch.object(T, "_git", return_value=""):
+            parts = T._step_parts(self.state, self.t1)
+        steps = parts[:parts.index("")]
+        self.assertRegex(steps[0], r"^(Feb 1, )?\d\d:00 \S+ You agreed the plan: p$")
+        self.assertRegex(steps[-1], r" Miriam resolved it$")        # no gap before the close
 
     def test_a_reply_alone_says_it_is_posted_and_whom_it_waits_on(self):
         self.t1.update(outcome="reply", reply="Bewusst so.\n")

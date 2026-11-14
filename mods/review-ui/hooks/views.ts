@@ -341,13 +341,56 @@ export const sizeOf = (text: string): { before: string; size: DiffSize; after: s
 // Markdown in runs, each line holding a diff's size apart from the rest; never one in a fence
 // or a quote, where it is someone's text.
 // `gap`: a blank line stood between it and the run before, which the card keeps.
+// A step's text as runs to draw inline in one wrapping line, so a long step wraps under its
+// own first word: code spans, bold, links, a diff's size, and people's names, which the card
+// draws in their colours (`people`, and "You").
+export type InlineRun = { kind: 'plain' | 'code' | 'bold' | 'name' | 'size'; text: string } | { kind: 'link'; text: string; url: string }
+const INLINE = /`([^`]+)`|\*\*([^*]+)\*\*|\[([^\]]+)\]\((\S+?)\)|(\u{f4d2} \d+ files? {1,2}\+\d+ {1,2}−\d+)/gu
+export const inlineOf = (md: string, people: readonly string[] = []): InlineRun[] => {
+  const out: InlineRun[] = []
+  const names = ['You', ...people].filter(Boolean).map(n => n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+  const named = new RegExp(`\\b(?:${names.join('|')})\\b`, 'gu')
+  const plain = (text: string) => {
+    let at = 0
+    for (const m of text.matchAll(named)) {
+      if ((m.index ?? 0) > at) out.push({ kind: 'plain', text: text.slice(at, m.index) })
+      out.push({ kind: 'name', text: m[0] })
+      at = (m.index ?? 0) + m[0].length
+    }
+    if (at < text.length) out.push({ kind: 'plain', text: text.slice(at) })
+  }
+  let at = 0
+  for (const m of md.matchAll(INLINE)) {
+    if ((m.index ?? 0) > at) plain(md.slice(at, m.index))
+    if (m[1] !== undefined) out.push({ kind: 'code', text: m[1] })
+    else if (m[2] !== undefined) out.push({ kind: 'bold', text: m[2] })
+    else if (m[3] !== undefined) out.push({ kind: 'link', text: m[3], url: m[4] as string })
+    else out.push({ kind: 'size', text: m[5] as string })
+    at = (m.index ?? 0) + m[0].length
+  }
+  if (at < md.length) plain(md.slice(at))
+  return out
+}
+
+// A card's text with the line a press left on it as its last step: right under the steps
+// above it where the text ends on one (a timeline goes on), set apart from anything else.
+export const withOutcome = (md: string, o: { when?: string | null; icon?: string | null; text: string; url?: string | null; label?: string | null; after?: string | null }, linkIcon: string): string => {
+  const line = `${o.when ? `${o.when} ` : ''}${o.icon ?? '\u{F012C}'} ${o.text}`
+    + (o.url ? ` · [${o.label ?? 'open'} ${linkIcon}](${o.url})` : '') + (o.url && o.after ? ` ${o.after}` : '')
+  const body = md.trimEnd()
+  const last = body.split('\n').pop() ?? ''
+  return body ? `${body}${STEP_LINE.test(last) ? '\n' : '\n\n'}${line}` : line
+}
+
 export type SizeRun = ({ md: string } | { before: string; size: DiffSize; after: string } | CommitRun | WordsRun | DraftHeadRun | StepRun) & { gap?: true }
 // A line of a topic's story (lib/ui.py's `step_md`): when, an icon, who did what. The card
 // draws the time dim, in a column as wide as the card's widest, so the icons line up.
 export type StepRun = { step: { when: string | null; indent: number; icon: string; rest: string } }
 // The steps' icons: done, waited on, a push, a reply, a resolve on GitLab (lib/ui.py's
 // STEP_DONE_ICON, STEP_WAITS_ICON, PUSHED_ICON, STATE_ICON["answered"], RESOLVED_ICON).
-const STEP_LINE = /^(?:(\d\d:\d\d|[A-Z][a-z]{2} \d{1,2}, \d\d:\d\d) )?(\u00a0*)([\u{F012C}\u{F051F}\u{F0552}\u{F09E1}\u{F05E1}]) (?!\*\*)(.+)$/u
+// With a time it leads, any icon but a commit's (a press's own, as the line a press leaves on
+// its card joins the steps).
+const STEP_LINE = /^(?:(\d\d:\d\d|[A-Z][a-z]{2} \d{1,2}, \d\d:\d\d) (\u00a0*)([\u{F0000}-\u{F071A}\u{F071D}-\u{FFFFD}])|(\u00a0*)([\u{F012C}\u{F051F}\u{F0552}\u{F09E1}\u{F05E1}])) (?!\*\*)(.+)$/u
 // A draft's heading (lib/ui.py's DRAFT_ICON, then "Draft …"), which a card draws with its
 // Copy beside it.
 export type DraftHeadRun = { draftHead: string }
@@ -440,7 +483,7 @@ export const sizeRunsOf = (md: string): SizeRun[] => {
     const step = fence === null && !open ? STEP_LINE.exec(line) : null
     if (step) {
       flushRun()
-      push({ step: { when: step[1] ?? null, indent: (step[2] ?? '').length, icon: step[3] as string, rest: step[4] as string } })
+      push({ step: { when: step[1] ?? null, indent: (step[2] ?? step[4] ?? '').length, icon: (step[3] ?? step[5]) as string, rest: step[6] as string } })
       continue
     }
     const commit = fence === null && !open ? COMMIT_LINE.exec(line) : null

@@ -327,7 +327,7 @@ test('a card a press finished ends with what happened, and a link to it', async 
   await card.press({ key: 'post' })
   await card.unmount()
   const again = await $.ui.mount(cardRow('tu-open', view('t1', 'v7')))
-  expect(JSON.stringify(await again.findAll({ type: 'Text' }))).toContain('\u{F048A} ')   // the button's icon, one sentence
+  expect(JSON.stringify(await again.findAll({ type: 'Text' }))).toContain('"text":"\u{F048A}"')   // the button's icon, one sentence
   expect(JSON.stringify(await again.findAll({ type: 'Text' }))).toContain(' posted it')
   expect((await again.find({ type: 'Link' }))?.props).toMatchObject({ href: 'https://gl/g/p/-/merge_requests/42#note_9', label: 'thread \u{f03cc}' })
   await again.unmount()
@@ -346,7 +346,7 @@ test("a press that closed its topic ends its card on the script's closing line, 
   const texts = (await again.findAll({ type: 'Text' })).map(t => JSON.stringify(t))
   expect(texts.some(t => t.includes(line.slice(4)))).toBe(true)
   // Its time first and dim, as the card's steps say theirs.
-  expect((await again.findAll({ type: 'Text' })).some(t => t.props.dimColor && String(t.text) === '14:02 ')).toBe(true)
+  expect((await again.findAll({ type: 'Text' })).some(t => t.props.dimColor && String(t.text).trim() === '14:02')).toBe(true)
   expect(texts.some(t => t.includes('Accepted the answer'))).toBe(false)
   // Its thread's link, clickable once the sidebar has moved on to another topic.
   expect((await again.find({ type: 'Link' }))?.props).toMatchObject({ href: 'https://gl/g/p/-/merge_requests/42#note_3', label: 'thread \u{f03cc}' })

@@ -262,6 +262,19 @@ export const oneLineNote = (body: string, room: number): { text: string; isCut: 
   return { text, isCut }
 }
 
+// The colour a person's name is drawn in, wherever it is: the person's own "You" in theirs,
+// and each other person in one of their own, by their place in the review's `people` (the
+// MR author first), so a second reviewer stands apart from the author at a glance. Muted
+// tones of the theme, apart from the accent, the code colour and a diff's green and red.
+export const YOU = 'You'
+export const YOU_COLOR = 'magenta'
+export const PEOPLE_COLORS = ['#e0af68', '#7dcfff', '#ff9e64', '#bb9af7', '#73daca']
+export const personColor = (name: string | null | undefined, people: readonly string[] = []): string | undefined => {
+  if (name === YOU) return YOU_COLOR
+  const at = name ? people.indexOf(name) : -1
+  return at >= 0 ? PEOPLE_COLORS[at % PEOPLE_COLORS.length] : undefined
+}
+
 // When a comment was written, as its header in the sidebar says it: `Nov 5, 12:09`, or the
 // time alone today (`09:05`), in the machine's own time, as the scripts write it (lib/ui.py's
 // `at_md`); nothing where the time is not known.

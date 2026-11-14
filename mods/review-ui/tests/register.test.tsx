@@ -2,9 +2,9 @@ import type { On } from 'claude-code'
 import type { Engine } from 'claude-code/testing'
 import { expect, test } from 'claude-code/testing'
 
-import { boxRowsOf, inboxMark, plainTitle, reflow, rowOf, sectionsOf, urlLabel, whenOf } from '../hooks/panel.ts'
+import { boxRowsOf, inboxMark, plainTitle, reflow, rowOf, sectionsOf, urlLabel, whenOf, personColor, PEOPLE_COLORS } from '../hooks/panel.ts'
 import { withEmoji } from '../hooks/views.ts'
-import { blocksOf, isPostCommand, NOTE, partsOf, sizeRunsOf } from '../hooks/views.ts'
+import { blocksOf, inlineOf, isPostCommand, NOTE, partsOf, sizeRunsOf, withOutcome } from '../hooks/views.ts'
 
 test('only a command that runs post or resolve is the person\'s press; one that names it is not', () => {
   for (const ran of [
@@ -709,4 +709,25 @@ test("a topic's story lines are steps: their time apart, and one under another w
   ])
   // A title line is not a step, though it starts with a state's icon.
   expect(sizeRunsOf('\u{F09E1} **t1** **summary**').some(r => 'step' in r)).toBe(false)
+})
+
+test('each person has a colour of their own, by their place in the review; you have yours', () => {
+  const people = ['Robin', 'Miriam']
+  expect(personColor('You', people)).toBe('magenta')
+  expect([personColor('Robin', people), personColor('Miriam', people)]).toEqual([PEOPLE_COLORS[0], PEOPLE_COLORS[1]])
+  expect(personColor('Nobody', people)).toBeUndefined()
+})
+
+test("a step's text is one flow of runs: names, code, links and a size", () => {
+  expect(inlineOf("You accepted Robin's answer in `a.ts` · [thread \u{F03CC}](u)", ['Robin'])).toEqual([
+    { kind: 'name', text: 'You' }, { kind: 'plain', text: ' accepted ' }, { kind: 'name', text: 'Robin' },
+    { kind: 'plain', text: "'s answer in " }, { kind: 'code', text: 'a.ts' }, { kind: 'plain', text: ' · ' },
+    { kind: 'link', text: 'thread \u{F03CC}', url: 'u' },
+  ])
+})
+
+test("a press's line goes on under the card's steps, and stands apart from anything else", () => {
+  const o = { when: '14:02', icon: '\u{F048A}', text: 'You posted it', url: 'u', label: 'thread' }
+  expect(withOutcome('13:55 \u{F012C} You agreed the plan', o, '\u{F03CC}')).toBe('13:55 \u{F012C} You agreed the plan\n14:02 \u{F048A} You posted it · [thread \u{F03CC}](u)')
+  expect(withOutcome('**Draft**\n\nHallo', o, '\u{F03CC}')).toBe('**Draft**\n\nHallo\n\n14:02 \u{F048A} You posted it · [thread \u{F03CC}](u)')
 })

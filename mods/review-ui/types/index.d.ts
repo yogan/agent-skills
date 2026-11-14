@@ -116,6 +116,9 @@ export type ReviewOwnThread = {
 
 export type ReviewState = {
   skill: string
+  // Everyone but the person who writes in the MR's threads, by first name, in the order the
+  // mod gives them their colours (lib/mr_common.py's `people`).
+  people?: string[]
   // review-mr: the language drafts are written in, which a drafting press names.
   lang?: string
   // review-mr: the MR author's first name, and the topics the round visits, in its order

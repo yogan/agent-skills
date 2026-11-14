@@ -8,9 +8,9 @@ import {
 } from './review.ts'
 import {
   boxRowsOf, fitTitle, plainTitle, INBOX_ICON, MR_COLOR, INBOX_WORD, inboxMark, kindSlot, legendFor, oneLineNote, reflow, sectionsOf, STATE_ICON,
-  whenOf, type BoxRow, type Row,
+  whenOf, personColor, YOU, YOU_COLOR, type BoxRow, type Row,
 } from './panel.ts'
-import { blocksOf, type DiffSize, type SizeRun, withEmoji, withoutDraft, isPostCommand, isViewCommand, partsOf, sizeOf, sizeRunsOf, withoutPasted, withSuggestions, manifestOf, titleOf, viewOf, withNote, withoutExcerpt, withoutExcerptLabel, withoutThread } from './views.ts'
+import { blocksOf, type DiffSize, type SizeRun, inlineOf, withEmoji, withOutcome, withoutDraft, isPostCommand, isViewCommand, partsOf, sizeOf, sizeRunsOf, withoutPasted, withSuggestions, manifestOf, titleOf, viewOf, withNote, withoutExcerpt, withoutExcerptLabel, withoutThread } from './views.ts'
 import {
   askedFor, barCells, clampOffset, codeArgsOf, codeWindow, currentOwn, firstOffset, jumpOf, markedCells, phaseOf, pushOf, stepOwn,
   type CodeView,
@@ -955,12 +955,10 @@ const drawLabel = (
   </Text>
 )
 
-// The colour the person's own name takes wherever a comment is signed: one word, "You",
-// in one colour, so their own comments stand out from everyone else's.
-const YOU = 'You'
-const YOU_COLOR = 'magenta'
-const author = (Text: ReturnType<EngineInterface['ui']['resolve']>['Text'], name: string | null | undefined) => (
-  <Text bold color={name === YOU ? YOU_COLOR : undefined}>{name ?? 'someone'}</Text>
+// A name wherever a comment is signed: the person's own "You" in their colour, everyone
+// else in theirs (`personColor`), so whose comment it is shows at a glance.
+const author = (Text: ReturnType<EngineInterface['ui']['resolve']>['Text'], name: string | null | undefined, people: readonly string[] = []) => (
+  <Text bold color={personColor(name, people)}>{name ?? 'someone'}</Text>
 )
 
 // A diff's size as lib/diffsize.py writes it, the counts in the colours a diff has. `pad`, for
@@ -988,28 +986,25 @@ const HEADING_MD = /^\*\*[^*]+\*\*$/
 const spaced = (Box: ReturnType<EngineInterface['ui']['resolve']>['Box'], r: SizeRun, key: string, el: JSX.Element) =>
   r.gap ? <Box key={`gap-${key}`} marginTop={1}>{el}</Box> : el
 
-// What a step says after its time and icon: "You" in the person's colour, as the sidebar
-// draws their name, and a diff's size in a diff's colours. Children of the step's own row,
-// as a size line's are: a box of their own around them squeezes each to its own line.
-const stepText = (els: Pick<ReturnType<EngineInterface['ui']['resolve']>, 'Box' | 'Markdown' | 'Text'>, rest: string, key: string, isDim?: boolean): JSX.Element[] => {
-  const { Box, Markdown, Text } = els
-  const isYou = /^You\b/.test(rest)
-  const text = isYou ? rest.slice(3).trimStart() : rest
-  const sized = sizeOf(text)
-  const out: JSX.Element[] = []
-  if (isYou) out.push(<Box key={`${key}-you`} flexShrink={0}><Text bold color={isDim ? undefined : YOU_COLOR} dimColor={isDim || undefined}>{YOU}</Text></Box>)
-  if (!sized) {
-    if (text) out.push(<Markdown key={`${key}-md`} text={text} dimColor={isDim || undefined} />)
-    return out
-  }
-  if (sized.before.trim()) out.push(<Markdown key={`${key}-before`} text={sized.before.trimEnd()} dimColor={isDim || undefined} />)
-  out.push(<Text key={`${key}-size`}>{drawSize(Text, sized.size, isDim)}</Text>)
-  if (sized.after.trim()) out.push(<Markdown key={`${key}-after`} text={sized.after.trimStart()} dimColor={isDim || undefined} />)
-  return out
+// What a step says after its time and icon, as one text that wraps under its own first
+// word: people's names in their colours, code spans, links and a diff's size inline.
+const stepText = (els: Pick<ReturnType<EngineInterface['ui']['resolve']>, 'Text'> & { Link: (p: { href: string; label?: string }) => JSX.Element }, rest: string, key: string, isDim?: boolean, people: readonly string[] = []) => {
+  const { Link, Text } = els
+  return (
+    <Text key={key} dimColor={isDim || undefined}>
+      {inlineOf(rest, people).map((r, n) => (r.kind === 'plain' ? r.text
+        : r.kind === 'code' ? <Text key={`c${n}`} color={isDim ? undefined : CODE_COLOR}>{r.text}</Text>
+        : r.kind === 'bold' ? <Text key={`b${n}`} bold>{r.text}</Text>
+        : r.kind === 'name' ? <Text key={`n${n}`} bold color={isDim ? undefined : personColor(r.text, people)}>{r.text}</Text>
+        : r.kind === 'link' ? <Link key={`l${n}`} href={r.url} label={r.text} />
+        : <Text key={`s${n}`}>{drawSize(Text, (sizeOf(r.text) as { size: DiffSize }).size, isDim)}</Text>))}
+    </Text>
+  )
 }
 
-const drawParts = ($: EngineInterface, e: Parameters<EngineInterface['ui']['resolve']>[0], text: string, at: string, isDim?: boolean, copy?: JSX.Element | null) => {
+const drawParts = ($: EngineInterface, e: Parameters<EngineInterface['ui']['resolve']>[0], text: string, at: string, isDim?: boolean, copy?: JSX.Element | null, people: readonly string[] = []) => {
   const { Box, Code, Markdown, Text } = $.ui.resolve(e)
+  const { Link } = $.ui.resolve(e) as ReturnType<EngineInterface['ui']['resolve']> & { Link: (p: { href: string; label?: string }) => JSX.Element }
   return partsOf(text).map((p, j) => {
     const runs = 'md' in p ? sizeRunsOf(p.md) : []
     // The steps' times in one column, as wide as the widest of the card's.
@@ -1026,7 +1021,7 @@ const drawParts = ($: EngineInterface, e: Parameters<EngineInterface['ui']['reso
                 {/* The time and the icon keep their width; a long step wraps under its text. */}
                 {whenWidth > 0 && <Box flexShrink={0}><Text dimColor>{(r.step.when ?? '').padEnd(whenWidth)}</Text></Box>}
                 <Box flexShrink={0}><Text dimColor={isDim || undefined}>{`${'\u00a0'.repeat(r.step.indent)}${r.step.icon}`}</Text></Box>
-                {stepText({ Box, Markdown, Text }, r.step.rest, `step-text-${at}-${j}-${k}`, isDim)}
+                {stepText({ Link, Text }, r.step.rest, `step-text-${at}-${j}-${k}`, isDim, people)}
               </Box>
             )
           : 'draftHead' in r
@@ -1108,7 +1103,7 @@ const LINK_MD = /^\[[^\]]*\]\(([^)]*)\)$/
 const hrefOf = (md: string | undefined): string | undefined => (md ? LINK_MD.exec(md)?.[1] : undefined)
 const noteHeadLine = (
   $: EngineInterface, e: Parameters<EngineInterface['ui']['resolve']>[0],
-  head: { url?: string | null; author?: string | null; when?: string | null; isDim?: boolean; hasBar?: boolean },
+  head: { url?: string | null; author?: string | null; when?: string | null; isDim?: boolean; hasBar?: boolean; people?: readonly string[] },
 ) => {
   const { Link, Text } = $.ui.resolve(e) as ReturnType<EngineInterface['ui']['resolve']> & { Link: (p: { href: string; label?: string }) => JSX.Element }
   return (
@@ -1116,7 +1111,7 @@ const noteHeadLine = (
       {head.hasBar && <Text dimColor>{'▎ '}</Text>}
       {head.url && <Link href={head.url} label={LINK_ICON} />}
       {head.url && ' '}
-      {head.isDim ? <Text bold dimColor>{head.author ?? 'someone'}</Text> : author(Text, head.author)}
+      {head.isDim ? <Text bold dimColor>{head.author ?? 'someone'}</Text> : author(Text, head.author, head.people)}
       {head.when && ' '}
       {head.when && <Text dimColor>{head.when}</Text>}
     </Text>
@@ -1126,20 +1121,20 @@ const noteHeadLine = (
 // A card's text, block by block: the asides dim, each comment with its link and author
 // apart and, for the person's own, the author in their colour; a bar at the left as a quote
 // has.
-const drawBlocks = ($: EngineInterface, e: Parameters<EngineInterface['ui']['resolve']>[0], text: string, isDim?: boolean, copy?: JSX.Element | null) => {
+const drawBlocks = ($: EngineInterface, e: Parameters<EngineInterface['ui']['resolve']>[0], text: string, isDim?: boolean, copy?: JSX.Element | null, people: readonly string[] = []) => {
   const { Box, Text } = $.ui.resolve(e)
   return blocksOf(text).map((b, i) => b.author
     ? (
       // The comment's head on a line of its own, its text below it at the card's whole
       // width, a quote, whose bar runs down every line however it wraps.
       <Box key={`block-${i}`} flexDirection="column" marginTop={b.isApart ? 1 : 0}>
-        {noteHeadLine($, e, { url: hrefOf(b.link), author: b.author, when: b.when, isDim, hasBar: true })}
-        {drawParts($, e, b.text, `n${i}`, isDim, copy)}
+        {noteHeadLine($, e, { url: hrefOf(b.link), author: b.author, when: b.when, isDim, hasBar: true, people })}
+        {drawParts($, e, b.text, `n${i}`, isDim, copy, people)}
       </Box>
     )
     : (
       <Box key={`block-${i}`} flexDirection="column" marginTop={b.isApart ? 1 : 0}>
-        {drawParts($, e, b.text, `b${i}`, b.isAside || isDim, copy)}
+        {drawParts($, e, b.text, `b${i}`, b.isAside || isDim, copy, people)}
       </Box>
     ))
 }
@@ -1326,8 +1321,7 @@ const drawCard = async ($: EngineInterface, e: Parameters<EngineInterface['ui'][
     // A card with no title line (a redrafted reply): its topic is the manifest's.
     return (
       <Box borderStyle="round" paddingX={1} flexDirection="column" width="100%">
-        {drawBlocks($, e, shownText, false, await copyChip($, e, of.topic ?? null))}
-        {done && <Box marginTop={1}>{outcomeLine($, e, done)}</Box>}
+        {drawBlocks($, e, done ? withOutcome(shownText, done, LINK_ICON) : shownText, false, await copyChip($, e, of.topic ?? null), r?.people)}
         {buttons}
       </Box>
     )
@@ -1367,10 +1361,11 @@ const drawCard = async ($: EngineInterface, e: Parameters<EngineInterface['ui'][
         </Box>
         {title.tail && <Markdown text={title.tail} dimColor />}
       </Box>
+      {/* What a press did is the last step of the card's story, in its column. */}
       {isBare
         ? <Text dimColor>{where}</Text>
-        : drawBlocks($, e, title.rest, isDim, await copyChip($, e, title.id))}
-      {done && <Box marginTop={1}>{outcomeLine($, e, done, isDim)}</Box>}
+        : drawBlocks($, e, done ? withOutcome(title.rest, done, LINK_ICON) : title.rest, isDim, await copyChip($, e, title.id), r?.people)}
+      {isBare && done && <Box marginTop={1}>{outcomeLine($, e, done, isDim)}</Box>}
       {buttons}
     </Box>
   )
@@ -2162,7 +2157,7 @@ export const register: Register = on => {
     // name.
     const link = (n: ReviewNote) => (n.url ? `[${LINK_ICON}](${n.url}) ` : '')
     // A comment's own line, wherever it is shown in full: its link, who wrote it, and when.
-    const noteHead = (n: ReviewNote) => noteHeadLine($, e, { url: n.url, author: n.author, when: whenOf(n.at) })
+    const noteHead = (n: ReviewNote) => noteHeadLine($, e, { url: n.url, author: n.author, when: whenOf(n.at), people: r.people })
     // A thread with no file to sit under, in full, as an opened thread box draws it.
     // The first one carries the ✕ a file's heading would (`isClosable`), as it stands in its place.
     const fullNotes = (title: string, list: ReviewNote[], isClosable = false) =>
@@ -2267,7 +2262,7 @@ export const register: Register = on => {
     const closedRowsOf = () => notes.map((n, i) => (
         <Box key={`note-${i}`} flexDirection="row" gap={1}>
           {n.url && <Markdown text={link(n).trim()} />}
-          {author(Text, n.author)}
+          {author(Text, n.author, r.people)}
           <Markdown text={short[i]?.text ?? ''} />
         </Box>
       ))
