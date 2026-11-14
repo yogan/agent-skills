@@ -175,8 +175,9 @@ test("the band's buttons are chips with no hotkey, Show sidebar too, with its ic
   // A hotkey is drawn inside the chip, between its cap and its fill.
   expect(all.every(b => b.props.hotkey === undefined && b.props.action === undefined)).toBe(true)
   expect(JSON.stringify(await band.findAll({ type: 'Text' }))).toContain('\u{F06FE} Show sidebar')
-  // One column off each edge, as the sidebar's foot and a card keep theirs.
-  expect((await band.findAll({ type: 'Box' }))[0]?.props.paddingX).toBe(1)
+  // One column off each edge, as the sidebar's foot and a card keep theirs: the first box
+  // that pads, as the engine may wrap the band in one of its own (2.1.325 does).
+  expect((await band.findAll({ type: 'Box' })).find(x => x.props.paddingX !== undefined)?.props.paddingX).toBe(1)
   await band.unmount()
 })
 
