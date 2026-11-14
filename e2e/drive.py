@@ -681,12 +681,15 @@ def verify(sc, model, out_root, keep, reset, record=False):
     if sc.needs_rig and not rig.up(log=lambda m: print(f"   {m}")):
         print(f"── {sc.name}\n   FAIL the rig's GitLab is not up (python3 e2e/rig.py up)")
         return False
+    took = {"scenario": sc.name, "reset": 0.0, "start": 0.0, "steps": []}
     if sc.needs_rig and reset:
+        t = time.time()
         try:
             reset_rig(out)
         except StepFailed as err:
             print(f"── {sc.name}\n   FAIL reset: {err}")
             return False
+        took["reset"] = round(time.time() - t, 1)
     session = f"drive-{sc.name}"
     tmux("kill-session", "-t", session, check=False)
     w, h = VERIFY_SIZE
@@ -700,6 +703,7 @@ def verify(sc, model, out_root, keep, reset, record=False):
     ran = None
     try:
         pane.wait_ready()
+        took["start"] = round(time.time() - t0, 1)
         for n, step in enumerate(sc.steps, 1):
             if isinstance(step, Handover):
                 break
@@ -708,6 +712,7 @@ def verify(sc, model, out_root, keep, reset, record=False):
             save(pane, out, n, step)
             sidebar_drawn_right(pane)
             off_script(mock)
+            took["steps"].append({"kind": type(step).__name__.lower(), "seconds": round(time.time() - t, 1)})
             print(f"   ok  {n:2d} {step.label()}  ({time.time() - t:.1f}s)")
         ran = transcript.session_file(cwd)
         if not mock and ran:
@@ -728,6 +733,9 @@ def verify(sc, model, out_root, keep, reset, record=False):
         print(f"        captures: {out}")
         return False
     finally:
+        # Where the time went, for timing.py: the reset, claude's start, each step by its kind.
+        took["total"] = round(took["reset"] + time.time() - t0, 1)
+        (out / "timing.json").write_text(json.dumps(took))
         if mock:
             mock.server.shutdown()
             mock.server.server_close()
@@ -738,7 +746,10 @@ def verify(sc, model, out_root, keep, reset, record=False):
         else:
             tmux("kill-session", "-t", session, check=False)
             cleanup()
-    print(f"   passed in {time.time() - t0:.0f}s · captures: {out}")
+    took["passed"] = True
+    (out / "timing.json").write_text(json.dumps(took))
+    print(f"   passed in {time.time() - t0:.0f}s" + (f" after a reset of {took['reset']:.0f}s" if took["reset"] else "")
+          + f" · captures: {out}")
     return True
 
 

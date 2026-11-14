@@ -80,7 +80,7 @@ class TestWhatNeedNotRun(unittest.TestCase):
                 self.assertEqual(picks(path), [])
 
     def test_the_rig_s_parts_a_verify_never_runs_reach_nothing(self):
-        for path in ("e2e/screenshot.py", "e2e/bootstrap.py", "e2e/tmux-demo.sh"):
+        for path in ("e2e/screenshot.py", "e2e/timing.py", "e2e/bootstrap.py", "e2e/tmux-demo.sh"):
             with self.subTest(path=path):
                 self.assertEqual(picks(path), [])
         everything = [n for n, *_ in SCENS]
