@@ -184,7 +184,8 @@ class TestDir(unittest.TestCase):
 
     def test_plan_names_the_directory_and_a_handoff_outside_it(self):
         printed = self.main("plan", "--name", self.name, "--dir", self.dir)
-        self.assertEqual(printed, f"name={self.name}\ndir={self.dir}\nhandoff={self.handoff}\n")
+        self.assertEqual(printed, f"name={self.name}\ndir={self.dir}\nhandoff={self.handoff}\n"
+                                  f"title={S.title_of({'name': self.name})}\n")
 
     def test_refuses_a_missing_directory_or_a_branch_option(self):
         for args in (("--dir", os.path.join(self.dir, "gone")),
@@ -305,7 +306,39 @@ class TestLaunch(unittest.TestCase):
         self.assertEqual(argv[argv.index("-c") + 1], "/w/app.wt/x")
         self.assertTrue(argv[-1].startswith("claude "))
         self.assertIn("/h/x-handoff.md", argv[-1])
-        self.assertEqual(outcome, "started in tmux window 3 (x)")
+        self.assertEqual(outcome, f"started in tmux window 3 ({S.tab.AGENT_ICON} x)")
+
+    def test_the_window_and_the_session_carry_its_short_title(self):
+        calls = []
+        p = {**self.P, "name": "review-ui-b5-rest", "title": "tab names"}
+        outcome = S.launch(p, {"TMUX": "1", "TMUX_PANE": "%1"}, self.runner(calls, stdout="3 @9"))
+        new = next(c for c in calls if c[:2] == ["tmux", "new-window"])
+        label = f"{S.tab.AGENT_ICON} tab names"
+        self.assertEqual(new[new.index("-n") + 1], label)
+        self.assertIn("claude --name 'tab names' ", new[-1])
+        # Marked as lib/tab.py's own name, so the session's /rename may follow it there.
+        self.assertIn(["tmux", "set-option", "-w", "-t", "@9", S.tab.SET_OPT, label], calls)
+        self.assertEqual(outcome, f"started in tmux window 3 ({label})")
+
+    def test_the_session_gets_its_readable_name_and_the_tab_keeps_the_short_one(self):
+        calls = []
+        p = {**self.P, "title": "rounding", "session": "Fix rounding of recipe weights"}
+        with tempfile.TemporaryDirectory() as d, \
+                unittest.mock.patch.object(S.tab, "CACHE", os.path.join(d, "titles.json")):
+            S.launch(p, {"TMUX": "1", "TMUX_PANE": "%1"}, self.runner(calls, stdout="3 @9"))
+            # The status line, handed the session's name, finds the tab's title for it.
+            self.assertEqual(S.tab.ready("Fix rounding of recipe weights"), "rounding")
+        new = next(c for c in calls if c[:2] == ["tmux", "new-window"])
+        self.assertEqual(new[new.index("-n") + 1], f"{S.tab.AGENT_ICON} rounding")
+        self.assertIn("claude --name 'Fix rounding of recipe weights' ", new[-1])
+
+    def test_without_a_title_the_names_words_cut_to_fit(self):
+        self.assertEqual(S.title_of({"name": "review-ui-b5-rest-two"}), "review ui b5 rest")
+        self.assertEqual(S.title_of({"name": "x", "title": "kept plan"}), "kept plan")
+
+    def test_a_title_too_long_for_the_tab_bar_is_refused(self):
+        with unittest.mock.patch("sys.stderr"), self.assertRaises(SystemExit):
+            S.main(["plan", "--name", "x", "--dir", "/tmp", "--title", "far too long a title"])
 
     def test_model_is_passed_to_claude(self):
         self.assertEqual(S.agent_command("go", {}, "opus"), ["claude", "--model", "opus", "go"])
@@ -344,7 +377,7 @@ class TestLaunch(unittest.TestCase):
         argv = calls[-1]
         self.assertEqual(argv[:3], ["tmux", "new-window", "-d"])
         self.assertEqual(argv[argv.index("-a") + 2], "@7")
-        self.assertEqual(outcome, "started in tmux window 3 (x)")
+        self.assertEqual(outcome, f"started in tmux window 3 ({S.tab.AGENT_ICON} x)")
 
     def test_a_background_session_no_pane_shows_says_why(self):
         calls = []

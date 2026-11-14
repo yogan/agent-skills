@@ -29,8 +29,13 @@ Decide its **kind** by what the side task changes, not by where this session run
   into `~` or `~/.claude` (this skills repository, `~/dotfiles`, `~/env`). Its work happens on
   the checked-out branch, so it takes effect at once.
 
-Choose a **name**: a short slug for the tmux window and the handoff file (and the worktree),
-e.g. `fix-rounding`.
+Choose three names for the side task:
+
+- **name**: a slug for the handoff file (and the worktree), e.g. `fix-rounding`;
+- **session**: a readable title for the new session, shown in its prompt box and in `/resume`,
+  e.g. `Fix rounding of recipe weights`;
+- **title**: one or two words for its tmux tab, at most 18 characters, the words that tell
+  this task apart from the user's other windows, e.g. `rounding`.
 
 For **dir**, choose the **dir** the new session starts in: the live checkout itself, or else a
 folder outside everything the task moves or deletes, e.g. the parent of a folder it moves. In
@@ -62,10 +67,10 @@ Ask, with neither option recommended, unless the user already said which one in 
 ## Step 2: Plan
 
 ```bash
-python3 ~/.claude/skills/split-handoff/scripts/spinoff.py plan --name <name> --branch <branch> [--stacked] [--repo <path>] [--new-worktree-dir]
+python3 ~/.claude/skills/split-handoff/scripts/spinoff.py plan --name <name> --session "<session>" --title "<title>" --branch <branch> [--stacked] [--repo <path>] [--new-worktree-dir]
 ```
 
-It prints `name`, `branch`, `base`, `worktree` and `handoff` (with `--dir`: `name`, `dir` and
+It prints `name`, `branch`, `base`, `worktree`, `handoff`, `title` and `session` (with `--dir`: `name`, `dir` and
 `handoff`, plus `branch` in a checkout and `pending` with `--commit-pending`), or refuses with the reason (taken branch, existing
 worktree or handoff file, no worktrees kept yet, no remote, uncommitted changes in a checkout given as `--dir`). On a refusal, follow its hint or pick another name or branch, and re-run. On uncommitted
 changes, ask the user to commit them first. Only when the user explicitly asked that the side
@@ -94,7 +99,7 @@ them. Leave out secrets and personal data.
 ## Step 4: Start
 
 ```bash
-python3 ~/.claude/skills/split-handoff/scripts/spinoff.py start --name <name> --branch <branch> [--stacked] [--repo <path>] [--new-worktree-dir] --model <your model id>
+python3 ~/.claude/skills/split-handoff/scripts/spinoff.py start --name <name> --session "<session>" --title "<title>" --branch <branch> [--stacked] [--repo <path>] [--new-worktree-dir] --model <your model id>
 ```
 
 It fetches (unless stacked) and creates the worktree on the new branch (with `--dir`, neither),

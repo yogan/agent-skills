@@ -36,7 +36,7 @@ Paths, all derived rather than configured, except the one personal choice:
               with `--dir`, the start directory's clone decides when it is a checkout,
               else the OS temp dir
 
-Run: `python3 spinoff.py plan --name fix-rounding --branch fix/rounding`
+Run: `python3 spinoff.py plan --name fix-rounding --title rounding --branch fix/rounding`
      `python3 spinoff.py plan --name migrate-workspace --dir ~/src`
 """
 import argparse
@@ -53,7 +53,7 @@ _REPO_ROOT = os.path.dirname(
 if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
 
-from lib import tmux  # noqa: E402
+from lib import tab, tmux  # noqa: E402
 from lib.cli import die  # noqa: E402
 from lib.git import REMOTE, default_base, git  # noqa: E402
 
@@ -85,15 +85,23 @@ def handoff_dir(cwd=None):
     return os.path.expanduser(configured) if configured else tempfile.gettempdir()
 
 
-def agent_command(prompt, env=None, model=None):
+def agent_command(prompt, env=None, model=None, name=None):
     """The same agent that is running this skill, started with `prompt` as its first
     message. OpenCode sets OPENCODE in its tool environment; anything else is Claude Code.
     `model` keeps the new session on the current one's model: without it Claude Code
-    starts on the configured default, which an organisation can pin to another model."""
+    starts on the configured default, which an organisation can pin to another model.
+    `name` is the Claude Code session's own name (its prompt box, `/resume`)."""
     env = os.environ if env is None else env
     if env.get("OPENCODE"):
         return ["opencode", "--prompt", prompt]
-    return ["claude"] + (["--model", model] if model else []) + [prompt]
+    return (["claude"] + (["--model", model] if model else [])
+            + (["--name", name] if name else []) + [prompt])
+
+
+def title_of(p):
+    """The side task's short title for its tab and session: the one given, else its name's
+    words, cut to fit."""
+    return p.get("title") or tab.cut(p["name"].replace("-", " "))
 
 
 def check_name(name):
@@ -199,7 +207,8 @@ def launch(p, env=None, run=subprocess.run, model=None):
     """Open the agent in a tmux window right after the current one, without switching to
     it. Returns the line to report; outside tmux, the command for the user to run."""
     env = os.environ if env is None else env
-    cmd = agent_command(prompt_for(p), env, model)
+    title = title_of(p)
+    cmd = agent_command(prompt_for(p), env, model, p.get("session") or title)
     where = p.get("worktree") or p["dir"]
     # A Claude Code background session has lost both variables; `own_pane` finds the pane
     # it is shown in, where there is one (see lib/tmux.py).
@@ -223,22 +232,42 @@ def launch(p, env=None, run=subprocess.run, model=None):
     # folder, for a `--resume` or a few commands of their own. tmux runs the line through
     # that same shell, so it holds only what every shell reads alike.
     after = f"; exec {shlex.quote(default_shell(env, run))} -l"
-    argv = (["tmux", "new-window", "-d", "-P", "-F", "#{window_index}"] + place
-            + ["-n", p["name"], "-c", where, shlex.join(cmd) + after])
+    # The window is named as lib/tab.py names an agent's window, and marked as named by it,
+    # so the session's own title (a /rename) may follow there.
+    label = tab.label(tab.AGENT_ICON, title)
+    argv = (["tmux", "new-window", "-d", "-P", "-F", "#{window_index} #{window_id}"] + place
+            + ["-n", label, "-c", where, shlex.join(cmd) + after])
     proc = run(argv, capture_output=True, text=True)
     if proc.returncode != 0:
         return (f"tmux refused ({proc.stderr.strip()}); start it yourself:\n"
                 f"  cd {shlex.quote(where)} && {shlex.join(cmd)}")
-    return f"started in tmux window {proc.stdout.strip()} ({p['name']})"
+    index, _, window = proc.stdout.strip().partition(" ")
+    if p.get("session") and p["session"] != title:
+        # The status line hands the session's name over to the tab once it starts; this
+        # makes the tab's short form of it the title given, not one a model would write.
+        try:
+            tab.remember(p["session"], title)
+        except OSError:
+            pass
+    if window:
+        run(["tmux", "set-option", "-w", "-t", window, tab.SET_OPT, label],
+            capture_output=True, text=True)
+        # When the session ends, the window left at the shell is tmux's to name again.
+        run(["tmux", "set-option", "-w", "-t", window, tab.BEFORE_OPT, tab.TMUX_NAMED],
+            capture_output=True, text=True)
+    return f"started in tmux window {index} ({label})"
 
 
 def start(name, branch, stacked=False, cwd=None, env=None, run=subprocess.run, model=None,
-          new_worktree_dir=False):
+          new_worktree_dir=False, title=None, session=None):
     # Stacked work starts from local HEAD, so nothing needs fetching for it.
     if not stacked:
         git("fetch", "--quiet", REMOTE, cwd=cwd)
     p = plan(name, branch, stacked, cwd, handoff_written=True,
              new_worktree_dir=new_worktree_dir)
+    p["title"] = title.strip() if title else title_of(p)
+    if session:
+        p["session"] = session.strip()
     git("worktree", "add", "--quiet", "--no-track", "-b", branch, p["worktree"], p["base"],
         cwd=cwd)
     return p, launch(p, env, run, model)
@@ -252,7 +281,11 @@ def _print(p):
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("action", choices=["plan", "start"])
-    ap.add_argument("--name", required=True, help="slug for the worktree, window and file")
+    ap.add_argument("--name", required=True, help="slug for the worktree, branch and file")
+    ap.add_argument("--title", help=f"short title for the tmux window, at most {tab.MAX} "
+                    "characters (default: the name's words, cut)")
+    ap.add_argument("--session", help="the new session's readable name, for its prompt box and "
+                    "/resume (default: the title)")
     kind = ap.add_mutually_exclusive_group(required=True)
     kind.add_argument("--branch", help="new branch, e.g. fix/rounding")
     kind.add_argument("--dir", help="start directory of a side task that is no branch")
@@ -264,12 +297,17 @@ def main(argv=None):
                     help="with --dir: the side task commits the checkout's uncommitted changes")
     ap.add_argument("--model", help="model for the new Claude Code session, e.g. this one's")
     a = ap.parse_args(argv)
+    if a.title and len(a.title.strip()) > tab.MAX:
+        ap.error(f"--title {a.title!r}: at most {tab.MAX} characters, for the tmux tab bar")
     if a.commit_pending and not a.dir:
         ap.error("--commit-pending needs --dir: a new worktree has nothing pending")
     if a.dir:
         if a.stacked or a.repo or a.new_worktree_dir:
             ap.error("--dir takes no --stacked, --repo or --new-worktree-dir: there is no branch")
         p = plan_dir(a.name, a.dir, a.action == "start", a.commit_pending)
+        p["title"] = a.title.strip() if a.title else title_of(p)
+        if a.session:
+            p["session"] = a.session.strip()
         _print(p)
         if a.action == "start":
             print(launch(p, model=a.model))
@@ -278,10 +316,15 @@ def main(argv=None):
     if cwd and not os.path.isdir(cwd):
         die(f"{a.repo} is not a directory")
     if a.action == "plan":
-        _print(plan(a.name, a.branch, a.stacked, cwd, new_worktree_dir=a.new_worktree_dir))
+        p = plan(a.name, a.branch, a.stacked, cwd, new_worktree_dir=a.new_worktree_dir)
+        p["title"] = a.title.strip() if a.title else title_of(p)
+        if a.session:
+            p["session"] = a.session.strip()
+        _print(p)
     else:
         p, outcome = start(a.name, a.branch, a.stacked, cwd, model=a.model,
-                           new_worktree_dir=a.new_worktree_dir)
+                           new_worktree_dir=a.new_worktree_dir, title=a.title,
+                           session=a.session)
         _print(p)
         print(outcome)
 
