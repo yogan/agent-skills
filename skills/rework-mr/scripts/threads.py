@@ -1171,8 +1171,10 @@ def _step_parts(state, t):
         word = OUTCOME_WORD.get(t.get("outcome") or "fix", "Fix")
         out += [ui.heading_md(ui.ASKED_ICON, f"Agreed plan: {word}"), "", t["plan"].strip(), ""]
         kept = t.get("kept") or {}
-        if kept.get("on") and kept["on"] == t.get("plan_on"):
-            out += [f"_{kept['why'].strip().rstrip('.')}: the plan holds._", ""]
+        if kept.get("who") and kept.get("on") and kept["on"] == t.get("plan_on"):
+            out += [ui.step_md(ui.STATE_ICON["answered"],
+                               f"{names_md(kept['who'])} wrote again; the plan still holds",
+                               kept.get("at")), ""]
     if st == "none" and not is_pushed_fix(t):
         out += [*replied_steps(state, t), ""]
     if st == "fixed":
@@ -2068,6 +2070,35 @@ def start_fix_round(t):
                   "reply", "reply_at", "reply_early", "post_differs", "early_posted",
                   "reply_posted", "fix_lost"):
             t.pop(k, None)
+
+
+def _instant(value):
+    """An ISO time as GitLab or this script writes it, comparable; None where unknown."""
+    try:
+        return datetime.datetime.fromisoformat(str(value).replace("Z", "+00:00")) if value else None
+    except ValueError:
+        return None
+
+
+def wrote_since_plan(state, t):
+    """Who of the reviewers wrote on `t` since its plan was agreed, or last kept, and when the
+    latest of them did: (first names in the order they wrote, its time). The user's own
+    replies are not theirs. A plan agreed before its time was stored counts its last
+    reviewer comment alone, the one that asked again."""
+    kept = t.get("kept") or {}
+    marks = [m for m in (_instant(t.get("plan_at")),
+                         _instant(kept.get("at")) if kept.get("on") == t.get("plan_on") else None) if m]
+    since = max(marks) if marks else None
+    theirs = sorted((n for x in t["thread_ids"] for n in (state["threads"].get(x) or {}).get("notes") or []
+                     if not n.get("mine") and _instant(n.get("at"))), key=lambda n: _instant(n["at"]))
+    new = [n for n in theirs if _instant(n["at"]) > since] if since else theirs[-1:]
+    who = list(dict.fromkeys(first_name(n.get("author")) or "The reviewer" for n in new))
+    return who, (new[-1]["at"] if new else None)
+
+
+def names_md(names):
+    """`Jan`, `Jan and Robin`, `Jan, Robin and Miriam`."""
+    return " and ".join([", ".join(names[:-1]), names[-1]] if len(names) > 1 else names)
 
 
 def plan_holds(t, mark):
@@ -3450,8 +3481,10 @@ def main():
         t = topic_for(state, args.topic) or die(f"no topic {args.topic}")
         t.get("decision") or die(f"{tref(args.topic)} has no agreed plan to keep: `propose` one")
         # What the reviewers said is the plan's again: it holds until they write once more.
+        # The card names who wrote since the plan (or its last keep), never the agent's reason.
+        who, at = wrote_since_plan(state, t)
         t["plan_on"] = reviewer_mark(state, t)
-        t["kept"] = {"why": args.why, "on": t["plan_on"]}
+        t["kept"] = {"why": args.why, "on": t["plan_on"], "who": who, "at": at}
         save(path, state)
         print(f"kept the plan for {tref(args.topic)}")
     elif cmd == "propose":

@@ -2308,7 +2308,47 @@ class TestKeepPlan(unittest.TestCase):
         self.run_cli("keep-plan", "t1", "--why", "Robin agreed with the plan.")
         self.assertEqual(T.step_of(self.state, self.t1), "fix")
         self.assertEqual(T.judge_list(self.state)["topics"], [])
-        self.assertIn("_Robin agreed with the plan: the plan holds._", T.render_quote(self.state, "t1"))
+        card = T.render_quote(self.state, "t1")
+        self.assertIn(T.ui.step_md(T.ui.STATE_ICON["answered"], "Robin wrote again; the plan still holds",
+                                   "2026-02-01T00:00:00Z"), card)
+        self.assertNotIn("agreed with the plan", card)                     # the agent's reason
+
+    def keep_after(self, *notes):
+        """The plan agreed on Jan 15, then `notes` (author, time, mine), then kept."""
+        self.state["threads"]["d1"]["notes"].pop()
+        self.t1.update(plan_at="2026-01-15T00:00:00+00:00", plan_on=T.reviewer_mark(self.state, self.t1))
+        for who, at, mine in notes:
+            self.state["threads"]["d1"]["notes"].append(
+                {"author": who, "body": "ok", "at": at, "mine": mine})
+        self.run_cli("keep-plan", "t1", "--why", "an acknowledgement")
+        return T.render_quote(self.state, "t1")
+
+    def test_everyone_who_wrote_since_the_plan_is_named_the_time_the_latest(self):
+        card = self.keep_after(("Robin Roe", "2026-01-10T00:00:00Z", False),   # before the plan
+                               ("Jan Doe", "2026-02-01T00:00:00Z", False),
+                               ("Me", "2026-02-02T00:00:00Z", True),
+                               ("Miriam Moe", "2026-02-03T00:00:00Z", False))
+        self.assertIn(T.ui.step_md(T.ui.STATE_ICON["answered"], "Jan and Miriam wrote again; the plan "
+                                   "still holds", "2026-02-03T00:00:00Z"), card)
+
+    def test_a_second_keep_names_only_who_wrote_since_the_first(self):
+        self.keep_after(("Jan Doe", "2026-02-01T00:00:00Z", False))
+        self.state["threads"]["d1"]["notes"].append(
+            {"author": "Miriam Moe", "body": "thanks", "at": "2026-02-05T00:00:00Z", "mine": False})
+        self.run_cli("keep-plan", "t1", "--why", "a thank-you")
+        card = T.render_quote(self.state, "t1")
+        self.assertIn("Miriam wrote again; the plan still holds", card)
+        self.assertNotIn("Jan and", card)
+
+    def test_a_plan_kept_before_the_names_were_stored_says_nothing(self):
+        self.t1["kept"] = {"why": "Robin agreed", "on": self.t1["plan_on"]}
+        card = T.render_quote(self.state, "t1")
+        self.assertNotIn("Robin agreed", card)
+        self.assertNotIn("plan still holds", card)
+
+    def test_names(self):
+        self.assertEqual([T.names_md(["A"]), T.names_md(["A", "B"]), T.names_md(["A", "B", "C"])],
+                         ["A", "A and B", "A, B and C"])
 
     def test_a_topic_with_no_agreed_plan_cannot_be_kept(self):
         del self.t1["decision"]
