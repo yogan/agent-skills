@@ -22,6 +22,11 @@ second run, is free; and after an amend that does change something, the scenario
 from what changed since the last tree that passed. `.githooks/pre-push` refuses a push whose
 commit has no recorded pass (`git push --no-verify` overrides it, as for any hook).
 
+Each scenario that passes is noted against the tree as it passes, so a run that failed on one
+of them does not pay for the others again: the next run of the same tree says which have
+passed already and runs the rest. The same tree is the same code, and a scenario plays a
+recording, so a pass stays a pass; any commit or amend that changes the tree starts over.
+
 It checks the committed tree, so it refuses to start with uncommitted changes: a pass would
 otherwise be recorded for something else than what gets pushed.
 
@@ -162,8 +167,22 @@ def tree_of(rev):
     return git("rev-parse", f"{rev}^{{tree}}")
 
 
+def scenarios_passed(tree):
+    """The scenarios a run that did not get through has passed for this tree already."""
+    part = load_record().get("partial") or {}
+    return set(part.get("scenarios", [])) if part.get("tree") == tree else set()
+
+
+def record_scenario(tree, name):
+    """Note one scenario's pass for `tree`; what was noted for another tree is dropped."""
+    rec = load_record()
+    rec["partial"] = {"tree": tree, "scenarios": sorted(scenarios_passed(tree) | {name})}
+    RECORD.write_text(json.dumps(rec, indent=1), encoding="utf-8")
+
+
 def record_pass(tree, commit, ran):
     rec = load_record()
+    rec.pop("partial", None)
     rec["passed"] = [p for p in rec["passed"] if p["tree"] != tree][-(KEEP - 1):] + [
         {"tree": tree, "commit": commit, "at": time.strftime("%Y-%m-%d %H:%M"), "ran": ran}]
     RECORD.write_text(json.dumps(rec, indent=1), encoding="utf-8")
@@ -232,9 +251,18 @@ def main(argv):
     ok = run("every unpushed commit, commit level", [sys.executable, "check_commits.py", base])
     # On the Mac, every file: the test box is Linux, and this is the one run in the real thing.
     ok = run("the whole unit suite, on the Mac", [sys.executable, "run_tests.py", "--host"]) and ok
+    # One at a time, each noted as it passes: see the docstring.
+    before, started = scenarios_passed(tree), time.monotonic()
+    for name in picked:
+        if name in before:
+            print(f"\n==> scenario {name}: passed for this tree already, not run again")
+        elif run(f"scenario {name}", [sys.executable, "e2e/drive.py", "verify", name]):
+            record_scenario(tree, name)
+        else:
+            ok = False
     if picked:
-        ok = run(f"{len(picked)} scenario(s)",
-                 [sys.executable, "e2e/drive.py", "verify", *picked]) and ok
+        print(f"\n    {len(picked)} scenario(s), {len(before & set(picked))} of them passed before: "
+              f"{time.monotonic() - started:.0f}s")
     if not ok:
         print("\ncheck_push: FAILED — nothing recorded")
         return 1

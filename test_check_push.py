@@ -108,6 +108,23 @@ class TestTheRecord(unittest.TestCase):
             self.assertEqual(cp.verify(["abc"]), 0)
             self.assertEqual(cp.verify(["abc", "def"]), 1)
 
+    def test_a_scenario_that_passed_is_not_run_again_for_the_same_tree(self):
+        cp.record_scenario("T-abc", "smoke")
+        cp.record_scenario("T-abc", "rework-3")
+        self.assertEqual(cp.scenarios_passed("T-abc"), {"smoke", "rework-3"})
+        # Another tree is other code: nothing carries over, and its note replaces the old.
+        self.assertEqual(cp.scenarios_passed("T-def"), set())
+        cp.record_scenario("T-def", "smoke")
+        self.assertEqual(cp.scenarios_passed("T-abc"), set())
+
+    def test_a_scenarios_pass_alone_lets_no_push_through(self):
+        with mock.patch.object(cp, "tree_of", lambda s: "T-abc"):
+            cp.record_scenario("T-abc", "smoke")
+            self.assertEqual(cp.verify(["abc"]), 1)
+            cp.record_pass("T-abc", "abc", {})
+            self.assertEqual(cp.verify(["abc"]), 0)
+            self.assertEqual(cp.scenarios_passed("T-abc"), set())      # the whole pass replaces it
+
     def test_deleting_a_branch_needs_no_pass(self):
         self.assertEqual(cp.verify(["0" * 40]), 0)
 
