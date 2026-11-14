@@ -10,6 +10,7 @@ as a whole: approved by its reviewer, then merged.
     python3 e2e/news.py approve # reviewer-bot approves MR !3, frank's own
     python3 e2e/news.py merge   # frank merges MR !3
     python3 e2e/news.py more    # reviewer-bot reopens MR !3's naming thread and asks for more
+    python3 e2e/news.py doubt   # reviewer-bot reopens it and doubts the pushed rename
 
 Each runs once per rig: a second `push` finds the fix already there and says so. Never
 resets anything; `fixture.py` (or tmux-demo.sh --force) is the way back to the start.
@@ -116,7 +117,14 @@ MORE = ("Thanks, that reads much better. One small thing while you're in there: 
         "a one-line doc comment above `commentKeys`, saying which queries it keys?")
 
 
-def more():
+# The same thread, its rename pushed, and the reviewer no longer sure of it: a pushed fix the
+# author keeps, with a reply and no second "Fixed".
+DOUBT = ("Thinking about it more, I'm not sure about the rename after all: every feature could "
+         "keep exporting `queryKeys` and the files importing two of them alias on import. "
+         "Should we go back to `queryKeys`?")
+
+
+def more(text=MORE):
     """reviewer-bot's follow-up in MR !3's thread on MORE_ON, reopened if resolved."""
     enc = fx.project_path_enc()
     discs = fx.api(f"projects/{enc}/merge_requests/{REWORK_IID}/discussions?per_page=100")
@@ -125,17 +133,18 @@ def more():
         if pos.get("new_path") == MORE_ON:
             fx.api(f"projects/{enc}/merge_requests/{REWORK_IID}/discussions/{d['id']}?resolved=false",
                    "PUT", {}, user="reviewer-bot")
-            fx.reply(REWORK_IID, d["id"], "reviewer-bot", MORE)
-            fx.info(f"!{REWORK_IID}: reviewer-bot asked for more on {MORE_ON}")
+            fx.reply(REWORK_IID, d["id"], "reviewer-bot", text)
+            fx.info(f"!{REWORK_IID}: reviewer-bot {'asked for more' if text == MORE else 'doubts the fix'} on {MORE_ON}")
             return
     die(f"no thread on {MORE_ON} in MR !{REWORK_IID}")
 
 
 def main():
     what = sys.argv[1] if len(sys.argv) > 1 else ""
-    if what in ("approve", "merge", "more"):
+    if what in ("approve", "merge", "more", "doubt"):
         fx.E = fx.env()
-        return {"approve": approve, "merge": merge, "more": more}[what]()
+        return {"approve": approve, "merge": merge, "more": more,
+                "doubt": lambda: more(DOUBT)}[what]()
     if what not in ("reply", "push", "both", "fix"):
         die(__doc__.strip())
     fx.E = fx.env()

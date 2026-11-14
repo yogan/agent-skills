@@ -187,6 +187,109 @@ REWORK_TWICE += [
                   r"^\(2, 2\)$"),
 ]
 
+# The same MR, the plan pass ended in the chat, as real runs went: with t3's plan typed in
+# (a decline that leaves a TODO, so a fix), t3 stays current with Fix it, and the model either
+# waits for it (`rework-mind`) or goes on to t1's fix unasked (`rework-ahead`). Each
+# scenario's recording is a real run that went its way.
+DROPPED = "git for-each-ref --format='%(refname)' refs/rework-mr/"
+MIND_START = [
+            Prompt("/rework-mr !3", timeout=600),
+            *REWORK_FIX[1:7],                         # t1's and t2's plans agreed
+            Expect(current("t3"), region="panel", wait=180),
+            Expect(button('Reply'), region="screen", wait=180),
+            Prompt("t3: decline it for this MR, but leave a TODO above discussionKeys saying the "
+                   "users and teams features still build their keys inline. That is agreed.",
+                   timeout=900),
+]
+# t3 from its Fix it: the TODO pushed, then the decline in its thread, not a "Fixed".
+T3_FIXED = [
+            press('Fix it', turn=True, timeout=600),
+            press('Ack and push', turn=True, timeout=600),
+            Expect(button('Reply…'), region="screen", wait=60),
+            press('Reply…'),
+            Prompt("decline it as out of scope here; the TODO marks it for a follow-up", timeout=600),
+            Expect(button('Post'), region="screen"),
+            press('Post'),
+            Check("git fetch -q && git show @{u}:src/features/discussions/api/query-keys.ts | grep -c TODO",
+                  r"^[1-9]"),
+            Check(thread_on("discussions/api/query-keys.ts", 'len(d["notes"]), d["notes"][-1]["author"]["username"]'),
+                  r"^2 frank$"),
+]
+T1_RESOLVED = Check(thread_on("comments/api/query-keys.ts", 'd["notes"][0]["resolved"]'), r"^True$")
+
+REWORK_AHEAD = [
+            *MIND_START,
+            # t1's fix made while t3 was current: shown as t1's, ready to push, its card saying
+            # which topic the person was on, with the choice to keep it for later.
+            Expect(current("t1"), region="panel", wait=60),
+            Expect(button('Ack and push'), region="screen", wait=60),
+            Expect(r"Made while you were on t3", region="screen"),
+            press('Put aside'),
+            # Back to t3, the working tree as it was, the fix kept in git.
+            Expect(current("t3"), region="panel", wait=60),
+            Expect(button('Fix it'), region="screen", wait=60),
+            Check("git status --porcelain | wc -l", r"^\s*0$"),
+            Check(DROPPED, r"refs/rework-mr/mr3/t1/dropped1/after"),
+            *T3_FIXED,
+            # t1 next: its fix back in the working tree, by itself. t3's push moved the files
+            # on, so its checks run again before it is pushed.
+            Expect(current("t1"), region="panel", wait=60),
+            Expect(r"The fix you put aside", region="screen", wait=60),
+            Check("git status --porcelain | wc -l", r"^\s*4$"),
+            press('Run the checks', turn=True, timeout=600),
+            press('Ack and push', turn=True, timeout=600),
+            Expect(button('“Fixed” + resolve'), region="screen", wait=60),
+            press('“Fixed” + resolve'),
+            Expect(current("t2"), region="panel", wait=120),
+            T1_RESOLVED,
+            Check("git fetch -q && git rev-parse HEAD @{u} | uniq | wc -l", r"^\s*1$"),
+            Check("git rev-list --count origin/main..@{u}", r"^2$"),   # both folded in
+]
+REWORK_MIND = [
+            *MIND_START,
+            # It waited: t3 is current, its fix the person's to start.
+            Expect(current("t3"), region="panel", wait=60),
+            *T3_FIXED,
+            # t1: the rename, pushed and "Fixed".
+            Expect(current("t1"), region="panel", wait=60),
+            press('Fix it', turn=True, timeout=600),
+            press('Ack and push', turn=True, timeout=600),
+            Expect(button('“Fixed” + resolve'), region="screen", wait=60),
+            press('“Fixed” + resolve'),
+            T1_RESOLVED,
+            # t2: made, then not wanted after all, before it is pushed.
+            Expect(current("t2"), region="panel", wait=120),
+            press('Fix it', turn=True, timeout=600),
+            Expect(button('Ack and push'), region="screen"),
+            Prompt("Stop, I don't want this fix after all: drop it, and draft a reply asking "
+                   "Miriam which of her two options she prefers.", timeout=600),
+            Expect(button('Post', 'Post + resolve'), region="screen", wait=60),
+            Check("git status --porcelain | wc -l", r"^\s*0$"),      # the working tree as it was
+            Check(DROPPED, r"refs/rework-mr/mr3/t2/dropped1/after"),   # the fix, kept in git
+            Check("git fetch -q && git rev-parse HEAD @{u} | uniq | wc -l", r"^\s*1$"),
+            press('Post'),
+            # A question to the reviewer: t2 waits on them, and the pass is through.
+            Expect(current("t2"), region="panel", absent=True, wait=60),
+            Check(thread_on("updateDiscussion.ts", 'len(d["notes"]), d["notes"][-1]["author"]["username"]'),
+                  r"^2 frank$"),
+            # The reviewer doubts t1's pushed rename; the person keeps it.
+            Check(f"{NEWS} doubt", r"doubts the fix"),
+            Expect(r"\bt1\b", region="panel", wait=240),
+            Click(" t1 ", offset=1, region="panel"),
+            Expect(f"(?:{button('Agree plan')}|{button('Reply')})", region="screen", wait=240),
+            Prompt("t1: keep the rename and push back: aliasing on every import is what the rename "
+                   "saves. Draft the reply.", timeout=600),
+            # A defended fix: a reply, never resolving, and no second "Fixed".
+            Expect(button('Post'), region="screen", wait=60),
+            Expect(button('Post + resolve'), region="screen", absent=True),
+            Expect(button('“Fixed”'), region="screen", absent=True),
+            press('Post'),
+            Check(thread_on("comments/api/query-keys.ts",
+                            'sum(n["body"].startswith("Fixed") for n in d["notes"]), d["notes"][-1]["author"]["username"]'),
+                  r"^1 frank$"),
+            Check("git rev-list --count origin/main..@{u}", r"^2$"),   # the TODO folded in too
+]
+
 SCENARIOS = [
     Scenario(
         "smoke", "the driver itself: start claude, send a prompt, read the answer",
@@ -279,6 +382,14 @@ SCENARIOS = [
     Scenario(
         "try-pushed-twice", "MR !3 up to t1's second push, t2's between, for a person to try (--keep)", WORK,
         needs_rig=True, mods=[MOD], fast_check=True, recording="rework-twice", steps=REWORK_TWICE[:TRY_TWICE]),
+
+    Scenario(
+        "rework-mind", "MR !3: a decline that leaves a TODO, a fix dropped for a question, a pushed fix defended", WORK,
+        needs_rig=True, mods=[MOD], fast_check=True, steps=[*REWORK_MIND]),
+
+    Scenario(
+        "rework-ahead", "MR !3: t1's fix made while t3 was current, put aside, back by itself after t3's push", WORK,
+        needs_rig=True, mods=[MOD], fast_check=True, steps=[*REWORK_AHEAD]),
 
     Scenario(
         "try-scrolling", "MR !4: every sidebar area with more than it shows, beside ones that fit, for a person to try (--keep)",
