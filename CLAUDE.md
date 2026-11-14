@@ -206,8 +206,8 @@ that are usually thrown away.
 
 - `skills/<name>/` — one skill each, independently symlink-installable (see README.md).
   `scripts/` holds its Python implementation.
-- `hooks/` — cross-skill runtime infra (the paste-gate Stop hook). See
-  [hooks/README.md](hooks/README.md).
+- `hooks/` — cross-skill runtime infra: the paste-gate Stop hook ([hooks/README.md](hooks/README.md))
+  and the tmux window names ([hooks/tmux-tab.md](hooks/tmux-tab.md)).
 - `testbox.py` — the Linux test box the loop and commit levels run most tests in.
 - `lib/` — Python shared repo-wide (skill scripts and `e2e/` both import from it).
   Only for logic that's provably identical across its consumers, modulo a trivial

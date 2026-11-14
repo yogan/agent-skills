@@ -123,7 +123,7 @@ Then start a new session. On Claude Code, for `review-mr` and `rework-mr`:
 | `skills/<name>/` | one skill each: `SKILL.md`, and its Python in `scripts/` |
 | `mods/review-ui/` | the Claude Code mod behind Review 2.0: [`mods/review-ui/README.md`](mods/review-ui/README.md) |
 | `lib/` | Python shared repo-wide; the diagram engine in [`lib/diagram/`](lib/diagram/README.md) |
-| `hooks/` | the `Stop` hook for sessions without the mod |
+| `hooks/` | the `Stop` hook for sessions without the mod; agent windows' tmux names |
 | `e2e/` | a local GitLab rig that drives real sessions through the review skills: [`e2e/README.md`](e2e/README.md) |
 
 Tests are plain `unittest`: `python3 run_tests.py` runs the fast suite, `--changed` only what

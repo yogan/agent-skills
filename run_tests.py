@@ -149,6 +149,7 @@ def run_one(job, tmpdir=None):
     path, klass = job
     argv = [sys.executable, str(path)] + ([klass] if klass else [])
     env = {k: v for k, v in os.environ.items() if not SESSION_ENV.match(k)}
+    env["AGENT_TAB_OFF"] = "1"            # lib/tab.py: no test names the developer's window
     if tmpdir:
         env["TMPDIR"] = f"{tmpdir}/"
     env["PATH"] = f"{no_glab()}{os.pathsep}{env.get('PATH', '')}"
