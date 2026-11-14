@@ -1379,10 +1379,13 @@ def answer_steps(state, t):
     wt = get_worktree(state.get("slug") or "", state.get("iid")) if fixes else None
 
     def said(f):
-        stat = fix_refs.stat(wt, f["ends"]) if wt and f.get("ends") else None
+        stat = fix_refs.stat(wt, f["ends"], f.get("paths")) if wt and f.get("ends") else None
+        also = shared_with(state, t, f)
         return ((f" · {diffsize.of_stat(stat)}" if stat else "")
                 + (f" · {ui.link_md('diff', f['url'])}" if f.get("url") else "")
-                + (" · may include other changes" if f.get("mixed") else ""))
+                + (f" · also {', '.join(also)}" if also else "")
+                + (" · with a rebase" if f.get("rebase")
+                   else " · may include other changes" if f.get("mixed") else ""))
 
     if len(fixes) == 1:
         out.append(ui.step_md(ui.STEP_DONE_ICON, f"{author} pushed a fix{said(fixes[0])}", fixes[0].get("at")))
@@ -2930,18 +2933,23 @@ def walk_fixes(state, ctx, iid, vs=None):
                 break                             # GitLab could not say: the next check tries
             d = _file_diff(diffs, w["file"])
             hit, first, last = code_view.touched((d or {}).get("diff"), w["first"], w["last"])
-            mixed = False
-            if hit and cur.get("base_commit_sha") != prev.get("base_commit_sha"):
+            rebase = cur.get("base_commit_sha") != prev.get("base_commit_sha")
+            if hit and rebase:
                 before, after = own_change(prev, w["file"]), own_change(cur, w["file"])
                 if before is not None and before == after:
                     hit = False                   # the rebase moved it, not the author
-                else:
-                    mixed = True
             if hit:
-                t.setdefault("fixes", []).append({
-                    "before": prev.get("head_commit_sha"), "after": cur.get("head_commit_sha"),
-                    "at": cur.get("created_at") or now_iso(), "mixed": mixed,
-                    "url": f"{web}/diffs?diff_id={cur.get('id')}&start_sha={prev.get('head_commit_sha')}"})
+                fix = {"before": prev.get("head_commit_sha"), "after": cur.get("head_commit_sha"),
+                       "at": cur.get("created_at") or now_iso(), "mixed": rebase, "rebase": rebase,
+                       "url": f"{web}/diffs?diff_id={cur.get('id')}&start_sha={prev.get('head_commit_sha')}"}
+                if rebase:
+                    # What the viewer and the files list show of it: the files the MR itself
+                    # changes, the target branch's own left out. A file both changed still
+                    # shows both.
+                    own = compare(cur.get("base_commit_sha"), cur.get("head_commit_sha"))
+                    if own is not None:
+                        fix["paths"] = sorted({d.get("new_path") or d.get("old_path") for d in own})
+                t.setdefault("fixes", []).append(fix)
             w.update(sha=cur.get("head_commit_sha"), first=first, last=last,
                      file=(d or {}).get("new_path") or w["file"])
 
@@ -2995,10 +3003,23 @@ def kept_fixes(state, t, kept=None):
 def kept_fix(state, t, n=None):
     """The author's `n`th fix to `t` (1-based) as kept in git, else its latest; None where
     it is not kept."""
+    f = picked_fix(state, t, n)
+    return f["ends"] if f else None
+
+
+def picked_fix(state, t, n=None):
+    """The author's `n`th fix to `t` (1-based), else its latest, with its `ends`; None."""
     fixes = kept_fixes(state, t)
     if not fixes or (n is not None and not 1 <= n <= len(fixes)):
         return None
-    return fixes[(n or len(fixes)) - 1]["ends"]
+    return fixes[(n or len(fixes)) - 1]
+
+
+def shared_with(state, t, f):
+    """The other topics the same push is a fix of: one push that changed several topics'
+    lines is listed under each, and each says the others are in it too."""
+    return [x["id"] for x in state["topics"] if x is not t
+            and any((g["before"], g["after"]) == (f["before"], f["after"]) for g in fixes_of(x))]
 
 
 # ------------------------------------------------- prepared inputs (explainer, seed)
@@ -3615,9 +3636,11 @@ def main():
     if cmd == "hunk-show":                # on a press: the author's fix in the diff viewer
         t = topic_for(state, args.topic) or die(f"no topic {args.topic}")
         wt = get_worktree(state.get("slug") or "", state.get("iid"))
-        ends = kept_fix(state, t, args.push) or die(f"{tref(args.topic)} has no push of the author's "
-                                                    "kept in git to show")
-        shown = fix_refs.show(wt, ends, state_file(STATE_ROOT, ctx["slug"], iid, f"fix-{args.topic}.patch"), f"{TOPIC_ICON}!{iid}")
+        f = picked_fix(state, t, args.push)
+        ends = (f or {}).get("ends") or die(f"{tref(args.topic)} has no push of the author's "
+                                            "kept in git to show")
+        shown = fix_refs.show(wt, ends, state_file(STATE_ROOT, ctx["slug"], iid, f"fix-{args.topic}.patch"),
+                              f"{TOPIC_ICON}!{iid}", f.get("paths"))
         if not shown:
             die(hunk.not_shown())
         hunk.focus_window(shown[0])
@@ -3645,8 +3668,9 @@ def main():
             v["mode"] = "since" if mine else "mr"
             push = pushed_of(state, t) if not args.thread else None
             v["since_at"] = (push or {}).get("at")
-            ends = kept_fix(state, t, args.push) if not args.thread else None
-            files = [[f, a, r] for f, a, r in fix_refs.stat(wt, ends)] if ends else []
+            fix = picked_fix(state, t, args.push) if not args.thread else None
+            ends = (fix or {}).get("ends")
+            files = [[f, a, r] for f, a, r in fix_refs.stat(wt, ends, fix.get("paths"))] if ends else []
             if files and args.file and args.file != code_view.commented(wt, x or {}):
                 # Another file of the author's fix, picked in the sidebar: its change in it.
                 picked = code_view.fix_view(wt, x or {}, files, args.file, *ends)

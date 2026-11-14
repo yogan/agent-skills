@@ -2618,7 +2618,15 @@ class TestFixPerPush(unittest.TestCase):
         self.assertEqual(out[1:4], [f"{T.ui.STEP_DONE_ICON} You pushed a fix · 2 pushes",
                                     f"\u00a0\u00a0{T.ui.PUSHED_ICON} push 1 · [diff {LINK_ICON}](G/diffs?diff_id=2&start_sha=A)",
                                     f"\u00a0\u00a0{T.ui.PUSHED_ICON} push 2 · [diff {LINK_ICON}](G/diffs?diff_id=4&start_sha=X)"
-                                    " · may include other topics' changes"])
+                                    " · may include other changes"])
+
+    def test_a_push_that_was_another_topic_s_too_says_which(self):
+        state, t = self.topic(self.push("A", "B", 2))
+        state["topics"].append({"id": "t3", "thread_ids": [], "pushes": [self.push("A", "B", 2)]})
+        t["plan"] = "p"
+        with mock.patch.object(T, "_git", return_value=""):
+            out = T.pushed_steps(state, t)
+        self.assertTrue(out[1].endswith(" · also t3"), out[1])
 
 
 class TestStateByWord(unittest.TestCase):

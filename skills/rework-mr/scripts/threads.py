@@ -1360,7 +1360,12 @@ def pushed_steps(state, t):
         stat = fix_refs.stat(root, f["ends"]) if f.get("ends") else None
         size = f" · {diffsize.of_stat(stat)}" if stat else ""
         link = f" · {ui.link_md('diff', f['url'])}" if f.get("url") else ""
-        return size + link + (" · may include other topics' changes" if f.get("mixed") else "")
+        # A push that was another topic's too says which; one that carried more than the fix
+        # (a rebase, other commits) says it may hold more. Mirrors findings.py's `answer_steps`.
+        also = [x["id"] for x in state["topics"] if x is not t and f.get("after")
+                and any(p.get("after") == f["after"] for p in x.get("pushes") or [])]
+        return size + link + (f" · also {', '.join(also)}" if also
+                              else " · may include other changes" if f.get("mixed") else "")
 
     # A topic pushed before its pushes were kept one by one has its link alone.
     fixes = kept_fixes(state, t) or [{"url": t["diff_url"]}]

@@ -40,6 +40,12 @@ class FixRefsTest(unittest.TestCase):
     def tearDown(self):
         self._dir.cleanup()
 
+    def test_a_fix_limited_to_some_files_leaves_the_others_out(self):
+        """A fix that came with a rebase shows the MR's own files alone."""
+        self.assertEqual([p for p, _, _ in fix_refs.stat(self.repo, (self.before, self.after), ["notes.md"])],
+                         ["notes.md"])
+        self.assertEqual(len(fix_refs.stat(self.repo, (self.before, self.after))), 2)
+
     def write(self, path, text):
         full = os.path.join(self.repo, path)
         os.makedirs(os.path.dirname(full), exist_ok=True)

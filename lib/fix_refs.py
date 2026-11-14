@@ -60,23 +60,25 @@ def kept(repo, skill, iid):
     return {t: (e["before"], e["after"]) for t, e in ends.items() if "before" in e and "after" in e}
 
 
-def patch(repo, ends):
+def patch(repo, ends, paths=None):
     """The fix as a git-style patch, renames detected, with the `a/` `b/` prefixes the
-    viewer and `hunk.diff_stat` read, whatever the repository's own diff settings."""
+    viewer and `hunk.diff_stat` read, whatever the repository's own diff settings. `paths`:
+    only these files, where the fix came with a rebase and the rest is the target branch's."""
     before, after = ends
     return _git(repo, "diff", "--no-color", "--no-ext-diff", "-M",
-                "--src-prefix=a/", "--dst-prefix=b/", before, after) or ""
+                "--src-prefix=a/", "--dst-prefix=b/", before, after,
+                *(["--", *paths] if paths else [])) or ""
 
 
-def stat(repo, ends):
+def stat(repo, ends, paths=None):
     """[(path, added, removed)] of the fix, from the patch itself (`hunk.diff_stat`)."""
-    return hunk.diff_stat(patch(repo, ends))
+    return hunk.diff_stat(patch(repo, ends, paths))
 
 
-def show(repo, ends, path, label):
+def show(repo, ends, path, label, paths=None):
     """Write the fix to `path` and put it in this agent's diff viewer window: (session_id,
     where), or None where it could not be shown there (see `hunk.show_patch`)."""
-    text = patch(repo, ends)
+    text = patch(repo, ends, paths)
     if not text.strip():
         return None
     os.makedirs(os.path.dirname(path), exist_ok=True)

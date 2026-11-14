@@ -1725,7 +1725,7 @@ class TestStateForTheMod(unittest.TestCase):
         def code(*extra):
             with patch.object(F, "resolve_state", return_value=(CTX, 7, "/s", state)), \
                     patch.object(F, "get_worktree", return_value="/wt"), \
-                    patch.object(F, "kept_fix", return_value=("B", "A")), \
+                    patch.object(F, "picked_fix", return_value={"ends": ("B", "A")}), \
                     patch.object(F.fix_refs, "stat", return_value=files), \
                     patch.object(F.code_view, "view", side_effect=view), \
                     patch.object(F.code_view, "now_at", side_effect=lambda r, s, p, c=None: p), \
@@ -2898,6 +2898,30 @@ class TestAuthorFixes(unittest.TestCase):
         self.diffs[("O", "C")] = [{"new_path": "a.ts", "diff": "@@ -1 +1 @@\n-p\n+r\n"}]
         self.walk()
         self.assertEqual([(f["after"], f["mixed"]) for f in F.fixes_of(self.t)], [("C", True)])
+
+    def test_a_push_that_fixed_two_topics_says_so_on_each(self):
+        self.state["threads"]["d2"] = {"mine": True, "file": "b.ts", "line": 3, "side": "new", "head_sha": "A",
+                                       "resolved": False, "notes": []}
+        self.state["topics"].append({"id": "t2", "thread_ids": ["d2"], "summary": "s", "state": None, "source": "llm"})
+        self.push("B", 2, [{"new_path": "a.ts", "old_path": "a.ts", "diff": self.FIX},
+                           {"new_path": "b.ts", "old_path": "b.ts", "diff": self.ELSEWHERE}])
+        self.walk()
+        with patch.object(F, "get_worktree", return_value=None):
+            self.assertIn("· also t2", F.answer_steps(self.state, self.t)[0])
+            self.assertIn("· also t1", F.answer_steps(self.state, self.state["topics"][1])[0])
+
+    def test_a_fix_that_came_with_a_rebase_says_so_and_shows_only_the_mr_s_own_files(self):
+        self.push("B", 2, [{"new_path": "a.ts", "old_path": "a.ts", "diff": self.FIX},
+                           {"new_path": "upstream.ts", "old_path": "upstream.ts", "diff": self.ELSEWHERE}], base="N")
+        self.diffs[("M", "A")] = [{"new_path": "a.ts", "diff": "@@ -1 +1 @@\n-p\n+q\n"}]
+        self.diffs[("N", "B")] = [{"new_path": "a.ts", "diff": "@@ -1 +1 @@\n-p\n+r\n"}]
+        self.walk()
+        (f,) = F.fixes_of(self.t)
+        self.assertEqual(f["paths"], ["a.ts"])            # upstream.ts is the target branch's
+        with patch.object(F, "get_worktree", return_value=None):
+            line = F.answer_steps(self.state, self.t)[0]
+        self.assertIn("· with a rebase", line)
+        self.assertNotIn("may include other changes", line)
 
     def test_where_the_versions_cannot_tell_one_fix_spans_the_comment_to_the_head(self):
         self.versions = [{"id": 9, "head_commit_sha": "Z", "base_commit_sha": "M"}]
