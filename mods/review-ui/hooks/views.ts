@@ -341,7 +341,13 @@ export const sizeOf = (text: string): { before: string; size: DiffSize; after: s
 // Markdown in runs, each line holding a diff's size apart from the rest; never one in a fence
 // or a quote, where it is someone's text.
 // `gap`: a blank line stood between it and the run before, which the card keeps.
-export type SizeRun = ({ md: string } | { before: string; size: DiffSize; after: string } | CommitRun | WordsRun | DraftHeadRun) & { gap?: true }
+export type SizeRun = ({ md: string } | { before: string; size: DiffSize; after: string } | CommitRun | WordsRun | DraftHeadRun | StepRun) & { gap?: true }
+// A line of a topic's story (lib/ui.py's `step_md`): when, an icon, who did what. The card
+// draws the time dim, in a column as wide as the card's widest, so the icons line up.
+export type StepRun = { step: { when: string | null; indent: number; icon: string; rest: string } }
+// The steps' icons: done, waited on, a push, a reply, a resolve on GitLab (lib/ui.py's
+// STEP_DONE_ICON, STEP_WAITS_ICON, PUSHED_ICON, STATE_ICON["answered"], RESOLVED_ICON).
+const STEP_LINE = /^(?:(\d\d:\d\d|[A-Z][a-z]{2} \d{1,2}, \d\d:\d\d) )?(\u00a0*)([\u{F012C}\u{F051F}\u{F0552}\u{F09E1}\u{F05E1}]) (?!\*\*)(.+)$/u
 // A draft's heading (lib/ui.py's DRAFT_ICON, then "Draft …"), which a card draws with its
 // Copy beside it.
 export type DraftHeadRun = { draftHead: string }
@@ -429,6 +435,12 @@ export const sizeRunsOf = (md: string): SizeRun[] => {
     if (fence === null && !open && DRAFT_HEAD.test(line.trim())) {
       flushRun()
       push({ draftHead: line.trim() })
+      continue
+    }
+    const step = fence === null && !open ? STEP_LINE.exec(line) : null
+    if (step) {
+      flushRun()
+      push({ step: { when: step[1] ?? null, indent: (step[2] ?? '').length, icon: step[3] as string, rest: step[4] as string } })
       continue
     }
     const commit = fence === null && !open ? COMMIT_LINE.exec(line) : null

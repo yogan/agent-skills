@@ -693,7 +693,7 @@ const cardForCurrent = async ($: EngineInterface) => {
   const now = currentTopic(r)
   if (host?.topic === r.current && (!host.step || host.step === now?.step)) return
   if (host?.topic === r.current && host.step === 'fixed' && now?.pushed && !(await read($, outcomes))[host.id]) {
-    const done = outcomeOf({ kind: 'push' }, now.diff_url ?? '')
+    const done = outcomeOf({ kind: 'push' }, now.diff_url ?? '', await pressTime($))
     if (done) await update($, outcomes, m => ({ ...m, [host.id]: done }))
   }
   await showStep($, s, r)
@@ -988,13 +988,47 @@ const HEADING_MD = /^\*\*[^*]+\*\*$/
 const spaced = (Box: ReturnType<EngineInterface['ui']['resolve']>['Box'], r: SizeRun, key: string, el: JSX.Element) =>
   r.gap ? <Box key={`gap-${key}`} marginTop={1}>{el}</Box> : el
 
+// What a step says after its time and icon: "You" in the person's colour, as the sidebar
+// draws their name, and a diff's size in a diff's colours. Children of the step's own row,
+// as a size line's are: a box of their own around them squeezes each to its own line.
+const stepText = (els: Pick<ReturnType<EngineInterface['ui']['resolve']>, 'Box' | 'Markdown' | 'Text'>, rest: string, key: string, isDim?: boolean): JSX.Element[] => {
+  const { Box, Markdown, Text } = els
+  const isYou = /^You\b/.test(rest)
+  const text = isYou ? rest.slice(3).trimStart() : rest
+  const sized = sizeOf(text)
+  const out: JSX.Element[] = []
+  if (isYou) out.push(<Box key={`${key}-you`} flexShrink={0}><Text bold color={isDim ? undefined : YOU_COLOR} dimColor={isDim || undefined}>{YOU}</Text></Box>)
+  if (!sized) {
+    if (text) out.push(<Markdown key={`${key}-md`} text={text} dimColor={isDim || undefined} />)
+    return out
+  }
+  if (sized.before.trim()) out.push(<Markdown key={`${key}-before`} text={sized.before.trimEnd()} dimColor={isDim || undefined} />)
+  out.push(<Text key={`${key}-size`}>{drawSize(Text, sized.size, isDim)}</Text>)
+  if (sized.after.trim()) out.push(<Markdown key={`${key}-after`} text={sized.after.trimStart()} dimColor={isDim || undefined} />)
+  return out
+}
+
 const drawParts = ($: EngineInterface, e: Parameters<EngineInterface['ui']['resolve']>[0], text: string, at: string, isDim?: boolean, copy?: JSX.Element | null) => {
   const { Box, Code, Markdown, Text } = $.ui.resolve(e)
-  return partsOf(text).map((p, j) => 'md' in p
+  return partsOf(text).map((p, j) => {
+    const runs = 'md' in p ? sizeRunsOf(p.md) : []
+    // The steps' times in one column, as wide as the widest of the card's.
+    const whenWidth = Math.max(0, ...runs.map(r => ('step' in r && r.step.when ? [...r.step.when].length : 0)))
+    return { p, runs, whenWidth }
+  }).map(({ p, runs, whenWidth }, j) => 'md' in p
     ? (
       <Box key={`md-${at}-${j}`} flexDirection="column">
-        {sizeRunsOf(p.md).map((r, k) => spaced(Box, r, `${at}-${j}-${k}`, 'md' in r
+        {runs.map((r, k) => spaced(Box, r, `${at}-${j}-${k}`, 'md' in r
           ? <Markdown key={`md-${at}-${j}-${k}`} text={withEmoji(r.md)} dimColor={isDim || undefined} />
+          : 'step' in r
+            ? (
+              <Box key={`step-${at}-${j}-${k}`} flexDirection="row" gap={1}>
+                {/* The time and the icon keep their width; a long step wraps under its text. */}
+                {whenWidth > 0 && <Box flexShrink={0}><Text dimColor>{(r.step.when ?? '').padEnd(whenWidth)}</Text></Box>}
+                <Box flexShrink={0}><Text dimColor={isDim || undefined}>{`${'\u00a0'.repeat(r.step.indent)}${r.step.icon}`}</Text></Box>
+                {stepText({ Box, Markdown, Text }, r.step.rest, `step-text-${at}-${j}-${k}`, isDim)}
+              </Box>
+            )
           : 'draftHead' in r
             // A draft's heading, its Copy beside it where the card can copy it.
             ? (
@@ -1185,7 +1219,7 @@ const copyDraft = async ($: EngineInterface, s: ReviewSession, r: ReviewState, t
   const where = s.skill === 'rework-mr' && t === r.current ? r.thread?.[0]?.url : undefined
   if (where && !(await read($, copyTold)).includes(t)) {
     await update($, copyTold, v => [...v, t])
-    await update($, notice, () => ({ text: `${t}: copied its draft · paste it in`, url: where, label: 'its thread', isError: false, topic: t }))
+    await update($, notice, () => ({ text: `${t}: copied its draft · paste it in`, url: where, label: 'thread', isError: false, topic: t }))
   }
   try {
     await $.clock.sleep(COPIED_MS)
@@ -1336,7 +1370,7 @@ const drawCard = async ($: EngineInterface, e: Parameters<EngineInterface['ui'][
       {isBare
         ? <Text dimColor>{where}</Text>
         : drawBlocks($, e, title.rest, isDim, await copyChip($, e, title.id))}
-      {done && <Box marginTop={1}>{outcomeLine($, e, done)}</Box>}
+      {done && <Box marginTop={1}>{outcomeLine($, e, done, isDim)}</Box>}
       {buttons}
     </Box>
   )
@@ -1353,14 +1387,28 @@ const standing = (r: ReviewState | null, t: ReviewState['topics'][number] | unde
   return word && `${word}: its code and its thread are in the sidebar.`
 }
 
+// When a press happened, as its card's last line says it; nothing where no clock answers.
+const pressTime = async ($: EngineInterface): Promise<string | undefined> => {
+  try {
+    return clockOf(new Date(await $.clock.now()).toISOString()) || undefined
+  } catch {
+    return undefined
+  }
+}
+
 // A line that says what happened and, where there is one, links to it: a short label and
 // an arrow, inline, as a comment's head links. A card's last line, and a notice.
-const outcomeLine = ($: EngineInterface, e: Parameters<EngineInterface['ui']['resolve']>[0], o: ReviewOutcome) => {
+const outcomeLine = ($: EngineInterface, e: Parameters<EngineInterface['ui']['resolve']>[0], o: ReviewOutcome, isDim?: boolean) => {
   const { Link, Text } = $.ui.resolve(e) as ReturnType<EngineInterface['ui']['resolve']> & { Link: (p: { href: string; label?: string }) => JSX.Element }
+  // As a step of the topic's story is drawn: the time dim, "You" in the person's colour.
+  const isYou = /^You\b/.test(o.text)
   return (
-    <Text dimColor>
-      {o.icon ? `${o.icon} ` : ''}{o.text}
-      {o.url && ' '}
+    <Text>
+      {o.when ? <Text dimColor>{`${o.when} `}</Text> : ''}
+      {o.icon ? `${o.icon} ` : ''}
+      {isYou && <Text bold color={isDim ? undefined : YOU_COLOR} dimColor={isDim || undefined}>{YOU}</Text>}
+      {isYou ? o.text.slice(3) : o.text}
+      {o.url && ' · '}
       {o.url && <Link href={o.url} label={`${o.label ?? 'open'} ${LINK_ICON}`} />}
       {o.url && o.after ? ` ${o.after}` : ''}
     </Text>
@@ -1415,7 +1463,7 @@ const stepControls = async ($: EngineInterface, s: ReviewSession, r: ReviewState
   // last line.
   const finish = async (pressed: BandButton['press'], stdout: string) => {
     const at = await read($, hostCard)
-    const done = outcomeOf(pressed, stdout)
+    const done = outcomeOf(pressed, stdout, await pressTime($))
     if (at && done && at.topic === (topic?.id ?? null)) await update($, outcomes, m => ({ ...m, [at.id]: done }))
   }
 

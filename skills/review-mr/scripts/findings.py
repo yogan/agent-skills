@@ -1304,12 +1304,11 @@ def _render_quote(state, tid, refine=False):
         # The topic's story step by step, as rework-mr's pushed fix tells its own: the comment
         # posted, then whom it waits on, or what closed it (below).
         mine = next((n for n in first.get("notes") or [] if n.get("mine")), None)
-        when = ui.at_md((mine or {}).get("at"))
-        link = f" · [its thread {LINK_ICON}]({mine['url']})" if (mine or {}).get("url") else ""
-        out += ["", f"{ui.STEP_DONE_ICON} Comment posted{f' · {when}' if when else ''}{link}",
+        link = f" · {ui.link_md('thread', mine['url'])}" if (mine or {}).get("url") else ""
+        out += ["", ui.step_md(ui.STEP_DONE_ICON, f"You posted the initial comment{link}", (mine or {}).get("at")),
                 *answer_steps(state, t)]
         if not closing and topic_status(state, t) == "open":
-            out.append(f"{ui.STEP_WAITS_ICON} Waits on {first_name(state.get('author')) or 'the author'}")
+            out.append(ui.step_md(ui.STEP_WAITS_ICON, f"Waits on {first_name(state.get('author')) or 'the author'}"))
     v = verdict_of(state, t)
     if v:
         # The agent's judgment of the author's answer, stored when the answer came in: a
@@ -1346,20 +1345,19 @@ def closing_line(state, t):
             return ui.closed_md(f"You accepted {author}'s answer and resolved it", at, url)
         if c.get("how") == "fixed":
             push = f" (push {c['push']})" if (c.get("push") or 0) > 1 else ""
-            return ui.closed_md(f"Fixed by {author}{push} · you acked it", at, url)
+            return ui.closed_md(f"{author} fixed it{push} · you acked it", at, url)
         if who == "you":
-            return ui.closed_md("Resolved and acked by you", at, url)
+            return ui.closed_md("You resolved and acked it", at, url)
         if who:
-            return ui.closed_md(f"Resolved by {who} · you acked it", at, url)
+            return ui.closed_md(f"{who} resolved it · you acked it", at, url)
         return ui.closed_md("You acked it", at, url)
     if not res:
         return None
     by_author = author_resolved(state, t)
-    if by_author == "pushed":
-        return f"{ui.RESOLVED_ICON} {author} resolved it on GitLab and pushed a fix."
     if by_author:
-        return f"{ui.RESOLVED_ICON} {author} resolved it on GitLab; nothing pushed for it yet."
-    return ui.closed_md(f"Resolved by {who}", res.get("resolved_at"), url)
+        how = " and pushed a fix" if by_author == "pushed" else "; nothing pushed for it yet"
+        return ui.step_md(ui.RESOLVED_ICON, f"{author} resolved it on GitLab{how}", res.get("resolved_at"))
+    return ui.closed_md(f"{'You' if who == 'you' else who} resolved it", res.get("resolved_at"), url)
 
 
 def answer_steps(state, t):
@@ -1378,25 +1376,23 @@ def answer_steps(state, t):
     wt = get_worktree(state.get("slug") or "", state.get("iid")) if fixes else None
 
     def said(f):
-        when = ui.at_md(f.get("at"))
         stat = fix_refs.stat(wt, f["ends"]) if wt and f.get("ends") else None
-        return ((f" · {when}" if when else "") + (f" · {diffsize.of_stat(stat)}" if stat else "")
-                + (f" · [the diff {LINK_ICON}]({f['url']})" if f.get("url") else "")
+        return ((f" · {diffsize.of_stat(stat)}" if stat else "")
+                + (f" · {ui.link_md('diff', f['url'])}" if f.get("url") else "")
                 + (" · may include other changes" if f.get("mixed") else ""))
 
     if len(fixes) == 1:
-        out.append(f"{ui.STEP_DONE_ICON} {author} pushed a fix{said(fixes[0])}")
+        out.append(ui.step_md(ui.STEP_DONE_ICON, f"{author} pushed a fix{said(fixes[0])}", fixes[0].get("at")))
     elif fixes:
-        out.append(f"{ui.STEP_DONE_ICON} {author} pushed a fix · {len(fixes)} pushes")
-        # Indented by no-break spaces: a card's markdown drops the plain ones leading a line.
-        out += [f"\u00a0\u00a0{ui.PUSHED_ICON} push {k}{said(f)}" for k, f in enumerate(fixes, 1)]
+        out.append(ui.step_md(ui.STEP_DONE_ICON, f"{author} pushed a fix · {len(fixes)} pushes"))
+        out += [ui.step_md(ui.PUSHED_ICON, f"push {k}{said(f)}", f.get("at"), indent=1)
+                for k, f in enumerate(fixes, 1)]
     said_by = [n for x in t["thread_ids"] for n in (state["threads"].get(x) or {}).get("notes") or []
                if not n.get("mine")]
     note = max(said_by, key=lambda n: stamp(n.get("at")), default=None)
     if note and (not fixes or stamp(note.get("at")) > stamp(fixes[-1].get("at"))):
-        when = ui.at_md(note.get("at"))
-        out.append(f"{ui.STATE_ICON['answered']} {first_name(note.get('author')) or author} replied"
-                   + (f" · {when}" if when else ""))
+        out.append(ui.step_md(ui.STATE_ICON["answered"], f"{first_name(note.get('author')) or author} replied",
+                              note.get("at")))
     return out
 
 

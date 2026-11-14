@@ -527,7 +527,7 @@ const reworkButtons = (review: ReviewState): BandButton[] => {
   }
   // The person wrote last on GitLab by hand (a question back): the topic may wait for the
   // reviewer's answer, one press.
-  if (topic.you_last) bs = [...bs, handled('Wait for reviewer', 'wrote last on GitLab; it waits on the reviewer', 'Waiting for the reviewer')]
+  if (topic.you_last) bs = [...bs, handled('Wait for reviewer', 'wrote last on GitLab; it waits on the reviewer', 'You chose to wait for the reviewer')]
   return [...primary(bs), ...wayOn(review, topic)]
 }
 
@@ -602,53 +602,56 @@ const DID: Partial<Record<Press['kind'], string>> = {
   'keep-waiting': 'keeps waiting for the author; the topic stays as it is',
 }
 
-// What a press did to its card, as the card's last line: the pressed button's icon, then one
-// sentence, with the link the script printed (the posted comment, the pushed diff) inline
-// in it. Null for a press that leaves its card as it was (a prompt for the model, a copy,
-// opening the viewer).
-export const outcomeOf = (press: Press, stdout: string): ReviewOutcome | null => {
+// What a press did to its card, as the card's last line, in the form of the topic's story
+// on its card (lib/ui.py's `step_md`): when (`now`, the press's time), the pressed button's
+// icon, then what the person did, with the link the script printed (the posted comment, the
+// pushed diff) as a bare noun after it. Null for a press that leaves its card as it was (a
+// prompt for the model, a copy, opening the viewer).
+const STEP = /^(?:(\d\d:\d\d|[A-Z][a-z]{2} \d{1,2}, \d\d:\d\d) )?(\S+) (.*)$/u
+export const outcomeOf = (press: Press, stdout: string, now?: string): ReviewOutcome | null => {
   const url = /https?:\/\/\S+/.exec(stdout)?.[0] ?? null
   // A press that closed its topic: the scripts' closing line (lib/ui.py's `closed_md`), the
   // same words the topic's card ends on whenever it is drawn again.
   const closed = /^closed: (.+)$/m.exec(stdout)?.[1]
   if (closed && ['resolve', 'ack', 'post'].includes(press.kind)) {
+    const step = STEP.exec(closed)
+    const rest = step?.[3] ?? closed
     // Its thread's link, at its end, drawn as a link: the label without its icon, which
     // the outcome line adds.
-    const link = /^(.*?) \[([^\]]*?)\s*\u{F03CC}?\]\((\S+)\)$/u.exec(closed)
-    return link ? { icon: null, text: link[1] ?? '', label: link[2] ?? null, url: link[3] ?? null } : { icon: null, text: closed }
+    const link = /^(.*?) · \[([^\]]*?)\s*\u{F03CC}?\]\((\S+)\)$/u.exec(rest)
+    return { icon: step?.[2] ?? null, when: step?.[1] ?? now ?? null, text: link ? link[1] ?? '' : rest,
+      ...(link ? { label: link[2] ?? null, url: link[3] ?? null } : {}) }
   }
-  const said = (button: string, text: string, link?: { label: string; after?: string }): ReviewOutcome =>
-    ({ icon: iconOf(button) ?? null, text, ...(link && url ? { url, label: link.label, after: link.after ?? null } : {}) })
+  const said = (button: string, text: string, link?: { label: string }): ReviewOutcome =>
+    ({ icon: iconOf(button) ?? null, when: now ?? null, text, ...(link && url ? { url, label: link.label } : {}) })
   switch (press.kind) {
     case 'post': {
-      const what = press.fixed ? 'Posted “Fixed”' : 'Posted'
       const button = press.fixed ? (press.resolve ? '“Fixed” + resolve' : '“Fixed”') : press.resolve ? 'Post + resolve' : 'Post'
-      return said(button, `${what} to`, { label: 'its thread', after: press.resolve ? 'and resolved' : undefined })
+      return said(button, `You posted ${press.fixed ? '“Fixed”' : 'it'}${press.resolve ? ' and resolved it' : ''}`, { label: 'thread' })
     }
     case 'push':
-      return said('Push', 'Pushed', { label: 'the fix' })
+      return said('Push', 'You pushed the fix', { label: 'diff' })
     case 'aside':
-      return said('Put aside', 'Put aside, kept in git for later')
+      return said('Put aside', 'You put it aside, kept in git for later')
     case 'apply-edit':
-      return said('Apply edit', 'Edited', { label: 'your comment', after: 'on GitLab' })
+      return said('Apply edit', 'You edited it on GitLab', { label: 'comment' })
     case 'resolve':
-      return said('Accept + resolve', 'Accepted the answer and resolved its thread')
+      return said('Accept + resolve', 'You accepted the answer and resolved it')
     case 'agree':
-      return said('Agree plan', 'Plan agreed')
+      return said('Agree plan', 'You agreed the plan')
     case 'drop':
-      return said('Drop', 'Dropped')
+      return said('Drop', 'You dropped it')
     case 'ack':
-      return said('Ack', 'Acked')
+      return said('Ack', 'You acked it')
     case 'wait':
-      return said('Wait for author', 'Waiting for the author')
     case 'keep-waiting':
-      return said('Keep waiting', 'Waiting for the author')
+      return said(press.kind === 'wait' ? 'Wait for author' : 'Keep waiting', 'You chose to wait for the author')
     case 'handled':
-      return said(press.label ?? 'Seen', press.done ?? 'Seen')
+      return said(press.label ?? 'Seen', press.done ?? 'You saw it')
     case 'posted-ok':
-      return said('Keep as posted', 'Kept as posted')
+      return said('Keep as posted', 'You kept it as posted')
     case 'merge':
-      return said(`Merge into ${press.into}`, `Merged into ${press.into}`)
+      return said(`Merge into ${press.into}`, `You merged it into ${press.into}`)
     default:
       return null
   }

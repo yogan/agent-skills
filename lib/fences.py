@@ -7,7 +7,6 @@ a copy per skill drifts: one learns to re-fence a ```suggestion and the other go
 printing it raw. Nothing here knows either skill's state shape.
 """
 
-import datetime
 import difflib
 import os
 import re
@@ -381,16 +380,10 @@ def unwrap(lines):
 
 
 def when_of(value):
-    """A comment's time as a card heads it, in local time: `Nov 5, 11:38`, as the sidebar
-    writes it; None where it is not known."""
-    try:
-        t = datetime.datetime.fromisoformat(str(value).replace("Z", "+00:00")) if value else None
-    except ValueError:
-        t = None
-    if not t:
-        return None
-    t = t.astimezone()
-    return f"{t.strftime('%b')} {t.day}, {t.strftime('%H:%M')}"
+    """A comment's time as a card heads it, in local time: `Nov 5, 11:38`, or the time alone
+    today, as the sidebar writes it (`lib/ui.py`'s `at_md`); None where it is not known."""
+    from lib import ui
+    return ui.at_md(value)
 
 
 def note_md(name, body, path=None, anchor=None, source=None, compact=False, url=None, mine=False,

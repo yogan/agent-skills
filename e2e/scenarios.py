@@ -172,7 +172,7 @@ REWORK_TWICE = [
             Expect(button('“Fixed” + resolve'), region="screen", wait=60),
             # Two fixes, t2's push between them: the card lists both, the sidebar shows the
             # latest and steps back to the first.
-            Expect(r"Fix pushed · 2 pushes", region="screen"),
+            Expect(r"You pushed a fix · 2 pushes", region="screen"),
             Expect(r"push 2 of 2", region="panel"),
 ]
 TRY_TWICE = len(REWORK_TWICE)
@@ -333,7 +333,7 @@ SCENARIOS = [
             # The author's push that changed t1's lines is its fix, found from the MR's
             # versions: on its card with the push's link, its files in the sidebar.
             Click(" t1 ", offset=1, region="panel"),
-            Expect(r"Alex pushed a fix · .*the diff", region="screen", wait=60),
+            Expect(r"Alex pushed a fix · .*diff", region="screen", wait=60),
             Expect(r"Show in hunk", region="panel"),
         ]),
     Scenario(

@@ -167,16 +167,28 @@ def at_md(value, today=None):
     return t.strftime("%H:%M") if t.date() == day else f"{t.strftime('%b')} {t.day}, {t.strftime('%H:%M')}"
 
 
-def closed_md(text, at=None, url=None):
-    """A topic's closing line, the last of its card before the buttons in both skills: what
-    closed it and by whom (`Resolved by Miriam`), when, and its thread's link, which the
-    sidebar stops showing once another topic is current. One markdown link at most, at the
-    end, so the review-ui mod can draw the same words as the outcome of the press that
-    closed it."""
-    from lib.fences import LINK_ICON
+def step_md(icon, text, at=None, indent=0):
+    """One line of a topic's story on its card, in both skills: when it happened, its icon,
+    then who did what (`You replied`, `Robin pushed a fix`). The time leads, so the review-ui
+    mod draws it dim in a column of its own and the icons of a card's steps line up; a step
+    with no time starts at its icon. `indent` sets a line under the one before it (a push of
+    several), by no-break spaces: a card's markdown drops the plain ones that lead a line."""
     when = at_md(at)
-    return (f"{STEP_DONE_ICON} {text}" + (f" · {when}" if when else "")
-            + (f" · [its thread {LINK_ICON}]({url})" if url else ""))
+    return (f"{when} " if when else "") + "\u00a0" * (2 * indent) + f"{icon} {text}"
+
+
+def link_md(label, url):
+    """A link on a step line: a bare noun (`thread`, `diff`, `reply`) and the link icon."""
+    from lib.fences import LINK_ICON
+    return f"[{label} {LINK_ICON}]({url})"
+
+
+def closed_md(text, at=None, url=None):
+    """A topic's closing line, the last of its card before the buttons in both skills: when,
+    who closed it and how (`Miriam resolved it`), and its thread's link, which the sidebar
+    stops showing once another topic is current. The review-ui mod draws the same words as
+    the outcome of the press that closed it."""
+    return step_md(STEP_DONE_ICON, text + (f" · {link_md('thread', url)}" if url else ""), at)
 
 
 def heading_md(icon, words):

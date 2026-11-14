@@ -112,7 +112,6 @@ from lib.mr_common import (
 )
 from lib.fences import (  # noqa: E402
     FENCE_RE,
-    LINK_ICON,
     YOU,
     block_lang,
     code_block,
@@ -1247,11 +1246,13 @@ def fixes_of(t):
         if last and not last["mixed"] and p.get("clean") and p.get("start") == last["after"]:
             last["pushes"].append(n)
             last["after"] = p["after"]
+            last["at"] = p.get("at")
             last["url"] = (re.sub(r"start_sha=[^&#]+", f"start_sha={last['start']}", p["url"])
                            if p.get("url") and last["url"] else None)
             continue
         out.append({"pushes": [n], "before": p["before"], "start": p.get("start"),
-                    "after": p["after"], "url": p.get("url"), "mixed": not p.get("clean")})
+                    "after": p["after"], "url": p.get("url"), "mixed": not p.get("clean"),
+                    "at": p.get("at")})
     return out
 
 
@@ -1339,34 +1340,33 @@ def pushed_steps(state, t):
     posted since and whom it waits on now. What the fix changed is the diff viewer's to
     show (Show fix in hunk), not a copy here."""
     done = ui.STEP_DONE_ICON
-    out = [f"{done} Plan agreed: {_one_line(t.get('plan'))}" if t.get("plan") else f"{done} Plan agreed"]
+    plan = _one_line(t.get("plan"))
+    out = [ui.step_md(done, f"You agreed the plan: {plan}" if plan else "You agreed the plan")]
     root = (_git("rev-parse", "--show-toplevel") or "").strip()
 
     def said(f):
         stat = fix_refs.stat(root, f["ends"]) if f.get("ends") else None
         size = f" · {diffsize.of_stat(stat)}" if stat else ""
-        link = f" · [the diff {LINK_ICON}]({f['url']})" if f.get("url") else ""
+        link = f" · {ui.link_md('diff', f['url'])}" if f.get("url") else ""
         return size + link + (" · may include other topics' changes" if f.get("mixed") else "")
 
     # A topic pushed before its pushes were kept one by one has its link alone.
     fixes = kept_fixes(state, t) or [{"url": t["diff_url"]}]
     if len(fixes) == 1:
-        out.append(f"{done} Fix pushed{said(fixes[0])}")
+        out.append(ui.step_md(done, f"You pushed a fix{said(fixes[0])}", fixes[0].get("at")))
     else:
-        out.append(f"{done} Fix pushed · {len(fixes)} pushes")
-        # Under it, one line per push, indented by no-break spaces: a card's markdown drops
-        # the plain ones that lead a line.
-        out += [f"\u00a0\u00a0{ui.PUSHED_ICON} push {k}{said(f)}" for k, f in enumerate(fixes, 1)]
+        out.append(ui.step_md(done, f"You pushed a fix · {len(fixes)} pushes"))
+        out += [ui.step_md(ui.PUSHED_ICON, f"push {k}{said(f)}", f.get("at"), indent=1)
+                for k, f in enumerate(fixes, 1)]
     url = reply_posted(state, t)
     if url:
         note = next((n for x in t["thread_ids"] for n in (state["threads"].get(x) or {}).get("notes") or []
                      if n.get("url") == url), {})
-        when = ui.at_md(note.get("at"))
-        out.append(f"{done} Reply posted{f' · {when}' if when else ''} · [your reply {LINK_ICON}]({url})")
+        out.append(ui.step_md(done, f"You replied · {ui.link_md('reply', url)}", note.get("at")))
     resolved = bool(t["thread_ids"]) and all(
         (state["threads"].get(x) or {}).get("resolved") for x in t["thread_ids"])
     if url and not resolved:
-        out.append(f"{ui.STEP_WAITS_ICON} Waits on {reviewer_of(state, t)}")
+        out.append(ui.step_md(ui.STEP_WAITS_ICON, f"Waits on {reviewer_of(state, t)}"))
     return out
 
 
@@ -1378,11 +1378,10 @@ def replied_steps(state, t):
     last = (x.get("notes") or [{}])[-1]
     if not last.get("mine"):
         return []
-    when = ui.at_md(last.get("at"))
-    link = f" · [your reply {LINK_ICON}]({last['url']})" if last.get("url") else ""
-    out = [f"{ui.STEP_DONE_ICON} Reply posted{f' · {when}' if when else ''}{link}"]
+    link = f" · {ui.link_md('reply', last['url'])}" if last.get("url") else ""
+    out = [ui.step_md(ui.STEP_DONE_ICON, f"You replied{link}", last.get("at"))]
     if not all((state["threads"].get(i) or {}).get("resolved") for i in t["thread_ids"]):
-        out.append(f"{ui.STEP_WAITS_ICON} Waits on {reviewer_of(state, t)}")
+        out.append(ui.step_md(ui.STEP_WAITS_ICON, f"Waits on {reviewer_of(state, t)}"))
     return out
 
 
@@ -1396,11 +1395,11 @@ def closing_line(state, t):
         return None
     c, x = t.get("closed") or {}, thr[0]
     if c and (x.get("resolved_mine") or not x.get("resolved_by")):
-        how = {"fixed": "Fixed", "replied": "Replied"}.get(c.get("how"))
-        return ui.closed_md(f"{how} and resolved by you" if how else "Resolved by you",
+        how = {"fixed": "fixed", "replied": "replied"}.get(c.get("how"))
+        return ui.closed_md(f"You {how} and resolved it" if how else "You resolved it",
                             x.get("resolved_at") or c.get("at"), x.get("url"))
-    who = "you" if x.get("resolved_mine") else first_name(x.get("resolved_by")) or "the reviewer"
-    return ui.closed_md(f"Resolved by {who}", x.get("resolved_at"), x.get("url"))
+    who = "You" if x.get("resolved_mine") else first_name(x.get("resolved_by")) or "The reviewer"
+    return ui.closed_md(f"{who} resolved it", x.get("resolved_at"), x.get("url"))
 
 
 def context_digest(state, tid):
@@ -1479,7 +1478,7 @@ def _short_fixed(line):
     """A draft's `Fixed: <diff url>` line, where the mod draws, as a short link: the URL is
     long and says nothing to read. Display only; the text posted keeps the URL."""
     m = FIXED_LINE.match(line)
-    return f"Fixed: [the diff {LINK_ICON}]({m.group(1)})" if m and ui.drawn() else line
+    return f"Fixed: {ui.link_md('diff', m.group(1))}" if m and ui.drawn() else line
 
 
 def _quote_draft(body, path=None):

@@ -2190,12 +2190,11 @@ class TestVerdict(unittest.TestCase):
         self.t["verdict"] = {"says": "settled", "text": "Awaited now.", "on": F.answer_mark(self.state, self.t)}
         with self.drawn():
             card = F.render_quote(self.state, "t1")
-        self.assertRegex(card.splitlines()[-1], rf"^{F.ui.STATE_ICON['answered']} Alex replied · (Nov 5, )?10:12$"
-                         .replace("10:12", r"\d\d:12"))
+        self.assertRegex(card.splitlines()[-1], rf"^(Nov 5, )?\d\d:12 {F.ui.STATE_ICON['answered']} Alex replied$")
         self.t["pushed"] = {"from": "a", "to": "b", "at": "2026-11-05T11:30:00Z"}
         with self.drawn(), patch.object(F, "verdict_of", return_value=self.t["verdict"]):
             card = F.render_quote(self.state, "t1")
-        self.assertRegex(card.splitlines()[-1], rf"^{F.ui.STEP_DONE_ICON} Alex pushed a fix · ")
+        self.assertRegex(card.splitlines()[-1], rf"^(Nov 5, )?\d\d:30 {F.ui.STEP_DONE_ICON} Alex pushed a fix")
         self.assertNotIn("replied", card)          # the push came after the reply
 
     def test_a_verdict_without_a_recap_goes_straight_to_what_was_done(self):
@@ -2762,12 +2761,13 @@ class TestPostedCommentCard(unittest.TestCase):
                          "resolved_at": "2026-11-10T17:02:00Z"})
         self.assertNotIn("Recommendation", out)
         self.assertIn("The section is stale.", out)
-        posted = out.index("Comment posted")
+        posted = out.index("You posted the initial comment")
         self.assertLess(out.index("The section is stale."), posted)
-        self.assertIn(f"[its thread {F.LINK_ICON}]({self.URL})", out)
-        # Its thread's link last: the sidebar stops showing it once another topic is current.
-        self.assertRegex(self.last_line(out), r"^\S+ Resolved by Jonas · (Nov 10, )?\d\d:\d\d"
-                         + re.escape(f" · [its thread {F.LINK_ICON}]({self.URL})") + "$")
+        self.assertIn(f"[thread {F.LINK_ICON}]({self.URL})", out)
+        # Its time first; its thread's link last: the sidebar stops showing it once another
+        # topic is current.
+        self.assertRegex(self.last_line(out), r"^(Nov 10, )?\d\d:\d\d \S+ Jonas resolved it"
+                         + re.escape(f" · [thread {F.LINK_ICON}]({self.URL})") + "$")
         self.assertNotIn("toggle", out)
 
     def test_an_open_comment_ends_on_whom_it_waits_on(self):
@@ -2779,29 +2779,29 @@ class TestPostedCommentCard(unittest.TestCase):
         thread = {"resolved": True, "resolved_by": "Robin Lang", "resolved_username": "robin.l"}
         out = self.card(thread, status="needs_ack")
         self.assertEqual(self.last_line(out),
-                         f"{F.ui.RESOLVED_ICON} Robin resolved it on GitLab; nothing pushed for it yet.")
+                         f"{F.ui.RESOLVED_ICON} Robin resolved it on GitLab; nothing pushed for it yet")
         out = self.card(thread, {"pushed": {"from": "a", "to": "b"}}, status="needs_ack")
-        self.assertEqual(self.last_line(out), f"{F.ui.RESOLVED_ICON} Robin resolved it on GitLab and pushed a fix.")
+        self.assertEqual(self.last_line(out), f"{F.ui.RESOLVED_ICON} Robin resolved it on GitLab and pushed a fix")
         self.assertNotIn("toggle", out)
         self.assertNotIn("Waits on", out)
 
     def test_resolved_by_the_user_says_so(self):
         out = self.card({"resolved": True, "resolved_by": "Frank", "resolved_mine": True,
                          "resolved_username": "frank"}, status="needs_ack")
-        self.assertRegex(self.last_line(out), r"^\S+ Resolved by you( · .+)?$")
+        self.assertRegex(self.last_line(out), r"^\S+ You resolved it( · .+)?$")
 
     def test_a_closed_topic_ends_on_how_it_was_closed(self):
         resolved = {"resolved": True, "resolved_by": "Frank", "resolved_mine": True}
         at = "2026-11-10T17:02:00Z"
         for closed, thread, said in (
                 ({"how": "accepted", "at": at}, resolved, "You accepted Robin's answer and resolved it"),
-                ({"how": "fixed", "at": at}, {}, "Fixed by Robin · you acked it"),
+                ({"how": "fixed", "at": at}, {}, "Robin fixed it · you acked it"),
                 ({"how": "acked", "at": at}, {"resolved": True, "resolved_by": "Robin Lang",
-                                              "resolved_username": "robin.l"}, "Resolved by Robin · you acked it"),
+                                              "resolved_username": "robin.l"}, "Robin resolved it · you acked it"),
                 ({"how": "acked", "at": at}, {}, "You acked it")):
             with self.subTest(said):
                 out = self.card(thread, {"state": "acked", "closed": closed}, status="acked")
-                self.assertRegex(self.last_line(out), rf"^{F.ui.STEP_DONE_ICON} {re.escape(said)} · (Nov 10, )?\d\d:\d\d · \[its thread .\]\(.+\)$")
+                self.assertRegex(self.last_line(out), rf"^(Nov 10, )?\d\d:\d\d {F.ui.STEP_DONE_ICON} {re.escape(said)} · \[thread .\]\(.+\)$")
                 self.assertNotIn("Waits on", out)
                 self.assertNotIn("toggle", out)
 
@@ -2856,7 +2856,7 @@ class TestAuthorFixes(unittest.TestCase):
                 patch.object(F, "topic_status", return_value="needs_ack"):
             self.assertEqual(F.author_resolved(self.state, self.t), "pushed")
             self.assertEqual(F.closing_line(self.state, self.t),
-                             f"{F.ui.RESOLVED_ICON} Robin resolved it on GitLab and pushed a fix.")
+                             f"{F.ui.RESOLVED_ICON} Robin resolved it on GitLab and pushed a fix")
 
     def test_each_push_that_changed_its_lines_is_a_fix_of_its_own_and_no_other_push_is(self):
         self.push("B", 2, [{"new_path": "a.ts", "old_path": "a.ts", "diff": self.FIX}])
@@ -2906,7 +2906,7 @@ class TestAuthorFixes(unittest.TestCase):
         self.walk()
         self.t.update(state="acked", closed={"how": "fixed", "push": 2, "at": "2026-11-05T15:00:00Z"})
         with patch.object(F, "topic_status", return_value="acked"):
-            self.assertIn("Fixed by Robin (push 2) · you acked it", F.closing_line(self.state, self.t))
+            self.assertIn("Robin fixed it (push 2) · you acked it", F.closing_line(self.state, self.t))
 
 
 if __name__ == "__main__":

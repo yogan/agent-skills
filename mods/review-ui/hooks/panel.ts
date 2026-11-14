@@ -262,14 +262,15 @@ export const oneLineNote = (body: string, room: number): { text: string; isCut: 
   return { text, isCut }
 }
 
-// When a comment was written, as its header in the sidebar says it: `Nov 5, 12:09`, in the
-// machine's own time; nothing where the time is not known.
+// When a comment was written, as its header in the sidebar says it: `Nov 5, 12:09`, or the
+// time alone today (`09:05`), in the machine's own time, as the scripts write it (lib/ui.py's
+// `at_md`); nothing where the time is not known.
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
-export const whenOf = (at: string | null | undefined): string => {
+export const whenOf = (at: string | null | undefined, now: Date = new Date()): string => {
   const d = at ? new Date(at) : null
   if (!d || Number.isNaN(d.getTime())) return ''
   const hm = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
-  return `${MONTHS[d.getMonth()]} ${d.getDate()}, ${hm}`
+  return d.toDateString() === now.toDateString() ? hm : `${MONTHS[d.getMonth()]} ${d.getDate()}, ${hm}`
 }
 
 // A thread box opened in the sidebar, as rows of exactly one line each, so its height is

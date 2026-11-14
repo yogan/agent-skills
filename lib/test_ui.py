@@ -114,9 +114,10 @@ class TestClosingLine(unittest.TestCase):
         self.assertIsNone(ui.at_md(None))
 
     def test_it_says_what_closed_it_then_when(self):
-        self.assertEqual(ui.closed_md("Resolved by Miriam"), f"{ui.STEP_DONE_ICON} Resolved by Miriam")
-        self.assertRegex(ui.closed_md("Resolved by Miriam", "2026-11-05T11:38:00Z"),
-                         r"^\S+ Resolved by Miriam · (\w{3} \d+, )?\d\d:\d\d$")
+        self.assertEqual(ui.closed_md("Miriam resolved it"), f"{ui.STEP_DONE_ICON} Miriam resolved it")
+        # The time leads, so the mod draws it in a column of its own; the thread's link last.
+        self.assertRegex(ui.closed_md("Miriam resolved it", "2026-11-05T11:38:00Z", "http://gl/n1"),
+                         r"^(\w{3} \d+, )?\d\d:\d\d \S+ Miriam resolved it · \[thread .\]\(http://gl/n1\)$")
 
 
 if __name__ == "__main__":

@@ -2,9 +2,9 @@ import type { On } from 'claude-code'
 import type { Engine } from 'claude-code/testing'
 import { expect, test } from 'claude-code/testing'
 
-import { boxRowsOf, inboxMark, plainTitle, reflow, rowOf, sectionsOf, urlLabel } from '../hooks/panel.ts'
+import { boxRowsOf, inboxMark, plainTitle, reflow, rowOf, sectionsOf, urlLabel, whenOf } from '../hooks/panel.ts'
 import { withEmoji } from '../hooks/views.ts'
-import { blocksOf, isPostCommand, NOTE, partsOf } from '../hooks/views.ts'
+import { blocksOf, isPostCommand, NOTE, partsOf, sizeRunsOf } from '../hooks/views.ts'
 
 test('only a command that runs post or resolve is the person\'s press; one that names it is not', () => {
   for (const ran of [
@@ -692,4 +692,21 @@ test('a topic being judged is marked in the colour of news where the heading cou
   const t = (inbox: string) => ({ id: 't3', status: 'open', state: 'answered', summary: 's', posted: true, draft: null, inbox }) as never
   expect(inboxMark(t('new'), [], ['t3'])).toMatchObject({ key: 'judging', color: 'yellow' })
   expect(inboxMark(t('yours'), [], ['t3'])).toMatchObject({ key: 'judging', isDim: true })
+})
+
+test("a comment's time today is the time alone, two digits each; another day's has its date", () => {
+  const now = new Date(2026, 10, 14, 15, 0)
+  expect(whenOf(new Date(2026, 10, 14, 9, 5).toISOString(), now)).toBe('09:05')
+  expect(whenOf(new Date(2026, 10, 5, 11, 38).toISOString(), now)).toBe('Nov 5, 11:38')
+})
+
+test("a topic's story lines are steps: their time apart, and one under another without a time", () => {
+  const runs = sizeRunsOf('13:55 \u{F012C} You posted the initial comment · [thread \u{F03CC}](u)\nNov 5, 09:02 \u00a0\u00a0\u{F0552} push 1 · [diff \u{F03CC}](d)\n\u{F051F} Waits on Robin')
+  expect(runs.map(r => ('step' in r ? [r.step.when, r.step.indent, r.step.rest] : null))).toEqual([
+    ['13:55', 0, 'You posted the initial comment · [thread \u{F03CC}](u)'],
+    ['Nov 5, 09:02', 2, 'push 1 · [diff \u{F03CC}](d)'],
+    [null, 0, 'Waits on Robin'],
+  ])
+  // A title line is not a step, though it starts with a state's icon.
+  expect(sizeRunsOf('\u{F09E1} **t1** **summary**').some(r => 'step' in r)).toBe(false)
 })

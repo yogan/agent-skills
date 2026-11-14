@@ -327,26 +327,29 @@ test('a card a press finished ends with what happened, and a link to it', async 
   await card.press({ key: 'post' })
   await card.unmount()
   const again = await $.ui.mount(cardRow('tu-open', view('t1', 'v7')))
-  expect(JSON.stringify(await again.findAll({ type: 'Text' }))).toContain('\u{F048A} Posted to')   // the button's icon, one sentence
-  expect((await again.find({ type: 'Link' }))?.props).toMatchObject({ href: 'https://gl/g/p/-/merge_requests/42#note_9', label: 'its thread \u{f03cc}' })
+  expect(JSON.stringify(await again.findAll({ type: 'Text' }))).toContain('\u{F048A} ')   // the button's icon, one sentence
+  expect(JSON.stringify(await again.findAll({ type: 'Text' }))).toContain(' posted it')
+  expect((await again.find({ type: 'Link' }))?.props).toMatchObject({ href: 'https://gl/g/p/-/merge_requests/42#note_9', label: 'thread \u{f03cc}' })
   await again.unmount()
 })
 
 test("a press that closed its topic ends its card on the script's closing line, the one the card says when drawn again", async ($, on) => {
   const answered = { ...topic('t1', 'needs_ack'), verdict: 'settled' as const }
-  const line = '\u{F012C} You accepted Robin\'s answer and resolved it · 14:02 ·'
+  const line = 'You accepted Robin\'s answer and resolved it'
   const w = world(on, [stateOf('t1', [answered]), stateOf(null, [{ ...answered, status: 'acked', state: 'done' }])],
-    { resolve: { stdout: `resolved and acked t1\nclosed: ${line} [its thread \u{F03CC}](https://gl/g/p/-/merge_requests/42#note_3)\n` } })
+    { resolve: { stdout: `resolved and acked t1\nclosed: 14:02 \u{F012C} ${line} · [thread \u{F03CC}](https://gl/g/p/-/merge_requests/42#note_3)\n` } })
   await openReview($, w, view('t1'))
   const card = await $.ui.mount(cardRow('tu-open', view('t1')))
   await card.press({ key: 'resolve' })
   await card.unmount()
   const again = await $.ui.mount(cardRow('tu-open', view('t1')))
   const texts = (await again.findAll({ type: 'Text' })).map(t => JSON.stringify(t))
-  expect(texts.some(t => t.includes(line))).toBe(true)
+  expect(texts.some(t => t.includes(line.slice(4)))).toBe(true)
+  // Its time first and dim, as the card's steps say theirs.
+  expect((await again.findAll({ type: 'Text' })).some(t => t.props.dimColor && String(t.text) === '14:02 ')).toBe(true)
   expect(texts.some(t => t.includes('Accepted the answer'))).toBe(false)
   // Its thread's link, clickable once the sidebar has moved on to another topic.
-  expect((await again.find({ type: 'Link' }))?.props).toMatchObject({ href: 'https://gl/g/p/-/merge_requests/42#note_3', label: 'its thread \u{f03cc}' })
+  expect((await again.find({ type: 'Link' }))?.props).toMatchObject({ href: 'https://gl/g/p/-/merge_requests/42#note_3', label: 'thread \u{f03cc}' })
   await again.unmount()
 })
 
@@ -1649,6 +1652,20 @@ test("a topic opened again to look at has one card: the older ones shrink to the
   expect(newer.some(t => t.includes('some view'))).toBe(true)
 })
 
+test("a card's steps draw their times dim in one column, and the person as You in their colour", async ($, on) => {
+  const head = '\u{f0182} **t1** **summary of t1** · `src/cache.ts:17`'
+  const body = `${head}\n\n13:55 \u{F012C} You posted the initial comment · [thread \u{F03CC}](http://gl/n1)\nNov 5, 09:02 \u{F012C} Robin pushed a fix\n\u{F051F} Waits on Robin`
+  const out = body + '\n\n<!-- paste-gate:critical\n' + JSON.stringify({ first: head, critical: [], topic: 't1', focus: 't1', review: REVIEW }) + '\n-->'
+  const w = world(on, [stateOf('t1', [topic('t1', 'open')])])
+  await openReview($, w, out)
+  const ui = await $.ui.mount(cardRow('tu-open', out))
+  const texts = await ui.findAll({ type: 'Text' })
+  const times = texts.filter(t => t.props.dimColor && /^(\d\d:\d\d|Nov 5, 09:02|\s+)\s*$/.test(String(t.text ?? ''))).map(t => String(t.text))
+  expect(times).toEqual(['13:55       ', 'Nov 5, 09:02', '            '])
+  expect(texts.some(t => String(t.text) === 'You' && t.props.color === 'magenta')).toBe(true)
+  await ui.unmount()
+})
+
 test("a topic still being decided keeps every card it had", async ($, on) => {
   const head = '\u{f0182} **t1** **summary of t1** · `src/cache.ts:17`'
   const out = `${head}\n\nsome view\n\n<!-- paste-gate:critical\n` + JSON.stringify({ first: head, critical: [], topic: 't1', focus: 't1', review: REVIEW }) + '\n-->'
@@ -2103,8 +2120,8 @@ test("rework-mr: a push the model finished brings up the topic's next card, and 
   await $.turn.complete({ answer: 'pushed' } as never)
   expect(w.placed.length).toBe(1)
   const old = await $.ui.mount(cardRow('tu-open', fixCard))
-  expect(JSON.stringify(await old.findAll({ type: 'Text' }))).toContain('Pushed')
-  expect((await old.find({ type: 'Link' }))?.props).toMatchObject({ href: 'http://gl/g/p/-/merge_requests/42/diffs?diff_id=7', label: 'the fix \u{f03cc}' })
+  expect(JSON.stringify(await old.findAll({ type: 'Text' }))).toContain('pushed the fix')
+  expect((await old.find({ type: 'Link' }))?.props).toMatchObject({ href: 'http://gl/g/p/-/merge_requests/42/diffs?diff_id=7', label: 'diff \u{f03cc}' })
   expect(await old.find({ type: 'Button', key: 'post-fixed' })).toBeUndefined()      // the buttons moved on
   await old.unmount()
 })
@@ -2528,7 +2545,7 @@ test("rework-mr: a draft's Copy sits beside its heading, reads Copied! a moment,
   expect((await card.findAll({ type: 'Button' })).some(b => b.key === 'copy-t1')).toBe(true)    // Copy again
   await card.unmount()
   const band = await $.ui.mount({ ...BAND, surface: 'terminal' })
-  expect((await band.find({ type: 'Link' }))?.props).toMatchObject({ href: 'https://gl/g/p/-/merge_requests/42#note_5', label: 'its thread \u{f03cc}' })
+  expect((await band.find({ type: 'Link' }))?.props).toMatchObject({ href: 'https://gl/g/p/-/merge_requests/42#note_5', label: 'thread \u{f03cc}' })
   await band.unmount()
 })
 

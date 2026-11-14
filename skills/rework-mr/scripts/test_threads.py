@@ -25,6 +25,7 @@ sys.path.insert(0, HERE)
 
 import threads as T  # noqa: E402
 from lib import critical_manifest  # noqa: E402
+from lib.fences import LINK_ICON  # noqa: E402
 os.environ["REVIEW_UI_DRAWN"] = "0"   # the views as without the review-ui mod, whatever session runs this (lib/ui.py)
 
 
@@ -1318,10 +1319,10 @@ class TestCodeContext(unittest.TestCase):
         self.assertNotIn("Changed since the comment", out)
         self.assertNotIn("+const line10 = 100", out)
         self.assertNotIn("Agreed plan", out)
-        self.assertIn(f"{T.ui.STEP_DONE_ICON} Plan agreed: Make it 100, as the reviewer asked, and say so in the docs too.", out)
-        self.assertIn(f"{T.ui.STEP_DONE_ICON} Fix pushed · {T.diffsize.text(1, 1, 1)} · [the diff {T.LINK_ICON}](http://gl/d)", out)
+        self.assertIn(f"{T.ui.STEP_DONE_ICON} You agreed the plan: Make it 100, as the reviewer asked, and say so in the docs too.", out)
+        self.assertIn(f"{T.ui.STEP_DONE_ICON} You pushed a fix · {T.diffsize.text(1, 1, 1)} · [diff {LINK_ICON}](http://gl/d)", out)
         # Not posted yet: nothing waits on the reviewer.
-        self.assertNotIn("Reply posted", out)
+        self.assertNotIn("You replied", out)
         self.assertNotIn("Waits on", out)
 
     def test_once_its_reply_is_posted_it_waits_on_the_reviewer(self):
@@ -1331,8 +1332,8 @@ class TestCodeContext(unittest.TestCase):
                 mock.patch.object(T, "step_of", return_value="none"):
             out = T.render_quote(state, "t1")
         # Pushed before the fix was kept in git: the link alone, no size.
-        self.assertIn(f"{T.ui.STEP_DONE_ICON} Fix pushed · [the diff {T.LINK_ICON}](http://gl/d)", out)
-        self.assertIn(f"{T.ui.STEP_DONE_ICON} Reply posted · [your reply {T.LINK_ICON}](http://gl/n3)", out)
+        self.assertIn(f"{T.ui.STEP_DONE_ICON} You pushed a fix · [diff {LINK_ICON}](http://gl/d)", out)
+        self.assertIn(f"{T.ui.STEP_DONE_ICON} You replied · [reply {LINK_ICON}](http://gl/n3)", out)
         self.assertIn(f"{T.ui.STEP_WAITS_ICON} Waits on Robin", out)
         state["threads"]["d1"]["resolved"] = True
         with mock.patch.dict(os.environ, {"REVIEW_UI_DRAWN": "1"}), \
@@ -2012,7 +2013,7 @@ class TestReplyAfterTheFix(unittest.TestCase):
     def test_the_fixed_line_is_drawn_as_a_short_link_and_posted_whole(self):
         self.set_reply("Took option B.\n")
         shown = T._quote_draft(self.t1["reply"])
-        self.assertIn(f"> Fixed: [the diff {T.LINK_ICON}]({self.t1['diff_url']})", shown)
+        self.assertIn(f"> Fixed: [diff {LINK_ICON}]({self.t1['diff_url']})", shown)
         self.assertIn(f"Fixed: {self.t1['diff_url']}", self.t1["reply"])
 
     def test_a_reply_that_links_the_fix_already_gets_no_second_line(self):
@@ -2577,7 +2578,7 @@ class TestFixPerPush(unittest.TestCase):
     def test_pushes_with_nothing_between_are_one_fix_and_one_link(self):
         _, t = self.topic(self.push("A", "B", 2), self.push("B", "C", 3))
         self.assertEqual(T.fixes_of(t), [{"pushes": [1, 2], "before": "A", "start": "A", "after": "C",
-                                          "url": "G/diffs?diff_id=3&start_sha=A", "mixed": False}])
+                                          "url": "G/diffs?diff_id=3&start_sha=A", "mixed": False, "at": None}])
 
     def test_a_push_between_keeps_two_fixes(self):
         _, t = self.topic(self.push("A", "B", 2), self.push("X", "C", 4))
@@ -2612,9 +2613,9 @@ class TestFixPerPush(unittest.TestCase):
         t["plan"] = "p"
         with mock.patch.object(T, "_git", return_value=""):
             out = T.pushed_steps(state, t)
-        self.assertEqual(out[1:4], [f"{T.ui.STEP_DONE_ICON} Fix pushed · 2 pushes",
-                                    f"\u00a0\u00a0{T.ui.PUSHED_ICON} push 1 · [the diff {T.LINK_ICON}](G/diffs?diff_id=2&start_sha=A)",
-                                    f"\u00a0\u00a0{T.ui.PUSHED_ICON} push 2 · [the diff {T.LINK_ICON}](G/diffs?diff_id=4&start_sha=X)"
+        self.assertEqual(out[1:4], [f"{T.ui.STEP_DONE_ICON} You pushed a fix · 2 pushes",
+                                    f"\u00a0\u00a0{T.ui.PUSHED_ICON} push 1 · [diff {LINK_ICON}](G/diffs?diff_id=2&start_sha=A)",
+                                    f"\u00a0\u00a0{T.ui.PUSHED_ICON} push 2 · [diff {LINK_ICON}](G/diffs?diff_id=4&start_sha=X)"
                                     " · may include other topics' changes"])
 
 
@@ -2714,7 +2715,7 @@ class TestStateByWord(unittest.TestCase):
         th.update(resolved=True, resolved_by="Haas, Miriam - X1", resolved_at="2026-02-01T13:02:00Z")
         with mock.patch.object(T, "pushed_steps", return_value=["PUSHED"]):
             parts = [x for x in T._step_parts(self.state, self.t1) if x]
-        self.assertRegex(parts[-1], rf"^{T.ui.STEP_DONE_ICON} Resolved by Miriam · .*\d\d:\d\d$")
+        self.assertRegex(parts[-1], rf"^((Nov|Feb) \d+, )?\d\d:\d\d {T.ui.STEP_DONE_ICON} Miriam resolved it$")
         th.update(resolved=False, resolved_by=None, resolved_at=None)
         with mock.patch.object(T, "api_post", return_value={"id": 9}):
             T.post_reply(self.state, {"enc": "g%2Fp", "web": "https://gl/g/p"}, 1, "t1", None,
@@ -2722,10 +2723,10 @@ class TestStateByWord(unittest.TestCase):
         th.update(resolved=True, resolved_by="Me", resolved_mine=True)
         with mock.patch.object(T, "pushed_steps", return_value=["PUSHED"]):
             parts = [x for x in T._step_parts(self.state, self.t1) if x]
-        self.assertRegex(parts[-1], rf"^{T.ui.STEP_DONE_ICON} Fixed and resolved by you · .*\d\d:\d\d"
+        self.assertRegex(parts[-1], rf"^((Nov|Feb) \d+, )?\d\d:\d\d {T.ui.STEP_DONE_ICON} You fixed and resolved it"
                          + (rf" · \[its thread .\]\({re.escape(th['url'])}\)" if th.get("url") else "") + "$")
         th["url"] = "https://gl/g/p/-/merge_requests/1#note_1"
-        self.assertTrue(T.closing_line(self.state, self.t1).endswith(f" · [its thread {T.LINK_ICON}]({th['url']})"))
+        self.assertTrue(T.closing_line(self.state, self.t1).endswith(f" · [thread {LINK_ICON}]({th['url']})"))
         th.update(resolved=False)
         self.assertIsNone(T.closing_line(self.state, self.t1))
 
@@ -2738,7 +2739,7 @@ class TestStateByWord(unittest.TestCase):
                             "at": "2026-02-01T13:02:00Z", "url": "https://gl/n9"})
         th["awaiting"] = "reviewer"
         parts = [x for x in T._step_parts(self.state, self.t1) if x]
-        self.assertRegex(parts[-2], rf"^{T.ui.STEP_DONE_ICON} Reply posted · .*\[your reply .*\]\(https://gl/n9\)$")
+        self.assertRegex(parts[-2], rf"^((Nov|Feb) \d+, )?\d\d:\d\d {T.ui.STEP_DONE_ICON} You replied · \[reply .\]\(https://gl/n9\)$")
         self.assertEqual(parts[-1], f"{T.ui.STEP_WAITS_ICON} Waits on Robin")
 
     def test_a_pushed_fix_redone_is_a_new_fix_round(self):

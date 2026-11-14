@@ -192,7 +192,7 @@ export type ReviewNotice = { text: string; isError: boolean; isWarning?: boolean
 // What a press did to the card it was pressed on, said as the card's last line once the
 // card is done: a few words, and where to see it on GitLab.
 // `icon`, the pressed button's; `text`, the words before the link; `after`, those after it.
-export type ReviewOutcome = { text: string; url?: string | null; label?: string | null; icon?: string | null; after?: string | null }
+export type ReviewOutcome = { text: string; url?: string | null; label?: string | null; icon?: string | null; after?: string | null; when?: string | null }
 
 // A file as the scripts' `code` command answers it, for the sidebar (lib/code_view.py).
 // `rows`: the file as the MR changes it, `[kind, old, new, text]` each; `at`, `changed`,
