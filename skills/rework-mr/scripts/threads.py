@@ -227,6 +227,7 @@ def fetch_threads(ctx, iid, me, mr_comments=None):
             continue
         resolvable = [n for n in notes if n.get("resolvable")]
         resolved = bool(resolvable) and all(n.get("resolved") for n in resolvable)
+        by = next((n for n in resolvable if n.get("resolved_by")), None) if resolved else None
         pos = first.get("position") or {}
         last = notes[-1]
         last_user = (last.get("author") or {}).get("username")
@@ -254,6 +255,11 @@ def fetch_threads(ctx, iid, me, mr_comments=None):
             "base_sha": pos.get("start_sha") or pos.get("base_sha"),
             "body": first.get("body"),
             "resolved": resolved,
+            # Who resolved it and when, for the line a topic's card ends on (`closing_line`).
+            "resolved_by": ((by or {}).get("resolved_by") or {}).get("name")
+            or ((by or {}).get("resolved_by") or {}).get("username"),
+            "resolved_mine": bool(me and by) and (by.get("resolved_by") or {}).get("username") == me,
+            "resolved_at": (by or {}).get("resolved_at"),
             "url": f"{ctx['web']}/-/merge_requests/{iid}#note_{first.get('id')}",
             "note_count": len(notes),
             "last_author": (last.get("author") or {}).get("name") or last_user,
@@ -1166,11 +1172,16 @@ def _step_parts(state, t):
         kept = t.get("kept") or {}
         if kept.get("on") and kept["on"] == t.get("plan_on"):
             out += [f"_{kept['why'].strip().rstrip('.')}: the plan holds._", ""]
+    if st == "none" and not is_pushed_fix(t):
+        out += [*replied_steps(state, t), ""]
     if st == "fixed":
         out += [render_fix(state, t["id"]).split("\n", 2)[-1], ""]
     if differs_now(t):
         # A reply posted by hand that no longer holds: its correction is the card, at any step.
         return out + [posted.card_md(t, "reply"), ""]
+    closing = closing_line(state, t)
+    if closing:
+        out += [closing, ""]              # the latest event, before a draft still to post
     if st == "reply" and t.get("reply"):
         x = state["threads"].get((t["thread_ids"] or [None])[0]) or {}
         out += [ui.heading_md(ui.DRAFT_ICON, "Draft reply"), "",
@@ -1348,12 +1359,48 @@ def pushed_steps(state, t):
         out += [f"\u00a0\u00a0{ui.PUSHED_ICON} push {k}{said(f)}" for k, f in enumerate(fixes, 1)]
     url = reply_posted(state, t)
     if url:
-        out.append(f"{done} Reply posted · [your reply {LINK_ICON}]({url})")
+        note = next((n for x in t["thread_ids"] for n in (state["threads"].get(x) or {}).get("notes") or []
+                     if n.get("url") == url), {})
+        when = ui.at_md(note.get("at"))
+        out.append(f"{done} Reply posted{f' · {when}' if when else ''} · [your reply {LINK_ICON}]({url})")
     resolved = bool(t["thread_ids"]) and all(
         (state["threads"].get(x) or {}).get("resolved") for x in t["thread_ids"])
     if url and not resolved:
         out.append(f"{ui.STEP_WAITS_ICON} Waits on {reviewer_of(state, t)}")
     return out
+
+
+def replied_steps(state, t):
+    """A topic answered with a reply alone and left to the reviewer, as a pushed fix's card
+    tells its steps (`pushed_steps`): the reply posted, then whom it waits on while its thread
+    is open. Nothing where the thread's last word is not the user's."""
+    x = state["threads"].get((t["thread_ids"] or [None])[0]) or {}
+    last = (x.get("notes") or [{}])[-1]
+    if not last.get("mine"):
+        return []
+    when = ui.at_md(last.get("at"))
+    link = f" · [your reply {LINK_ICON}]({last['url']})" if last.get("url") else ""
+    out = [f"{ui.STEP_DONE_ICON} Reply posted{f' · {when}' if when else ''}{link}"]
+    if not all((state["threads"].get(i) or {}).get("resolved") for i in t["thread_ids"]):
+        out.append(f"{ui.STEP_WAITS_ICON} Waits on {reviewer_of(state, t)}")
+    return out
+
+
+def closing_line(state, t):
+    """The line a topic's card ends on once its threads are resolved: what closed it, by
+    whom, and when (the card rule: a card's last line before its buttons is the topic's
+    latest event). The reviewer's word on it is in the sidebar's thread, not here. None while
+    a thread is open. Mirrors findings.py's `closing_line`, whose closes differ (an ack)."""
+    thr = [state["threads"].get(x) or {} for x in t["thread_ids"]]
+    if not thr or not all(x.get("resolved") for x in thr):
+        return None
+    c, x = t.get("closed") or {}, thr[0]
+    if c and (x.get("resolved_mine") or not x.get("resolved_by")):
+        how = {"fixed": "Fixed", "replied": "Replied"}.get(c.get("how"))
+        return ui.closed_md(f"{how} and resolved by you" if how else "Resolved by you",
+                            x.get("resolved_at") or c.get("at"), x.get("url"))
+    who = "you" if x.get("resolved_mine") else first_name(x.get("resolved_by")) or "the reviewer"
+    return ui.closed_md(f"Resolved by {who}", x.get("resolved_at"), x.get("url"))
 
 
 def context_digest(state, tid):
@@ -2418,6 +2465,8 @@ def post_reply(state, ctx, iid, tid, expect, fixed=False, resolve=False):
         for x in t["thread_ids"]:
             if not (state["threads"].get(x) or {}).get("resolved"):
                 api_post(f"{disc}/{x}?resolved=true", {}, method="PUT")
+        # How the user closed it, for the line its card ends on (`closing_line`).
+        t["closed"] = {"how": "fixed" if fixed else "replied", "at": datetime.datetime.now(datetime.timezone.utc).isoformat()}
     t["state"] = "waiting"
     t.pop("waiting_on", None)
     if t.get("diff_url"):
@@ -3317,6 +3366,9 @@ def main():
         resync(state, ctx, iid)
         save(path, state)
         print(f"posted {tref(args.topic)}: {url}")
+        closing = args.resolve and closing_line(state, topic_for(state, args.topic))
+        if closing:
+            print(f"closed: {closing}")
     elif cmd == "push":
         pressed = os.environ.get(PRESS_ENV) == "1"
         if ui.drawn() and not pressed:

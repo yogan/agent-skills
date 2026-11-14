@@ -105,5 +105,19 @@ class TestRecommendationMidParagraph(unittest.TestCase):
                          f"It breaks.\n\n**{RECOMMENDATION_ICON} Recommendation**\n\nMerge into t1.")
 
 
+class TestClosingLine(unittest.TestCase):
+    def test_a_time_today_alone_an_earlier_one_with_its_day(self):
+        import datetime
+        at = datetime.datetime(2026, 11, 5, 11, 38).astimezone()
+        self.assertEqual(ui.at_md(at.isoformat(), today=at.date()), "11:38")
+        self.assertEqual(ui.at_md(at.isoformat(), today=at.date() + datetime.timedelta(days=1)), "Nov 5, 11:38")
+        self.assertIsNone(ui.at_md(None))
+
+    def test_it_says_what_closed_it_then_when(self):
+        self.assertEqual(ui.closed_md("Resolved by Miriam"), f"{ui.STEP_DONE_ICON} Resolved by Miriam")
+        self.assertRegex(ui.closed_md("Resolved by Miriam", "2026-11-05T11:38:00Z"),
+                         r"^\S+ Resolved by Miriam · (\w{3} \d+, )?\d\d:\d\d$")
+
+
 if __name__ == "__main__":
     unittest.main()

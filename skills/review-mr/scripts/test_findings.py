@@ -2181,6 +2181,22 @@ class TestVerdict(unittest.TestCase):
         self.assertNotIn("Missing await here.", card)   # the thread is the sidebar's
         self.assertNotIn("Raise it", card)            # the finding's own advice is history now
 
+    def test_an_answered_card_ends_on_the_author_s_latest_answer_not_the_verdict(self):
+        """The card rule: the latest event last, never the agent's judgment of it."""
+        self.state["author"] = "Alex Novak"
+        self.state["threads"]["d1"]["notes"] = [
+            {"author": "Ann", "body": "Missing await.", "mine": True, "at": "2026-11-05T09:00:00Z"},
+            {"author": "Novak, Alex", "body": "Done.", "mine": False, "at": "2026-11-05T10:12:00Z"}]
+        self.t["verdict"] = {"says": "settled", "text": "Awaited now.", "on": F.answer_mark(self.state, self.t)}
+        with self.drawn():
+            card = F.render_quote(self.state, "t1")
+        self.assertRegex(card.splitlines()[-1], rf"^{F.ui.STATE_ICON['answered']} Alex replied · (Nov 5, )?10:12$"
+                         .replace("10:12", r"\d\d:12"))
+        self.t["pushed"] = {"from": "a", "to": "b", "at": "2026-11-05T11:30:00Z"}
+        with self.drawn(), patch.object(F, "verdict_of", return_value=self.t["verdict"]):
+            card = F.render_quote(self.state, "t1")
+        self.assertRegex(card.splitlines()[-1], rf"^{F.ui.PUSHED_ICON} Alex pushed a change to its lines · ")
+
     def test_a_verdict_without_a_recap_goes_straight_to_what_was_done(self):
         self.t["verdict"] = {"says": "settled", "text": "Done.", "did": "Pushed it.",
                              "on": F.answer_mark(self.state, self.t)}
@@ -2718,26 +2734,76 @@ class TestFollowUpReopens(unittest.TestCase):
 
 
 class TestPostedCommentCard(unittest.TestCase):
-    """Where the mod draws, a comment of the user's own already posted ends its card on that,
-    then on who resolved its thread; the advice that led to it is not given again."""
+    """Where the mod draws, a comment of the user's own already posted tells its story step
+    by step, and ends on the topic's latest event: who resolved its thread, or how it was
+    closed here. The advice that led to it is not given again."""
+
+    URL = "http://gl/g/p/-/merge_requests/2#note_1"
+
+    def card(self, thread=None, topic=None, status="open", author_username="robin.l"):
+        state = {"iid": 2, "author": "Robin", "author_username": author_username,
+                 "threads": {"d1": {"mine": True, "resolved": False, "file": "a.md", "line": 3,
+                                    "url": self.URL, **(thread or {}),
+                                    "notes": [{"body": "Nit: stale.", "mine": True, "url": self.URL,
+                                               "at": "2026-11-10T16:39:00Z"}]}},
+                 "topics": [{"id": "t2", "thread_ids": ["d1"], "summary": "stale section", "state": None,
+                             "why": "The section is stale. **Recommendation:** raise it.", **(topic or {})}]}
+        with patch.dict(os.environ, {"REVIEW_UI_DRAWN": "1"}), patch.object(F, "_thread_context", return_value=[]), \
+                patch.object(F, "verdict_of", return_value=None), patch.object(F, "kept_fix", return_value=None), \
+                patch.object(F, "topic_status", return_value=status):
+            return F._render_quote(state, "t2")
+
+    def last_line(self, out):
+        return out.strip().splitlines()[-1]
 
     def test_it_ends_on_the_posting_and_the_resolve_without_the_recommendation(self):
-        url = "http://gl/g/p/-/merge_requests/2#note_1"
-        state = {"iid": 2, "threads": {"d1": {"mine": True, "resolved": True, "resolved_by": "Jonas Keller",
-                                              "file": "a.md", "line": 3, "url": url,
-                                              "notes": [{"body": "Nit: stale.", "mine": True, "url": url,
-                                                         "at": "2026-11-10T16:39:00Z"}]}},
-                 "topics": [{"id": "t2", "thread_ids": ["d1"], "summary": "stale section", "state": None,
-                             "why": "The section is stale. **Recommendation:** raise it."}]}
-        with patch.dict(os.environ, {"REVIEW_UI_DRAWN": "1"}), patch.object(F, "_thread_context", return_value=[]), \
-                patch.object(F, "verdict_of", return_value=None), patch.object(F, "topic_status", return_value="open"):
-            out = F._render_quote(state, "t2")
+        out = self.card({"resolved": True, "resolved_by": "Jonas Keller", "resolved_username": "jonas",
+                         "resolved_at": "2026-11-10T17:02:00Z"})
         self.assertNotIn("Recommendation", out)
         self.assertIn("The section is stale.", out)
-        posted, resolved = out.index("Your comment is posted"), out.index("Resolved on GitLab by Jonas")
+        posted = out.index("Comment posted")
         self.assertLess(out.index("The section is stale."), posted)
-        self.assertLess(posted, resolved)
-        self.assertIn(f"[its thread {F.LINK_ICON}]({url})", out)
+        self.assertIn(f"[its thread {F.LINK_ICON}]({self.URL})", out)
+        # Its thread's link last: the sidebar stops showing it once another topic is current.
+        self.assertRegex(self.last_line(out), r"^\S+ Resolved by Jonas · (Nov 10, )?\d\d:\d\d"
+                         + re.escape(f" · [its thread {F.LINK_ICON}]({self.URL})") + "$")
+        self.assertNotIn("toggle", out)
+
+    def test_an_open_comment_ends_on_whom_it_waits_on(self):
+        out = self.card()
+        self.assertEqual(self.last_line(out), f"{F.ui.STEP_WAITS_ICON} Waits on Robin")
+
+    def test_the_author_resolving_says_whether_a_fix_is_pushed_and_asks_nothing(self):
+        # Authors tick threads off while they work and push later: no push, no hint to ack.
+        thread = {"resolved": True, "resolved_by": "Robin Lang", "resolved_username": "robin.l"}
+        out = self.card(thread, status="needs_ack")
+        self.assertEqual(self.last_line(out),
+                         f"{F.ui.RESOLVED_ICON} Robin resolved it on GitLab; nothing pushed for it yet.")
+        out = self.card(thread, {"pushed": {"from": "a", "to": "b"}}, status="needs_ack")
+        self.assertEqual(self.last_line(out), f"{F.ui.RESOLVED_ICON} Robin resolved it on GitLab and pushed a fix.")
+        self.assertNotIn("toggle", out)
+        self.assertNotIn("Waits on", out)
+
+    def test_resolved_by_the_user_says_so(self):
+        out = self.card({"resolved": True, "resolved_by": "Frank", "resolved_mine": True,
+                         "resolved_username": "frank"}, status="needs_ack")
+        self.assertRegex(self.last_line(out), r"^\S+ Resolved by you( · .+)?$")
+
+    def test_a_closed_topic_ends_on_how_it_was_closed(self):
+        resolved = {"resolved": True, "resolved_by": "Frank", "resolved_mine": True}
+        at = "2026-11-10T17:02:00Z"
+        for closed, thread, said in (
+                ({"how": "accepted", "at": at}, resolved, "You accepted Robin's answer and resolved it"),
+                ({"how": "fixed", "at": at}, {}, "Fixed by Robin · you acked it"),
+                ({"how": "acked", "at": at}, {"resolved": True, "resolved_by": "Robin Lang",
+                                              "resolved_username": "robin.l"}, "Resolved by Robin · you acked it"),
+                ({"how": "acked", "at": at}, {}, "You acked it")):
+            with self.subTest(said):
+                out = self.card(thread, {"state": "acked", "closed": closed}, status="acked")
+                self.assertRegex(self.last_line(out), rf"^{F.ui.STEP_DONE_ICON} {re.escape(said)} · (Nov 10, )?\d\d:\d\d · \[its thread .\]\(.+\)$")
+                self.assertNotIn("Waits on", out)
+                self.assertNotIn("toggle", out)
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

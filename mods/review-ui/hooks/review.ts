@@ -274,6 +274,16 @@ const stepButtons = (review: ReviewState | null): BandButton[] | null => {
         { key: 'keep', label: 'Keep as posted', press: { kind: 'posted-ok' } },
       ]
     case 'reack': {
+      // The author resolved it with nothing pushed for it yet: authors tick a thread off as
+      // they work and push later, so waiting comes first, the ack a press away. Nothing for
+      // the background agent to judge in that.
+      if (topic?.author_resolved === 'unpushed' && !topic.peer) {
+        return [
+          { key: 'wait', label: 'Wait for author', press: { kind: 'wait' }, isPrimary: true },
+          { key: 'ack', label: 'Ack', press: { kind: 'ack' } },
+          { key: 'follow', label: 'Follow up', press: ask(`Draft a follow-up reply for ${t}${inLang(review)}.`) },
+        ]
+      }
       // An answer with no verdict yet is the background agent's to judge: nothing to decide
       // until its judgment is on the card. One it could not judge is the chat's.
       if (review?.judge?.topics.includes(t)) {
@@ -598,6 +608,15 @@ const DID: Partial<Record<Press['kind'], string>> = {
 // opening the viewer).
 export const outcomeOf = (press: Press, stdout: string): ReviewOutcome | null => {
   const url = /https?:\/\/\S+/.exec(stdout)?.[0] ?? null
+  // A press that closed its topic: the scripts' closing line (lib/ui.py's `closed_md`), the
+  // same words the topic's card ends on whenever it is drawn again.
+  const closed = /^closed: (.+)$/m.exec(stdout)?.[1]
+  if (closed && ['resolve', 'ack', 'post'].includes(press.kind)) {
+    // Its thread's link, at its end, drawn as a link: the label without its icon, which
+    // the outcome line adds.
+    const link = /^(.*?) \[([^\]]*?)\s*\u{F03CC}?\]\((\S+)\)$/u.exec(closed)
+    return link ? { icon: null, text: link[1] ?? '', label: link[2] ?? null, url: link[3] ?? null } : { icon: null, text: closed }
+  }
   const said = (button: string, text: string, link?: { label: string; after?: string }): ReviewOutcome =>
     ({ icon: iconOf(button) ?? null, text, ...(link && url ? { url, label: link.label, after: link.after ?? null } : {}) })
   switch (press.kind) {

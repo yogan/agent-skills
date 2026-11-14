@@ -20,6 +20,7 @@ codepoints as `glyphnames.json` (v3.5.1) gives them. Look a new one up by name t
 (`python3 lib/glyphs.py <name>`, or `--search <word>`); a
 codepoint typed from memory is the wrong glyph more often than not.
 """
+import datetime
 import json
 import os
 import re
@@ -150,6 +151,32 @@ PUSHED_ICON = "\U000f0552"
 # waited on (md-timer_sand, the icon of Wait for author).
 STEP_DONE_ICON = "\U000f012c"
 STEP_WAITS_ICON = "\U000f051f"
+
+
+def at_md(value, today=None):
+    """When something happened, as a card's last line says it: the time alone today, the day
+    and the time before (`Nov 5, 11:38`, as a comment's head writes it); None where unknown."""
+    try:
+        t = datetime.datetime.fromisoformat(str(value).replace("Z", "+00:00")) if value else None
+    except ValueError:
+        t = None
+    if not t:
+        return None
+    t = t.astimezone()
+    day = today or datetime.datetime.now().astimezone().date()
+    return t.strftime("%H:%M") if t.date() == day else f"{t.strftime('%b')} {t.day}, {t.strftime('%H:%M')}"
+
+
+def closed_md(text, at=None, url=None):
+    """A topic's closing line, the last of its card before the buttons in both skills: what
+    closed it and by whom (`Resolved by Miriam`), when, and its thread's link, which the
+    sidebar stops showing once another topic is current. One markdown link at most, at the
+    end, so the review-ui mod can draw the same words as the outcome of the press that
+    closed it."""
+    from lib.fences import LINK_ICON
+    when = at_md(at)
+    return (f"{STEP_DONE_ICON} {text}" + (f" · {when}" if when else "")
+            + (f" · [its thread {LINK_ICON}]({url})" if url else ""))
 
 
 def heading_md(icon, words):

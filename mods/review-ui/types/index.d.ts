@@ -31,6 +31,9 @@ export type ReviewTopic = {
   verdict_text?: string | null
   // Every GitLab thread of the topic resolved.
   resolved?: boolean
+  // review-mr: the MR author resolved it and the person has not closed it here, with a fix
+  // of theirs pushed since the comment or none yet.
+  author_resolved?: 'pushed' | 'unpushed' | null
   // Another reviewer's thread (or the MR author's own) that waits on the user.
   peer?: boolean
   // review-mr: the agent's view of another reviewer's thread, which the user watches: for
@@ -250,6 +253,9 @@ declare module 'claude-code' {
       'placed-of': Shaped<Record<string, { topic?: string; draft?: string }>>
       // What a press did to each card it finished, by the card's id.
       outcomes: Shaped<Record<string, ReviewOutcome>>
+      // The cards of the review in the order they came up (`at`, by card id), and for each
+      // topic opened again to look at, the card that tells its story now (`retold`).
+      cards: Shaped<{ n: number; at: Record<string, number>; retold: Record<string, string> }>
       // A draft's Copy reading "Copied!", by its topic; the topics told where to paste one.
       copied: Shaped<string | null>
       'copy-told': Shaped<string[]>

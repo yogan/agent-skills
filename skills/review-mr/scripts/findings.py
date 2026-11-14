@@ -228,9 +228,9 @@ def fetch_threads(ctx, iid, me, author=None):
             continue
         resolvable = [n for n in notes if n.get("resolvable")]
         resolved = bool(resolvable) and all(n.get("resolved") for n in resolvable)
-        resolved_by = next((((n.get("resolved_by") or {}).get("name")
-                             or (n.get("resolved_by") or {}).get("username"))
-                            for n in resolvable if n.get("resolved_by")), None)
+        by = next((n for n in resolvable if n.get("resolved_by")), None) if resolved else None
+        resolved_by = ((by or {}).get("resolved_by") or {}).get("name") \
+            or ((by or {}).get("resolved_by") or {}).get("username")
         pos = first.get("position") or {}
         last = notes[-1]
         first_user = (first.get("author") or {}).get("username")
@@ -259,6 +259,10 @@ def fetch_threads(ctx, iid, me, author=None):
             "body": first.get("body"),
             "resolved": resolved,
             "resolved_by": resolved_by,
+            # Whether it was the user, and when: what a closed topic's card ends on.
+            "resolved_username": ((by or {}).get("resolved_by") or {}).get("username"),
+            "resolved_mine": bool(me and by) and (by.get("resolved_by") or {}).get("username") == me,
+            "resolved_at": (by or {}).get("resolved_at"),
             "url": f"{ctx['web']}/-/merge_requests/{iid}#note_{first.get('id')}",
             "note_count": len(notes),
             "last_author": (last.get("author") or {}).get("name") or last_user,
@@ -1246,13 +1250,18 @@ def _render_quote(state, tid, refine=False):
     v = verdict_of(state, t)
     if ui.drawn() and v and not refine and not peer_waiting(state, t):
         return render_answered(state, t, summ, v)
+    # A topic closed on a judged answer, opened again to look at: its whole story, the
+    # verdict it was closed on and what closed it.
+    v = t.get("verdict")
+    if (ui.drawn() and v and v.get("says") != "wait" and not refine and t.get("closed")
+            and topic_status(state, t) == "acked"):
+        return render_answered(state, t, summ, v)
     shown = []                            # the notes, as rendered — see `context_digest`
     # Where the mod draws, a comment of the user's own already posted ends its card on that:
     # when it went up, and, where it is, who resolved its thread. The advice that led to it
     # is followed, so it is not given again.
     first = state["threads"].get((t["thread_ids"] or [None])[0]) or {}
     is_own_posted = ui.drawn() and bool(first.get("mine"))
-    tail = []
     for i, th in enumerate(t["thread_ids"]):
         x = state["threads"].get(th, {})
         # An MR-level thread carries no diff position at all, so there is no path to
@@ -1271,16 +1280,6 @@ def _render_quote(state, tid, refine=False):
             out.append(loc_md(path))
         if x.get("url") and not ui.drawn():       # drawn: each comment links itself
             out.append(x["url"])
-        if x.get("resolved"):
-            who = first_name(x.get("resolved_by")) or "someone"
-            # Where the mod draws, a part of the card of its own, headed as the analysis is,
-            # at its end: it changes what the person's next press means.
-            if ui.drawn():
-                tail.append(f"{ui.heading_md(ui.RESOLVED_ICON, f'Resolved on GitLab by {who}')}\n\n"
-                            "That is their toggle: your ack is what closes this topic here.")
-            else:
-                out.append(f"_(GitLab thread resolved by {who} — that's their toggle; "
-                           "your ack is what closes this topic here)_")
         if not refine:
             ctx = _thread_context(state, x)
             shown += ctx
@@ -1300,22 +1299,103 @@ def _render_quote(state, tid, refine=False):
         # another reviewer's thread, judged when it came in.
         out += (["", ui.analysis_heading(), "", ui.without_recommendation(t["why"])]
                 if is_own_posted else analysis_md(t["why"]))
+    closing = closing_line(state, t)
     if is_own_posted:
+        # The topic's story step by step, as rework-mr's pushed fix tells its own: the comment
+        # posted, then whom it waits on, or what closed it (below).
         mine = next((n for n in first.get("notes") or [] if n.get("mine")), None)
-        when = when_of((mine or {}).get("at"))
+        when = ui.at_md((mine or {}).get("at"))
         link = f" · [its thread {LINK_ICON}]({mine['url']})" if (mine or {}).get("url") else ""
-        out += ["", ui.heading_md(ui.STATE_ICON["waiting"], "Your comment is posted"), "",
-                f"{when or 'On GitLab'}{link}"]
-    for part in tail:
-        out += ["", part]
+        out += ["", f"{ui.STEP_DONE_ICON} Comment posted{f' · {when}' if when else ''}{link}"]
+        if not closing and topic_status(state, t) == "open":
+            out.append(f"{ui.STEP_WAITS_ICON} Waits on {first_name(state.get('author')) or 'the author'}")
     v = verdict_of(state, t)
     if v:
         # The agent's judgment of the author's answer, stored when the answer came in: a
         # card a press brings up has no model turn beside it.
         out += ["", ui.heading_md(ui.VERDICT_ICON, f"Verdict: {verdict_word(state, t, v)}"), "",
                 v["text"].strip()]
+    if closing:
+        # The latest thing that happened to the topic, last before what is decided on it.
+        out += ["", closing if ui.drawn() else f"_({closing})_"]
     out += _draft_block(state, t, t.get("draft"), follow_up=True)
     return "\n".join(out).strip()
+
+
+def closing_line(state, t):
+    """The line a posted topic's card ends on once it is closed here or its threads are
+    resolved: what happened last, by whom, and when (the card rule: a card's last line before
+    its buttons is the topic's latest event). None while neither.
+
+    Closed here, it says how: the user's Accept + resolve (the one place "accepted" is said),
+    an ack of the author's fix, an ack of a thread somebody resolved. Resolved on GitLab and
+    not closed here, it says by whom; the MR author's resolve is no close at all, as authors
+    tick threads off while they work and push later: it says whether a fix is pushed yet."""
+    thr = [state["threads"].get(x) or {} for x in t["thread_ids"]]
+    res = thr[0] if thr and all(x.get("resolved") for x in thr) else None
+    author = first_name(state.get("author")) or "the author"
+    who = None
+    if res:
+        who = "you" if res.get("resolved_mine") else first_name(res.get("resolved_by")) or "someone"
+    c = t.get("closed") or {}
+    url = next((x.get("url") for x in thr if x.get("url")), None)
+    if topic_status(state, t) == "acked" and t.get("source") not in ("peer", "author"):
+        at = c.get("at") or t.get("acked_at")
+        if c.get("how") == "accepted":
+            return ui.closed_md(f"You accepted {author}'s answer and resolved it", at, url)
+        if c.get("how") == "fixed":
+            return ui.closed_md(f"Fixed by {author} · you acked it", at, url)
+        if who == "you":
+            return ui.closed_md("Resolved and acked by you", at, url)
+        if who:
+            return ui.closed_md(f"Resolved by {who} · you acked it", at, url)
+        return ui.closed_md("You acked it", at, url)
+    if not res:
+        return None
+    by_author = author_resolved(state, t)
+    if by_author == "pushed":
+        return f"{ui.RESOLVED_ICON} {author} resolved it on GitLab and pushed a fix."
+    if by_author:
+        return f"{ui.RESOLVED_ICON} {author} resolved it on GitLab; nothing pushed for it yet."
+    return ui.closed_md(f"Resolved by {who}", res.get("resolved_at"), url)
+
+
+def answer_line(state, t):
+    """The author's answer an answered topic's card ends on, where nothing closed it: their
+    latest reply or the push that changed its lines, whichever came last, and when. The
+    reply's words are the sidebar's thread; the verdict above is the agent's judgment of it."""
+    author = first_name(state.get("author")) or "the author"
+    said = [n for x in t["thread_ids"] for n in (state["threads"].get(x) or {}).get("notes") or []
+            if not n.get("mine")]
+    def stamp(v):
+        when = _ts(v)
+        return when.timestamp() if when else 0
+    note = max(said, key=lambda n: stamp(n.get("at")), default=None)
+    push = t.get("pushed")
+    if push and (not note or stamp(push.get("at")) >= stamp(note.get("at"))):
+        when = ui.at_md(push.get("at"))
+        return f"{ui.PUSHED_ICON} {author} pushed a change to its lines" + (f" · {when}" if when else "")
+    if note:
+        when = ui.at_md(note.get("at"))
+        return f"{ui.STATE_ICON['answered']} {first_name(note.get('author')) or author} replied" + \
+            (f" · {when}" if when else "")
+    return None
+
+
+def author_resolved(state, t):
+    """Whether the MR author resolved `t`'s threads and the user has not closed it here:
+    "pushed" where a push of theirs changed its lines since the comment, "unpushed" where
+    none has yet, else None. It decides what its card recommends: an ack once the fix is
+    there, waiting while it is not."""
+    if topic_status(state, t) == "acked" or t.get("source") in ("peer", "author"):
+        return None
+    thr = [state["threads"].get(x) or {} for x in t["thread_ids"]]
+    if not thr or not all(x.get("resolved") for x in thr):
+        return None
+    name = thr[0].get("resolved_username")
+    if not name or name != state.get("author_username") or thr[0].get("resolved_mine"):
+        return None
+    return "pushed" if t.get("pushed") or kept_fix(state, t) else "unpushed"
 
 
 def render_answered(state, t, summ, v):
@@ -1347,6 +1427,9 @@ def render_answered(state, t, summ, v):
         out += part
     out += ["", ui.heading_md(ui.VERDICT_ICON, f"Verdict: {verdict_word(state, t, v)}"), "",
             v["text"].strip()]
+    latest = closing_line(state, t) or answer_line(state, t)
+    if latest:
+        out += ["", latest]
     out += _draft_block(state, t, t.get("draft"), follow_up=True)
     t["shown"] = _digest(out)
     return "\n".join(out).strip()
@@ -2149,6 +2232,8 @@ def state_json(state):
                              == "fyi" and t.get("state") != "acked"),
             "resolved": bool(t["thread_ids"]) and all(
                 (state["threads"].get(x) or {}).get("resolved") for x in t["thread_ids"]),
+            # The author resolved it and the user has not closed it: with a fix pushed or not.
+            "author_resolved": author_resolved(state, t),
             # Its thread on GitLab, where the box's line about it links.
             "thread_url": next((u for x in t["thread_ids"] if (u := (state["threads"].get(x) or {}).get("url"))), None),
         })
@@ -3670,6 +3755,11 @@ def main():
             t["state"] = None
             t.pop("acked_at", None)
         elif args.state:
+            if args.state == "acked" and topic_status(state, t) != "acked":
+                # How it was closed, for the line its card ends on: on the author's fix where
+                # a push changed its lines since the comment, else on what stands.
+                t["closed"] = {"how": "fixed" if t.get("pushed") or kept_fix(state, t) else "acked",
+                               "at": now_iso()}
             t["state"] = args.state
             # Stamped so a later author note can be recognised as newer than the ack.
             t["acked_at"] = now_iso() if args.state == "acked" else None
@@ -3688,6 +3778,8 @@ def main():
             # A follow-up answers the thread as it stands now (`drop_stale_drafts`).
             t["draft_on"] = answer_mark(state, t)
         save(path, state)
+        if args.state == "acked" and closing_line(state, t):
+            print(f"closed: {closing_line(state, t)}")
         if args.summary is not None:
             # Answered at the moment the wrong-language summary is stored, rather than
             # two commands later when a whole table has to be re-rendered.
@@ -3873,8 +3965,10 @@ def main():
                 th["resolved"] = True
         t["state"] = "acked"
         t["acked_at"] = now_iso()
+        t["closed"] = {"how": "accepted", "at": t["acked_at"]}
         save(path, state)
         print(f"resolved and acked {tref(args.topic)}")
+        print(f"closed: {closing_line(state, t)}")
     elif cmd == "post":
         url = post_draft(state, ctx, iid, args.topic, args.expect)
         # Synced at once, so the topic reads as posted (and the current topic moves on)

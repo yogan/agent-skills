@@ -916,6 +916,19 @@ class TestSyncRefreshesThreads(unittest.TestCase):
         for k, v in live["d1"].items():
             self.assertEqual(state["threads"]["d1"][k], v, k)
 
+    def test_who_resolved_a_thread_and_when_is_kept(self):
+        orig = T.api
+        note = {"resolvable": True, "resolved": True, "id": 1, "author": {"name": "Robin"},
+                "body": "b", "resolved_by": {"name": "Haas, Miriam", "username": "mh"},
+                "resolved_at": "2026-02-01T13:02:00Z", "position": self.POSITION}
+        T.api = lambda *a, **k: [{"id": "d1", "notes": [note]}]
+        try:
+            x = T.fetch_threads({"enc": "x", "web": "http://gl"}, 575, "mh")["d1"]
+        finally:
+            T.api = orig
+        self.assertEqual((x["resolved_by"], x["resolved_mine"], x["resolved_at"]),
+                         ("Haas, Miriam", True, "2026-02-01T13:02:00Z"))
+
     def test_a_range_that_disappears_is_dropped(self):
         """The reviewer edited a multi-line comment down to one line — an update() would
         have left the old span behind."""
@@ -2692,6 +2705,41 @@ class TestStateByWord(unittest.TestCase):
         self.assertTrue(any("Agreed plan: Push back" in x for x in parts))
         self.run_cmd("set", "t1", "--reply", "-", stdin="Bewusst so, weil …\n")
         self.assertNotIn("Fixed", self.t1["reply"])
+
+    def test_a_card_ends_on_who_resolved_its_thread_and_how(self):
+        """The card rule: its last line before the buttons is the topic's latest event. The
+        reviewer's resolve names them; the user's "Fixed" + resolve says it was theirs."""
+        self.pushed()
+        th = self.state["threads"]["d1"]
+        th.update(resolved=True, resolved_by="Haas, Miriam - X1", resolved_at="2026-02-01T13:02:00Z")
+        with mock.patch.object(T, "pushed_steps", return_value=["PUSHED"]):
+            parts = [x for x in T._step_parts(self.state, self.t1) if x]
+        self.assertRegex(parts[-1], rf"^{T.ui.STEP_DONE_ICON} Resolved by Miriam · .*\d\d:\d\d$")
+        th.update(resolved=False, resolved_by=None, resolved_at=None)
+        with mock.patch.object(T, "api_post", return_value={"id": 9}):
+            T.post_reply(self.state, {"enc": "g%2Fp", "web": "https://gl/g/p"}, 1, "t1", None,
+                         fixed=True, resolve=True)
+        th.update(resolved=True, resolved_by="Me", resolved_mine=True)
+        with mock.patch.object(T, "pushed_steps", return_value=["PUSHED"]):
+            parts = [x for x in T._step_parts(self.state, self.t1) if x]
+        self.assertRegex(parts[-1], rf"^{T.ui.STEP_DONE_ICON} Fixed and resolved by you · .*\d\d:\d\d"
+                         + (rf" · \[its thread .\]\({re.escape(th['url'])}\)" if th.get("url") else "") + "$")
+        th["url"] = "https://gl/g/p/-/merge_requests/1#note_1"
+        self.assertTrue(T.closing_line(self.state, self.t1).endswith(f" · [its thread {T.LINK_ICON}]({th['url']})"))
+        th.update(resolved=False)
+        self.assertIsNone(T.closing_line(self.state, self.t1))
+
+    def test_a_reply_alone_says_it_is_posted_and_whom_it_waits_on(self):
+        self.t1.update(outcome="reply", reply="Bewusst so.\n")
+        with mock.patch.object(T, "api_post", return_value={"id": 9}):
+            T.post_reply(self.state, {"enc": "g%2Fp", "web": "https://gl/g/p"}, 1, "t1", None)
+        th = self.state["threads"]["d1"]
+        th["notes"].append({"author": "Me", "body": "Bewusst so.", "mine": True,
+                            "at": "2026-02-01T13:02:00Z", "url": "https://gl/n9"})
+        th["awaiting"] = "reviewer"
+        parts = [x for x in T._step_parts(self.state, self.t1) if x]
+        self.assertRegex(parts[-2], rf"^{T.ui.STEP_DONE_ICON} Reply posted · .*\[your reply .*\]\(https://gl/n9\)$")
+        self.assertEqual(parts[-1], f"{T.ui.STEP_WAITS_ICON} Waits on Robin")
 
     def test_a_pushed_fix_redone_is_a_new_fix_round(self):
         self.pushed()

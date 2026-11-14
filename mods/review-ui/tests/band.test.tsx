@@ -258,6 +258,22 @@ test('a settled answer on a thread resolved already is accepted alone', async ($
   await ui.unmount()
 })
 
+test("review-mr: the author resolving with nothing pushed recommends waiting, the ack a press away", async ($, on) => {
+  const w = world(on, [stateOf('t2', [{ ...topic('t2', 'needs_ack'), verdict: 'settled', resolved: true, author_resolved: 'unpushed' } as Topic])])
+  await openReview($, w, view('t2'))
+  const ui = await mountStep($, 'terminal')
+  expect(await labels(ui)).toEqual(['Wait for author', 'Ack', 'Follow up', 'Next', 'Show sidebar'])
+  await ui.unmount()
+})
+
+test("review-mr: the author resolving with a fix pushed recommends the ack, the fix a press away", async ($, on) => {
+  const w = world(on, [stateOf('t2', [{ ...topic('t2', 'needs_ack'), resolved: true, author_resolved: 'pushed', fix_kept: true } as Topic])])
+  await openReview($, w, view('t2'))
+  const ui = await mountStep($, 'terminal')
+  expect(await labels(ui)).toEqual(['Ack', 'Follow up', 'Show fix in hunk', 'Explain', 'Next', 'Show sidebar'])
+  await ui.unmount()
+})
+
 test('an answer that needs more offers the follow-up first, or accepting it anyway', async ($, on) => {
   const w = world(on, [stateOf('t2', [{ ...topic('t2', 'needs_ack'), verdict: 'more', verdict_text: 'Writes still skip the locale. Ask for writes.' }], { lang: 'de' })])
   await openReview($, w, view('t2'))
@@ -313,6 +329,24 @@ test('a card a press finished ends with what happened, and a link to it', async 
   const again = await $.ui.mount(cardRow('tu-open', view('t1', 'v7')))
   expect(JSON.stringify(await again.findAll({ type: 'Text' }))).toContain('\u{F048A} Posted to')   // the button's icon, one sentence
   expect((await again.find({ type: 'Link' }))?.props).toMatchObject({ href: 'https://gl/g/p/-/merge_requests/42#note_9', label: 'its thread \u{f03cc}' })
+  await again.unmount()
+})
+
+test("a press that closed its topic ends its card on the script's closing line, the one the card says when drawn again", async ($, on) => {
+  const answered = { ...topic('t1', 'needs_ack'), verdict: 'settled' as const }
+  const line = '\u{F012C} You accepted Robin\'s answer and resolved it · 14:02 ·'
+  const w = world(on, [stateOf('t1', [answered]), stateOf(null, [{ ...answered, status: 'acked', state: 'done' }])],
+    { resolve: { stdout: `resolved and acked t1\nclosed: ${line} [its thread \u{F03CC}](https://gl/g/p/-/merge_requests/42#note_3)\n` } })
+  await openReview($, w, view('t1'))
+  const card = await $.ui.mount(cardRow('tu-open', view('t1')))
+  await card.press({ key: 'resolve' })
+  await card.unmount()
+  const again = await $.ui.mount(cardRow('tu-open', view('t1')))
+  const texts = (await again.findAll({ type: 'Text' })).map(t => JSON.stringify(t))
+  expect(texts.some(t => t.includes(line))).toBe(true)
+  expect(texts.some(t => t.includes('Accepted the answer'))).toBe(false)
+  // Its thread's link, clickable once the sidebar has moved on to another topic.
+  expect((await again.find({ type: 'Link' }))?.props).toMatchObject({ href: 'https://gl/g/p/-/merge_requests/42#note_3', label: 'its thread \u{f03cc}' })
   await again.unmount()
 })
 
@@ -1591,6 +1625,39 @@ test('beside the sidebar, a closed topic\'s card says where it stands, and keeps
   const texts = (await ui.findAll({ type: 'Text' })).map(t => String(t.text ?? ''))
   expect(texts.some(t => /^Closed: its code and its thread are in the sidebar\.$/.test(t))).toBe(true)
   expect(JSON.stringify(await ui.findAll({ type: 'Markdown' }))).not.toContain('please rename it')
+  await ui.unmount()
+})
+
+test("a topic opened again to look at has one card: the older ones shrink to their title and say it is below", async ($, on) => {
+  const head = '\u{f0182} **t1** **summary of t1** · `src/cache.ts:17`'
+  const out = `${head}\n\nsome view\n\n<!-- paste-gate:critical\n` + JSON.stringify({ first: head, critical: [], topic: 't1', focus: 't1', review: REVIEW }) + '\n-->'
+  // Opened from the sidebar's Closed group: current, and closed.
+  const w = world(on, [stateOf('t1', [topic('t1', 'acked'), topic('t2', 'draft')])])
+  await openReview($, w, out)
+  await $.tool.call({ tool: 'Bash', command: 'python3 $SD/findings.py quote t1 --iid 42', tool_use_id: 'tu-again' } as never)
+  const texts = async (id: string) => {
+    const ui = await $.ui.mount(cardRow(id, out))
+    const all = [...(await ui.findAll({ type: 'Text' })).map(t => String(t.text ?? '')), ...(await ui.findAll({ type: 'Markdown' })).map(m => String(m.props.text))]
+    await ui.unmount()
+    return all
+  }
+  const older = await texts('tu-open')
+  expect(older).toContain('Shown again below.')
+  expect(older.some(t => t.includes('some view'))).toBe(false)
+  const newer = await texts('tu-again')
+  expect(newer).not.toContain('Shown again below.')
+  expect(newer.some(t => t.includes('some view'))).toBe(true)
+})
+
+test("a topic still being decided keeps every card it had", async ($, on) => {
+  const head = '\u{f0182} **t1** **summary of t1** · `src/cache.ts:17`'
+  const out = `${head}\n\nsome view\n\n<!-- paste-gate:critical\n` + JSON.stringify({ first: head, critical: [], topic: 't1', focus: 't1', review: REVIEW }) + '\n-->'
+  const w = world(on, [stateOf('t1', [topic('t1', 'needs_ack')])])
+  await openReview($, w, out)
+  await $.tool.call({ tool: 'Bash', command: 'python3 $SD/findings.py quote t1 --iid 42', tool_use_id: 'tu-again' } as never)
+  const ui = await $.ui.mount(cardRow('tu-open', out))
+  expect(await ui.find({ type: 'Text', text: 'Shown again below.' })).toBeUndefined()
+  expect(JSON.stringify(await ui.findAll({ type: 'Markdown' }))).toContain('some view')
   await ui.unmount()
 })
 
