@@ -5,12 +5,20 @@ Idempotent and state-deriving — safe to run twice, and it derives what exists 
 than assuming a clean slate. Target: well under a minute, fully offline.
 
     python3 fixture.py                 # everything
+    python3 fixture.py --mr 3          # MR !3 alone, made again under its number (repeatable)
     python3 fixture.py --only mr1      # one stage (during development)
     python3 fixture.py --keep-project  # skip the delete/recreate (faster iteration)
 
 Why it deletes and recreates the *project* rather than just the branches: that is what
 restarts MR IIDs at 1, so !1/!2/!3 always match the run-of-show and the speaker notes
 never rot.
+
+`--mr N` is the reset between two test runs, for what one run can have changed: it deletes that
+one merge request and makes it again, with its threads, its checkout and the skills' state for
+it, and leaves the rest of the rig alone. GitLab would number the new one !5, so the project's
+counter is set back in GitLab's database for the one creation (`next_mr_number`). It only
+does this on a rig that is otherwise as a full reset left it (`intact`): where the project,
+`main` or another merge request is not, it says why and runs everything instead.
 
 Upstream code comes from a bare mirror in .cache/ (created on first run), so a reset
 never needs the network.
@@ -249,8 +257,8 @@ def reset_project():
         renamed = api(f"projects/{pid}")["path_with_namespace"]
         api(f"projects/{pid}", "DELETE",
             raw_query=f"?permanently_remove=true&full_path={renamed}")
-        for _ in range(60):
-            time.sleep(2)
+        for _ in range(240):
+            time.sleep(0.5)
             try:
                 api(f"projects/{pid}")
             except ApiError as e:
@@ -528,7 +536,7 @@ def create_mr(user, branch, title, description, reviewers=("frank",),
     # push_branch already waits on) is not the same read path as MR validation. So the
     # wait is necessary but not sufficient — this call has to retry too.
     mr = None
-    for attempt in range(1, 16):
+    for attempt in range(1, 61):
         try:
             mr = api(f"projects/{project_path_enc()}/merge_requests", "POST", {
                 "source_branch": branch, "target_branch": target,
@@ -539,9 +547,9 @@ def create_mr(user, branch, title, description, reviewers=("frank",),
         except ApiError as e:
             if e.code != 400 or "source_branch" not in str(e):
                 raise
-            if attempt == 15:
+            if attempt == 60:
                 die(f"GitLab never saw branch {branch} for MR creation: {e}")
-            time.sleep(2)
+            time.sleep(0.5)
     info(f"created after {attempt} attempt(s)" if attempt > 1 else "created")
     if reviewers:
         ids = [api(f"users?username={r}")[0]["id"] for r in reviewers]
@@ -614,15 +622,15 @@ def reply(iid, discussion_id, user, body):
         f"{discussion_id}/notes", "POST", {"body": body}, user=user)
 
 
-def wait_for_diff(iid, tries=30):
+def wait_for_diff(iid, tries=120):
     """MR diffs are generated asynchronously. Anchoring a discussion to a diff line
     before the first version exists fails, so wait for it."""
     for _ in range(tries):
         vs = api(f"projects/{project_path_enc()}/merge_requests/{iid}/versions")
         if vs:
             return vs[0]
-        time.sleep(2)
-    die(f"MR !{iid} has no diff version after {tries * 2} s")
+        time.sleep(0.5)
+    die(f"MR !{iid} has no diff version after {tries // 2} s")
 
 
 # ---------------------------------------------------------------- MR !2
@@ -947,10 +955,26 @@ def clone_mr4():
 # ---------------------------------------------------------------- local clone
 
 
-def reclone_workdir():
+def review_worktrees():
+    """Each review worktree that is there -> (its MR's branch, the commit it is on)."""
+    out = {}
+    for iid, branch in ((1, MR1_BRANCH), (2, MR2_BRANCH)):
+        path = f"{WORKDIR}-review-mr{iid}"
+        r = git("rev-parse", "HEAD", cwd=path, check=False) if os.path.isdir(path) else None
+        if r and r.returncode == 0:
+            out[path] = (branch, r.stdout.strip())
+    return out
+
+
+def reclone_workdir(keep_worktrees=False):
     """A stale local branch or a leftover review worktree is exactly the kind of thing
-    that bites during a live demo, so the working copy is rebuilt from scratch too."""
+    that bites during a live demo, so the working copy is rebuilt from scratch too.
+
+    `keep_worktrees`: the review worktrees are worktrees OF this clone, so removing it leaves
+    them without a repository. Where only this clone is rebuilt, each is added again on the
+    commit it was on (its branch's tip where that commit is gone)."""
     step(f"re-cloning the working copy at {WORKDIR}")
+    kept = review_worktrees() if keep_worktrees else {}
     if os.path.isdir(WORKDIR):
         shutil.rmtree(WORKDIR)
     host = E["E2E_GITLAB_HOST"]
@@ -966,6 +990,12 @@ def reclone_workdir():
     git("branch", f"--set-upstream-to=origin/{MR3_BRANCH}", MR3_BRANCH, cwd=WORKDIR,
         check=False)
     info(f"cloned, on {MR3_BRANCH}")
+    for path, (branch, sha) in kept.items():
+        shutil.rmtree(path, ignore_errors=True)
+        there = git("cat-file", "-e", f"{sha}^{{commit}}", cwd=WORKDIR, check=False).returncode == 0
+        git("worktree", "add", "--quiet", "--force", "--detach", path,
+            sha if there else f"origin/{branch}", cwd=WORKDIR)
+        info(f"review worktree back at {path}")
     record_checks()
 
 
@@ -1026,20 +1056,132 @@ def register_mr1_inputs(iid=1):
         info(f"{what} → {artifact}")
 
 
-def wipe_skill_state():
+def wipe_skill_state(iid=None):
     """Skill state lives outside both git and GitLab, so a project delete and a
     re-clone leave it behind. A stale findings.json would make the live run resume
-    mid-review, and the stored worktree pointer would dangle at a deleted path."""
-    step("wiping local skill state")
+    mid-review, and the stored worktree pointer would dangle at a deleted path.
+
+    `iid`: that merge request's state alone; what the skills keep for the whole project
+    (the draft language) stays."""
+    step("wiping local skill state" + (f" of MR !{iid}" if iid else ""))
     slug = E["E2E_PROJECT"].replace("/", "-").replace(".", "-")
     for root in ("review-mr", "rework-mr"):
         base = os.path.expanduser(f"~/.claude/{root}")
         if not os.path.isdir(base):
             continue
         for name in sorted(os.listdir(base)):
-            if name == slug or name.startswith(f"{slug}--mr"):
+            mine = name == f"{slug}--mr{iid}" if iid else \
+                name == slug or name.startswith(f"{slug}--mr")
+            if mine:
                 shutil.rmtree(os.path.join(base, name))
                 info(f"removed ~/.claude/{root}/{name}")
+
+
+# ---------------------------------------------------------------- one MR alone
+
+MR_COUNT = 4
+
+
+class NotIntact(Exception):
+    """The rig is not as a full reset left it, beyond the one merge request asked for."""
+
+
+def psql(sql):
+    """One statement in the rig's own database."""
+    r = rig.docker("exec", rig.CONTAINER, "gitlab-psql", "-At", "-c", sql)
+    if r.returncode:
+        die(f"gitlab-psql failed: {(r.stderr or r.stdout).strip()}")
+    return r.stdout.strip()
+
+
+def next_mr_number(pid, n):
+    """The project's next merge request is !n.
+
+    GitLab numbers them from a counter of its own that only goes up, and has no API for it,
+    so it is set in its database: the row GitLab itself increments on every creation
+    (`internal_ids`, usage 1 = merge requests). `create_mr` checks the number it got."""
+    done = psql(f"update internal_ids set last_value = {int(n) - 1} "
+                f"where project_id = {int(pid)} and usage = 1 returning last_value")
+    if done.split("\n")[0] != str(int(n) - 1):       # the value, then psql's "UPDATE 1"
+        die(f"could not set the project's merge request counter (got {done!r})")
+
+
+def intact():
+    """The project's id, on a rig whose project, `main` and merge requests are all there as
+    a full reset makes them; NotIntact with the reason otherwise. What a run can change inside
+    one merge request is not looked at: that is what gets made again."""
+    try:
+        p = api(f"projects/{project_path_enc()}")
+    except ApiError as e:
+        raise NotIntact(f"no project ({e})") from None
+    enc = project_path_enc()
+    mrs = api(f"projects/{enc}/merge_requests?state=all&per_page=100")
+    if sorted(m["iid"] for m in mrs) != list(range(1, MR_COUNT + 1)):
+        raise NotIntact(f"its merge requests are {sorted(m['iid'] for m in mrs)}")
+    want = {"main": git("rev-parse", build_main(), cwd=BUILD).stdout.strip(),
+            MR1_TARGET: git("rev-parse", MR1_PR_BASE, cwd=BUILD).stdout.strip()}
+    for branch, sha in want.items():
+        try:
+            has = api(f"projects/{enc}/repository/branches/{urllib.parse.quote(branch, safe='')}")
+        except ApiError as e:
+            raise NotIntact(f"no branch {branch} ({e})") from None
+        if has["commit"]["id"] != sha:
+            raise NotIntact(f"{branch} has moved to {has['commit']['id'][:12]}")
+    if not os.path.isdir(WORKDIR) or git("rev-parse", "--git-dir", cwd=WORKDIR,
+                                         check=False).returncode != 0:
+        raise NotIntact(f"no checkout at {WORKDIR}")
+    return p["id"]
+
+
+def remake_mr1():
+    wipe_skill_state(1)
+    mr = build_mr1()
+    wait_for_diff(mr["iid"])
+    register_mr1_inputs()
+    # What a full reset sets for the whole project, through MR !2's worktree.
+    findings(f"{WORKDIR}-review-mr1", "lang", "--set", "en")
+
+
+def remake_mr2():
+    wipe_skill_state(2)
+    mr = build_mr2()
+    wait_for_diff(mr["iid"])
+    seed_mr2(mr["iid"])
+
+
+def remake_mr3():
+    wipe_skill_state(3)
+    mr = build_mr3()
+    wait_for_diff(mr["iid"])
+    seed_mr3_threads(mr["iid"])
+    reclone_workdir(keep_worktrees=True)
+
+
+def remake_mr4():
+    wipe_skill_state(4)
+    mr = build_mr4()
+    wait_for_diff(mr["iid"])
+    seed_mr4(mr["iid"])
+    clone_mr4()
+
+
+REMAKE = {1: remake_mr1, 2: remake_mr2, 3: remake_mr3, 4: remake_mr4}
+
+
+def remake(iids):
+    """Each of these merge requests deleted and made again under its number, the rest of
+    the rig untouched. NotIntact, before anything is changed, where that would not give the
+    state a full reset gives."""
+    fresh_build()
+    pid = intact()
+    for n in sorted(set(iids)):
+        step(f"MR !{n} alone: deleted, and made again under its number")
+        api(f"projects/{pid}/merge_requests/{n}", "DELETE")
+        next_mr_number(pid, n)
+        try:
+            REMAKE[n]()
+        finally:
+            next_mr_number(pid, MR_COUNT + 1)
 
 
 # ---------------------------------------------------------------- driver
@@ -1056,7 +1198,12 @@ def main():
                     help="run only these stages (repeatable)")
     ap.add_argument("--keep-project", action="store_true",
                     help="do not delete/recreate the project (faster iteration)")
+    ap.add_argument("--mr", type=int, choices=sorted(REMAKE), action="append",
+                    help="make only this merge request again (repeatable); everything, "
+                         "where the rest of the rig is not as a full reset left it")
     args = ap.parse_args()
+    if args.mr and (args.only or args.keep_project):
+        ap.error("--mr goes with neither --only nor --keep-project")
     E = env()
     want = set(args.only or STAGES)
 
@@ -1064,6 +1211,14 @@ def main():
     if not rig.up(log=info):
         die("the rig's GitLab is not up (python3 e2e/rig.py up)")
     started = time.time()
+    if args.mr:
+        try:
+            remake(args.mr)
+            step(f"MR {', '.join(f'!{n}' for n in sorted(set(args.mr)))} ready in "
+                 f"{time.time() - started:.0f} s")
+            return
+        except NotIntact as why:
+            step(f"not one merge request alone, everything: {why}")
     silence_mail()
     if "project" in want and not args.keep_project:
         reset_project()

@@ -75,7 +75,8 @@ Display names use the enterprise `Last, First - ID` shape on purpose — `lib/mr
 ## Reset before every run
 
 ```sh
-python3 fixture.py          # ~22 s, idempotent, offline
+python3 fixture.py          # ~28 s, idempotent, offline
+python3 fixture.py --mr 3   # MR !3 alone, ~6 s (MR !2: ~11 s)
 ```
 
 Deletes and recreates the *project* (that is what restarts MR IIDs at 1), re-pushes branches,
@@ -108,6 +109,20 @@ import happens live, and only the inputs are prepared.
 To re-cut the seed (five findings, one per file, spanning all four severities) or replace the
 explainer, edit `artifacts/` and re-run the stage above. Both are plain files —
 `seed-mr1.json` is exactly what `findings.py import` eats.
+
+### One merge request alone
+
+`--mr N` is the reset between two test runs. A scenario works on one merge request, so
+that one is all it can have changed: `--mr N` deletes it and makes it again with its threads,
+its checkout and the skills' state for it, and leaves the other three as they are. GitLab
+would number the new one !5, so the project's merge request counter is set back in GitLab's
+own database for that one creation (`gitlab-psql` in the container; `next_mr_number`), and
+the number GitLab then gives is checked.
+
+It does this only on a rig that is otherwise whole: the project, `main` and
+`release/2024-06` where a full reset leaves them, all four merge requests there, the working
+copy a checkout. Anything else (a merged MR !3 has moved `main`; a rig never reset) and it
+says why and runs everything. `drive.py verify` asks for it before every rig scenario.
 
 On talk day use `./tmux-demo.sh` instead — it runs this only if the state does not verify.
 
@@ -171,7 +186,8 @@ hand as long as the tool calls stay.
 **verify** runs at a fixed 160×50 and leaves your
 own settings out, so your Stop hooks, skills, CLAUDE.md and permission rules play no part: the
 repo's skills come back in as a plugin, and the scenario carries its own allow list. A
-scenario marked `rig` resets the fixture first (~30 s), because the run before it wrote skill
+scenario marked `rig` first makes its merge request again (`fixture.py --mr N`, ~6 s; the
+whole fixture, ~28 s, where the rig is not whole), because the run before it wrote skill
 state and posted to the merge request; `--no-reset` skips that. After every step the screen is
 saved as text and with colours under `.runs/<time>-<scenario>/`, and a failed run adds what
 the session ran (`transcript.txt`, from `transcript.py`) and, on the recording, what each

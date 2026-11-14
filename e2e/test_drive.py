@@ -220,5 +220,24 @@ class OutputTest(unittest.TestCase):
         self.assertIn(b"smoke", written)
 
 
+class ResetTest(unittest.TestCase):
+    def test_every_rig_scenario_names_the_merge_request_it_works_on(self):
+        # One that named none would get the whole reset: slower, and nothing says so.
+        import scenarios
+        got = {sc.name: sc.mr() for sc in scenarios.SCENARIOS if sc.needs_rig}
+        self.assertEqual({n for n, mr in got.items() if mr is None}, set())
+        self.assertEqual((got["review-1"], got["rereview-2"], got["rework-fix"], got["try-scrolling"]),
+                         (1, 2, 3, 4))
+        self.assertIsNone(next(sc for sc in scenarios.SCENARIOS if sc.name == "smoke").mr())
+
+    def test_the_reset_makes_only_the_scenarios_merge_request_again(self):
+        ran = mock.Mock(return_value=mock.Mock(returncode=0, stdout="", stderr=""))
+        with mock.patch.object(drive.subprocess, "run", ran), \
+                mock.patch.object(drive.Path, "write_text"):
+            drive.reset_rig(drive.Path("/nowhere"), 3)
+            drive.reset_rig(drive.Path("/nowhere"))
+        self.assertEqual([c.args[0][2:] for c in ran.call_args_list], [["--mr", "3"], []])
+
+
 if __name__ == "__main__":
     unittest.main()

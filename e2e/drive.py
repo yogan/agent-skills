@@ -208,6 +208,18 @@ class Scenario:
     # news with the model, and a recording made without that has no answer for it.
     fast_check: bool = False
 
+    def mr(self):
+        """The number of the merge request its steps work on, from the command they type
+        (`/rework-mr !3`); None where they type none. A rig scenario changes that merge
+        request, its checkout and the skills' state for it, and nothing else on the rig:
+        that is all the reset before the next one puts back (`reset_rig`)."""
+        for step in self.steps:
+            m = re.match(r"/[\w-]+ !(\d+)\b", getattr(step, "text", "")) \
+                if isinstance(step, (Prompt, Type)) else None
+            if m:
+                return int(m.group(1))
+        return None
+
 
 class StepFailed(Exception):
     pass
@@ -652,12 +664,16 @@ def demo_is_open():
                           capture_output=True).returncode == 0
 
 
-def reset_rig(out):
-    """Put the local GitLab and the demo checkouts back in their known state (~30 s).
+def reset_rig(out, mr=None):
+    """Put the local GitLab and the demo checkouts back in their known state.
 
     Every rig scenario starts from here: a review run writes the skill's state and posts to
-    the merge request, so the next run would otherwise start somewhere else."""
-    r = subprocess.run([sys.executable, str(E2E / "fixture.py")], capture_output=True, text=True)
+    the merge request, so the next run would otherwise start somewhere else. `mr`: the one
+    merge request the scenario works on, which is then all that is made again (~6 s, against
+    ~30 s for everything): what the scenarios before it did to theirs does not reach it.
+    `fixture.py` still makes everything where the rig is not whole."""
+    only = ["--mr", str(mr)] if mr else []
+    r = subprocess.run([sys.executable, str(E2E / "fixture.py"), *only], capture_output=True, text=True)
     (out / "reset.log").write_text(r.stdout + r.stderr)
     if r.returncode:
         raise StepFailed(f"fixture.py failed, see {out / 'reset.log'}")
@@ -685,7 +701,7 @@ def verify(sc, model, out_root, keep, reset, record=False):
     if sc.needs_rig and reset:
         t = time.time()
         try:
-            reset_rig(out)
+            reset_rig(out, sc.mr())
         except StepFailed as err:
             print(f"── {sc.name}\n   FAIL reset: {err}")
             return False
