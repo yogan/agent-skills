@@ -259,8 +259,10 @@ def first_prompt(messages):
 
 def same(recorded, asked):
     """Whether the recorded prompt is in what is asked now, ids aside: a press makes a token
-    of its own each time, and a run its own commits and threads."""
-    return ID.sub("#", recorded) in ID.sub("#", asked)
+    of its own each time, and a run its own commits and threads. Every hex token counts as
+    one, as a short hash can come out all digits; a prompt that differs only in a number of
+    seven digits or more passes for the same, which none of the skills' prompts has."""
+    return HEX.sub("#", recorded) in HEX.sub("#", asked)
 
 
 def prompts_before(messages):
@@ -352,6 +354,11 @@ class Mock:
         hexes = stream.get("hexes")
         for reply, asked in zip(stream["replies"], prompts_before(messages)):
             then, now = reply.get("prompt_ids"), ID.findall(asked)
+            if then and len(now) < len(then):
+                # A short hash this run made can come out all digits, which ID does not take
+                # (a press's hand-off names the commits beside its token): every hex token
+                # here may line up instead, as for a call's output below.
+                now = HEX.findall(asked)
             if then and len(then) == len(now):
                 renamed.update((a, z) for a, z in zip(then, now) if a != z)
         for m in messages:

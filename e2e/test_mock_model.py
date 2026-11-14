@@ -204,6 +204,18 @@ class RunMadeIds(unittest.TestCase):
         got = mock.answer(request(u("go"), a(text("ready")), u("Ack and push t1 with --token 9ab31e07")))
         self.assertEqual(got[0]["input"]["command"], "python3 threads.py push t1 --token 9ab31e07")
 
+    def test_a_press_s_token_is_followed_beside_a_hash_that_came_out_all_digits(self):
+        """A replay pushed with the recording's token: the hand-off also named a commit whose
+        short hash this run came out all digits, so the ids did not line up."""
+        lines = [user("go"), said("m1", text("ready")),
+                 user("fixup=b21b636 and fixup=1c2d3e4, then push t1 --token c0f21fa7"),
+                 said("m2", call("tu1", "python3 threads.py push t1 --token c0f21fa7"))]
+        mock = M.Mock({"streams": [{"name": "main", "first": "go", "replies": M.conversation(lines),
+                                    "ids": M.seen_ids(lines)}]})
+        got = mock.answer(request(u("go"), a(text("ready")),
+                                  u("fixup=b21b636 and fixup=0325159, then push t1 --token 19bd333a")))
+        self.assertEqual(got[0]["input"]["command"], "python3 threads.py push t1 --token 19bd333a")
+
     def test_a_hash_that_came_out_all_digits_is_still_followed(self):
         lines = [user("go"), said("m1", call("tu1", "git log")),
                  {"type": "user", "message": {"role": "user", "content": [
