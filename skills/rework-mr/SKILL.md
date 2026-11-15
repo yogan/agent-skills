@@ -261,6 +261,15 @@ lands in the sidebar's inbox, and a background agent of the mod's prepares a pla
   on GitLab is the user's press there, never yours.
 - **"Change the plan for <t>: <what>"** is the user's word on an agreed plan: rework it
   with them and store the new one (`set <t> --decision "…" --plan "…" --outcome <outcome>`).
+- **A draft belongs to the plan it was written under.** Store the plan first, or the plan
+  and its reply in one call: a reply stored before its plan is not that plan's draft. A
+  reviewer's new comment, a new plan, a plan of another kind and a posted reply each put the
+  stored draft out of use, and the command that did it says so. Where the old words still
+  hold exactly under the new plan (the user changed a reply-only plan to "add the line, then
+  post that the rest comes later"), `set <t> --keep-reply` takes the draft up again: it stays
+  on the card while the fix is made and goes up after it. A draft that is simply wrong now
+  goes with `set <t> --drop-reply`. Never tell the user to edit a draft before posting it:
+  the card posts what it shows.
 - **A topic moved by word.** Whatever the user and you agree on in the chat is carried out
   with the commands, never left to the card: `set <t> --outcome <kind>` changes only the
   plan's kind, `set <t> --state waiting|open` whose turn it is, `wait <t>` that it waits on
@@ -303,9 +312,13 @@ lands in the sidebar's inbox, and a background agent of the mod's prepares a pla
   viewer are answered, show the fix again and leave the push to its card.
 - **After the push** the card offers a short `Fixed: <link>` or a longer reply. Asked for the
   longer one, draft what the reviewer needs to know (how the fix differs from what they
-  asked, the answer to their question); `set --reply` ends it on the `Fixed:` line (a link per
-  fix the thread has not seen linked yet),
-  and it never resolves the thread: the reviewer reads it and resolves.
+  asked, the answer to their question). Never write the `Fixed:` line yourself: the card and
+  the post end the reply on it (a link per fix the thread has not seen linked yet) where the
+  plan that stands is a fix and it is pushed, and on nothing where the reply pushes back or
+  asks. It never resolves the thread: the reviewer reads it and resolves.
+  Where a reply ahead of the fix went up, the reviewer has read what the fix does: the reply
+  after it says only what is new since. With nothing new, draft nothing: tell the user in a
+  line that the earlier reply said it and that "Fixed" on the card is the whole answer.
 - **Posting is the user's**: they post from the card. `threads.py post` refuses anything else.
 
 ## Next topics
@@ -547,7 +560,7 @@ Per topic:
   gets nothing), and `clip.sh` runs `guard-reply.sh` — so an un-reworded draft cannot be
   copied or posted.
 - GitLab markdown, code in fences, identifiers in `backticks`, **no headings**, bullets only if they help. Short but concrete.
-- Fixes: `Fixed: <diff-url>` alone; explain only when needed (didn't follow exactly / did more / was complex), and then the explanation comes first and the `Fixed:` line last (`set --reply` adds it).
+- Fixes: `Fixed: <diff-url>` alone; explain only when needed (didn't follow exactly / did more / was complex), and then the explanation comes first and the `Fixed:` line last (the card and the post add it; never write it).
 - reply-only / push-back: explain the reasoning. question: answer with a snippet or concrete example.
 
 ## Prerequisites

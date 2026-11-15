@@ -2153,17 +2153,41 @@ class TestReplyAfterTheFix(unittest.TestCase):
 
     def test_it_ends_on_the_fixed_line(self):
         self.set_reply("Took option B, since it keeps the cache warm.\n")
-        self.assertTrue(self.t1["reply"].endswith(f"Fixed: {self.t1['diff_url']}\n"))
+        self.assertTrue(T.draft_of(self.state, self.t1).endswith(f"Fixed: {self.t1['diff_url']}\n"))
 
     def test_the_fixed_line_is_drawn_as_a_short_link_and_posted_whole(self):
         self.set_reply("Took option B.\n")
-        shown = T._quote_draft(self.t1["reply"])
+        shown = "\n".join(T._step_parts(self.state, self.t1))
         self.assertIn(f"> Fixed: [diff {LINK_ICON}]({self.t1['diff_url']})", shown)
-        self.assertIn(f"Fixed: {self.t1['diff_url']}", self.t1["reply"])
+        T.post_reply(self.state, {"enc": "g%2Fp", "web": "https://gl/g/p"}, 1, "t1", None)
+        self.assertEqual(self.post.call_args[0][1]["body"],
+                         f"Took option B.\n\nFixed: {self.t1['diff_url']}\n")
 
     def test_a_reply_that_links_the_fix_already_gets_no_second_line(self):
         self.set_reply(f"Done in {self.t1['diff_url']}\n")
-        self.assertEqual(self.t1["reply"].count(self.t1["diff_url"]), 1)
+        self.assertEqual(T.draft_of(self.state, self.t1).count(self.t1["diff_url"]), 1)
+
+    def test_the_fixed_line_follows_the_plan_as_it_is_now_not_as_it_was_when_stored(self):
+        """A push-back drafted while the topic's plan was still the earlier round's fix
+        ended on `Fixed: <link>`, a claim of a fix that did not exist, and the card had no
+        way to take the line out before posting."""
+        self.set_reply("Bewusst so.\n")
+        self.assertIn("Fixed:", T.draft_of(self.state, self.t1))
+        self.t1["outcome"] = "push-back"
+        self.t1["reply_for"] = T.draft_round(self.state, self.t1)      # kept as it is
+        self.assertEqual(T.draft_of(self.state, self.t1), "Bewusst so.\n")
+
+    def test_no_fixed_line_once_a_reviewer_wrote_after_the_push(self):
+        self.state["threads"]["d1"]["notes"].append(
+            {"author": "Robin", "body": "Not what I meant.", "at": "2026-03-01T00:00:00Z", "mine": False})
+        self.assertFalse(T.fixed_due(self.state, self.t1))
+
+    def test_the_version_a_press_names_is_of_the_text_it_posts(self):
+        self.set_reply("Took option B.\n")
+        version = T.state_json(self.state)["topics"][0]["draft"]
+        self.assertEqual(version, T.reply_version(T.draft_of(self.state, self.t1)))
+        T.post_reply(self.state, {"enc": "g%2Fp", "web": "https://gl/g/p"}, 1, "t1", version)
+        self.post.assert_called_once()
 
     def test_it_cannot_be_posted_with_resolve(self):
         self.t1["reply"] = "Took option B.\n"
@@ -2174,6 +2198,160 @@ class TestReplyAfterTheFix(unittest.TestCase):
     def test_fixed_alone_still_resolves(self):
         T.post_reply(self.state, {"enc": "g%2Fp", "web": "https://gl/g/p"}, 1, "t1", None, fixed=True, resolve=True)
         self.assertEqual(self.post.call_count, 2)                     # the note, the resolve
+
+
+class TestADraftBelongsToItsRound(unittest.TestCase):
+    """A reply draft counts only in the round it was written for. Each of these once left a
+    draft stored that came up again later, with Post under it: the question already posted
+    offered as the reply after the fix, a dropped round's "I'd rather not" under the fix that
+    was pushed after all."""
+
+    CTX = {"enc": "g%2Fp", "web": "https://gl/g/p"}
+
+    def setUp(self):
+        mock.patch.dict(os.environ, {"REVIEW_UI_DRAWN": "1", T.PRESS_ENV: "1"}).start()
+        self.addCleanup(mock.patch.stopall)
+        T._WORKING.clear()
+        self.addCleanup(T._WORKING.clear)
+        self.state = TestRounds.state(1)
+        T.start_round(self.state)
+        self.t1 = T.topic_for(self.state, "t1")
+        self.post = mock.patch.object(T, "api_post", return_value={"id": 9}).start()
+        mock.patch.object(T, "working_diff", return_value="").start()
+
+    def run_cmd(self, *argv, stdin=""):
+        with mock.patch.object(sys, "argv", ["threads.py", *argv, "--iid", "1"]), \
+                mock.patch.object(T, "resolve_state", return_value=(self.CTX, 1, "/s", self.state)), \
+                mock.patch.object(T, "save"), mock.patch.object(T, "hold"), \
+                mock.patch("sys.stdin", io.StringIO(stdin)), \
+                mock.patch("sys.stdout", new_callable=io.StringIO) as out:
+            T.main()
+        return out.getvalue()
+
+    def plan(self, outcome, *more, stdin=""):
+        return self.run_cmd("set", "t1", "--decision", "d", "--plan", f"a {outcome}", "--outcome", outcome,
+                            *more, stdin=stdin)
+
+    def draft(self):
+        return T.state_json(self.state)["topics"][0]["draft"]
+
+    def reviewer_writes(self, body="Und jetzt?", at="2026-03-01T00:00:00Z"):
+        th = self.state["threads"]["d1"]
+        th["notes"].append({"author": "Robin", "body": body, "at": at, "mine": False})
+        th["awaiting"] = "you"
+        self.t1.pop("state", None)
+
+    def test_a_posted_draft_is_spent(self):
+        self.plan("question", "--reply", "-", stdin="A oder B?\n")
+        self.assertTrue(self.draft())
+        T.post_reply(self.state, self.CTX, 1, "t1", None)
+        self.assertNotIn("reply", self.t1)
+        self.reviewer_writes("B.")
+        self.plan("fix")
+        self.t1["diff_url"] = "https://gl/g/p/-/merge_requests/1/diffs?diff_id=2"
+        self.assertEqual(T.step_of(self.state, self.t1), "reply")
+        self.assertIsNone(self.draft())
+        self.assertNotIn("Draft reply", "\n".join(T._step_parts(self.state, self.t1)))
+
+    def test_a_draft_passed_over_for_the_short_fixed_is_spent_too(self):
+        self.plan("fix")
+        self.t1["diff_url"] = "https://gl/g/p/-/merge_requests/1/diffs?diff_id=2"
+        self.run_cmd("set", "t1", "--reply", "-", stdin="Took B.\n")
+        T.post_reply(self.state, self.CTX, 1, "t1", None, fixed=True)
+        self.assertNotIn("reply", self.t1)
+
+    def test_a_reviewer_s_new_comment_ends_it(self):
+        self.plan("push-back", "--reply", "-", stdin="Bewusst so.\n")
+        self.reviewer_writes()
+        self.assertIsNone(self.draft())
+        self.assertIsNone(T.draft_of(self.state, self.t1))
+
+    def test_a_new_plan_ends_it_and_says_how_to_keep_it(self):
+        """The dropped round's question, then "do it after all": posted after the push, it
+        would have contradicted the fix."""
+        self.plan("question", "--reply", "-", stdin="Lieber nicht. Welche Richtung?\n")
+        out = self.plan("fix")
+        self.assertIsNone(self.draft())
+        self.assertIn("set t1 --keep-reply", out)
+        self.t1["diff_url"] = "https://gl/g/p/-/merge_requests/1/diffs?diff_id=2"
+        self.assertNotIn("Draft reply", "\n".join(T._step_parts(self.state, self.t1)))
+        with mock.patch("sys.stderr", new_callable=io.StringIO) as err, self.assertRaises(SystemExit):
+            T.post_reply(self.state, self.CTX, 1, "t1", None)
+        self.assertIn("nothing was posted", err.getvalue())
+        self.post.assert_not_called()
+
+    def test_a_plan_of_another_kind_ends_it(self):
+        self.plan("push-back", "--reply", "-", stdin="Bewusst so.\n")
+        out = self.run_cmd("set", "t1", "--outcome", "fix")
+        self.assertIsNone(self.draft())
+        self.assertIn("--keep-reply", out)
+
+    def test_kept_by_word_it_stays_on_the_card_while_the_fix_is_made(self):
+        """A reply-only plan that became a fix ("still add a TODO, then post that the rest
+        comes in another MR"): the reply agreed stays in sight, and goes up after the fix."""
+        self.plan("reply", "--reply", "-", stdin="Das kommt in einem eigenen MR.\n")
+        self.plan("fix")
+        out = self.run_cmd("set", "t1", "--keep-reply")
+        self.assertNotIn("--keep-reply", out)
+        self.assertEqual(T.step_of(self.state, self.t1), "fix")
+        parts = "\n".join(T._step_parts(self.state, self.t1))
+        self.assertIn("Draft reply, to post after the fix", parts)
+        self.assertIn("> Das kommt in einem eigenen MR.", parts)
+        self.t1["diff_url"] = "https://gl/g/p/-/merge_requests/1/diffs?diff_id=2"
+        self.assertTrue(T.draft_of(self.state, self.t1).endswith(f"Fixed: {self.t1['diff_url']}\n"))
+
+    def test_a_plan_and_its_reply_stored_in_one_call_belong_together(self):
+        self.plan("push-back", "--reply", "-", stdin="Bewusst so.\n")
+        self.assertEqual(T.draft_of(self.state, self.t1), "Bewusst so.\n")
+
+    def test_a_reply_ahead_of_the_fix_is_overtaken_by_its_push(self):
+        self.plan("fix")
+        self.run_cmd("set", "t1", "--reply", "-", "--early", stdin="Option 2, der Fix folgt.\n")
+        self.assertTrue(T.state_json(self.state)["topics"][0]["early"])
+        self.t1["diff_url"] = "https://gl/g/p/-/merge_requests/1/diffs?diff_id=2"
+        self.assertIsNone(self.draft())
+        with mock.patch("sys.stderr", new_callable=io.StringIO), self.assertRaises(SystemExit):
+            self.run_cmd("set", "t1", "--keep-reply")
+
+    def test_a_fix_made_on_a_plan_to_reply_puts_its_draft_out_of_use(self):
+        self.plan("reply", "--reply", "-", stdin="Lieber nicht.\n")
+        held = T.draft_holds(self.state, self.t1)
+        self.t1["outcome"] = "fix"                    # what `diff-view` does on such a plan
+        self.assertIn("out of use", T.stale_draft_note(self.state, self.t1, held))
+
+    def test_an_acknowledged_plan_keeps_its_draft(self):
+        self.plan("push-back", "--reply", "-", stdin="Bewusst so.\n")
+        self.reviewer_writes("ok")
+        self.assertIsNone(self.draft())
+        self.run_cmd("keep-plan", "t1", "--why", "they agreed")
+        self.assertTrue(self.draft())
+
+    def test_a_draft_stored_before_drafts_carried_their_round_still_counts(self):
+        self.plan("push-back")
+        self.t1["reply"] = "Bewusst so.\n"
+        self.assertTrue(self.draft())
+
+    def test_a_draft_not_to_be_posted_is_dropped_by_word(self):
+        self.plan("push-back", "--reply", "-", stdin="Bewusst so.\n")
+        self.run_cmd("set", "t1", "--drop-reply")
+        self.assertNotIn("reply", self.t1)
+        self.assertIsNone(self.draft())
+
+    def test_after_a_reply_ahead_of_the_fix_the_next_one_is_told_not_to_repeat_it(self):
+        self.plan("fix")
+        self.t1.update(diff_url="https://gl/g/p/-/merge_requests/1/diffs?diff_id=2", early_posted="https://gl/n1")
+        out = self.run_cmd("set", "t1", "--reply", "-", stdin="This took option 2.\n")
+        self.assertIn("ahead of the fix is posted", out)
+        self.assertIn("--drop-reply", out)
+        self.t1.pop("early_posted")
+        self.assertNotIn("ahead of the fix", self.run_cmd("set", "t1", "--reply", "-", stdin="Took 2.\n"))
+
+    def test_a_stale_draft_is_not_handed_out_for_pasting(self):
+        self.plan("push-back", "--reply", "-", stdin="Bewusst so.\n")
+        self.reviewer_writes()
+        with mock.patch("sys.stderr", new_callable=io.StringIO) as err, self.assertRaises(SystemExit):
+            T.reply_body(self.state, "t1")
+        self.assertIn("earlier round", err.getvalue())
 
 
 class TestPostedByHandDiffers(unittest.TestCase):

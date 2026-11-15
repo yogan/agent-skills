@@ -1147,10 +1147,11 @@ OUTCOME_WORD = {"fix": "Fix", "reply": "Reply only", "push-back": "Push back",
                 "question": "Answer the question"}
 
 
-def differs_now(t):
+def differs_now(state, t):
     """Whether a correction of the reply the user posted by hand waits: stored, and its
-    draft not yet posted or recorded as posted (either ends it). Mirrors findings.py's."""
-    return bool(t.get("post_differs") and t.get("reply"))
+    draft still this round's, not yet posted or recorded as posted (each ends it). Mirrors
+    findings.py's."""
+    return bool(t.get("post_differs") and draft_holds(state, t))
 
 
 def _step_parts(state, t):
@@ -1184,7 +1185,7 @@ def _step_parts(state, t):
         out += [*replied_steps(state, t), ""]
     if st == "fixed":
         out += [render_fix(state, t["id"]).split("\n", 2)[-1], ""]
-    if differs_now(t):
+    if differs_now(state, t):
         # A reply posted by hand that no longer holds: its correction is the card, at any step.
         return out + [posted.card_md(t, "reply"), ""]
     closing = closing_line(state, t)
@@ -1195,10 +1196,14 @@ def _step_parts(state, t):
             out.insert(len(out) - 1, closing)
         else:
             out += [closing, ""]
-    if st == "reply" and t.get("reply"):
+    draft = draft_of(state, t)
+    if draft and (st == "reply" or (st == "fix" and not early_reply(t))):
         x = state["threads"].get((t["thread_ids"] or [None])[0]) or {}
-        out += [ui.heading_md(ui.DRAFT_ICON, "Draft reply"), "",
-                _quote_draft(t["reply"], x.get("file")), ""]
+        # Kept through a plan that became a fix: on its card until it can go up, so the
+        # words agreed are not lost from sight while the fix is made.
+        out += [ui.heading_md(ui.DRAFT_ICON, "Draft reply" if st == "reply"
+                              else "Draft reply, to post after the fix"), "",
+                _quote_draft(draft, x.get("file")), ""]
     return out
 
 
@@ -1475,7 +1480,15 @@ def reply_body(state, tid, legacy_dir=None):
     session already in flight when this changed keeps working.
     """
     t = topic_for(state, tid) or die(f"no topic {tid}")
-    body = t.get("reply")
+    body = draft_of(state, t)
+    if not body and t.get("reply"):
+        die(
+            f"the reply stored for {tid} was drafted for an earlier round (the reviewer wrote "
+            "again, the plan changed, or its fix is pushed since), and is out of use — store "
+            f"the one for now:\n  python3 threads.py set {tid} --reply - <<'REPLY_EOF'\n"
+            f"  <the reply body>\n  REPLY_EOF\n(or `set {tid} --keep-reply` where the old "
+            "words still hold as they are)"
+        )
     if not body and legacy_dir:
         f = os.path.join(legacy_dir, f"reply-{tid}.md")
         if os.path.exists(f):
@@ -1573,7 +1586,7 @@ def render_reply_view(state, tid, body, refine=False):
         refine = False
     if not refine:
         quote = render_quote(state, tid)
-        if ui.drawn() and t.get("reply"):
+        if ui.drawn() and draft_holds(state, t):
             # The draft follows below, as the view's own part: not twice.
             quote = quote.split(f"\n{ui.heading_md(ui.DRAFT_ICON, 'Draft reply')}", 1)[0].rstrip()
         out += [quote, ""]
@@ -1636,9 +1649,9 @@ def emit(state, block, topic=None):
     one, so the paste gate enforces only what belongs to the topic being decided."""
     extra = view_context(state)
     t = topic_for(state, topic) if topic else None
-    if t and t.get("reply"):
+    if t and draft_holds(state, t):
         # The version of the draft the view shows: what a Post press under it posts.
-        extra["draft"] = reply_version(t["reply"])
+        extra["draft"] = reply_version(draft_of(state, t))
     if t:
         # The step it shows the topic at: a turn that moved the topic on without a view of
         # its own (the model finishing a push it was handed) leaves the card a step behind.
@@ -1716,7 +1729,7 @@ def state_json(state):
         topics.append({
             "id": t["id"], "status": topic_status(state, t), "state": ui_state(state, t),
             "summary": t.get("summary"), "file": _loc_cell(state, t).strip("`") or None,
-            "posted": True, "draft": reply_version(t["reply"]) if t.get("reply") else None,
+            "posted": True, "draft": reply_version(draft_of(state, t)) if draft_holds(state, t) else None,
             "inbox": inbox_of(state, t), "news": kinds, "news_at": news_at,
             "step": step_of(state, t),
             # The plan proposed for it, which Agree plan stores without a model turn.
@@ -1729,14 +1742,14 @@ def state_json(state):
             "fix_kept": bool(kept_fix(state, t, kept=kept)),
             "pushes": len(fixes_of(t)) if is_pushed_fix(t) else 0,
             # A reply drafted to post ahead of the fix, and whether one went up already.
-            "early": early_reply(t) and bool(t.get("reply")),
+            "early": early_reply(t) and draft_holds(state, t),
             "early_posted": bool(t.get("early_posted")),
             # You wrote last in its threads, by hand on GitLab, and nothing says it waits.
             "you_last": you_last(state, t),
             # A fix dropped earlier, kept in git: a new fix may start from it.
             "dropped": any(d.get("key") for d in t.get("dropped") or []),
             # A reply posted by hand that no longer holds: its corrected version waits.
-            "post_differs": differs_now(t),
+            "post_differs": differs_now(state, t),
             # Whether the fix differs from the plan agreed: a reply then explains it.
             "differs": bool((f.get("compare") or {}).get("differs")),
             # A fix made while another topic was current: the one it was made from, to go
@@ -2072,7 +2085,7 @@ def start_fix_round(t):
     is recorded beside them, and the card lists them all."""
     if (t.get("outcome") or "fix") == "fix" and t.get("diff_url"):
         for k in ("diff_url", "fix", "checked", "push_token", "push_from", "handed_from",
-                  "reply", "reply_at", "reply_early", "post_differs", "early_posted",
+                  "reply", "reply_at", "reply_for", "reply_early", "post_differs", "early_posted",
                   "reply_posted", "fix_lost"):
             t.pop(k, None)
 
@@ -2133,6 +2146,67 @@ def early_reply(t):
     reply-only plan the reply is the topic's whole answer, and posted it waits on the
     reviewer; taken as one ahead of a fix it left the topic "to reply" with nothing to come."""
     return bool(t.get("reply_early")) and is_fix(t)
+
+
+def draft_round(state, t):
+    """What a draft reply is written for: what the reviewers said last, and the plan agreed
+    on it (when, and its kind), None while no plan is. A draft counts only in the round it
+    was stored in: a reviewer's new comment, a new plan and a plan of another kind each
+    start another, where the old words may say the opposite of what happens now."""
+    mark = reviewer_mark(state, t)
+    plan = f"{t.get('plan_at') or ''}|{t.get('outcome') or 'fix'}" if plan_holds(t, mark) else None
+    return {"on": mark, "plan": plan}
+
+
+def draft_holds(state, t):
+    """Whether `t`'s stored reply is still the one to post: written in the round that runs
+    (`draft_round`; one stored before drafts carried their round holds), and, where it was to
+    go up ahead of the fix, that fix not pushed yet."""
+    if not t.get("reply") or (early_reply(t) and t.get("diff_url")):
+        return False
+    return t.get("reply_for") in (None, draft_round(state, t))
+
+
+def fixed_due(state, t):
+    """Whether a reply on `t` ends on the line that links its fix: only one that follows the
+    fix of the plan that stands, pushed since the reviewers wrote last. A reply that pushes
+    back, answers a question or comes ahead of the fix claims no fix, whatever the topic's
+    earlier rounds pushed."""
+    if not (is_fix(t) and t.get("diff_url")) or t.get("reply_early"):
+        return False
+    mark = reviewer_mark(state, t)
+    if t.get("decision"):
+        return plan_holds(t, mark)
+    # No plan stored (a rework run without rounds): the push must be the thread's last event.
+    pushed = _instant((t.get("pushes") or [{}])[-1].get("at"))
+    theirs = [m for x in t["thread_ids"] for n in (state["threads"].get(x) or {}).get("notes") or []
+              if not n.get("mine") and (m := _instant(n.get("at")))]
+    return not (pushed and theirs and max(theirs) > pushed)
+
+
+def draft_of(state, t):
+    """The reply to post on `t`, as its card shows it and its press posts it, or None where
+    no draft of this round is stored: the stored words, ending on the `Fixed:` line where one
+    is due (`fixed_due`). The line is added here, from the plan as it stands now, never
+    stored with the words: stored, it outlived the plan it was true for."""
+    if not draft_holds(state, t):
+        return None
+    body = t["reply"]
+    if fixed_due(state, t) and t["diff_url"] not in body:
+        body += "\n" + fixed_body(state, t)
+    return body
+
+
+def stale_draft_note(state, t, held):
+    """What the agent is told once a command of its own ended the round a draft was written
+    for (`held`: whether the draft counted before it): the draft is out of use, and how to
+    take it up again where its words still hold."""
+    if not held or draft_holds(state, t) or not t.get("reply"):
+        return ""
+    return (f"The reply drafted for {tref(t['id'])} under its earlier plan is out of use: the "
+            "plan changed, and its words may no longer be true. Where they still hold as they "
+            f"are, take it up again (`set {t['id']} --keep-reply`); otherwise draft the reply "
+            "anew when it is due.")
 
 
 def step_of(state, t, status=None):
@@ -2590,7 +2664,10 @@ def post_reply(state, ctx, iid, tid, expect, fixed=False, resolve=False):
         t.get("diff_url") or die(f"{tref(tid)} has no diff URL yet: push the fix first")
         body = fixed_body(state, t)
     else:
-        body = t.get("reply") or die(f"{tref(tid)} has no draft reply yet")
+        body = draft_of(state, t) or die(
+            f"{tref(tid)} has no draft reply"
+            + (" of this round: the one stored was written before the reviewer wrote again, "
+               "the plan changed or its fix was pushed; nothing was posted" if t.get("reply") else " yet"))
         if expect and reply_version(body) != expect:
             die(f"the draft of {tref(tid)} changed after the card you pressed Post under was "
                 "drawn; nothing was posted. Press Post under the newest card.")
@@ -2614,8 +2691,8 @@ def post_reply(state, ctx, iid, tid, expect, fixed=False, resolve=False):
     if early:
         # Said ahead of the fix (which option, what follows): the plan stands, and the fix
         # still comes, with a short `Fixed: <link>` once pushed.
-        t.pop("reply")
-        t.pop("reply_early")
+        for k in ("reply", "reply_early", "reply_for"):
+            t.pop(k, None)
         t["early_posted"] = url
         return url
     if resolve:
@@ -2628,6 +2705,10 @@ def post_reply(state, ctx, iid, tid, expect, fixed=False, resolve=False):
     t.pop("waiting_on", None)
     if t.get("diff_url"):
         t["reply_posted"] = url          # the pushed fix's card links it
+    # Posted, a draft is spent, and so is one passed over for the short "Fixed": kept, it
+    # came back as the next round's draft, offered for posting under a fix it knew nothing of.
+    for k in ("reply", "reply_for"):
+        t.pop(k, None)
     return url
 
 
@@ -3124,6 +3205,11 @@ def main():
     ps.add_argument("--early", action="store_true",
                     help="with --reply: a reply ahead of the fix (posted without resolving; "
                     "the plan stands)")
+    ps.add_argument("--drop-reply", action="store_true",
+                    help="the reply drafted for <t> is not to be posted: it is taken off its card")
+    ps.add_argument("--keep-reply", action="store_true",
+                    help="the reply drafted under the earlier plan still holds word for word "
+                    "under the plan as it is now: it is the draft again")
     # Rounds, where the review-ui mod draws (see "rounds" above).
     pdf = sub.add_parser("drop-fix", help="on the user's word: <t>'s fix is not wanted after "
                          "all; it is kept in git, the working tree cleaned, the plan a reply")
@@ -3297,7 +3383,10 @@ def main():
             t.pop("handed_from", None)
             # Code changed on a plan that was to reply only: it is a fix now, which is pushed
             # and answered as one. Left a reply, its card had no push and `push` refused it.
+            held = draft_holds(state, t)
             t["outcome"] = "fix"
+            if note := stale_draft_note(state, t, held):
+                print(note, file=sys.stderr)
             t["fix"] = {"did": args.did, "fixup": args.fixup, "new": args.new_commit, "stat": diff_stat(diff),
                         "notes": notes,
                         "compare": {"as_agreed": bool(args.as_agreed), "differs": args.differs}}
@@ -3470,7 +3559,8 @@ def main():
                 t.pop("reply_early", None)
                 t["state"] = "waiting"
                 t.pop("waiting_on", None)
-            t.pop("reply", None)
+            for k in ("reply", "reply_for"):
+                t.pop(k, None)
             if current_topic(state) == args.topic:
                 CURRENT.leave(state)
             save(path, state)
@@ -3479,7 +3569,7 @@ def main():
             resync(state, ctx, iid)
             save(path, state)
             _disc, mine = posted.own_note(state, t, last=True, since=t.get("reply_at"))
-            print("Drafted:\n\n" + (t.get("reply") or "(no draft kept)").strip())
+            print("Drafted:\n\n" + (draft_of(state, t) or "(no draft kept)").strip())
             print("\nPosted:\n\n" + (mine.get("body") if mine else "(not on GitLab yet: nothing of the "
                                         "user's came after the draft)").strip())
     elif cmd == "keep-plan":
@@ -3490,6 +3580,9 @@ def main():
         who, at = wrote_since_plan(state, t)
         t["plan_on"] = reviewer_mark(state, t)
         t["kept"] = {"why": args.why, "on": t["plan_on"], "who": who, "at": at}
+        if (t.get("reply_for") or {}).get("plan") == draft_round(state, t)["plan"]:
+            # The reviewer only acknowledged the plan: the reply drafted under it holds too.
+            t["reply_for"] = draft_round(state, t)
         save(path, state)
         print(f"kept the plan for {tref(args.topic)}")
     elif cmd == "propose":
@@ -3692,6 +3785,23 @@ def main():
         emit(state, "\n\n".join(x for x in (table, cleanup) if x))
     elif cmd == "set":
         t = topic_for(state, args.topic) or die(f"no topic {args.topic}")
+        held = draft_holds(state, t) and args.reply is None
+        if args.drop_reply:
+            if args.reply is not None or args.keep_reply:
+                die("--drop-reply takes the stored reply out of use: not with --reply or --keep-reply")
+            for k in ("reply", "reply_at", "reply_for", "reply_early", "post_differs"):
+                t.pop(k, None)
+            held = False
+        if args.keep_reply:
+            if args.reply is not None:
+                die("--keep-reply takes up the reply stored earlier; with --reply the new one "
+                    "is the draft: pass one of them")
+            if not t.get("reply"):
+                die(f"{tref(args.topic)} has no reply stored to take up: draft it "
+                    f"(`set {args.topic} --reply -`)")
+            if early_reply(t) and t.get("diff_url"):
+                die(f"the reply stored for {tref(args.topic)} was to go up ahead of its fix, "
+                    "which is pushed now: draft the reply after the fix instead")
         fld = {"start-sha": "start_sha", "diff-url": "diff_url"}
         for f in (
             "summary",
@@ -3718,11 +3828,9 @@ def main():
                         f"draft has internal topic handle(s): {' '.join(hits)} — reword "
                         f"(link the other thread via `url <other-t>`), then re-run"
                     )
+                # The words alone: the line linking the fix is added where the draft is
+                # shown and posted, from the plan as it stands then (`draft_of`).
                 v = v.rstrip("\n") + "\n"
-                # A reply after the fix ends on the line that links it, as `Fixed: <link>`
-                # alone would: the reviewer reads it there and resolves the thread.
-                if is_pushed_fix(t) and is_fix(t) and not args.early and t["diff_url"] not in v:
-                    v += "\n" + fixed_body(state, t)
                 t.pop("post_differs", None)   # a new draft: the old one's check is over
                 # When it was written: a reply the user posts by hand is one made after this.
                 t["reply_at"] = datetime.datetime.now(datetime.timezone.utc).isoformat()
@@ -3749,15 +3857,28 @@ def main():
             # The plan's kind changed in the chat, the plan itself kept.
             t["outcome"] = args.outcome
             start_fix_round(t)
+        if (args.reply is not None or args.keep_reply) and t.get("reply"):
+            # The round the draft is for, taken last: a plan stored in the same call is its plan.
+            t["reply_for"] = draft_round(state, t)
         save(path, state)
         print(step_report(state, t))
+        if note := stale_draft_note(state, t, held):
+            print(note)
+        if args.reply is not None and not args.early and t.get("early_posted") and fixed_due(state, t):
+            print(f"A reply ahead of the fix is posted in {tref(args.topic)}'s thread already: the "
+                  "reviewer has read what the fix does. Keep this one to what is new since; "
+                  f"where nothing is, drop it (`set {args.topic} --drop-reply`) and tell the user "
+                  "that “Fixed” on the card is the whole answer.")
     elif cmd == "drop-fix":
         t = topic_for(state, args.topic) or die(f"no topic {args.topic}")
         if args.aside == bool(args.plan):
             die("drop-fix needs --plan (the reply it becomes), or --aside (the plan stays)")
+        held = draft_holds(state, t)
         drop_fix(state, iid, t, args.why, args.plan, args.outcome, args.new, aside=args.aside)
         save(path, state)
         print(step_report(state, t))
+        if note := stale_draft_note(state, t, held):
+            print(note)
     elif cmd == "merge":
         into = topic_for(state, args.into) or die(f"no topic {args.into}")
         for oid in args.others:
