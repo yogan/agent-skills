@@ -295,7 +295,7 @@
       }
      ],
      "prompts": [
-      "The review-ui plugin sent a message: The user pressed Ack and push for t1, and its fix goes into more than one fixup commit, so the press hands you the commits. The checks left the whole fix staged: s"
+      "The review-ui plugin sent a message: The user pressed Ack and push for t1, and its fix is "
      ],
      "prompt_ids": [
       "2e524e8",

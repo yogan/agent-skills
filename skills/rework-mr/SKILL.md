@@ -389,8 +389,11 @@ Clean up locally once it is merged, which removes the worktree or switches the m
 back, and deletes this review's own state. **Never merge, set auto-merge or clean up
 yourself**, and never offer to. After a `Clean up locally` note the session is over: run
 nothing more in it. A failed pipeline or a failed merge comes to you as the user's prompt
-asking for an analysis; the prompt says what to do, and a fix for a failed pipeline is shown,
-checked and pushed only on the user's word, as a commit of its own.
+asking for an analysis; the prompt says what to do. A fix for a failed pipeline goes the way
+a topic's fix goes: shown, checked, then folded as a fixup into the commit of the MR that
+broke it (`git commit --fixup=<sha>`, `git rebase --autosquash`), so every commit passes on
+its own and none says "fix CI"; a new commit only where no commit of the MR broke it. Pushed
+only on the user's word.
 
 ## Merged MR in a worktree
 

@@ -2932,9 +2932,16 @@ def handoff_brief(tid, fix, token, skip_hooks):
     steps += [f"`git commit {flag}--fixup={x.split()[0]}` for {x}" for x in fix.get("fixup") or []]
     hooks = ("" if skip_hooks else " Let git run the repository's hooks on each commit: they "
              "have not run for real on this repository's checks yet.")
+    # What the press cannot commit itself, in the fix's own terms: it makes one fixup and
+    # nothing else, and "more than one fixup commit" was said of a single new commit too.
+    n_new, n_fix = len(fix.get("new") or []), len(fix.get("fixup") or [])
+    kinds = ([("a new commit" if n_new == 1 else f"{n_new} new commits")] if n_new else []) + (
+        [("a fixup" if n_fix == 1 else f"{n_fix} fixup commits")] if n_fix else [])
+    what = " and ".join(kinds) or "more than one commit"
+    one = n_new + n_fix == 1
     # The checks left the whole fix staged; a commit made from that index takes it all.
-    return (f"The user pressed Ack and push for {tid}, and its fix goes into more than one "
-            "fixup commit, so the press hands you the commits. The checks left the whole fix "
+    return (f"The user pressed Ack and push for {tid}, and its fix is {what}, which the "
+            f"press does not make itself, so it hands you the commit{'' if one else 's'}. The checks left the whole fix "
             "staged: start from an empty index (`git reset -q`), then, in this order, `git add` "
             "the files that belong to each commit and make it: " + "; ".join(steps or [
                 "one `git commit --fixup=<sha>` per commit the fix belongs to"]) + "."

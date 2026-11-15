@@ -750,8 +750,10 @@ export type EndLine = { text: string; tone: 'info' | 'busy' | 'needs'; button?: 
 // The prompts of the two analyses: each a turn of the model's, started by its press.
 export const CI_PROMPT = "The MR's pipeline failed. Find the failing job, read its log, say what broke and why, " +
   'and propose a fix. If this project has a skill of its own for CI failures, use it; otherwise use ' +
-  '`glab ci view` and the job logs. A fix goes the usual way: shown to me and checked first, then ' +
-  'committed as a commit of its own and pushed only on my word.'
+  '`glab ci view` and the job logs. A fix goes the way a topic\'s fix goes: shown to me and checked ' +
+  'first, then folded as a fixup into the commit of this MR that broke it (`git commit --fixup=<sha>`, ' +
+  'then `git rebase --autosquash`), so every commit passes on its own and none says "fix CI". A new ' +
+  'commit only where no commit of this MR broke it. Pushed only on my word.'
 export const MERGE_PROMPT = 'Merging the MR failed. Look at the failed merge on GitLab, analyse why it failed, ' +
   'and recommend what to do.'
 

@@ -3154,6 +3154,9 @@ test('rework-mr: the merge pressed is followed to its end, and a failure offers 
   const failed = endOf(ended('rework-mr', { pipeline: { status: 'failed' } }), false)
   expect([failed?.text, failed?.button?.label]).toEqual(['Pipeline failed', 'Analyze CI failure'])
   expect(failed?.button?.press).toEqual({ kind: 'ask', prompt: CI_PROMPT })
+  // The fix for a pipeline goes into the commit that broke it: no "fix e2e" commits.
+  expect(CI_PROMPT).toMatch(/fixup into the commit of this MR that broke it/)
+  expect(CI_PROMPT).not.toMatch(/commit of its own/)
   expect(endText('rework-mr', { state: 'closed' })).toBeUndefined()
 })
 
