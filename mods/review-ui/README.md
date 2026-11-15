@@ -30,7 +30,7 @@ How it fits together:
   new one, is handed to the model to commit, and the press goes on from its commits.
 - Above the prompt, a band of buttons for the current step (review-mr), the recommended
   answer first and drawn as the primary, Explain after it wherever something is decided
-  (Explain further once pressed): Comment and Drop for a new topic; Post, Copy, I posted my own for a draft; for an answer the agent judged, its
+  (Explain further once pressed): Comment and Drop for a new topic; Post, Copy, I posted my own for a draft (Post + resolve beside Post for a drafted reply, which settles its thread and closes the topic); for an answer the agent judged, its
   verdict's own answer first: Accept + resolve, Not enough… and Analyse more, or Send
   follow-up, Accept anyway and Analyse more; Next, apart at the row's end, where another waits; for another reviewer's thread, which the user watches, Seen and
   Reply…, with Merge into tN first where the agent advised merging; for one of

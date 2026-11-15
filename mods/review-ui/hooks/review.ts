@@ -351,6 +351,10 @@ const stepButtons = (review: ReviewState | null): BandButton[] | null => {
     case 'reply':
       return [
         { key: 'post', label: 'Post', press: { kind: 'post' }, isPrimary: true },
+        // A reply that settles the point (the answer is accepted, a follow-up MR is fine):
+        // posted and its thread resolved in one press, the topic closed where it stands, as
+        // GitLab's own "Reply and resolve thread" and rework-mr's Post + resolve.
+        { key: 'post-resolve', label: 'Post + resolve', press: { kind: 'post', resolve: true } },
         // Posted by hand into the thread: the agent checks it against the draft, as for a
         // comment linked by hand and in rework-mr.
         { key: 'link', label: 'Check my post', press: ask(checkPrompt(t)) },
@@ -512,9 +516,13 @@ const reworkButtons = (review: ReviewState): BandButton[] => {
       const replied: BandButton = { key: 'posted-check', label: 'Check my post', press: ask(reworkCheckPrompt(t)) }
       if (topic.draft) {
         // Rewording is a prompt, or Copy and the person's own edit: no Redo. A reply after
-        // the fix explains it and never resolves: the reviewer reads it and resolves.
+        // the fix explains it and never resolves: the reviewer reads it and resolves. Nor
+        // does a question, which waits for its answer, or a push-back, which waits for the
+        // reviewer's word: resolving with either closes the thread on them
+        // (threads.py's `post_reply` refuses the same).
+        const settles = !topic.pushed && topic.outcome !== 'question' && topic.outcome !== 'push-back'
         bs = [{ key: 'post', label: 'Post', press: { kind: 'post', reply: true }, isPrimary: true },
-          ...(topic.pushed ? [] : [{ key: 'post-resolve', label: 'Post + resolve', press: { kind: 'post', reply: true, resolve: true } } as BandButton]),
+          ...(settles ? [{ key: 'post-resolve', label: 'Post + resolve', press: { kind: 'post', reply: true, resolve: true } } as BandButton] : []),
           replied, ...(topic.fix_kept ? [showFix] : [])]
       } else if (topic.pushed && (topic.outcome ?? 'fix') === 'fix') {
         // After the push: a "Fixed" with its link, resolved or not, or a reply that says more.

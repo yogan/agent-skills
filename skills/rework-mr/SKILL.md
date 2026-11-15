@@ -320,6 +320,10 @@ lands in the sidebar's inbox, and a background agent of the mod's prepares a pla
   after it says only what is new since. With nothing new, draft nothing: tell the user in a
   line that the earlier reply said it and that "Fixed" on the card is the whole answer.
 - **Posting is the user's**: they post from the card. `threads.py post` refuses anything else.
+  Asked to post, resolve or push ("post that and resolve it"), do your part (the draft, the
+  fix), then name the press that does the rest in one line ("Post + resolve on the card does
+  both"); never answer that you cannot. A reply that asks the reviewer a question or pushes
+  back has Post alone: its thread is the reviewer's to close.
 
 ## Next topics
 

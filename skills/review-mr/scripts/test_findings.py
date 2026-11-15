@@ -2777,6 +2777,50 @@ class TestFollowUpReopens(unittest.TestCase):
         self.assertFalse(state["threads"]["d1"]["resolved"])
 
 
+class TestPostAndResolve(unittest.TestCase):
+    """GitLab's "Reply and resolve thread": a reply that settles the point is posted, its
+    thread resolved and the topic closed in one press, where it stands."""
+
+    def setUp(self):
+        self.state = {"iid": 2, "author": "Alex Kim",
+                      "threads": {"d1": {"mine": True, "resolved": False, "awaiting": "you",
+                                         "url": "http://gl/g/p/-/merge_requests/2#note_1", "notes": []}},
+                      "topics": [{"id": "t2", "thread_ids": ["d1"], "draft": "Fine in a follow-up MR, thanks."}]}
+        patcher = patch.dict(os.environ, {F.PRESS_ENV: "1"})
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def test_the_reply_goes_up_the_thread_is_resolved_and_the_topic_closed(self):
+        with patch.object(F, "api_post", return_value={"id": 9}) as api, \
+                patch.object(F, "_reply_thread", return_value="d1"):
+            url = F.post_draft(self.state, CTX, 2, "t2", None, resolve=True)
+        self.assertEqual([c.args[0] for c in api.call_args_list],
+                         ["projects/g%2Fp/merge_requests/2/discussions/d1/notes",
+                          "projects/g%2Fp/merge_requests/2/discussions/d1?resolved=true"])
+        t = self.state["topics"][0]
+        self.assertTrue(url.endswith("#note_9"))
+        self.assertEqual((t["state"], t["closed"]["how"], t["draft"]), ("acked", "replied", None))
+        self.assertEqual(F.topic_status(self.state, t), "acked")
+        with patch.dict(os.environ, {"REVIEW_UI_DRAWN": "1"}):
+            self.assertIn("You replied and resolved it", F.closing_line(self.state, t))
+
+    def test_a_thread_resolved_already_is_not_reopened_by_it(self):
+        self.state["threads"]["d1"]["resolved"] = True
+        with patch.object(F, "api_post", return_value={"id": 9}) as api, \
+                patch.object(F, "_reply_thread", return_value="d1"):
+            F.post_draft(self.state, CTX, 2, "t2", None, resolve=True)
+        self.assertEqual(api.call_count, 1)                       # the note alone
+        self.assertTrue(self.state["threads"]["d1"]["resolved"])
+
+    def test_a_first_comment_cannot_resolve(self):
+        self.state["topics"][0]["thread_ids"] = []
+        with patch.object(F, "api_post") as api, self.assertRaises(SystemExit), \
+                redirect_stderr(io.StringIO()) as err:
+            F.post_draft(self.state, CTX, 2, "t2", None, resolve=True)
+        api.assert_not_called()
+        self.assertIn("not posted yet", err.getvalue())
+
+
 class TestPostedCommentCard(unittest.TestCase):
     """Where the mod draws, a comment of the user's own already posted tells its story step
     by step, and ends on the topic's latest event: who resolved its thread, or how it was

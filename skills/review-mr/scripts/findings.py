@@ -1346,6 +1346,8 @@ def closing_line(state, t):
         at = c.get("at") or t.get("acked_at")
         if c.get("how") == "accepted":
             return ui.closed_md(f"You accepted {author}'s answer and resolved it", at, url)
+        if c.get("how") == "replied":
+            return ui.closed_md("You replied and resolved it", at, url)
         if c.get("how") == "fixed":
             push = f" (push {c['push']})" if (c.get("push") or 0) > 1 else ""
             return ui.closed_md(f"{author} fixed it{push} · you acked it", at, url)
@@ -2362,13 +2364,20 @@ def diff_position(ctx, iid, path, line):
 PRESS_ENV = "REVIEW_UI_PRESS"
 
 
-def post_draft(state, ctx, iid, tid, expect):
+def post_draft(state, ctx, iid, tid, expect, resolve=False):
     """Post `tid`'s draft: a new thread at its line (or on the MR itself), or, for a topic
-    already posted, a reply into its thread. Returns the posted note's URL."""
+    already posted, a reply into its thread. `resolve`: the reply settles the point, so its
+    threads are resolved with it and the topic is closed here (GitLab's "Reply and resolve
+    thread"); only a reply can, as a new comment has nothing to settle yet. Returns the
+    posted note's URL."""
     if os.environ.get(PRESS_ENV) != "1":
-        die("posting is the user's press, on the Post button under a draft's card; "
-            "nothing else posts. Offer the draft and let them press it.")
+        die("posting is the user's press, on the Post button under a draft's card (Post + "
+            "resolve where the reply settles its thread); nothing else posts. Show the draft "
+            "and name the button to press.")
     t = topic_for(state, tid) or die(f"no topic {tid}")
+    if resolve and not t["thread_ids"]:
+        die(f"{tref(tid)} is not posted yet: a first comment opens its thread, and cannot "
+            "resolve it")
     body = draft_body(state, tid)
     if expect and draft_version(body) != expect:
         die(f"the draft of {tref(tid)} changed after the card you pressed Post under was "
@@ -2384,7 +2393,17 @@ def post_draft(state, ctx, iid, tid, expect):
         # A follow-up into a thread its author resolved reopens it: the reply asks something
         # of them still, and a resolved thread hides it from their list of open ones.
         th = state["threads"].get(pick) or {}
-        if th.get("resolved"):
+        if resolve:
+            for x in t["thread_ids"]:
+                other = state["threads"].get(x) or {}
+                if not other.get("resolved") and not other.get("gone"):
+                    api_post(f"{disc}/{x}?resolved=true", {}, method="PUT")
+                    other["resolved"] = True
+            t["state"] = "acked"
+            t["acked_at"] = now_iso()
+            # How the user closed it, for the line its card ends on (`closing_line`).
+            t["closed"] = {"how": "replied", "at": t["acked_at"]}
+        elif th.get("resolved"):
             api_post(f"{disc}/{pick}?resolved=false", {}, method="PUT")
             th["resolved"] = False
         t["draft"] = None
@@ -3591,6 +3610,8 @@ def main():
     pp.add_argument("topic")
     pp.add_argument("--iid", type=int)
     pp.add_argument("--expect", help="the draft version the pressed card showed")
+    pp.add_argument("--resolve", action="store_true",
+                    help="a reply that settles the point: resolve its thread and close the topic")
 
     pq3 = sub.add_parser("posted", help="the user's own posting of <t>'s draft, read back "
                          "from GitLab beside the draft, to check it")
@@ -4154,8 +4175,9 @@ def main():
         print(f"{tref(args.topic)}: {args.says}")
     elif cmd == "resolve":
         if os.environ.get(PRESS_ENV) != "1":
-            die("resolving is the user's press, on the Resolve thread button; nothing else "
-                "resolves.")
+            die("resolving is the user's press, on the topic's card (Resolve, or Post + resolve "
+                "under a drafted reply); nothing else resolves. Show the card and name the "
+                "button to press.")
         t = topic_for(state, args.topic) or die(f"no topic {args.topic}")
         disc = f"projects/{ctx['enc']}/merge_requests/{iid}/discussions"
         for x in t["thread_ids"]:
@@ -4170,12 +4192,15 @@ def main():
         print(f"resolved and acked {tref(args.topic)}")
         print(f"closed: {closing_line(state, t)}")
     elif cmd == "post":
-        url = post_draft(state, ctx, iid, args.topic, args.expect)
+        url = post_draft(state, ctx, iid, args.topic, args.expect, args.resolve)
         # Synced at once, so the topic reads as posted (and the current topic moves on)
         # for whatever asks next, rather than at the next sync.
         sync(state, fetch_threads(ctx, iid, me, author), ctx, iid)
         save(path, state)
         print(f"posted {tref(args.topic)}: {url}")
+        closing = args.resolve and closing_line(state, topic_for(state, args.topic))
+        if closing:
+            print(f"closed: {closing}")
     elif cmd == "posted":
         t = topic_for(state, args.topic) or die(f"no topic {args.topic}")
         if args.apply:

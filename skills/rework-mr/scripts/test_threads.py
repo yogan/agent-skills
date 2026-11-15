@@ -2419,6 +2419,39 @@ class TestPostedByHandDiffers(unittest.TestCase):
         self.assertEqual(self.t1["state"], "waiting")
 
 
+class TestResolveOnlyWithAReplyThatSettles(unittest.TestCase):
+    """Resolving a thread on a question you wait to have answered closes it on the reviewer,
+    and so does resolving on a push-back: only a reply that settles the point resolves."""
+
+    CTX = {"enc": "g%2Fp", "web": "https://gl/g/p"}
+
+    def setUp(self):
+        mock.patch.dict(os.environ, {"REVIEW_UI_DRAWN": "1", T.PRESS_ENV: "1"}).start()
+        self.addCleanup(mock.patch.stopall)
+        T._WORKING.clear()
+        self.addCleanup(T._WORKING.clear)
+        self.state = TestRounds.state(1)
+        self.t1 = T.topic_for(self.state, "t1")
+        self.post = mock.patch.object(T, "api_post", return_value={"id": 9}).start()
+        mock.patch.object(T, "working_diff", return_value="").start()
+
+    def test_a_question_or_a_push_back_is_never_posted_with_resolve(self):
+        for outcome, said in (("question", "asks the reviewer a question"), ("push-back", "pushes back")):
+            with self.subTest(outcome):
+                TestRounds.agree(self.state, "t1", outcome=outcome)
+                self.t1["reply"] = "Hm?\n"
+                with mock.patch("sys.stderr", new_callable=io.StringIO) as err, self.assertRaises(SystemExit):
+                    T.post_reply(self.state, self.CTX, 1, "t1", None, resolve=True)
+                self.assertIn(said, err.getvalue())
+                self.post.assert_not_called()
+
+    def test_a_reply_that_settles_the_point_resolves_with_it(self):
+        TestRounds.agree(self.state, "t1", outcome="reply")
+        self.t1["reply"] = "Kommt in einem eigenen MR.\n"
+        T.post_reply(self.state, self.CTX, 1, "t1", None, resolve=True)
+        self.assertEqual(self.post.call_count, 2)                     # the note, the resolve
+
+
 class TestReplyAheadOfTheFix(unittest.TestCase):
     """A reply posted before the fix (which option the plan took, that the fix follows):
     the plan stands, the topic stays the user's, and the round goes on."""

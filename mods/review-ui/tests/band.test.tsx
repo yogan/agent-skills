@@ -1796,12 +1796,23 @@ test('rework-mr: Reply instead… leaves the reply\'s gist to the person, and it
 })
 
 test('rework-mr: a reply stored as the plan is at the reply step, its draft on the card', async ($, on) => {
-  const w = world(on, [reworkState('t1', [reworkTopic('t1', 'reply', { draft: 'Not in this MR.', outcome: 'push-back' })])])
+  const w = world(on, [reworkState('t1', [reworkTopic('t1', 'reply', { draft: 'Not in this MR.', outcome: 'reply' })])])
   await openRework($, w, reworkView('t1'))
   const ui = await mountStep($, 'terminal')
   expect((await labels(ui)).slice(0, 2)).toEqual(['Post', 'Post + resolve'])
   await ui.unmount()
 })
+
+// Resolving a thread on a question you wait to have answered closed it on the reviewer.
+for (const outcome of ['question', 'push-back']) {
+  test(`rework-mr: a reply that is a ${outcome} is posted, never resolved with`, async ($, on) => {
+    const w = world(on, [reworkState('t1', [reworkTopic('t1', 'reply', { draft: 'Which one?', outcome })])])
+    await openRework($, w, reworkView('t1'))
+    const ui = await mountStep($, 'terminal')
+    expect(await labels(ui)).toEqual(['Post', 'Check my post', 'Next', 'Show sidebar'])
+    await ui.unmount()
+  })
+}
 
 test('rework-mr: a topic with no plan yet offers its research, or a reply instead; no Discuss…', async ($, on) => {
   const w = world(on, [reworkState('t1', [reworkTopic('t1', 'plan')])])
@@ -2497,8 +2508,21 @@ test('a posted comment waiting on its author, with a follow-up drafted, offers t
   const w = world(on, [stateOf('t1', [topic('t1', 'open', 'v1')], { in_round: true })])
   await openReview($, w, view('t1', 'v1'))
   const ui = await mountStep($, 'terminal')
-  expect((await labels(ui)).slice(0, 3)).toEqual(['Post', 'Check my post', 'Keep waiting'])
+  expect((await labels(ui)).slice(0, 4)).toEqual(['Post', 'Post + resolve', 'Check my post', 'Keep waiting'])
   await ui.unmount()
+})
+
+// GitLab's own "Reply and resolve thread": "post that a follow-up MR is fine, then resolve"
+// once took the agent's "I can't post or resolve", a Post, and a walk back to the topic.
+test('a drafted follow-up can be posted and its thread resolved in one press', async ($, on) => {
+  const w = world(on, [stateOf('t1', [topic('t1', 'open', 'v1')], { in_round: true })])
+  await openReview($, w, view('t1', 'v1'))
+  const ui = await mountStep($, 'terminal')
+  await ui.press({ key: 'post-resolve' })
+  await ui.unmount()
+  const post = w.ran.find(r => r.argv[2] === 'post')
+  expect(post?.argv.slice(2).join(' ')).toBe('post t1 --expect v1 --resolve --iid 42')
+  expect(post?.env?.REVIEW_UI_PRESS).toBe('1')
 })
 
 test('rework-mr: a card whose fix is not pushed has no ✕: the topic is finished first', async ($, on) => {

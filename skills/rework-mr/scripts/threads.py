@@ -2703,6 +2703,12 @@ def post_reply(state, ctx, iid, tid, expect, fixed=False, resolve=False):
         t.pop("reply_early", None)
     if early and resolve:
         die(f"the reply drafted for {tref(tid)} comes before its fix: post it without resolving")
+    if resolve and not fixed and t.get("outcome") in ("question", "push-back"):
+        # A question waits for its answer and a push-back for the reviewer's word: resolving
+        # with it would close the thread on them.
+        die(f"the reply drafted for {tref(tid)} "
+            + ("asks the reviewer a question" if t["outcome"] == "question" else "pushes back")
+            + ": post it without resolving; the thread is the reviewer's to close")
     if resolve and not fixed and t.get("diff_url"):
         # A longer reply after the fix explains something: the reviewer reads it, and
         # resolves the thread once they agree.
