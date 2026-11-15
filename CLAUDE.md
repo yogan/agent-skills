@@ -43,7 +43,8 @@ How work runs here, whatever it touches. One topic at a time:
 
 The push level — the whole unit suite and every scenario a change reaches — runs once per top
 commit, before a push (`python3 check_push.py`), or when a large change needs its feedback
-sooner. Never in a loop and never per commit: a full run of the scenarios is over 20 minutes.
+sooner. Never in a loop and never per commit: a full run of the scenarios is about 4 minutes,
+three at a time, with the Mac's load average near 7 meanwhile.
 
 **Verifying.** Verify the claim you are about to make, by the cheapest means that could
 disprove it: a measurement beats a render, a render beats a full capture. Never present a
@@ -90,7 +91,8 @@ tooling:
   where it differs from Ghostty. `e2e/drive.py verify <scenario>` drives a real session through it
   on the local GitLab rig, the model's replies played from the scenario's recording: free and
   the same every run, so the ONE scenario a change shows in belongs in the loop beside the unit
-  tests (each takes from 15 seconds to 4 minutes). The rest run at the push level.
+  tests (each takes from 15 seconds to 2 minutes, in a copy of the rig that is its alone, so
+  it disturbs neither the demo nor another scenario). The rest run at the push level.
   A real model (`--model`, and `--record` to re-make a recording the change broke) costs money
   and minutes: one run at the end with the owner's go. Say exactly what to run and what should be different from last time, then
   wait. The ack comes after the owner has run it, so step 2's "prove it" is unit tests plus
