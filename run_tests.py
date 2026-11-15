@@ -334,6 +334,9 @@ def _module_index(files):
             if path.name == "__init__.py":
                 index[dotted.rsplit(".__init__", 1)[0]] = path
         index[(path.parent, path.stem)] = path
+        # The fallback: a bare name imported from elsewhere, where the importer put that
+        # directory on `sys.path` first (`check_push.py` importing e2e's `scenarios`).
+        index.setdefault(("*", path.stem), set()).add(path)
     return index
 
 
@@ -368,8 +371,14 @@ def _imports(path, index):
         # "lib.diagram.render"; whichever resolves is the real one, and both are cheap to try.
         if name in index:
             out.add(index[name])
-        if (base, name.split(".")[0]) in index:
-            out.add(index[(base, name.split(".")[0])])
+        top = name.split(".")[0]
+        if (base, top) in index:
+            out.add(index[(base, top)])
+        elif name not in index:
+            # Not beside the importer and no dotted path: every repo module of that name.
+            # Over-selects where two folders share a name, which costs seconds; no repo module
+            # shares a name with the standard library, so `import json` adds nothing.
+            out.update(index.get(("*", top), ()))
 
     for node in ast.walk(tree):
         if isinstance(node, ast.ImportFrom):

@@ -70,6 +70,13 @@ class TestSelectionCoversTheObviousCase(unittest.TestCase):
                          "lib/diagram/test_reference.py", "lib/diagram/test_compact.py"):
             self.assertIn(rt.REPO_ROOT / expected, picked, expected)
 
+    def test_a_bare_import_from_another_folder_is_an_edge(self):
+        """`check_push.py` puts `e2e/` on sys.path and imports `scenarios` by its bare name;
+        resolved only beside the importer, a new scenario's commit ran no test of check_push's
+        and the one it broke was found a commit later."""
+        picked = rt._dependents({rt.REPO_ROOT / "e2e/scenarios.py"}, EVERY)
+        self.assertIn(rt.REPO_ROOT / "test_check_push.py", picked)
+
     def test_a_change_reaches_tests_transitively_not_just_direct_importers(self):
         """test_visualize.py never imports palette; it imports render, which imports it."""
         picked = rt._dependents({rt.REPO_ROOT / "lib/diagram/palette.py"}, EVERY)
