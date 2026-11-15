@@ -4,6 +4,7 @@
     python3 check_push.py                  # check HEAD against its upstream, record the pass
     python3 check_push.py --scenarios all  # every recorded scenario, whatever the change
     python3 check_push.py --scenarios none # no scenario (say so when you report)
+    python3 check_push.py --jobs 1         # the scenarios one after another (default: 3 at once)
     python3 check_push.py --dry-run        # say what would run, run nothing
     python3 check_push.py --verify SHA...  # the pre-push hook: has each of these passed?
 
@@ -21,6 +22,10 @@ A pass is recorded against the top commit's TREE, so an amend that changes nothi
 second run, is free; and after an amend that does change something, the scenarios are picked
 from what changed since the last tree that passed. `.githooks/pre-push` refuses a push whose
 commit has no recorded pass (`git push --no-verify` overrides it, as for any hook).
+
+The scenarios run several at a time (`JOBS`): each has a copy of the rig that is its alone
+(`e2e/drive.py`, `copy_of`), so they share nothing but the machine and the one GitLab. A
+scenario's output is printed whole when it ends.
 
 Each scenario that passes is noted against the tree as it passes, so a run that failed on one
 of them does not pay for the others again: the next run of the same tree says which have
@@ -41,6 +46,7 @@ import json
 import re
 import subprocess
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -50,7 +56,13 @@ sys.path.insert(0, str(HERE / "e2e"))
 
 import run_tests  # noqa: E402
 
+from lib import parallel  # noqa: E402
+
 RECORD = HERE / ".check_push_passed.json"
+# Scenarios at the same time. Each is a real claude in tmux beside its stand-in model and the
+# skills' scripts, and they all talk to one GitLab in a 4-CPU VM: three kept every scenario
+# as fast as it runs alone, with the Mac's load where it was (see the commit that set this).
+JOBS = 3
 KEEP = 30           # recorded passes kept; a pass older than these is simply run again
 
 # What the scenarios exercise, by path. Matched in order; the first match decides.
@@ -251,18 +263,29 @@ def main(argv):
     ok = run("every unpushed commit, commit level", [sys.executable, "check_commits.py", base])
     # On the Mac, every file: the test box is Linux, and this is the one run in the real thing.
     ok = run("the whole unit suite, on the Mac", [sys.executable, "run_tests.py", "--host"]) and ok
-    # One at a time, each noted as it passes: see the docstring.
+    # Each on its own, noted as it passes: see the docstring.
     before, started = scenarios_passed(tree), time.monotonic()
     for name in picked:
         if name in before:
             print(f"\n==> scenario {name}: passed for this tree already, not run again")
-        elif run(f"scenario {name}", [sys.executable, "e2e/drive.py", "verify", name]):
-            record_scenario(tree, name)
-        else:
-            ok = False
+    todo = [n for n in picked if n not in before]
+    noting = threading.Lock()
+
+    def scenario(name):
+        r = subprocess.run([sys.executable, "e2e/drive.py", "verify", name], cwd=HERE,
+                           capture_output=True, text=True)
+        with noting:
+            print(f"\n==> scenario {name}: {'ok' if r.returncode == 0 else 'FAILED'}\n"
+                  + (r.stdout + r.stderr).rstrip(), flush=True)
+            if r.returncode == 0:
+                record_scenario(tree, name)
+        return r.returncode == 0
+
+    jobs = int(argv[argv.index("--jobs") + 1]) if "--jobs" in argv else JOBS
+    ok = all(parallel.each(scenario, todo, workers=jobs)) and ok
     if picked:
-        print(f"\n    {len(picked)} scenario(s), {len(before & set(picked))} of them passed before: "
-              f"{time.monotonic() - started:.0f}s")
+        print(f"\n    {len(picked)} scenario(s), {len(before & set(picked))} of them passed before, "
+              f"{jobs} at a time: {time.monotonic() - started:.0f}s", flush=True)
     if not ok:
         print("\ncheck_push: FAILED — nothing recorded")
         return 1
