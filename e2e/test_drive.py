@@ -316,6 +316,52 @@ class WaitTest(unittest.TestCase):
         self.assertLess(clock.now, 30)
 
 
+class CopyTest(unittest.TestCase):
+    """A scenario on the rig runs in a copy of the rig that is its alone."""
+
+    def scenario(self, name, cwd="~/src/agent-skills-demo-review-mr1"):
+        return drive.Scenario(name, "x", cwd=cwd, steps=[], needs_rig=True)
+
+    def test_two_scenarios_share_neither_project_nor_folder(self):
+        a, b = drive.copy_of(self.scenario("rework-fix")), drive.copy_of(self.scenario("rework-mind"))
+        self.assertEqual(a, ("demo/e2e-rework-fix", "~/src/agent-skills-e2e/rework-fix"))
+        self.assertNotEqual(a[0], b[0])
+        self.assertNotEqual(a[1], b[1])
+        self.assertNotEqual(a[0], drive.DEMO_PROJECT)       # nor the demo's with anyone
+
+    def test_its_folder_is_the_copys_checkout_of_the_same_name(self):
+        sc = self.scenario("review-1")
+        cwd, _ = drive.workdir(sc, drive.copy_of(sc)[1])
+        self.assertEqual(cwd, os.path.expanduser("~/src/agent-skills-e2e/review-1/agent-skills-demo-review-mr1"))
+        # A showcase runs where the scenario says: the demo's own checkout.
+        self.assertEqual(drive.workdir(sc)[0], os.path.expanduser("~/src/agent-skills-demo-review-mr1"))
+
+    def test_a_steps_command_reaches_the_copy_through_its_environment(self):
+        env = drive.rig_env(*drive.copy_of(self.scenario("rework-fix")))
+        self.assertEqual((env["E2E_PROJECT"], env["P"], env["SLUG"]),
+                         ("demo/e2e-rework-fix", "demo%2Fe2e-rework-fix", "demo-e2e-rework-fix"))
+        ran = mock.Mock(return_value=mock.Mock(stdout="ok", stderr=""))
+        with mock.patch.object(drive.subprocess, "run", ran):
+            drive.run_step(drive.Pane("t", env=env), drive.Check("glab api projects/$P", "ok"), verify=True)
+        self.assertEqual(ran.call_args.kwargs["env"]["P"], "demo%2Fe2e-rework-fix")
+
+    def test_no_scenario_names_the_demos_project_in_a_command(self):
+        # It would read or change the demo's merge request from a copy's run.
+        import scenarios
+        for sc in scenarios.SCENARIOS:
+            for step in sc.steps:
+                if isinstance(step, drive.Check):
+                    self.assertNotIn("bulletproof-react", step.command, sc.name)
+
+    def test_the_reset_builds_the_scenarios_copy_not_the_demo(self):
+        ran = mock.Mock(return_value=mock.Mock(returncode=0, stdout="", stderr=""))
+        env = drive.rig_env(*drive.copy_of(self.scenario("rework-fix")))
+        with mock.patch.object(drive.subprocess, "run", ran), mock.patch.object(drive.Path, "write_text"):
+            drive.reset_rig(drive.Path("/nowhere"), 3, env)
+        self.assertEqual(ran.call_args.kwargs["env"]["E2E_PROJECT"], "demo/e2e-rework-fix")
+        self.assertEqual(ran.call_args.kwargs["env"]["E2E_SRC"], "~/src/agent-skills-e2e/rework-fix")
+
+
 class ResetTest(unittest.TestCase):
     def test_every_rig_scenario_names_the_merge_request_it_works_on(self):
         # One that named none would get the whole reset: slower, and nothing says so.

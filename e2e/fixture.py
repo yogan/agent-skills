@@ -13,6 +13,11 @@ Why it deletes and recreates the *project* rather than just the branches: that i
 restarts MR IIDs at 1, so !1/!2/!3 always match the run-of-show and the speaker notes
 never rot.
 
+`E2E_PROJECT` and `E2E_SRC` in the environment build a copy of the rig instead: another
+project in the same GitLab (`demo/e2e-rework-fix`) with its checkouts under another folder.
+`drive.py verify` gives every scenario a copy of its own that way, so two scenarios share
+nothing and can run at the same time, and the demo's own project is never a test's.
+
 `--mr N` is the reset between two test runs, for what one run can have changed: it deletes that
 one merge request and makes it again, with its threads, its checkout and the skills' state for
 it, and leaves the rest of the rig alone. GitLab would number the new one !5, so the project's
@@ -62,11 +67,15 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 ENV_FILE = os.path.join(HERE, ".env.local")
 CACHE = os.path.join(HERE, ".cache", "bulletproof-react.git")
 PATCHES = os.path.join(HERE, "patches")
-BUILD = os.path.join(HERE, ".cache", "build")
+# A copy of the rig (see the docstring) builds in a folder of its own, so that two resets can
+# run at the same time.
+COPY = os.environ.get("E2E_PROJECT", "").replace("/", "-")
+BUILD = os.path.join(HERE, ".cache", f"build-{COPY}" if COPY else "build")
 
 UPSTREAM = "https://github.com/alan2207/bulletproof-react.git"
 BASE = "74c76128"          # "validate env variables", 2024-05-03 — parent of e74349ee
-WORKDIR = os.path.expanduser("~/src/agent-skills-demo")
+SRC = os.path.expanduser(os.environ.get("E2E_SRC") or "~/src")
+WORKDIR = os.path.join(SRC, "agent-skills-demo")
 
 # Fixed dates so commit SHAs are identical on every reset — docs can cite them.
 DATES = {
@@ -101,6 +110,8 @@ def env():
             if line and not line.startswith("#") and "=" in line:
                 k, v = line.split("=", 1)
                 out[k] = v
+    if os.environ.get("E2E_PROJECT"):
+        out["E2E_PROJECT"] = os.environ["E2E_PROJECT"]
     return out
 
 
@@ -151,7 +162,11 @@ def api(path, method="GET", body=None, user="root", raw_query="", tries=4):
 
 def git(*args, cwd=None, user=None, date=None, check=True):
     """Run git. `user` sets author+committer so GitLab attributes the commit to that
-    account (matched by email); `date` pins both dates so SHAs are reproducible."""
+    account (matched by email); `date` pins both dates so SHAs are reproducible.
+
+    Never through a credential helper: every URL here carries its token, and the helper is
+    then only asked to store it. macOS's keychain helper answers one caller at a time and may
+    put a question on the screen, and three resets at once all stopped in it for good."""
     envv = dict(os.environ)
     if user:
         name, mail = IDENT[user]
@@ -159,7 +174,7 @@ def git(*args, cwd=None, user=None, date=None, check=True):
                     GIT_COMMITTER_NAME=name, GIT_COMMITTER_EMAIL=mail)
     if date:
         envv.update(GIT_AUTHOR_DATE=date, GIT_COMMITTER_DATE=date)
-    r = subprocess.run(["git", *args], cwd=cwd, env=envv,
+    r = subprocess.run(["git", "-c", "credential.helper=", *args], cwd=cwd, env=envv,
                        capture_output=True, text=True)
     if check and r.returncode != 0:
         die(f"git {' '.join(args)} failed:\n{r.stderr.strip() or r.stdout.strip()}")
@@ -169,6 +184,16 @@ def git(*args, cwd=None, user=None, date=None, check=True):
 def push_url(user):
     host = E["E2E_GITLAB_HOST"]
     return f"http://{user}:{token(user)}@{host}/{E['E2E_PROJECT']}.git"
+
+
+def clone_as_frank(where):
+    """A checkout of the project at `where`, pushing and pulling as frank without a prompt
+    (/rework-mr force-pushes on every fixup) and without a credential helper (see `git`):
+    the skills' own git commands in it, and in its worktrees, run under that setting too."""
+    git("clone", "--quiet", push_url("frank"), where)
+    git("config", "user.name", IDENT["frank"][0], cwd=where)
+    git("config", "user.email", IDENT["frank"][1], cwd=where)
+    git("config", "credential.helper", "", cwd=where)
 
 
 def push_branch(user, branch, force=True):
@@ -842,7 +867,7 @@ MR4_DESC = """Two small chores in one MR:
 - `src/config/feature-flags.ts`: every flag the app reads, in one place, each with its default
 - a one-line doc comment on top of each shared component that had none
 """
-MR4_DIR = f"{os.path.expanduser('~/src/agent-skills-demo')}-scroll"
+MR4_DIR = f"{WORKDIR}-scroll"
 # The flags file: long enough that the sidebar's file scrolls.
 MR4_FLAGS = "src/config/feature-flags.ts"
 MR4_FLAG_NAMES = [f"{a}{b}" for a in ("comments", "discussions", "users", "teams", "profile", "auth",
@@ -941,11 +966,7 @@ def clone_mr4():
     step(f"cloning MR !4's checkout at {MR4_DIR}")
     if os.path.isdir(MR4_DIR):
         shutil.rmtree(MR4_DIR)
-    host = E["E2E_GITLAB_HOST"]
-    git("clone", "--quiet", f"http://{host}/{E['E2E_PROJECT']}.git", MR4_DIR)
-    git("config", "user.name", IDENT["frank"][0], cwd=MR4_DIR)
-    git("config", "user.email", IDENT["frank"][1], cwd=MR4_DIR)
-    git("remote", "set-url", "origin", push_url("frank"), cwd=MR4_DIR)
+    clone_as_frank(MR4_DIR)
     git("fetch", "--quiet", "origin", MR4_BRANCH, cwd=MR4_DIR)
     git("checkout", "--quiet", "-B", MR4_BRANCH, f"origin/{MR4_BRANCH}", cwd=MR4_DIR)
     git("branch", f"--set-upstream-to=origin/{MR4_BRANCH}", MR4_BRANCH, cwd=MR4_DIR, check=False)
@@ -977,12 +998,7 @@ def reclone_workdir(keep_worktrees=False):
     kept = review_worktrees() if keep_worktrees else {}
     if os.path.isdir(WORKDIR):
         shutil.rmtree(WORKDIR)
-    host = E["E2E_GITLAB_HOST"]
-    git("clone", "--quiet", f"http://{host}/{E['E2E_PROJECT']}.git", WORKDIR)
-    git("config", "user.name", IDENT["frank"][0], cwd=WORKDIR)
-    git("config", "user.email", IDENT["frank"][1], cwd=WORKDIR)
-    # push/pull as frank without prompting — /rework-mr force-pushes on every fixup
-    git("remote", "set-url", "origin", push_url("frank"), cwd=WORKDIR)
+    clone_as_frank(WORKDIR)
     # Land on MR !3's branch: it is your own MR, so this is where /rework-mr expects to
     # be, and a bare `glab mr view` here then resolves the right MR.
     git("fetch", "--quiet", "origin", MR3_BRANCH, cwd=WORKDIR)

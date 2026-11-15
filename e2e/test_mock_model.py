@@ -2,6 +2,7 @@
 """Tests for mock_model.py: cutting a recording from transcript lines, and answering from it."""
 import json
 import os
+import tempfile
 import sys
 import unittest
 import urllib.request
@@ -90,6 +91,22 @@ class Recording(unittest.TestCase):
         stored = M.to_placeholders({"command": f"cat {home}/notes.txt"})
         self.assertEqual(stored, {"command": "cat {HOME}/notes.txt"})
         self.assertEqual(M.from_placeholders(stored), {"command": f"cat {home}/notes.txt"})
+
+    def test_a_copy_of_the_rig_plays_a_recording_in_its_own_checkouts(self):
+        # Recorded in the demo's checkouts, played in a scenario's copy: its checkouts take
+        # their place, and this repo's own folder beside them stays where it is.
+        copy = tempfile.mkdtemp()
+        self.addCleanup(os.rmdir, copy)
+        self.addCleanup(setattr, M, "CHECKOUTS", M.CHECKOUTS)
+        M.CHECKOUTS = copy
+        real = os.path.realpath(copy)
+        recorded = {"command": "cd {SRC}/agent-skills-demo-review-mr2 && python3 {SRC}/agent-skills/e2e/news.py"}
+        played = M.from_placeholders(recorded)["command"]
+        self.assertTrue(played.startswith(f"cd {real}/agent-skills-demo-review-mr2 && "), played)
+        self.assertNotIn(real, played.split("&&")[1])
+        self.assertNotIn("{SRC}", played)
+        # And what such a run says or records reads as the recording does.
+        self.assertEqual(M.to_placeholders({"command": played}), recorded)
 
     def test_a_runs_own_skills_folder_is_kept_as_the_repos(self):
         run = "{SRC}/agent-skills/e2e/.runs/20261112-213646-try-scrolling/skills-plugin/skills/rework-mr/scripts"

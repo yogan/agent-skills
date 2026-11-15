@@ -52,18 +52,30 @@ OFF = "⚠ mock model: off script"
 SIG = 200        # how much of a prompt identifies it: enough to tell buttons and topics apart
 
 
+# The folder the demo checkouts are under in this run, where it is not the one holding this
+# checkout: a scenario's own copy of the rig (drive.py's `copy_of`). Set by the driver before
+# a recording is played or made.
+CHECKOUTS = None
+DEMO = "agent-skills-demo"       # what every demo checkout's folder name starts with
+
+
 def places():
     """(path, placeholder) pairs, longest path first. A recording is committed, so the folders
     it ran under are kept as placeholders and put back when it is played: the paths name
     whoever recorded it, and the replay may run under someone else's. The folder holding this
-    checkout holds the demo checkouts too (fixture.py); `~/src` may be a link to it."""
+    checkout holds the demo checkouts too (fixture.py), unless CHECKOUTS names another;
+    `~/src` may be a link to it."""
     home = os.path.expanduser("~")
     src = os.path.realpath(os.path.dirname(os.path.dirname(HERE)))
     pairs = [(src, "{SRC}"), (os.path.dirname(os.path.dirname(HERE)), "{SRC}"), (home, "{HOME}")]
     alias = os.path.join(home, "src")
     if os.path.realpath(alias) == src:
         pairs.append((alias, "{SRC}"))
-    return sorted(set(pairs), key=lambda p: -len(p[0]))
+    if CHECKOUTS:
+        # The real folder first: a placeholder goes back to the first path that carries it.
+        for root in (os.path.realpath(CHECKOUTS), CHECKOUTS):
+            pairs.append((os.path.join(root, DEMO), "{SRC}/" + DEMO))
+    return sorted(dict.fromkeys(pairs), key=lambda p: -len(p[0]))
 
 
 # A run's own plugin folder of this repo's skills (drive.py's `skills_plugin`), whose `skills`

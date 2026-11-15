@@ -4,6 +4,7 @@
 Run: `python3 e2e/test_fixture.py` (no GitLab, no docker: nothing is called).
 """
 import os
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -44,6 +45,39 @@ class WipeTest(unittest.TestCase):
     def test_a_full_reset_takes_the_projects_state_and_every_merge_requests(self):
         fixture.wipe_skill_state()
         self.assertEqual(self.left(), ["review-mr/someone-else--mr1"])
+
+
+class CopyTest(unittest.TestCase):
+    """E2E_PROJECT and E2E_SRC build a copy of the rig, beside the demo's and apart from it."""
+
+    def paths(self, **env):
+        code = "import fixture as f; print(f.WORKDIR); print(f.MR4_DIR); print(f.BUILD)"
+        clean = {k: v for k, v in os.environ.items() if k not in ("E2E_PROJECT", "E2E_SRC")}
+        r = subprocess.run([sys.executable, "-c", code], cwd=os.path.dirname(os.path.abspath(__file__)),
+                           env={**clean, **env}, capture_output=True, text=True, check=True)
+        return r.stdout.split("\n")[:3]
+
+    def test_the_demos_rig_is_where_it_always_was(self):
+        work, scroll, build = self.paths()
+        self.assertEqual(work, os.path.expanduser("~/src/agent-skills-demo"))
+        self.assertEqual(scroll, os.path.expanduser("~/src/agent-skills-demo-scroll"))
+        self.assertTrue(build.endswith("/.cache/build"))
+
+    def test_a_copy_has_its_own_checkouts_and_its_own_folder_to_build_in(self):
+        work, scroll, build = self.paths(E2E_PROJECT="demo/e2e-rework-fix", E2E_SRC="~/src/copies/rework-fix")
+        self.assertEqual(work, os.path.expanduser("~/src/copies/rework-fix/agent-skills-demo"))
+        self.assertEqual(scroll, work + "-scroll")
+        self.assertTrue(build.endswith("/.cache/build-demo-e2e-rework-fix"))
+
+    def test_a_copys_project_replaces_the_one_the_rig_was_set_up_with(self):
+        with tempfile.NamedTemporaryFile("w", suffix=".env") as f:
+            f.write("E2E_PROJECT=demo/bulletproof-react\nE2E_GITLAB_HOST=gitlab.test\n")
+            f.flush()
+            with mock.patch.object(fixture, "ENV_FILE", f.name):
+                self.assertEqual(fixture.env()["E2E_PROJECT"], "demo/bulletproof-react")
+                with mock.patch.dict(os.environ, {"E2E_PROJECT": "demo/e2e-rework-fix"}):
+                    got = fixture.env()
+        self.assertEqual((got["E2E_PROJECT"], got["E2E_GITLAB_HOST"]), ("demo/e2e-rework-fix", "gitlab.test"))
 
 
 class CounterTest(unittest.TestCase):

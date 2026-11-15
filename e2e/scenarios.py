@@ -54,7 +54,8 @@ def current(t):
 # to decline it, the card drafts that reply with one press, and it is posted at once.
 # How long a check that only looks keeps asking GitLab for what the press before it posts.
 SOON = 30
-THREADS = "glab api 'projects/demo%2Fbulletproof-react/merge_requests/3/discussions'"
+# `$P`: the project of the rig a scenario runs on, as the API takes it (drive.py's `rig_env`).
+THREADS = 'glab api "projects/$P/merge_requests/3/discussions"'
 
 
 def thread_on(path, show):
@@ -84,7 +85,7 @@ SCROLL = "~/src/agent-skills-demo-scroll"     # MR !4's checkout (fixture.py's M
 THUMB = Expect(r"[█▁▂▃▄▅▆▇]", region="panel", wait=30)
 # How many of MR !4's topics carry a proposal, asked until all do or 14 minutes have passed.
 EVERY_PROPOSAL = ("python3 -c \"import json,os,time\n"
-                  "p=os.path.expanduser('~/.claude/rework-mr/demo-bulletproof-react--mr4/topics.json')\n"
+                  "p=os.path.expanduser('~/.claude/rework-mr/$SLUG--mr4/topics.json')\n"
                   "for _ in range(168):\n"
                   " ts=json.load(open(p))['topics']; n=sum(1 for t in ts if t.get('proposal'))\n"
                   " if n==len(ts): break\n"
@@ -119,7 +120,7 @@ REWORK_FIX = [
             Expect(current("t2"), region="panel", wait=120),
             Check("git fetch -q && git rev-parse HEAD @{u} | uniq | wc -l", r"^\s*1$"),
             Check("git rev-list --count origin/main..@{u}", r"^2$"),   # squashed, no fixup left
-            Check("glab api 'projects/demo%2Fbulletproof-react/merge_requests/3/discussions'"
+            Check('glab api "projects/$P/merge_requests/3/discussions"'
                   " | python3 -c 'import json,sys; d=[x for x in json.load(sys.stdin) if x[\"notes\"][0]"
                   ".get(\"position\",{}).get(\"new_path\",\"\").endswith(\"comments/api/query-keys.ts\")][0];"
                   " print(d[\"notes\"][0][\"resolved\"], d[\"notes\"][-1][\"body\"][:6])'",
@@ -156,7 +157,7 @@ REWORK_FIX = [
             press('Merge', region="panel"),
             Expect(r"You merged the MR", region="panel", wait=60),
             Expect(button('Clean up locally'), region="panel"),
-            Check("glab api 'projects/demo%2Fbulletproof-react/merge_requests/3'"
+            Check('glab api "projects/$P/merge_requests/3"'
                   " | python3 -c 'import json,sys; print(json.load(sys.stdin)[\"state\"])'", r"^merged$"),
             press('Clean up locally', region="panel"),
             Expect(r"All cleaned up\. You can close this session\.", region="panel", wait=60),
@@ -454,7 +455,7 @@ SCENARIOS = [
             Expect(button('Copy'), region="screen"),
             Expect(button('Post'), region="screen"),
             press('Post'),
-            Check("glab api 'projects/demo%2Fbulletproof-react/merge_requests/1/discussions'",
+            Check('glab api "projects/$P/merge_requests/1/discussions"',
                   r'"new_path":"[^"]*db\.ts"', wait=SOON),
         ]),
 
@@ -463,7 +464,7 @@ SCENARIOS = [
         needs_rig=True, mods=[MOD], steps=[
             Prompt("/review-mr !1", timeout=600),
             # The user's own review, posted straight to GitLab: one comment making t1's point.
-            Check("glab api -X POST 'projects/demo%2Fbulletproof-react/merge_requests/1/discussions'"
+            Check('glab api -X POST "projects/$P/merge_requests/1/discussions"'
                   " -f body=\"Is the CORS setup in the mock server right? Looks odd.\"",
                   r'"id"'),
             press('My review is done', turn=True, timeout=600),
@@ -476,7 +477,7 @@ SCENARIOS = [
             Expect(button('Copy'), region="screen"),
             Expect(button('Post'), region="screen"),
             press('Post'),                 # a reply below the user's own comment
-            Check("glab api 'projects/demo%2Fbulletproof-react/merge_requests/1/discussions'"
+            Check('glab api "projects/$P/merge_requests/1/discussions"'
                   " | python3 -c 'import json,sys; print(max(len(d[\"notes\"]) for d in json.load(sys.stdin)))'",
                   r"^2$", wait=SOON),
         ]),

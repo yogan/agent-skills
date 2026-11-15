@@ -58,7 +58,7 @@ BOOT_TIMEOUT = 900
 LABEL = "agent-skills.e2e-rig-idle"
 PLIST = launchd.plist_path(LABEL)
 
-# Mirrors drive.py's DEMO_SESSION and its `drive-<scenario>` sessions.
+# tmux-demo.sh's session, and drive.py's `drive-<scenario>` sessions.
 DEMO_SESSION = "agentic-review-skills-demo"
 
 

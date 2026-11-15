@@ -11,7 +11,10 @@ the same every time. `--model haiku` (or any model) runs on the real one instead
 money and minutes: it is the only test of whether a model follows the skills' wording, so it
 runs with the owner's go, and `--record` keeps a passing run as the scenario's recording.
 
-**verify** runs each scenario in a detached tmux session of a fixed size, with the user's own
+**verify** runs each scenario in a detached tmux session of a fixed size, a scenario on the
+rig in a copy of the rig that is its alone (`copy_of`): a project of its own in the local
+GitLab and checkouts of its own, so scenarios share nothing, can run at the same time, and
+never touch the demo's project. It runs with the user's own
 settings left out (`--setting-sources project,local`) so a Stop hook of theirs cannot change
 what is measured. After every step it saves the screen as text and
 with colours, checks what the step expects, and on the first miss exits non-zero naming the
@@ -70,6 +73,12 @@ GRACE = 10          # seconds a step keeps looking for what the action before it
 STANDS = 0.5        # seconds a button stands unmoved before it is clicked
 PRESS_TAKEN = 1.5   # seconds a press that says nothing on screen is given to be through
 TURN_QUIET = 1.5    # seconds of unchanged screen after a turn before it counts as ended
+
+# The demo's own rig, which a showcase runs on: its project (bootstrap.py's GROUP and PROJECT)
+# and the folder its checkouts are under (fixture.py's SRC), where a scenario's `cwd` names one.
+GROUP = "demo"
+DEMO_PROJECT = f"{GROUP}/bulletproof-react"
+SRC = "~/src"
 
 # The engine's own questions that can come up mid-run, and the key a person would answer each
 # with. They take the band above the prompt, where the mod yields to them, so the cards'
@@ -175,7 +184,8 @@ class Panel(Step):
 @dataclasses.dataclass
 class Check(Step):
     """A shell command's output matches `pattern`: for what the screen cannot show, such
-    as whether a comment really reached GitLab. Runs in the scenario's folder."""
+    as whether a comment really reached GitLab. Runs in the scenario's folder, with the
+    rig it runs on in its environment (`rig_env`): `$P` is the project as the API takes it."""
     command: str
     pattern: str
     timeout: int = 120  # seconds the command may run: one that waits for something, longer
@@ -333,10 +343,11 @@ def tmux(*args, check=True):
 class Pane:
     """One claude, in a tmux pane addressed by `target`."""
 
-    def __init__(self, target, log=print, cwd=None):
+    def __init__(self, target, log=print, cwd=None, env=None):
         self.target = target
         self.log = log
         self.cwd = cwd
+        self.env = env or {}        # the rig a step's shell command reaches (`rig_env`)
 
     def screen(self, ansi=False):
         """The visible screen only: what the person sees, and what a step judges. One of the
@@ -393,16 +404,18 @@ class Pane:
         """Wait for the prompt box, answering the trust-this-folder question on the way.
 
         That question's default is "No, exit": an Enter meant for the prompt quits claude, so
-        it is answered here, once, with its second option.
+        it is answered here with its second option, and Enter is only sent once the screen
+        shows that option chosen: a key sent while the question is still being drawn is lost.
         """
-        end, answered = time.time() + timeout, False
+        end = time.time() + timeout
         while time.time() < end:
             s = self.screen()
             if "trust this folder" in s:
-                if not answered:
-                    self.keys("Down")
+                if re.search(r"❯ Yes, I trust", s):
                     self.keys("Enter")
-                    answered = True
+                    time.sleep(1)
+                else:
+                    self.keys("Down")
             elif has_prompt_box(s):
                 return self.settle(timeout=max(5, end - time.time()))
             time.sleep(0.5)
@@ -484,11 +497,31 @@ def expand(p):
     return os.path.expanduser(p)
 
 
-def workdir(sc):
+def copy_of(sc):
+    """(project, folder its checkouts are under) of the scenario's own copy of the rig.
+
+    One copy per scenario, kept between runs: `fixture.py` builds it whole the first time
+    (~30 s) and makes the scenario's merge request again before every run after that (~6 s).
+    Nothing but that scenario's verify ever touches it, which is what lets several run at
+    once; the demo's own project and checkouts are a showcase's and a person's."""
+    return f"{GROUP}/e2e-{sc.name}", f"{SRC}/agent-skills-e2e/{sc.name}"
+
+
+def rig_env(project=DEMO_PROJECT, src=SRC):
+    """What reaches a rig, the demo's or a copy: for fixture.py and news.py (E2E_PROJECT,
+    E2E_SRC), and for a step's own shell command (`$P`, the project as the API takes it;
+    `$SLUG`, as the skills name their state folders after it)."""
+    return {"E2E_PROJECT": project, "E2E_SRC": src, "P": project.replace("/", "%2F"),
+            "SLUG": project.replace("/", "-").replace(".", "-")}
+
+
+def workdir(sc, src=SRC):
     """The scenario's folder, and a cleanup for it: a fresh one when the scenario names none,
-    removed afterwards, since a test removes exactly what it created."""
+    removed afterwards, since a test removes exactly what it created. `src`: the folder the
+    rig's checkouts are under in this run, in place of the demo's."""
     if sc.cwd:
-        return expand(sc.cwd), lambda: None
+        under = sc.cwd.startswith(SRC + "/")
+        return expand(src + sc.cwd[len(SRC):] if under else sc.cwd), lambda: None
     d = tempfile.mkdtemp(prefix=f"drive-{sc.name}-")
     return d, lambda: shutil.rmtree(d, ignore_errors=True)
 
@@ -696,7 +729,8 @@ def run_step(pane, step, verify, nxt=None):
         while True:
             # A check that runs a skill's script must not name the window the driver runs in.
             r = subprocess.run(step.command, shell=True, capture_output=True, text=True,
-                               cwd=pane.cwd, timeout=step.timeout, env={**os.environ, "AGENT_TAB_OFF": "1"})
+                               cwd=pane.cwd, timeout=step.timeout,
+                               env={**os.environ, **pane.env, "AGENT_TAB_OFF": "1"})
             if re.search(step.pattern, r.stdout + r.stderr, re.M):
                 break
             if time.time() >= end:
@@ -727,18 +761,8 @@ def save(pane, out, n, step):
     stem.with_suffix(".ansi").write_text(pane.screen(ansi=True))
 
 
-# tmux-demo.sh's session. Its windows work in the rig's checkouts, so a reset under them pulls
-# the floor away mid-review: a press lands in a folder that was just re-cloned.
-DEMO_SESSION = "agentic-review-skills-demo"
-
-
-def demo_is_open():
-    return subprocess.run(["tmux", "has-session", "-t", DEMO_SESSION],
-                          capture_output=True).returncode == 0
-
-
-def reset_rig(out, mr=None):
-    """Put the local GitLab and the demo checkouts back in their known state.
+def reset_rig(out, mr=None, env=None):
+    """Put the scenario's copy of the rig (`env`, from `rig_env`) back in its known state.
 
     Every rig scenario starts from here: a review run writes the skill's state and posts to
     the merge request, so the next run would otherwise start somewhere else. `mr`: the one
@@ -746,7 +770,8 @@ def reset_rig(out, mr=None):
     ~30 s for everything): what the scenarios before it did to theirs does not reach it.
     `fixture.py` still makes everything where the rig is not whole."""
     only = ["--mr", str(mr)] if mr else []
-    r = subprocess.run([sys.executable, str(E2E / "fixture.py"), *only], capture_output=True, text=True)
+    r = subprocess.run([sys.executable, str(E2E / "fixture.py"), *only], capture_output=True, text=True,
+                       env={**os.environ, **(env or {})})
     (out / "reset.log").write_text(r.stdout + r.stderr)
     if r.returncode:
         raise StepFailed(f"fixture.py failed, see {out / 'reset.log'}")
@@ -755,17 +780,14 @@ def reset_rig(out, mr=None):
 def verify(sc, model, out_root, keep, reset, record=False):
     out = out_root / f"{datetime.datetime.now():%Y%m%d-%H%M%S}-{sc.name}"
     out.mkdir(parents=True)
+    env = rig_env(*copy_of(sc)) if sc.needs_rig else rig_env()
+    mock_model.CHECKOUTS = expand(env["E2E_SRC"]) if sc.needs_rig else None
     mock = None
     if model == "mock":
         mock, why = start_mock(sc, log=str(out / "mock.log"))
         if not mock:
             print(f"── {sc.name}\n   FAIL {why}")
             return False
-    if sc.needs_rig and reset and demo_is_open():
-        print(f"── {sc.name}\n   FAIL reset: the demo session '{DEMO_SESSION}' is open, and a reset "
-              "re-clones the checkouts its windows work in. Close it first "
-              f"(tmux kill-session -t {DEMO_SESSION}), or run with --no-reset.")
-        return False
     # Up first, also without a reset: a rig left unused is paused, then stopped (rig.py).
     if sc.needs_rig and not rig.up(log=lambda m: print(f"   {m}")):
         print(f"── {sc.name}\n   FAIL the rig's GitLab is not up (python3 e2e/rig.py up)")
@@ -774,7 +796,7 @@ def verify(sc, model, out_root, keep, reset, record=False):
     if sc.needs_rig and reset:
         t = time.time()
         try:
-            reset_rig(out, sc.mr())
+            reset_rig(out, sc.mr(), env)
         except StepFailed as err:
             print(f"── {sc.name}\n   FAIL reset: {err}")
             return False
@@ -782,11 +804,11 @@ def verify(sc, model, out_root, keep, reset, record=False):
     session = f"drive-{sc.name}"
     tmux("kill-session", "-t", session, check=False)
     w, h = VERIFY_SIZE
-    cwd, cleanup = workdir(sc)
+    cwd, cleanup = workdir(sc, env["E2E_SRC"])
     tmux("new-session", "-d", "-s", session, "-x", str(w), "-y", str(h), "-c", cwd,
          claude_command(sc, model, verify=True, plugins=[skills_plugin(out)],
                         mock=mock.command if mock else None))
-    pane = Pane(session, cwd=cwd)
+    pane = Pane(session, cwd=cwd, env=env)
     print(f"── {sc.name}: {sc.about}" + ("" if mock else f"  (real model: {model})"))
     n, step, t0 = 0, None, time.time()
     ran = None
@@ -850,6 +872,7 @@ def showcase(sc, model, session, pace):
     window = sc.window or sc.name
     if model is None and not any(isinstance(s, Handover) for s in sc.steps):
         model = "mock"
+    mock_model.CHECKOUTS = None     # the demo's own rig
     mock = None
     if model == "mock":
         mock, why = start_mock(sc, log=None)
@@ -864,7 +887,7 @@ def showcase(sc, model, session, pace):
         wid = tmux("new-session", "-d", "-P", "-F", "#{window_id}", "-s", session, "-n", window, "-c", cwd)
     else:
         wid = tmux("new-window", "-d", "-P", "-F", "#{window_id}", "-t", f"{session}:", "-n", window, "-c", cwd)
-    pane = Pane(wid.strip(), cwd=cwd)
+    pane = Pane(wid.strip(), cwd=cwd, env=rig_env())
     # `env -u`: a caller may have switched the mod's rendering and the tab names off for its
     # own checks (tmux-demo.sh does), and a tmux server it started hands that on to every window.
     pane.type("clear; env -u REVIEW_UI_DRAWN -u AGENT_TAB_OFF " + claude_command(

@@ -124,6 +124,29 @@ It does this only on a rig that is otherwise whole: the project, `main` and
 copy a checkout. Anything else (a merged MR !3 has moved `main`; a rig never reset) and it
 says why and runs everything. `drive.py verify` asks for it before every rig scenario.
 
+### A copy of the rig for every test scenario
+
+`drive.py verify` never runs on the demo's project. Each scenario on the rig has a copy of
+the rig that is its alone: a project of its own beside the demo's (`demo/e2e-rework-fix`),
+built by the same `fixture.py` with the same four merge requests under the same numbers, and
+its checkouts under `~/src/agent-skills-e2e/<scenario>/`. The first run of a scenario builds
+its copy whole (~30 s); every run after that makes the scenario's merge request again (~6 s).
+
+Two scenarios therefore share nothing, which is what lets `check_push.py` run three at a
+time; and a test run can no longer reset the demo under an open demo session, or find the
+rig as a person left it. A recording made in one place plays in the other: it keeps the
+checkouts as `{SRC}/agent-skills-demo…`, and `mock_model.py` puts the run's own folder there.
+A scenario's shell checks reach their project as `$P`.
+
+By hand, the environment says which rig is meant:
+
+```sh
+E2E_PROJECT=demo/e2e-rework-fix E2E_SRC=~/src/agent-skills-e2e/rework-fix python3 fixture.py --mr 3
+```
+
+A copy is a project and three small checkouts; removing one is deleting its project in
+GitLab and its folder, and the next run builds it again.
+
 On talk day use `./tmux-demo.sh` instead — it runs this only if the state does not verify.
 
 ### What it builds
@@ -186,8 +209,9 @@ hand as long as the tool calls stay.
 **verify** runs at a fixed 160×50 and leaves your
 own settings out, so your Stop hooks, skills, CLAUDE.md and permission rules play no part: the
 repo's skills come back in as a plugin, and the scenario carries its own allow list. A
-scenario marked `rig` first makes its merge request again (`fixture.py --mr N`, ~6 s; the
-whole fixture, ~28 s, where the rig is not whole), because the run before it wrote skill
+scenario marked `rig` runs in its own copy of the rig (above) and first makes its merge
+request again there (`fixture.py --mr N`, ~6 s; the whole fixture, ~28 s, where the copy
+is not whole or not there yet), because the run before it wrote skill
 state and posted to the merge request; `--no-reset` skips that. After every step the screen is
 saved as text and with colours under `.runs/<time>-<scenario>/`, and a failed run adds what
 the session ran (`transcript.txt`, from `transcript.py`) and, on the recording, what each
