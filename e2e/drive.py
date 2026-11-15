@@ -72,6 +72,8 @@ VERIFY_SIZE = (160, 50)
 GRACE = 10          # seconds a step keeps looking for what the action before it brings
 STANDS = 0.5        # seconds a button stands unmoved before it is clicked
 PRESS_TAKEN = 1.5   # seconds a press that says nothing on screen is given to be through
+MISS_LOOK = 0.5     # seconds after a click in which a screen moved under it counts as a miss
+MISS_ROWS = 4       # rows above a button that must have moved with it for it to be the same one
 TURN_QUIET = 1.5    # seconds of unchanged screen after a turn before it counts as ended
 
 # What claude says at its start when it runs without its fullscreen interface for one launch,
@@ -285,6 +287,32 @@ def find_text(screen, text, region="screen"):
     return None
 
 
+def missed(before, after, at, text, region="screen"):
+    """Where a button just clicked at `at` is now, when the screen moved under the click;
+    None when the press may have landed.
+
+    A line that appears at the moment of the press (a background agent's line under the
+    prompt) moves the transcript, and the press lands on a row the button has just left.
+    A browser driver checks what is under the pointer as it clicks; a terminal has no such
+    check, so it is judged afterwards: the same button some rows away, with the rows above
+    it moved along on its side of the panel's divider, is one the screen moved away from.
+    A pressed button is taken off the screen while its press runs, and the next card's
+    buttons have other rows above them."""
+    now = find_text(after, text, region)
+    if now is None or now == at:
+        return None
+    div = divider_column(before)
+    side = "panel" if div is not None and at[1] > div else "transcript"
+    old, new = region_of(before, side).split("\n"), region_of(after, side).split("\n")
+    shift = now[0] - at[0]
+    # Rows pushed off the top are no evidence either way; the button and one above it are needed.
+    rows = [r for r in range(max(0, at[0] - MISS_ROWS), at[0] + 1)
+            if 0 <= r + shift < len(new) and r < len(old)]
+    if len(rows) >= 2 and at[0] in rows and all(new[r + shift] == old[r] for r in rows):
+        return now
+    return None
+
+
 def has_prompt_box(screen):
     """Claude's prompt is drawn: a `❯` line directly under a horizontal rule. A shell prompt
     may carry a `❯` too, but not under a rule, so a window still at its shell does not count."""
@@ -465,6 +493,29 @@ class Pane:
             if time.time() >= end:
                 return at
             time.sleep(0.2)
+
+    def press(self, at, text, region, offset=0):
+        """Click the button found at `at`, and once more where it is now when the screen
+        moved under the first click (`missed`). Returns where it was pressed.
+
+        Looked at again just before the click, so a move already drawn is clicked where it
+        went; the look afterwards ends as soon as the button leaves the screen, which a press
+        that landed does at once."""
+        before = self.screen()
+        at = find_text(before, text, region) or at
+        self.click(at[0], at[1] + offset)
+        end = time.time() + MISS_LOOK
+        while True:
+            now = self.screen()
+            if find_text(now, text, region) is None:
+                return at
+            moved = missed(before, now, at, text, region)
+            if moved is not None:
+                self.click(moved[0], moved[1] + offset)
+                return moved
+            if time.time() >= end:
+                return at
+            time.sleep(0.1)
 
     def pressed(self, at, text, region, hurry):
         """Wait until a press without a turn is through.
@@ -705,7 +756,7 @@ def run_step(pane, step, verify, nxt=None):
         at = pane.standing(step.text, step.region)
         if at is None:
             raise StepFailed(f"nothing on screen reads {step.text!r}")
-        pane.click(at[0], at[1] + step.offset)
+        at = pane.press(at, step.text, step.region, step.offset)
         if step.turn:
             pane.wait_turn(step.timeout)
         else:

@@ -265,6 +265,27 @@ class WaitTest(unittest.TestCase):
         self.assertIsNone(drive.Pane("t").standing(self.BUTTON, "screen"))
         self.assertGreaterEqual(clock.now, drive.GRACE)
 
+    def test_a_click_the_screen_moved_away_from_is_pressed_again_where_the_button_went(self):
+        # A background agent's two lines arrive as the click is sent: the card moves up two rows.
+        card = ["╭─ t1", "│ rename it", "│ in 3 files", f"│ {self.BUTTON}", "╰─", "", "", "❯"]
+        moved = card[2:] + ["  ⏺ main", "  ◯ Judge news"]
+        clock = Clock(self, [(0, "\n".join(card)), (0.05, "\n".join(moved))])
+        at = drive.Pane("t").press((3, 2), self.BUTTON, "screen")
+        self.assertEqual(at, (1, 2))
+        self.assertEqual(len(clock.clicks), 2)
+
+    def test_a_press_that_landed_is_not_pressed_again(self):
+        clock = Clock(self, [(0, self.card(2)), (0.05, "╭─ t1")])
+        drive.Pane("t").press((3, 2), self.BUTTON, "screen")
+        self.assertEqual(len(clock.clicks), 1)
+
+    def test_the_next_cards_button_elsewhere_is_not_the_one_missed(self):
+        # The press landed and t2's card came with its own Agree plan, two rows higher.
+        t2 = "\n".join(["╭─ t2", "│ refetch the detail", f"│ {self.BUTTON}"])
+        clock = Clock(self, [(0, self.card(2)), (0.05, t2)])
+        drive.Pane("t").press((3, 2), self.BUTTON, "screen")
+        self.assertEqual(len(clock.clicks), 1)
+
     def test_a_press_is_through_when_its_button_has_left_the_screen(self):
         clock = Clock(self, [(0, self.card(2)), (0.2, "╭─ t1")])
         drive.Pane("t").pressed((3, 2), self.BUTTON, "screen", hurry=True)
