@@ -529,9 +529,15 @@ const reworkButtons = (review: ReviewState): BandButton[] => {
         // A reply is the recommendation where there is something to say: the fix differs
         // from the plan agreed, or the plan answers the reviewer and nothing went up yet.
         const hasMore = topic.differs === true || (topic.answer_now === true && !topic.early_posted)
+        // A fix that differs from the plan agreed: what the reply has to say is known (the
+        // card's story says how it differs), so it is drafted on a press, with nothing to
+        // type; "Fixed" alone would leave the difference unmentioned.
+        const reply: BandButton = topic.differs === true
+          ? { key: 'draft', label: 'Reply', press: ask(`Draft the reply for ${t} after its fix${lang}: the fix differs from the plan agreed (\`plans\` says how), so tell the reviewer what it does beyond or instead of what was agreed. Store it (\`set ${t} --reply -\`) and show it (\`reply-view ${t}\`).`), isPrimary: true }
+          : { key: 'draft', label: 'Reply…', press: { kind: 'fill', text: `Draft the reply for ${t} after its fix${lang}: ` }, ...(hasMore ? { isPrimary: true as const } : {}) }
         bs = [{ key: 'post-fixed', label: '“Fixed”', press: { kind: 'post', fixed: true } },
           { key: 'post-fixed-resolve', label: '“Fixed” + resolve', press: { kind: 'post', fixed: true, resolve: true }, ...(hasMore ? {} : { isPrimary: true as const }) },
-          { key: 'draft', label: 'Reply…', press: { kind: 'fill', text: `Draft the reply for ${t} after its fix${lang}: ` }, ...(hasMore ? { isPrimary: true as const } : {}) },
+          reply,
           ...(topic.fix_kept ? [showFix] : [])]
       } else {
         // A plan to reply, a pushed fix defended among them: the fix stays a press away.

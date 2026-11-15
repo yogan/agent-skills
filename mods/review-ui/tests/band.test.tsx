@@ -1752,9 +1752,9 @@ const reworkTopic = (id: string, step: string, extra: object = {}) => ({
 })
 const reworkState = (current: string | null, topics: object[], extra: object = {}) =>
   JSON.stringify({ skill: 'rework-mr', iid: 42, title: 'Add a widget cache', current, topics, ...extra })
-const reworkView = (tid: string, draft?: string, step?: string) =>
+const reworkView = (tid: string, draft?: string, step?: string, face?: string) =>
   `◈ **${tid}** \`src/cache.ts:17\`\n\nsome view\n\n<!-- paste-gate:critical\n` +
-  JSON.stringify({ first: `◈ **${tid}** \`src/cache.ts:17\``, critical: [], topic: tid, focus: tid, review: REWORK, ...(draft ? { draft } : {}), ...(step ? { step } : {}) }) +
+  JSON.stringify({ first: `◈ **${tid}** \`src/cache.ts:17\``, critical: [], topic: tid, focus: tid, review: REWORK, ...(draft ? { draft } : {}), ...(step ? { step } : {}), ...(face ? { face } : {}) }) +
   '\n-->'
 const openRework = async ($: Engine, w: World, stdout: string) => {
   w.tool.stdout = stdout
@@ -2167,6 +2167,58 @@ test("rework-mr: a turn that left the topic at its card's step places no new car
   expect(w.placed).toEqual([])
 })
 
+// The plan on the card was "Push back"; typed "plan it as a fix", the model stored the new
+// plan and showed nothing, so the old card stayed and took the press that agreed the new one.
+test("rework-mr: a turn that changed what the topic's card says, at the same step, places a new card", async ($, on) => {
+  const plan = (face: string) => reworkState('t1', [reworkTopic('t1', 'plan', { proposal: { says: 'needs', outcome: 'fix', plan: 'Revert it.' } })], { face })
+  const states = [plan('f1')]
+  const w = world(on, states)
+  await openRework($, w, reworkView('t1', undefined, 'plan', 'f1'))
+  await $.turn.complete({ answer: 'looked' } as never)
+  expect(w.placed).toEqual([])                         // the card says what the topic does
+  states[0] = plan('f2')
+  await $.turn.complete({ answer: 'planned it as a fix' } as never)
+  expect(w.placed.length).toBe(1)
+})
+
+// "t1: posted “Fixed” with the diff link" once stood under the cards while the reviewer's
+// doubt about that fix was already being answered, reading as if just posted.
+test("a press's line goes once its topic has moved on from the moment of the press", async ($, on) => {
+  const t1 = reworkTopic('t1', 'plan', { proposal: { says: 'needs', outcome: 'fix', plan: 'Rename it.' } })
+  const states = [reworkState('t1', [t1]), reworkState('t1', [{ ...t1, step: 'fix' }])]
+  const w = world(on, states)
+  on('turn.start', ($, e) => ({ turnId: e.turnId }))
+  await openRework($, w, reworkView('t1'))
+  const ui = await mountStep($, 'terminal')
+  await ui.press({ key: 'agree' })
+  await ui.unmount()
+  const said = async () => {
+    const band = await $.ui.mount({ ...BAND, surface: 'terminal' })
+    const text = JSON.stringify(await band.findAll({ type: 'Text' }))
+    await band.unmount()
+    return text
+  }
+  expect(await said()).toContain('t1: agreed the proposed plan')
+  // The topic moves on (a draft is stored for it): the line is about a moment that is over.
+  states[1] = reworkState('t1', [{ ...t1, step: 'fix', draft: 'v1' }])
+  await $.tool.call({ tool: 'Bash', command: 'python3 $SD/threads.py present --iid 42', tool_use_id: 'tu-2' } as never)
+  expect(await said()).not.toContain('agreed the proposed plan')
+})
+
+test("a press's line goes once the model takes a turn", async ($, on) => {
+  const t1 = reworkTopic('t1', 'plan', { proposal: { says: 'needs', outcome: 'fix', plan: 'Rename it.' } })
+  const w = world(on, [reworkState('t1', [t1]), reworkState('t1', [{ ...t1, step: 'fix' }])])
+  on('turn.start', ($, e) => ({ turnId: e.turnId }))
+  await openRework($, w, reworkView('t1'))
+  const ui = await mountStep($, 'terminal')
+  await ui.press({ key: 'agree' })
+  await ui.unmount()
+  await $.turn.start({ text: 'Change the plan for t1: add a TODO, then reply', turnId: 'turn-1' })
+  const band = await $.ui.mount({ ...BAND, surface: 'terminal' })
+  expect(JSON.stringify(await band.findAll({ type: 'Text' }))).not.toContain('agreed the proposed plan')
+  await band.unmount()
+})
+
 test('rework-mr: a comment that asks nothing is seen, not planned', async ($, on) => {
   const w = world(on, [reworkState('t1', [reworkTopic('t1', 'plan', { proposal: { says: 'fyi' } })])])
   await openRework($, w, reworkView('t1'))
@@ -2375,8 +2427,11 @@ test('rework-mr: after a push that differs from the plan, the reply comes first'
   const w = world(on, [reworkState('t1', [reworkTopic('t1', 'reply', { pushed: true, differs: true })])])
   await openRework($, w, reworkView('t1'))
   const ui = await mountStep($, 'terminal')
-  expect((await labels(ui))[0]).toBe('Reply…')
+  // What the reply has to say is known, so one press drafts it: nothing to type.
+  expect((await labels(ui))[0]).toBe('Reply')
+  await ui.press({ key: 'draft' })
   await ui.unmount()
+  expect(w.prompts[0]).toMatch(/differs from the plan agreed.*set t1 --reply -/)
 })
 
 test('rework-mr: after the push of a plan that answers the reviewer, with nothing said yet, the reply comes first', async ($, on) => {

@@ -51,9 +51,12 @@ export type Manifest = {
   draft?: string
   // rework-mr: the step the view shows its topic at (threads.py's `step_of`).
   step?: string
+  // What the topic's card said when the view was printed, as a fingerprint (the scripts'
+  // `card_face`): the state carries the current topic's, and a card with another is stale.
+  face?: string
 }
 
-export type View = { text: string; topic?: string; step?: string; draft?: string }
+export type View = { text: string; topic?: string; step?: string; draft?: string; face?: string }
 
 // A script the command names through a variable it assigns first (`S=$SD/threads.py &&
 // python3 $S quote t1`) is the same script: the variable is read as what it holds.
@@ -116,7 +119,7 @@ export const viewOf = (stdout: unknown): View | undefined => {
   text = text.trim()
   if (!text) return undefined
   if (!manifest?.topic) return { text }
-  return { text, topic: manifest.topic, ...(manifest.step ? { step: manifest.step } : {}), ...(manifest.draft ? { draft: manifest.draft } : {}) }
+  return { text, topic: manifest.topic, ...(manifest.step ? { step: manifest.step } : {}), ...(manifest.draft ? { draft: manifest.draft } : {}), ...(manifest.face ? { face: manifest.face } : {}) }
 }
 
 // The line the model reads at the end of a view command's output once the person has the

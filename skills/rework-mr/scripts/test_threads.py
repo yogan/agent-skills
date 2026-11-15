@@ -2092,6 +2092,57 @@ class TestViewStep(unittest.TestCase):
         self.assertEqual(wm.call_args.kwargs["extra"]["step"], "fixed")
 
 
+class TestCardFace(unittest.TestCase):
+    """What a topic's card says, as a fingerprint the mod compares: the view's with the
+    state's. A plan replaced by typing left the old card up, which then took the press that
+    agreed the new plan under the old one's text."""
+
+    def setUp(self):
+        mock.patch.dict(os.environ, {"REVIEW_UI_DRAWN": "1"}).start()
+        self.addCleanup(mock.patch.stopall)
+        T._WORKING.clear()
+        self.addCleanup(T._WORKING.clear)
+        mock.patch.object(T, "working_diff", return_value="").start()
+        mock.patch.object(T, "_git", return_value="").start()
+        self.state = TestRounds.state(1)
+        T.start_round(self.state)
+        self.t1 = T.topic_for(self.state, "t1")
+        self.propose("push-back", "Explain why it stays.")
+
+    def propose(self, outcome, plan):
+        self.t1["proposal"] = {"says": "needs", "why": "w", "outcome": outcome, "plan": plan,
+                               "on": T.reviewer_mark(self.state, self.t1)}
+
+    def test_the_view_and_the_state_name_the_same_face(self):
+        with mock.patch.object(T.ui, "record"), \
+                mock.patch.object(T.critical_manifest, "with_manifest", return_value="") as wm, \
+                redirect_stdout(io.StringIO()):
+            T.emit(self.state, "card", "t1")
+        self.assertEqual(wm.call_args.kwargs["extra"]["face"], T.state_json(self.state)["face"])
+
+    def test_a_plan_proposed_anew_changes_it_at_the_same_step(self):
+        before = T.card_face(self.state, self.t1)
+        self.assertEqual(before, T.card_face(self.state, self.t1))
+        self.propose("fix", "Revert the rename.")
+        self.assertEqual(T.step_of(self.state, self.t1), "plan")
+        self.assertNotEqual(before, T.card_face(self.state, self.t1))
+
+    def test_a_new_comment_and_a_stored_draft_change_it(self):
+        TestRounds.agree(self.state, "t1", outcome="reply")
+        faces = [T.card_face(self.state, self.t1)]
+        self.t1["reply"] = "Bewusst so.\n"
+        faces.append(T.card_face(self.state, self.t1))
+        self.state["threads"]["d1"]["notes"].append({"author": "Me", "body": "x", "at": "2026-03-01T00:00:00Z", "mine": True})
+        faces.append(T.card_face(self.state, self.t1))
+        self.assertEqual(len(set(faces)), 3)
+
+    def test_it_leaves_no_mark_on_the_view_being_printed(self):
+        self.t1["proposal"]["change"] = "--- a/a.py\n+++ b/a.py\n@@ -1 +1 @@\n-a\n+b\n"
+        critical_manifest.reset()
+        T.card_face(self.state, self.t1)
+        self.assertEqual(critical_manifest.current(), [])
+
+
 class TestHandedOverPush(unittest.TestCase):
     """The model's `push --committed` finishing a press that handed it the commits."""
 
@@ -3003,7 +3054,26 @@ class TestFixPerPush(unittest.TestCase):
     def test_pushes_with_nothing_between_are_one_fix_and_one_link(self):
         _, t = self.topic(self.push("A", "B", 2), self.push("B", "C", 3))
         self.assertEqual(T.fixes_of(t), [{"pushes": [1, 2], "before": "A", "start": "A", "after": "C",
-                                          "url": "G/diffs?diff_id=3&start_sha=A", "mixed": False, "at": None}])
+                                          "url": "G/diffs?diff_id=3&start_sha=A", "mixed": False, "at": None,
+                                          "differs": None}])
+
+    def test_how_a_fix_differed_from_its_plan_stays_in_the_story_after_the_push(self):
+        """Before the push its card said "Differs from the plan you agreed"; after it only
+        "You pushed a fix", and "Fixed" told the reviewer nothing of the extra rename."""
+        state, t = self.topic({**self.push("A", "B", 2), "at": "2026-02-01T12:00:00Z",
+                               "differs": "It also renames the file."})
+        t.update(plan="Rename the factory.", decision="d", thread_ids=[])
+        with mock.patch.dict(os.environ, {"REVIEW_UI_DRAWN": "1"}), mock.patch.object(T, "_git", return_value=""):
+            steps = T.pushed_steps(state, t)
+        self.assertRegex(steps[1], r"You pushed a fix")
+        self.assertRegex(steps[2], rf"^\S.*{T.ui.DIFFERS_ICON} It differs from the plan agreed: It also renames the file\.$")
+        self.assertRegex(steps[2], T._STEP.pattern)                # a step of the story, timed
+
+    def test_a_fix_as_agreed_adds_no_line(self):
+        state, t = self.topic(self.push("A", "B", 2))
+        t.update(plan="Rename the factory.", decision="d", thread_ids=[])
+        with mock.patch.dict(os.environ, {"REVIEW_UI_DRAWN": "1"}), mock.patch.object(T, "_git", return_value=""):
+            self.assertEqual(len(T.pushed_steps(state, t)), 2)
 
     def test_a_push_between_keeps_two_fixes(self):
         _, t = self.topic(self.push("A", "B", 2), self.push("X", "C", 4))

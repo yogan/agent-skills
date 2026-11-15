@@ -1262,7 +1262,8 @@ def fixes_of(t):
     "after", "url", "mixed"}`: `before` and `after` the commits its change lies between,
     `url` GitLab's diff of it (the last push's version, from where the first one started),
     `mixed` where that link may show more than the fix (a push recorded before pushes were
-    kept one by one, or one that carried a rebase or other commits along)."""
+    kept one by one, or one that carried a rebase or other commits along), `differs` how the
+    fix differed from the plan agreed, where the agent said it did."""
     out = []
     for n, p in enumerate(t.get("pushes") or [], 1):
         last = out[-1] if out else None
@@ -1272,10 +1273,11 @@ def fixes_of(t):
             last["at"] = p.get("at")
             last["url"] = (re.sub(r"start_sha=[^&#]+", f"start_sha={last['start']}", p["url"])
                            if p.get("url") and last["url"] else None)
+            last["differs"] = " ".join(x for x in (last.get("differs"), p.get("differs")) if x) or None
             continue
         out.append({"pushes": [n], "before": p["before"], "start": p.get("start"),
                     "after": p["after"], "url": p.get("url"), "mixed": not p.get("clean"),
-                    "at": p.get("at")})
+                    "at": p.get("at"), "differs": p.get("differs")})
     return out
 
 
@@ -1380,14 +1382,22 @@ def pushed_steps(state, t):
         return size + link + (f" · also {', '.join(also)}" if also
                               else " · may include other changes" if f.get("mixed") else "")
 
+    def differs(f, indent=0):
+        # What the fix did beyond or instead of the plan stays part of the story once it is
+        # pushed: the reviewer has not been told yet, and "Fixed" alone would not tell them.
+        return ([ui.step_md(ui.DIFFERS_ICON, f"It differs from the plan agreed: {f['differs'].strip()}",
+                            f.get("at"), indent=indent)] if f.get("differs") else [])
+
     # A topic pushed before its pushes were kept one by one has its link alone.
     fixes = kept_fixes(state, t) or [{"url": t["diff_url"]}]
     if len(fixes) == 1:
         out.append(ui.step_md(done, f"You pushed a fix{said(fixes[0])}", fixes[0].get("at")))
+        out += differs(fixes[0])
     else:
         out.append(ui.step_md(done, f"You pushed a fix · {len(fixes)} pushes"))
-        out += [ui.step_md(ui.PUSHED_ICON, f"push {k}{said(f)}", f.get("at"), indent=1)
-                for k, f in enumerate(fixes, 1)]
+        for k, f in enumerate(fixes, 1):
+            out += [ui.step_md(ui.PUSHED_ICON, f"push {k}{said(f)}", f.get("at"), indent=1),
+                    *differs(f, indent=1)]
     url = reply_posted(state, t)
     if url:
         note = next((n for x in t["thread_ids"] for n in (state["threads"].get(x) or {}).get("notes") or []
@@ -1644,6 +1654,20 @@ def view_context(state):
     }
 
 
+def card_face(state, t):
+    """A fingerprint of what `t`'s card says now beyond its code: its name, its thread's
+    comments, and the step's parts (the plan proposed or agreed, the fix, the story, the
+    draft). The mod compares the one a card was drawn with (`emit`) to the topic's now
+    (`state_json`): a card whose plan was replaced by typing stayed up with the old plan and
+    took the press that agreed the new one. Rendered like `context_digest`, with marking
+    suspended, as the render is thrown away."""
+    with critical_manifest.suspended():
+        said = [[n.get("url") or n.get("at"), len(n.get("body") or "")]
+                for x in t["thread_ids"] for n in (state["threads"].get(x) or {}).get("notes") or []]
+        parts = _step_parts(state, t) if ui.drawn() else []
+        return _digest(json.dumps([t.get("summary"), said, parts]))
+
+
 def emit(state, block, topic=None):
     """Print a gated view with its manifest, naming the topic it is about and the current
     one, so the paste gate enforces only what belongs to the topic being decided."""
@@ -1656,6 +1680,7 @@ def emit(state, block, topic=None):
         # The step it shows the topic at: a turn that moved the topic on without a view of
         # its own (the model finishing a push it was handed) leaves the card a step behind.
         extra["step"] = step_of(state, t)
+        extra["face"] = card_face(state, t)
     focus = current_topic(state)
     if t and t["id"] == focus:
         # The card the user has in front of them, whatever the current topic moved on to
@@ -1796,6 +1821,8 @@ def state_json(state):
     return {"skill": "rework-mr", "iid": state.get("iid"), "title": state.get("title"),
             "url": state.get("mr_web_url"), "people": people(state),
             "current": cur, "topics": topics, "thread": thread,
+            # What the current topic's card would say now: one drawn with another is stale.
+            "face": card_face(state, t) if t else None,
             "hunk": hunk_window() if t and step_of(state, t) == "fixed" else None,
             "round": round_order(state) if ui.drawn() else [],
             "pass": pass_now(state), "in_round": bool(state.get("in_round")),
@@ -2015,6 +2042,9 @@ def render_plans(state):
             out += ["  change agreed:", *(f"    {ln}" for ln in change.strip("\n").splitlines())]
         if t.get("diff_url"):
             out.append(f"  pushed: {t['diff_url']}")
+        differs = ((t.get("fix") or {}).get("compare") or {}).get("differs")
+        if differs:
+            out.append(f"  the fix differs from this plan: {differs}")
         for d in t.get("dropped") or []:
             if d.get("key"):
                 ref = f"{fix_refs.prefix(SKILL, state.get('iid'))}{d['key']}"
@@ -3012,7 +3042,10 @@ def push_fix(ctx, iid, path, tid, committed=False):
     t = topic_for(state, tid)
     t.setdefault("pushes", []).append({"before": frm, "start": start, "after": head, "url": url,
                                        "clean": clean,
-                                       "at": datetime.datetime.now(datetime.timezone.utc).isoformat()})
+                                       "at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+                                       # How it differed from the plan agreed, kept with the push:
+                                       # its card's story says so after the push too.
+                                       "differs": ((t.get("fix") or {}).get("compare") or {}).get("differs")})
     n = len(t["pushes"])
     for k in ("push_from", "push_start", "handed_from", "start_sha"):
         t.pop(k, None)

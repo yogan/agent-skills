@@ -135,6 +135,9 @@ export type ReviewState = {
   // rework-mr, a fix waiting for its push: the diff viewer's window for it, and how many
   // notes the user left there (null where the viewer could not be asked).
   hunk?: { open: boolean; notes: number | null } | null
+  // What the current topic's card would say now, as a fingerprint: a card drawn with
+  // another one shows the topic as it was.
+  face?: string | null
   // Where the MR stands as a whole, from the update check.
   mr?: {
     state: 'opened' | 'merged' | 'closed' | 'locked' | null; merged_at?: string | null; closed_at?: string | null
@@ -191,7 +194,8 @@ export type ReviewCard = { topic: string; draft: string | null }
 // The newest card in the chat, which carries the current step's buttons while it is that
 // step's: its row (a tool call's id, or a placed row's) and the topic it shows, null for one
 // that shows none (the opener, a comment's match, the explainer question).
-export type ReviewHost = { id: string; topic: string | null; step?: string | null }
+// `face`: what the topic's card said when this one was drawn (the scripts' `card_face`).
+export type ReviewHost = { id: string; topic: string | null; step?: string | null; face?: string | null }
 
 // A view the mod drew itself after a press (no tool call to hang it under), by row id.
 export type ReviewPlaced = Record<string, string>
@@ -200,7 +204,9 @@ export type ReviewPlaced = Record<string, string>
 // `topic`: the topic the press was on; a success or a warning is shown only while it is
 // current. A warning says what to do next, in yellow.
 // A notice may carry one link, drawn inline after its text under a short label.
-export type ReviewNotice = { text: string; isError: boolean; isWarning?: boolean; topic?: string | null; url?: string | null; label?: string | null } | null
+// `moment`: where its topic stood when a press's line was said; the line goes once the topic
+// has moved on from it.
+export type ReviewNotice = { text: string; isError: boolean; isWarning?: boolean; topic?: string | null; url?: string | null; label?: string | null; moment?: string | null } | null
 
 // What a press did to the card it was pressed on, said as the card's last line once the
 // card is done: a few words, and where to see it on GitLab.

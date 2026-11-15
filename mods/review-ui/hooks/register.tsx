@@ -549,7 +549,7 @@ const openSidebar = async ($: EngineInterface, s: ReviewSession, focus: boolean)
 const shownCard = async ($: EngineInterface, id: string, stdout: string) => {
   const view = viewOf(stdout)
   if (!view) return
-  await update($, hostCard, () => ({ id, topic: view.topic ?? null, step: view.step ?? null }))
+  await update($, hostCard, () => ({ id, topic: view.topic ?? null, step: view.step ?? null, face: view.face ?? null }))
   await noteCard($, id, view.topic)
 }
 
@@ -589,7 +589,7 @@ const placeOutput = async ($: EngineInterface, stdout: string) => {
   const id = `card-${Object.keys(await read($, placed)).length + 1}`
   await update($, placed, m => ({ ...m, [id]: view.text }))
   await update($, placedOf, m => ({ ...m, [id]: { topic: view.topic, draft: view.draft } }))
-  await update($, hostCard, () => ({ id, topic: view.topic ?? null, step: view.step ?? null }))
+  await update($, hostCard, () => ({ id, topic: view.topic ?? null, step: view.step ?? null, face: view.face ?? null }))
   await noteCard($, id, view.topic)
   await $.ui.place({ id })
   return true
@@ -605,6 +605,17 @@ const PENDING = '\u0000pending:'
 // An error the band says belongs to the press that failed: once another card comes up, or
 // one is closed, that moment is over, and an old error would read as one about the new card.
 const clearError = ($: EngineInterface) => update($, notice, n => (n?.isError ? null : n))
+
+// Where a topic stands, as a press's line remembers it: the line is about that moment, and
+// goes once the topic has moved on from it (a reviewer wrote, a judgment came in, a draft
+// was stored). Left standing, "posted “Fixed” with the diff link" read as just done while
+// the reviewer's doubt about that fix was already being answered.
+const momentOf = (r: ReviewState | null, tid: string | null | undefined): string | null => {
+  const t = r?.topics.find(x => x.id === tid)
+  return t ? JSON.stringify([t.status, t.step, t.draft, t.inbox, t.news_at, t.outcome, t.pushed, t.resolved, t.verdict]) : null
+}
+// A press's line also goes once the model takes a turn: whatever it does next is newer.
+const clearSaid = ($: EngineInterface) => update($, notice, n => (n && !n.isError && !n.isWarning ? null : n))
 
 const placeTopic = async ($: EngineInterface, s: ReviewSession, tid: string, focus = false) => {
   await clearError($)
@@ -627,7 +638,7 @@ const placeTopic = async ($: EngineInterface, s: ReviewSession, tid: string, foc
   const id = `card-${Object.keys(await read($, placed)).length + 1}`
   await update($, placed, m => ({ ...m, [id]: view.text }))
   await update($, placedOf, m => ({ ...m, [id]: { topic: view.topic, draft: view.draft } }))
-  await update($, hostCard, () => ({ id, topic: tid, step: view.step ?? null }))
+  await update($, hostCard, () => ({ id, topic: tid, step: view.step ?? null, face: view.face ?? null }))
   await noteCard($, id, tid)
   await update($, card, () => ({ topic: tid, draft: manifestOf(q.stdout)?.draft ?? null }))
   await $.ui.place({ id })
@@ -742,7 +753,10 @@ const cardForCurrent = async ($: EngineInterface) => {
   if (!r?.current) return
   const host = await read($, hostCard)
   const now = currentTopic(r)
-  if (host?.topic === r.current && (!host.step || host.step === now?.step)) return
+  // Nor one that says what the topic no longer does (`card_face`): a plan replaced by
+  // typing, a draft stored or dropped, with no view of it shown since.
+  const isSameFace = !host?.face || !r.face || host.face === r.face
+  if (host?.topic === r.current && (!host.step || host.step === now?.step) && isSameFace) return
   if (host?.topic === r.current && host.step === 'fixed' && now?.pushed && !(await read($, outcomes))[host.id]) {
     const done = outcomeOf({ kind: 'push' }, now.diff_url ?? '', await pressTime($))
     if (done) await update($, outcomes, m => ({ ...m, [host.id]: done }))
@@ -1574,7 +1588,7 @@ const stepControls = async ($: EngineInterface, s: ReviewSession, r: ReviewState
       if (pressed) await finish(pressed, ran.stdout)
       const now = await refresh($, s)
       const after = now?.current ?? null
-      await update($, notice, () => ({ text: did, isError: false, topic: before }))
+      await update($, notice, () => ({ text: did, isError: false, topic: before, moment: momentOf(now, before) }))
       // The round moves on: the next topic's card, or a comment of the person's own whose
       // match waits.
       const isMoved = after !== before
@@ -1593,8 +1607,9 @@ const stepControls = async ($: EngineInterface, s: ReviewSession, r: ReviewState
   // model's turn) needs a new card (`cardForCurrent`).
   const press = (b: BandButton) => async (ev: { surface?: string }) => {
     await pressOn(b, ev)
-    const now = currentTopic(await read($, review))
-    await update($, hostCard, h => (h?.step && now && h.topic === now.id ? { ...h, step: now.step ?? null } : h))
+    const after = await read($, review)
+    const now = currentTopic(after)
+    await update($, hostCard, h => (h?.step && now && h.topic === now.id ? { ...h, step: now.step ?? null, face: after?.face ?? null } : h))
   }
 
   const pressOn = async (b: BandButton, ev: { surface?: string }) => {
@@ -1640,7 +1655,7 @@ const stepControls = async ($: EngineInterface, s: ReviewSession, r: ReviewState
           const before = r.current
           const now = await refresh($, s)
           const did = didText(b.press, t)
-          await update($, notice, () => ({ text: did, isError: false, topic: t }))
+          await update($, notice, () => ({ text: did, isError: false, topic: t, moment: momentOf(now, t) }))
           // What goes into the thread is the next card's: a "Fixed", or a reply that says more.
           await showStep($, s, now)
           await $.session.append({
@@ -1760,6 +1775,7 @@ export const register: Register = on => {
   on('turn.start', async ($, e, next) => {
     if ((e as { agentId?: string }).agentId) return next(e)
     await update($, working, () => true)
+    await clearSaid($)
     await dropStray($)
     await recover($)
     return next(e)
@@ -3064,8 +3080,10 @@ export const register: Register = on => {
     // What the last press did, under the buttons. A success is said only while its topic is
     // current: once the next topic's card is up, that card is what says the press went
     // through, and the line only repeats what the chat above already told. A failure stays.
+    // Nor once its topic has moved on from the moment of the press (`momentOf`).
     const heard = await read($, notice)
-    const said = heard && ((heard.isError && !heard.isWarning) || heard.topic === undefined || heard.topic === r.current) ? heard : null
+    const isPast = !!heard && heard.moment != null && heard.moment !== momentOf(r, heard.topic)
+    const said = heard && !isPast && ((heard.isError && !heard.isWarning) || heard.topic === undefined || heard.topic === r.current) ? heard : null
     const doing = await read($, busy)
 
 
