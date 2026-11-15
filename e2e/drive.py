@@ -74,6 +74,12 @@ STANDS = 0.5        # seconds a button stands unmoved before it is clicked
 PRESS_TAKEN = 1.5   # seconds a press that says nothing on screen is given to be through
 TURN_QUIET = 1.5    # seconds of unchanged screen after a turn before it counts as ended
 
+# What claude says at its start when it runs without its fullscreen interface for one launch,
+# because an earlier launch on this machine was ended before that had started (a killed
+# session is enough). The scenarios are written for the fullscreen one: the sidebar docks
+# nowhere else. It tries fullscreen again at the next launch, so the driver launches again.
+CLASSIC = "using the classic renderer"
+
 # The demo's own rig, which a showcase runs on: its project (bootstrap.py's GROUP and PROJECT)
 # and the folder its checkouts are under (fixture.py's SRC), where a scenario's `cwd` names one.
 GROUP = "demo"
@@ -761,6 +767,20 @@ def save(pane, out, n, step):
     stem.with_suffix(".ansi").write_text(pane.screen(ansi=True))
 
 
+def ready_in_fullscreen(pane, launch_again):
+    """Wait for claude's prompt, in the interface the scenarios are written for: where it
+    says it came up without (CLASSIC), it is launched again, once, and the run says so."""
+    pane.wait_ready()
+    if CLASSIC not in pane.history():
+        return
+    print("   claude came up without its fullscreen interface (an earlier launch was cut "
+          "short): launched again")
+    launch_again()
+    pane.wait_ready()
+    if CLASSIC in pane.history():
+        raise StepFailed("claude runs without its fullscreen interface, twice in a row")
+
+
 def reset_rig(out, mr=None, env=None):
     """Put the scenario's copy of the rig (`env`, from `rig_env`) back in its known state.
 
@@ -805,15 +825,18 @@ def verify(sc, model, out_root, keep, reset, record=False):
     tmux("kill-session", "-t", session, check=False)
     w, h = VERIFY_SIZE
     cwd, cleanup = workdir(sc, env["E2E_SRC"])
-    tmux("new-session", "-d", "-s", session, "-x", str(w), "-y", str(h), "-c", cwd,
-         claude_command(sc, model, verify=True, plugins=[skills_plugin(out)],
-                        mock=mock.command if mock else None))
+    command = claude_command(sc, model, verify=True, plugins=[skills_plugin(out)],
+                             mock=mock.command if mock else None)
+    tmux("new-session", "-d", "-s", session, "-x", str(w), "-y", str(h), "-c", cwd, command)
     pane = Pane(session, cwd=cwd, env=env)
     print(f"── {sc.name}: {sc.about}" + ("" if mock else f"  (real model: {model})"))
     n, step, t0 = 0, None, time.time()
     ran = None
     try:
-        pane.wait_ready()
+        def again():
+            tmux("kill-session", "-t", session, check=False)
+            tmux("new-session", "-d", "-s", session, "-x", str(w), "-y", str(h), "-c", cwd, command)
+        ready_in_fullscreen(pane, again)
         took["start"] = round(time.time() - t0, 1)
         for n, step in enumerate(sc.steps, 1):
             if isinstance(step, Handover):

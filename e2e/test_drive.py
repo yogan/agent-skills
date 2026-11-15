@@ -316,6 +316,34 @@ class WaitTest(unittest.TestCase):
         self.assertLess(clock.now, 30)
 
 
+class LaunchTest(unittest.TestCase):
+    """A launch in claude's fallback interface is not one a scenario can run in."""
+    NOTE = ("Claude Code's fullscreen renderer didn't finish starting last time on this machine, "
+            "so this launch is using the classic renderer.")
+
+    def pane(self, histories):
+        pane = mock.Mock()
+        pane.history.side_effect = histories
+        return pane
+
+    def test_a_fullscreen_launch_is_used_as_it_is(self):
+        again = mock.Mock()
+        drive.ready_in_fullscreen(self.pane(["❯ "]), again)
+        again.assert_not_called()
+
+    def test_a_launch_in_the_fallback_interface_is_launched_again_and_says_so(self):
+        again, pane = mock.Mock(), self.pane([self.NOTE, "❯ "])
+        with mock.patch("builtins.print") as said:
+            drive.ready_in_fullscreen(pane, again)
+        again.assert_called_once()
+        self.assertEqual(pane.wait_ready.call_count, 2)
+        self.assertIn("launched again", said.call_args.args[0])
+
+    def test_the_fallback_twice_in_a_row_fails_the_run(self):
+        with mock.patch("builtins.print"), self.assertRaises(drive.StepFailed):
+            drive.ready_in_fullscreen(self.pane([self.NOTE, self.NOTE]), mock.Mock())
+
+
 class CopyTest(unittest.TestCase):
     """A scenario on the rig runs in a copy of the rig that is its alone."""
 
