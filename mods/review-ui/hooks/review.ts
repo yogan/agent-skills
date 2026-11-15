@@ -482,9 +482,11 @@ const reworkButtons = (review: ReviewState): BandButton[] => {
     case 'fixed': {
       // The diff viewer: opened on a press, then read on one, once the person wrote there.
       // A change of mind is a prompt or a note in the viewer, so there is no Redo.
+      // Notes wait whether the viewer is still open or not: the script keeps what the person
+      // wrote in one they closed since, and holds the push until it is read.
       const isOpen = review.hunk?.open === true
-      const hasNotes = isOpen && (review.hunk?.notes ?? 0) > 0
-      const hunk: BandButton = isOpen
+      const hasNotes = (review.hunk?.notes ?? 0) > 0
+      const hunk: BandButton = isOpen || hasNotes
         ? { key: 'hunk-notes', label: 'Read hunk notes', ...(hasNotes ? { isPrimary: true as const } : {}),
           press: ask(`Read my notes on ${t}'s fix in the diff viewer (\`hunk-notes\`), change the fix where they ask for it (and run its checks again), answer each note, then show the fix again. ${SAY_FIRST} Pushing is my press on its card.`) }
         // A fix that differs from the plan agreed is looked at before it is pushed.

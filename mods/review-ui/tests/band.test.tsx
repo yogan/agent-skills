@@ -2225,6 +2225,37 @@ test('rework-mr: once the person left notes in the diff viewer, reading them com
   expect(w.prompts[0]).toMatch(/hunk-notes.*Pushing is my press/)
 })
 
+// The viewer forgets its notes with its window; the script keeps them, and the card must not
+// go back to offering the push as if nothing had been written.
+test('rework-mr: notes left in a diff viewer closed since are still read first', async ($, on) => {
+  const w = world(on, [reworkState('t1', [reworkTopic('t1', 'fixed', { checks: 'passed' })], { hunk: { open: false, notes: 1 } })])
+  await openRework($, w, reworkView('t1'))
+  const ui = await mountStep($, 'terminal')
+  expect(await labels(ui)).toEqual(['Read hunk notes', 'Ack and push', 'Show sidebar'])
+  await ui.unmount()
+})
+
+// The viewer being open was learnt only from a state read, and the state was read again only
+// once it was known open: notes showed up after some other press, never by themselves.
+test('rework-mr: while a fix waits for its push, each update check reads the state again, so notes show up by themselves', async ($, on) => {
+  const tick = heldClock(on)
+  on('tool.register' as never, (() => ({ value: undefined })) as never)
+  on('session.start' as never, ((_: unknown, e: object) => e) as never)
+  const fixed = (hunk: object) => reworkState('t1', [reworkTopic('t1', 'fixed', { checks: 'passed' })], { hunk })
+  const states = [fixed({ open: false, notes: 0 })]
+  const w = world(on, states)
+  await (($ as unknown as { session: { start: (e: object) => Promise<unknown> } }).session.start({ source: 'startup', cwd: '/wt' }))
+  await openRework($, w, reworkView('t1'))
+  const before = await mountStep($, 'terminal')
+  expect(await labels(before)).toEqual(['Ack and push', 'Review in hunk', 'Show sidebar'])
+  await before.unmount()
+  states[0] = fixed({ open: true, notes: 1 })          // the person opened the viewer and wrote
+  await tick()
+  const after = await mountStep($, 'terminal')
+  expect(await labels(after)).toEqual(['Read hunk notes', 'Ack and push', 'Show sidebar'])
+  await after.unmount()
+})
+
 test('rework-mr: a fix that differs from the plan agreed is reviewed in hunk first', async ($, on) => {
   const w = world(on, [reworkState('t1', [reworkTopic('t1', 'fixed', { checks: 'passed', differs: true })])])
   await openRework($, w, reworkView('t1'))

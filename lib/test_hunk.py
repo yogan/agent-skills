@@ -557,6 +557,45 @@ class TestNotes(unittest.TestCase):
             run.assert_not_called()
 
 
+class TestNotesOutliveTheirViewer(unittest.TestCase):
+    """The viewer holds notes in memory and forgets them with its window: the copy each read
+    leaves on disk is what a note closed over is read from."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.path = os.path.join(self._tmp.name, "kept", "notes.json")
+        self.note = ("a.py", "new", 3, "stop, this is wrong", "n1")
+
+    def test_a_note_seen_in_a_live_viewer_is_there_once_the_viewer_is_gone(self):
+        hunk.keep_notes(self.path, "s1", [self.note])
+        self.assertEqual(hunk.kept_notes(self.path, but="s1"), [])      # open: read live
+        self.assertEqual(hunk.kept_notes(self.path), [self.note])       # closed: from the copy
+
+    def test_the_copy_follows_the_viewer_while_it_is_open(self):
+        hunk.keep_notes(self.path, "s1", [self.note])
+        hunk.keep_notes(self.path, "s1", [])                            # the user deleted it
+        self.assertEqual(hunk.kept_notes(self.path), [])
+        self.assertFalse(os.path.exists(self.path))
+
+    def test_a_new_viewer_does_not_replace_what_an_earlier_one_left(self):
+        hunk.keep_notes(self.path, "s1", [self.note])
+        hunk.keep_notes(self.path, "s2", [])
+        self.assertEqual(hunk.kept_notes(self.path, but="s2"), [self.note])
+
+    def test_handed_over_the_copy_goes(self):
+        hunk.keep_notes(self.path, "s1", [self.note])
+        hunk.forget_notes(self.path)
+        self.assertEqual(hunk.kept_notes(self.path), [])
+        hunk.forget_notes(self.path)                                    # nothing there: no error
+
+    def test_a_copy_that_cannot_be_read_holds_nothing(self):
+        os.makedirs(os.path.dirname(self.path))
+        with open(self.path, "w") as fh:
+            fh.write("{not json")
+        self.assertEqual(hunk.kept_notes(self.path), [])
+
+
 class TestAgentNotesAreResetPerRound(unittest.TestCase):
     """The window outlives the diff in it. Notes from the round before describe code that
     has been rewritten since, and the viewer re-anchors them by line number — so they end

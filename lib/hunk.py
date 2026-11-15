@@ -420,6 +420,54 @@ def user_notes(session_id):
     return out
 
 
+def _kept(path):
+    try:
+        with open(path, encoding="utf-8") as fh:
+            data = json.load(fh)
+        return data if isinstance(data, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def keep_notes(path, session_id, notes):
+    """Keep at `path` a copy of what the user wrote in the viewer `session_id`, as
+    `user_notes` just read it (their edits and deletions follow: the copy is replaced).
+
+    The viewer holds its notes in memory alone: once its window closes, the daemon forgets
+    the session and every note in it. A note is the user's only copy of a request, and one
+    saying "stop, this is wrong" read as "no notes, nothing blocks the push" after they
+    closed the window. So every read of a live viewer leaves this copy, which outlives it
+    (`kept_notes`) until the notes are handed to the model (`forget_notes`)."""
+    data = _kept(path)
+    if notes:
+        data[session_id] = [list(n) for n in notes]
+    else:
+        data.pop(session_id, None)
+    if not data:
+        forget_notes(path)
+        return
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    tmp = f"{path}.{os.getpid()}.tmp"
+    with open(tmp, "w", encoding="utf-8") as fh:
+        json.dump(data, fh)
+    os.replace(tmp, path)
+
+
+def kept_notes(path, but=None):
+    """The notes kept at `path` from viewers other than `but` (the one open now, whose notes
+    are read live): what the user wrote in a viewer that has closed since, in `user_notes`'
+    shape."""
+    return [tuple(n) for sid, notes in _kept(path).items() if sid != but for n in notes]
+
+
+def forget_notes(path):
+    """The kept copy goes, once its notes have reached the model."""
+    try:
+        os.remove(path)
+    except OSError:
+        pass
+
+
 def drop_note(session_id, note_id):
     """Remove one note the model has now been given. True if it went.
 

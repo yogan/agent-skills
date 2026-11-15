@@ -1691,16 +1691,38 @@ def reload_open_viewer(notes):
             pass                  # the card says what the notes would have; the diff is in
 
 
+def notes_store(root):
+    """Where the notes the user left in this session's diff viewer for `root` are kept on
+    disk (`lib/hunk.py`'s `keep_notes`), or None where the session cannot be told from
+    another."""
+    owner = hunk.owner_id()
+    if not (root and owner):
+        return None
+    d = os.path.join(STATE_ROOT, "hunk-notes")
+    return os.path.join(d, hashlib.sha1(f"{root}\0{owner}".encode()).hexdigest()[:16] + ".json")
+
+
+def viewer_notes(root):
+    """The user's notes on the fix, wherever they are now: `(session, live, left)`. `session`
+    is this session's open diff viewer or None; `live` its notes (None where it could not
+    be asked, which is never "none"); `left` the notes of a viewer closed since, from the
+    copy every read of a live one leaves on disk. Unread, either kind holds the push."""
+    sid = (root and hunk.installed() and hunk.find_session(root, hunk.owner_id())) or None
+    store = notes_store(root)
+    live = hunk.user_notes(sid) if sid else []
+    if sid and live is not None and store:
+        hunk.keep_notes(store, sid, live)
+    return sid, live, (hunk.kept_notes(store, but=sid) if store else [])
+
+
 def hunk_window():
     """The diff viewer's window for the fix shown, where this session opened one: whether it
-    is open, and how many notes the user left on it (None where it could not be asked).
-    Asked only while a fix waits for its push, where the card offers to read the notes."""
+    is open, and how many notes of the user's wait to be read (None where it could not be
+    asked), those of a viewer closed since among them. Asked while a fix waits for its push,
+    where the card offers to read the notes."""
     root = (_git("rev-parse", "--show-toplevel") or "").strip()
-    sid = root and hunk.installed() and hunk.find_session(root, hunk.owner_id())
-    if not sid:
-        return {"open": False, "notes": 0}
-    notes = hunk.user_notes(sid)
-    return {"open": True, "notes": None if notes is None else len(notes)}
+    sid, live, left = viewer_notes(root)
+    return {"open": bool(sid), "notes": None if live is None else len(live) + len(left)}
 
 
 def you_last(state, t):
@@ -2900,13 +2922,12 @@ def push_fix(ctx, iid, path, tid, committed=False):
         raise Handoff(f"The repository's checks changed since they ran on {tid}'s fix "
                       f"({why or 'the record was written again'}): run `threads.py verify "
                       f"{tid}` and show the fix again.")
-    sid = hunk.installed() and hunk.find_session(root, hunk.owner_id())
-    left = hunk.user_notes(sid) if sid else []
+    sid, left, closed = viewer_notes(root)
     if left is None:
         # Unread is not none: a note the user left could be the reason not to push.
         raise Handoff(f"The diff viewer's notes on {tid}'s fix could not be read: run "
                       "`threads.py hunk-notes`, and push only once it reads them.")
-    if left:
+    if left or closed:
         raise Handoff(f"I left notes on {tid}'s fix in the diff viewer: run `threads.py "
                       "hunk-notes`, answer them, and show the fix again.")
     fix = t.get("fix") or {}
@@ -3418,23 +3439,26 @@ def main():
         # "no output" is the common answer and the one that means "go ahead and push".
         # Which is exactly why every OTHER outcome has to say something — see below.
         root = (_git("rev-parse", "--show-toplevel") or "").strip()
-        sid = root and hunk.installed() and hunk.find_session(root, hunk.owner_id())
-        if not sid:
-            return
-        notes = hunk.user_notes(sid)
+        sid, notes, closed = viewer_notes(root)
         if notes is None:
             die(
                 "could not read the viewer's notes — the daemon did not answer. This is "
                 "NOT the same as there being none: do not push. Retry, and if it keeps "
                 "failing ask the user whether they left anything on the diff."
             )
-        for line in hunk_note_lines(notes):
+        if closed:
+            # Written in a viewer the user closed before anything read it: as much a request
+            # as one still on screen.
+            print("Left in the diff viewer before its window was closed:")
+        for line in hunk_note_lines([*closed, *notes]):
             print(line)
         # Printed first, dropped second: the note is the user's only copy of the request
         # until this output reaches the model, and a delete that ran before the print
         # would lose it for good on any failure in between.
         for _p, _s, _ln, _t, nid in notes:
             hunk.drop_note(sid, nid)
+        if store := notes_store(root):
+            hunk.forget_notes(store)
         return
 
     if cmd == "hunk-close":

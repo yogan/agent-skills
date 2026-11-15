@@ -317,9 +317,11 @@ const check = async ($: EngineInterface) => {
     // one would only queue behind it (the scripts take turns on the state file) and draw an
     // answer older than the press. The next period checks.
     if (!s || !r || (await read($, working)) || (await read($, busy)) || (await read($, cleanedUp))) return
-    // A fix open in the diff viewer: the person's notes there make reading them the
-    // recommended press, so the state is read again (locally; GitLab is not asked).
-    if (r.hunk?.open) await refresh($, s)
+    // A fix waiting for its push: the person may open the diff viewer and write notes there
+    // at any time, which make reading them the recommended press, so the state is read
+    // again (locally; GitLab is not asked). Not only once the viewer is known to be open:
+    // that is learnt from this same read, so the notes showed up only after another press.
+    if (r.hunk) await refresh($, s)
     // A merged or closed MR has nothing more to say: GitLab is not asked again.
     if (r.mr?.state === 'merged' || r.mr?.state === 'closed') return
     const n = (await read($, ticks)) + 1
@@ -1332,7 +1334,9 @@ const cardButtons = async ($: EngineInterface, e: Parameters<EngineInterface['ui
   const vp = (e as { viewport?: { isFullscreen?: boolean } }).viewport
   const code = await codeFor($, r, currentOwn(r, await read($, ownPick)))
   const isInSidebar = vp?.isFullscreen === true && (await panelShown($)) && (code?.view.fix_files?.length ?? 0) > 0
-  const buttons = isInSidebar ? all.filter(b => !HUNK_KEYS.includes(b.key)) : all
+  // But notes the person left there: reading them is what the card is about now, so the
+  // key is the card's own (and the sidebar's line gives it up, below).
+  const buttons = isInSidebar ? all.filter(b => !HUNK_KEYS.includes(b.key) || isNotesKey(b, r)) : all
   if (!isHosted || buttons.length === 0) return null
   const els = $.ui.resolve(e)
   const { Box } = els
@@ -1351,6 +1355,8 @@ const cardButtons = async ($: EngineInterface, e: Parameters<EngineInterface['ui
 
 // The keys that open the fix in the diff viewer, which the sidebar's files area carries too.
 const HUNK_KEYS = ['hunk', 'hunk-notes', 'hunk-pushed']
+// The key that reads the person's notes while some wait: the card's, not the sidebar's.
+const isNotesKey = (b: { key: string }, r: ReviewState): boolean => b.key === 'hunk-notes' && (r.hunk?.notes ?? 0) > 0
 
 // A view in its frame. A topic's title line is drawn in colour, as the panel draws the
 // topic's row: the severity icon in the severity's colour, the handle in the accent colour.
@@ -2666,7 +2672,7 @@ export const register: Register = on => {
         )
       })
       const { offered, press } = await stepControls($, s, r, await read($, working))
-      const found = offered.find(b => HUNK_KEYS.includes(b.key))
+      const found = offered.find(b => HUNK_KEYS.includes(b.key) && !isNotesKey(b, r))
       // rework-mr, a fix pushed more than once: which push the area shows, and the keys that
       // step between them. The file is read first, then picked, as a file's pick is.
       const topic = r.topics.find(x => x.id === r.current)

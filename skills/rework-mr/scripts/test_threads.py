@@ -2782,6 +2782,10 @@ class TestPushFix(unittest.TestCase):
         self.checks._out.side_effect = lambda root, *a: "HEADTREE" if a[-1] == "HEAD^{tree}" else "NEW"
         self.checks.Stop = type("Stop", (Exception,), {})
         mock.patch.object(T.hunk, "installed", return_value=False).start()
+        # The copy of the viewer's notes is kept in a folder of this test's own.
+        self._notes = tempfile.TemporaryDirectory()
+        self.addCleanup(self._notes.cleanup)
+        mock.patch.object(T, "notes_store", return_value=os.path.join(self._notes.name, "n.json")).start()
         # The push waits for GitLab's new version a second at a time; a mock that never shows
         # it would make a test sit the whole wait out.
         mock.patch.object(T.time, "sleep").start()
@@ -2871,12 +2875,37 @@ class TestPushFix(unittest.TestCase):
         with self.assertRaisesRegex(T.Handoff, "could not be read"):
             self.push()
         self.checks.commit_fixup.assert_not_called()
-        notes.return_value = [{"body": "why?"}]
+        notes.return_value = [("a.py", "new", 3, "why?", "n1")]
         with self.assertRaisesRegex(T.Handoff, "answer them"):
             self.push()
         self.checks.commit_fixup.assert_not_called()
         notes.return_value = []
         mock.patch.object(T, "hunk_close_decision", return_value=("", False)).start()
+        self.push()
+        self.checks.commit_fixup.assert_called_once()
+
+    def test_a_note_left_in_a_viewer_closed_since_still_stops_the_push(self):
+        """The viewer keeps its notes in memory: closed before anything read them, "this
+        whole idea is wrong" was gone, `hunk-notes` printed nothing, and the push went on."""
+        mock.patch.object(T.hunk, "installed", return_value=True).start()
+        session = mock.patch.object(T.hunk, "find_session", return_value="sid").start()
+        mock.patch.object(T.hunk, "owner_id", return_value="me").start()
+        mock.patch.object(T.hunk, "user_notes", return_value=[("a.py", "new", 3, "this is wrong", "n1")]).start()
+        mock.patch.object(T, "_git", return_value="/repo\n").start()
+        self.assertEqual(T.hunk_window(), {"open": True, "notes": 1})     # seen while open
+        session.return_value = None                                        # the user closes it
+        self.assertEqual(T.hunk_window(), {"open": False, "notes": 1})
+        with self.assertRaisesRegex(T.Handoff, "hunk-notes"):
+            self.push()
+        self.checks.commit_fixup.assert_not_called()
+        drop = mock.patch.object(T.hunk, "drop_note").start()
+        with mock.patch.object(sys, "argv", ["threads.py", "hunk-notes"]), \
+                mock.patch("sys.stdout", new_callable=io.StringIO) as out:
+            T.main()
+        self.assertIn("before its window was closed", out.getvalue())
+        self.assertIn("a.py:3: this is wrong", out.getvalue())
+        drop.assert_not_called()                                           # no viewer to drop from
+        self.assertEqual(T.hunk_window(), {"open": False, "notes": 0})     # handed over: spent
         self.push()
         self.checks.commit_fixup.assert_called_once()
 
