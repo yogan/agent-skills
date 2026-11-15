@@ -2222,6 +2222,17 @@ class TestVerdict(unittest.TestCase):
         self.assertRegex(card.splitlines()[-1], rf"^(Nov 5, )?\d\d:30 {F.ui.STEP_DONE_ICON} Alex pushed a fix")
         self.assertNotIn("replied", card)          # the push came after the reply
 
+    def test_a_file_the_author_removed_is_said_in_a_line_under_what_they_did(self):
+        self.state["threads"]["d1"].update(file="a.ts", line=3, side="new", head_sha="B")
+        self.t["verdict"] = {"says": "settled", "text": "Gone with the file.", "did": "Removed the file.",
+                             "on": F.answer_mark(self.state, self.t)}
+        with self.drawn(), patch.object(F, "get_worktree", return_value="/wt"), \
+                patch.object(F.code_view, "since_fence", return_value=None), \
+                patch.object(F.code_view, "removed_since", return_value=True) as removed:
+            card = F.render_quote(self.state, "t1")
+        removed.assert_called_once_with("/wt", "B", "a.ts")
+        self.assertLess(card.index("Removed the file."), card.index("_Since removed._"))
+
     def test_a_verdict_without_a_recap_goes_straight_to_what_was_done(self):
         self.t["verdict"] = {"says": "settled", "text": "Done.", "did": "Pushed it.",
                              "on": F.answer_mark(self.state, self.t)}

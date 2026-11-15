@@ -1443,6 +1443,8 @@ def render_answered(state, t, summ, v):
         fence = code_view.since_fence(wt, x["head_sha"], x["file"], int(first), int(x["line"]))
         if fence:
             part += ["", *fence]
+        elif code_view.removed_since(wt, x["head_sha"], x["file"]):
+            part += ["", "_Since removed._"]
     if did or len(part) > 2:
         out += part
     out += ["", ui.heading_md(ui.VERDICT_ICON, f"Verdict: {verdict_word(state, t, v)}"), "",

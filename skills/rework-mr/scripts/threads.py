@@ -749,8 +749,11 @@ def _since_comment(sha, path, first, last):
     root = (_git("rev-parse", "--show-toplevel") or "").strip()
     if not (root and sha):
         return []
-    # A file renamed since (another topic's fix, say) is followed, and said in a line: the
-    # rename alone is no change to the comment's lines.
+    # A file removed since is said in a line, never shown as every line of it removed; one
+    # renamed since (another topic's fix, say) is followed, and said in a line: the rename
+    # alone is no change to the comment's lines.
+    if code_view.removed_since(root, sha, path):
+        return ["", "_Since removed._"]
     now = code_view.now_at(root, sha, path)
     moved = [f"_Since renamed to `{now}`._"] if now != path else []
     hit, _, _ = code_view.touched(code_view._diff_since(root, sha, path), first, last)

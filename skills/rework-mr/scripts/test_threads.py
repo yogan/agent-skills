@@ -1283,6 +1283,22 @@ class TestCodeContext(unittest.TestCase):
         finally:
             self._git("reset", "-q", "--hard", self.sha)
 
+    def test_a_file_git_sees_removed_since_is_said_in_a_line_not_shown_removed(self):
+        # The fix renamed the file and rewrote two thirds of it: git, and GitLab, see one file
+        # removed and another added, and the comment's file is gone.
+        self._git("mv", self.file, "src/renamed.ts")
+        lines = [f"const v{i} = {i * 2}" if i <= 20 else f"const line{i} = {i}" for i in range(1, 31)]
+        with open(os.path.join(self.repo, "src/renamed.ts"), "w") as f:
+            f.write("\n".join(lines) + "\n")
+        self._git("commit", "-qam", "rename and rewrite")
+        try:
+            out = T.render_code_context(self.thread())
+            self.assertIn("_Since removed._", out)
+            self.assertNotIn("Changed since the comment", out)
+            self.assertNotIn("-const line25 = 25", out)
+        finally:
+            self._git("reset", "-q", "--hard", self.sha)
+
     def test_the_change_s_heading_says_working_tree_only_while_it_is_there(self):
         lines = [f"const line{i} = {i}" for i in range(1, 31)]
         lines[9] = "const line10 = 100"

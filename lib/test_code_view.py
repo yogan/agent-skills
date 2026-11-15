@@ -157,6 +157,70 @@ class TestView(unittest.TestCase):
         # Only renamed, the comment's lines are untouched: nothing to show.
         self.assertIsNone(code_view.since_fence(repo, sha, "t.md", 2, 2))
 
+    SHORT = ["export const fooKeys = {", "  all: ['foo'] as const,",
+             "  one: (fooId: string) => ['foo', fooId] as const,", "};"]
+    EDITED = ["export const fooQueryKeys = {", "  all: ['foo', 'v2'] as const,",
+              "  one: (id: string) => ['foo', id] as const,", "};"]
+
+    def write(self, repo, name, lines):
+        with open(os.path.join(repo, name), "w") as f:
+            f.write("".join(f"{x}\n" for x in lines))
+
+    def test_a_rename_too_edited_for_git_is_a_removal_said_in_no_lines(self):
+        # Renamed and rewritten in one go: less than half alike, so git sees one file removed
+        # and another added, and so does GitLab. Nothing guesses the new one is it.
+        repo, sha = self.repo(self.SHORT, self.SHORT)
+        self.git(repo, "mv", "t.md", "foo-keys.md")
+        self.write(repo, "foo-keys.md", self.EDITED)
+        for committed in (False, True):
+            with self.subTest(committed=committed):
+                if committed:
+                    self.git(repo, "commit", "-qam", "rename")
+                self.assertEqual(code_view.now_at(repo, sha, "t.md"), "t.md")
+                self.assertTrue(code_view.removed_since(repo, sha, "t.md"))
+                self.assertIsNone(code_view.since_fence(repo, sha, "t.md", 3, 3))
+
+    def test_a_rename_then_a_rewrite_is_followed_commit_by_commit(self):
+        # As `git log --follow` does: renamed in one commit, rewritten in the next, where the
+        # diff over both is one file removed and another added.
+        lines = [f"line {i} of a file long enough for git to see the rename" for i in range(1, 11)]
+        repo, base = self.repo(lines, lines)
+        self.git(repo, "mv", "t.md", "moved.md")
+        self.git(repo, "commit", "-qm", "rename")
+        rewritten = [f"rewritten {i}" for i in range(1, 9)] + lines[8:]
+        self.write(repo, "moved.md", rewritten)
+        self.git(repo, "commit", "-qam", "rewrite")
+        names = subprocess.run(["git", "-C", repo, "diff", "-M", "--name-status", base],
+                               capture_output=True, text=True).stdout
+        self.assertNotIn("R", names[:1])        # the case: the whole range does not pair them
+        self.assertFalse(code_view.removed_since(repo, base, "t.md"))
+        v = code_view.view(repo, "t.md", 10, since=base, base=base)
+        self.assertEqual((v["file"], v["renamed_from"], v["line"], v["whole"]),
+                         ("moved.md", "t.md", 10, None))
+        fence = code_view.since_fence(repo, base, "t.md", 2, 2)
+        self.assertEqual(fence[0], "```diff path=moved.md")
+        self.assertIn("+rewritten 2", fence)
+        self.assertNotIn("-" + lines[9], fence)          # not the whole old file
+
+    def test_a_committed_rename_rewritten_on_disk_marks_only_what_changed(self):
+        lines = [f"line {i} of a file long enough for git to see the rename" for i in range(1, 11)]
+        repo, sha = self.repo(lines, lines)
+        self.git(repo, "mv", "t.md", "moved.md")
+        self.git(repo, "commit", "-qm", "rename")
+        self.write(repo, "moved.md", [f"rewritten {i}" for i in range(1, 9)] + lines[8:])
+        fence = code_view.since_fence(repo, sha, "t.md", 2, 2)
+        self.assertEqual(fence[0], "```diff path=moved.md")
+        self.assertIn("+rewritten 2", fence)
+        self.assertNotIn("-" + lines[9], fence)
+
+    def test_a_removed_file_beside_one_new_one_is_not_guessed_to_be_it(self):
+        repo, sha = self.repo(self.SHORT, self.SHORT)
+        self.git(repo, "rm", "-q", "t.md")
+        self.write(repo, "other.md", ["x"])
+        self.git(repo, "add", ".")
+        self.git(repo, "commit", "-qm", "replace")
+        self.assertEqual(code_view.now_at(repo, sha, "t.md"), "t.md")
+
     def test_a_renamed_file_is_no_new_file_and_marks_only_what_changed_in_it(self):
         lines = [f"line {i} of a file long enough for git to see the rename" for i in range(1, 9)]
         repo, base = self.repo(lines, lines)

@@ -19,6 +19,7 @@ import functools
 import os
 import re
 import subprocess
+import tempfile
 
 
 def _diff_since(repo, sha, path, context=0, commit=None):
@@ -26,14 +27,46 @@ def _diff_since(repo, sha, path, context=0, commit=None):
     when git cannot. A file renamed since is diffed against its name now, so the diff holds
     what changed in it rather than every line removed."""
     now = now_at(repo, sha, path, commit)
-    paths = [path] if now == path else [path, now]
+    if now != path:
+        return _pair_diff(repo, sha, path, commit, now, context)
     try:
         r = subprocess.run(["git", "-C", repo, "diff", "--no-color", "-M", f"-U{context}", sha,
-                            *([commit] if commit else []), "--", *paths],
+                            *([commit] if commit else []), "--", path],
                            capture_output=True, text=True, errors="replace", timeout=20)
     except (OSError, subprocess.SubprocessError):
         return None
     return r.stdout if r.returncode == 0 else None
+
+
+def _pair_diff(repo, old_rev, old_path, new_rev, new_path, context):
+    """The unified diff from `old_path` at `old_rev` to `new_path` at `new_rev` (None: the file
+    on disk), two names of one file as git's history pairs them (`now_at`). Where one diff
+    over the whole range does not pair them — renamed in one commit, rewritten in the next —
+    git compares the two versions as named, as `git diff <rev>:<a> <rev>:<b>` does, so the
+    diff holds what changed rather than every line of both."""
+    diff = _git_out(repo, "diff", "--no-color", "--no-ext-diff", "-M", f"-U{context}", old_rev,
+                    *([new_rev] if new_rev else []), "--", old_path, new_path)
+    if diff is None or re.search(r"^rename from ", diff, re.M) or not diff.strip():
+        return diff
+    if new_rev:
+        return _git_out(repo, "diff", "--no-color", "--no-ext-diff", f"-U{context}",
+                        f"{old_rev}:{old_path}", f"{new_rev}:{new_path}")
+    # The file on disk is no object of git's: the old version goes beside it in a file.
+    old = _git_out(repo, "show", f"{old_rev}:{old_path}")
+    if old is None:
+        return None
+    with tempfile.TemporaryDirectory(prefix="code-view-") as d:
+        was = os.path.join(d, os.path.basename(old_path))
+        with open(was, "w", encoding="utf-8") as f:
+            f.write(old)
+        try:
+            r = subprocess.run(["git", "-C", repo, "diff", "--no-index", "--no-color", "--no-ext-diff",
+                                f"-U{context}", was, os.path.join(repo, new_path)],
+                               capture_output=True, text=True, errors="replace", timeout=20)
+        except (OSError, subprocess.SubprocessError):
+            return None
+    # --no-index answers 1 where the two differ.
+    return r.stdout if r.returncode in (0, 1) else None
 
 
 def now_at(repo, sha, path, commit=None):
@@ -45,17 +78,68 @@ def now_at(repo, sha, path, commit=None):
         return path
     if commit is None and os.path.isfile(os.path.join(repo, path)):
         return path
-    return _renamed_since(repo, sha, commit).get(path, path)
+    renamed, gone = _renamed_since(repo, sha, commit)
+    if path in renamed:
+        return renamed[path]
+    return _followed(repo, sha, path, commit) if path in gone else path
 
 
-@functools.lru_cache(maxsize=16)
+def removed_since(repo, sha, path, commit=None):
+    """Whether `path` of commit `sha` is gone from the files on disk (or `commit`): removed,
+    and no rename git sees carries it on. A thread there is outdated, as GitLab calls it."""
+    if not (repo and sha and path) or now_at(repo, sha, path, commit) != path:
+        return False
+    if commit is None:
+        return not os.path.isfile(os.path.join(repo, path))
+    return path in _renamed_since(repo, sha, commit)[1]
+
+
+def _pinned(f):
+    """`f` cached where its answer is about commits alone; asked again where it is about the
+    files on disk (its last argument None), which change under a process that asks twice.
+    Every argument is passed, by position, so the last one is always that commit."""
+    cached = functools.lru_cache(maxsize=32)(f)
+
+    @functools.wraps(f)
+    def call(*args):
+        return (cached if args[-1] else f)(*args)
+    return call
+
+
+@_pinned
 def _renamed_since(repo, sha, commit=None):
     """Every rename git sees between commit `sha` and the files on disk (or `commit`), old
-    name to new."""
+    name to new, and every file removed since."""
     out = _git_out(repo, "diff", "--no-color", "--no-ext-diff", "-M", "--name-status", sha,
                    *([commit] if commit else []))
-    pairs = (ln.split("\t") for ln in (out or "").splitlines())
-    return {f[1]: f[2] for f in pairs if f[0].startswith("R") and len(f) == 3}
+    rows = [ln.split("\t") for ln in (out or "").splitlines()]
+    return ({f[1]: f[2] for f in rows if f[0].startswith("R") and len(f) == 3},
+            {f[1] for f in rows if f[0] == "D" and len(f) == 2})
+
+
+@_pinned
+def _followed(repo, sha, path, commit=None):
+    """`path`'s name now, followed one commit at a time where the whole diff since `sha` lost
+    it, as `git log --follow` does: each commit since (and, for the files on disk, what is not
+    committed yet), through the renames git itself sees in it. A rename in one commit and a
+    rewrite in the next are one rename this way, where the diff over both is a file removed
+    and another added. A file git sees removed is removed: no new file is guessed to be it.
+    `path` where no step carries it to a file that is there now."""
+    log = _git_out(repo, "log", "--first-parent", "--diff-merges=first-parent", "--reverse",
+                   "-M", "--name-status", "--pretty=tformat:@", f"{sha}..{commit or 'HEAD'}")
+    if log is None:
+        return path
+    steps = [block.splitlines() for block in log.split("@\n")]
+    if commit is None:
+        steps.append((_git_out(repo, "diff", "--no-color", "--no-ext-diff", "-M", "--name-status",
+                               "HEAD") or "").splitlines())
+    now = path
+    for step in steps:
+        rows = [ln.split("\t") for ln in step if "\t" in ln]
+        now = next((f[2] for f in rows if f[0].startswith("R") and len(f) == 3 and f[1] == now), now)
+    there = (_git_out(repo, "cat-file", "-e", f"{commit}:{now}") is not None if commit
+             else os.path.isfile(os.path.join(repo, now)))
+    return now if there else path
 
 
 HUNK = re.compile(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@", re.M)
@@ -98,25 +182,34 @@ def _git_out(repo, *args):
 
 
 # Context wide enough that the diff of a file is one hunk holding every line of it.
-WHOLE = "-U100000000"
+WHOLE_LINES = 100000000
+WHOLE = f"-U{WHOLE_LINES}"
 
 
-@functools.lru_cache(maxsize=32)
-def change_of(repo, path, base, at=None):
+def change_of(repo, path, base, at=None, was=None):
+    """What the MR does to `path` as a whole (`_change_of`)."""
+    return _change_of(repo, path, base, was, at)
+
+
+@_pinned
+def _change_of(repo, path, base, was, at):
     """What the MR does to `path` as a whole: `("added", None)`, `("removed", None)`,
     `("renamed", <old path>)`, or `(None, None)` for a file it only edits (or when git
-    cannot say).
+    cannot say). `at`: the commit to read the MR at, None for the files on disk.
 
     Asked of the whole MR, never of the one path: git finds a rename only where it sees both
     names, so a diff limited to the new name reads a renamed file as an added one, every line
-    new."""
+    new. `was`: a name the caller followed the file from (`now_at`), for a rename git does not
+    pair; the MR renamed the file from it where it removes `was` and adds `path`."""
     if not (repo and path and base):
         return None, None
     out = _git_out(repo, "diff", "--no-color", "--no-ext-diff", "-M", "--name-status", base,
                    *([at] if at else []))
-    for ln in (out or "").splitlines():
-        f = ln.split("\t")
+    rows = [ln.split("\t") for ln in (out or "").splitlines()]
+    for f in rows:
         if f[0] == "A" and f[1:] == [path]:
+            if was and ["D", was] in rows:
+                return "renamed", was
             return "added", None
         if f[0] == "D" and f[1:] == [path]:
             return "removed", None
@@ -125,18 +218,21 @@ def change_of(repo, path, base, at=None):
     return None, None
 
 
-def rows_of(repo, path, base, at=None):
+def rows_of(repo, path, base, at=None, was=None):
     """The file as the MR changes it, every line: `[kind, old, new, text]` rows in the order
     a unified diff reads, `kind` one of " ", "-", "+", `old`/`new` the line's number on that
     side (None where it has none). `base` is the MR's diff base; `at` the commit to read the
     file at, or None for the files on disk. None when git cannot say. A renamed file is
-    diffed against its old name, so only what the MR changed in it is marked."""
+    diffed against its old name, so only what the MR changed in it is marked; `was` as for
+    `change_of`."""
     if not (repo and path and base):
         return None
-    kind, old_path = change_of(repo, path, base, at)
-    paths = [old_path, path] if kind == "renamed" else [path]
-    diff = _git_out(repo, "diff", "--no-color", "--no-ext-diff", "-M", WHOLE, base,
-                    *([at] if at else []), "--", *paths)
+    kind, old_path = change_of(repo, path, base, at, was)
+    if kind == "renamed":
+        diff = _pair_diff(repo, base, old_path, at, path, WHOLE_LINES)
+    else:
+        diff = _git_out(repo, "diff", "--no-color", "--no-ext-diff", "-M", WHOLE, base,
+                        *([at] if at else []), "--", path)
     if diff is None:
         return None
     lines = diff.splitlines()
@@ -198,7 +294,8 @@ def view(repo, path, line, since=None, start=None, side="new", base=None, commit
     # Read where the file is now: a rename since the comment moved it.
     posted, path = path, now_at(repo, since, path, commit) if since and side != "old" else path
     full = os.path.join(repo or "", path or "")
-    rows = rows_of(repo, path, base, commit) if os.path.isfile(full) or base else None
+    was = posted if posted != path else None
+    rows = rows_of(repo, path, base, commit, was) if os.path.isfile(full) or base else None
     if rows is None:
         if not (repo and path and os.path.isfile(full)):
             return None
@@ -233,7 +330,7 @@ def view(repo, path, line, since=None, start=None, side="new", base=None, commit
     gone = set(changed)
     # A file the MR adds or removes whole is all one colour, which marks nothing: the sidebar
     # draws it plain and says so beside its name instead.
-    kind = change_of(repo, path, base, commit)[0] if base else None
+    kind = change_of(repo, path, base, commit, was)[0] if base else None
     return {"file": path, "side": "old" if is_old else "new", "line": n, "start": first,
             "moved": moved, "rows": rows, "at": at,
             "renamed_from": posted if posted != path else None,
@@ -298,7 +395,10 @@ def since_fence(repo, sha, path, first, last, context=1):
     its lines `first`..`last`, as a ```diff block of the hunks that reach them, or None when
     git cannot say or nothing there changed. The card of a topic the author answered in
     code shows it under what they did. A file renamed since is followed: its block holds what
-    changed in it, under its name now."""
+    changed in it, under its name now. A file removed since has no block: every line of it
+    removed says nothing a line cannot (`removed_since`)."""
+    if removed_since(repo, sha, path):
+        return None
     out = _diff_since(repo, sha, path, context)
     if not out:
         return None
