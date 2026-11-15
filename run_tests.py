@@ -460,6 +460,33 @@ def _readers(rel, files):
     return out
 
 
+def _folder_readers(rel, files):
+    """The Python files beside a changed file's folder that name the folder in their code: a
+    module that reads its data by joining a folder name to its own location (a scenario's
+    recording, a demo patch) names no file in it, so `_readers` finds nothing and every edit
+    there used to decline into the whole suite. Every folder the file is in counts, so a
+    subfolder the module reaches by a computed name (`patches/mr2/`) is covered by the folder
+    it names. Only a folder of data counts, one holding no Python: a folder of code (`skills`,
+    `e2e`) is named by modules that walk it, which says nothing about what reads one file in
+    it. Only a module in that folder's parent counts, and only a string that is the folder's
+    name exactly, so a common name elsewhere selects nothing."""
+    parts = Path(rel).parts
+    folders = {REPO_ROOT.joinpath(*parts[:i]) for i in range(1, len(parts))}
+    folders = {f for f in folders if not any(f in p.parents for p in files)}
+    out = set()
+    for path in files:
+        named = {f.name for f in folders if f.parent == path.parent}
+        if not named:
+            continue
+        try:
+            text = path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        if named & set(_code_strings(text)):
+            out.add(path)
+    return out
+
+
 def _code_strings(text):
     """The string constants a module's code uses: docstrings and comments left out. A file
     that does not parse gives its whole text, so it is never read as naming less."""
@@ -511,7 +538,7 @@ def select_changed(files, base="HEAD"):
             if browser in files:
                 changed.add(browser)
         else:
-            readers = _readers(rel, files)
+            readers = _readers(rel, files) | _folder_readers(rel, files)
             if not readers and path.suffix.lower() not in DOCS:
                 unknown.append(rel)
             changed |= readers

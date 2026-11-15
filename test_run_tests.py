@@ -166,6 +166,26 @@ class TestItDeclinesRatherThanGuess(unittest.TestCase):
         self.assertIsNotNone(selected)
         self.assertIn(rt.REPO_ROOT / "lib/diagram/test_browser.py", selected)
 
+    def test_a_file_in_a_data_folder_selects_the_tests_reaching_the_module_naming_it(self):
+        """A recording is read by joining its folder's name to the module's location, so no
+        code names the file, and a commit deleting two recordings ran all 70 test files in the
+        hook. The folder's name in the code is the edge; a subfolder counts through it."""
+        selected, _ = self._changed("e2e/recordings/no-such-" + "scenario.json")
+        self.assertIsNotNone(selected)
+        self.assertIn(rt.REPO_ROOT / "e2e/test_drive.py", selected)
+        self.assertIn(rt.REPO_ROOT / "e2e/test_mock_model.py", selected)
+        self.assertNotIn(rt.REPO_ROOT / "lib/test_gitlab.py", selected)
+        selected, _ = self._changed("e2e/patches/no-such-mr/0001-no-" + "such.patch")
+        self.assertIn(rt.REPO_ROOT / "e2e/test_fixture.py", selected)
+
+    def test_a_folder_of_code_or_a_folder_nothing_names_still_declines(self):
+        """Modules that walk `skills/` name it too; that says nothing about what reads one
+        file in it."""
+        for rel in ("skills/no-such-skill/no-" + "reader.json", "e2e/no-such-data/no-" + "reader.json"):
+            with self.subTest(rel=rel):
+                selected, _ = self._changed(rel)
+                self.assertIsNone(selected)
+
     def test_no_changes_selects_nothing_rather_than_everything(self):
         """Its name was right and its assertion was not: `None` here means "run everything",
         so asking a clean tree what it affects used to cost the whole suite. An empty selection
