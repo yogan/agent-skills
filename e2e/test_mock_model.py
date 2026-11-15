@@ -113,6 +113,23 @@ class Recording(unittest.TestCase):
         self.assertEqual(M.to_placeholders({"command": f"python3 {run}/threads.py"}),
                          {"command": "python3 {SRC}/agent-skills/skills/rework-mr/scripts/threads.py"})
 
+    def test_a_sessions_scratchpad_is_kept_as_a_placeholder_and_each_play_gets_its_own(self):
+        pad = "/private/tmp/claude-501/-Users-someone-src-agent-skills-demo/" \
+              "0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0/scratchpad"
+        stored = M.to_placeholders({"command": f"cat > {pad}/p.py <<'X'\nX\npython3 {pad}/p.py"})
+        self.assertEqual(stored["command"], "cat > {SCRATCHPAD}/p.py <<'X'\nX\npython3 {SCRATCHPAD}/p.py")
+        plays = []
+        for _ in range(2):          # two plays at once: each in a folder of its own, made for it
+            here = tempfile.mkdtemp()
+            self.addCleanup(os.rmdir, here)
+            self.addCleanup(setattr, M, "SCRATCH", M.SCRATCH)
+            M.SCRATCH = os.path.join(here, "scratchpad")
+            self.addCleanup(os.rmdir, M.SCRATCH)
+            plays.append(M.from_placeholders(stored)["command"])
+            self.assertTrue(os.path.isdir(M.SCRATCH))
+            self.assertIn(f"python3 {M.SCRATCH}/p.py", plays[-1])
+        self.assertNotEqual(plays[0], plays[1])
+
     def test_a_prompt_reads_the_same_with_the_engines_reminders_around_it(self):
         self.assertEqual(M.human(reminded("Do  the\nthing")), "Do the thing")
 

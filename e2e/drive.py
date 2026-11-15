@@ -853,6 +853,7 @@ def verify(sc, model, out_root, keep, reset, record=False):
     out.mkdir(parents=True)
     env = rig_env(*copy_of(sc)) if sc.needs_rig else rig_env()
     mock_model.CHECKOUTS = expand(env["E2E_SRC"]) if sc.needs_rig else None
+    mock_model.SCRATCH = str(out / "scratchpad")    # kept with the run's captures
     mock = None
     if model == "mock":
         mock, why = start_mock(sc, log=str(out / "mock.log"))

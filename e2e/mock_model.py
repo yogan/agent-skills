@@ -36,6 +36,7 @@ import json
 import os
 import re
 import sys
+import tempfile
 import threading
 import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -83,10 +84,26 @@ def places():
 # gone when the recording is played. Kept as the repo's own skills folder, which it is.
 RUN_SKILLS = re.compile(r"e2e/\.runs/[^/\s'\"]+/skills-plugin/skills/")
 
+# The scratchpad Claude Code gives a session, under the system's temp folder and named after
+# the session. Kept as a placeholder, and every play of a recording gets a folder of its own:
+# plays of one recording that run at the same time would otherwise write the same file into
+# each other's commands, and the recorded session's folder is gone after a restart.
+SCRATCHPAD = re.compile(r"(?:/private)?/tmp/claude-\d+/[^/\s'\"]+/[0-9a-f-]{36}/scratchpad")
+SCRATCH = None      # this play's own; drive.py sets it to the run's folder
+
+
+def scratch():
+    """This play's scratchpad, made on first use: a temp folder where no run names one."""
+    global SCRATCH
+    if SCRATCH is None:
+        SCRATCH = tempfile.mkdtemp(prefix="mock-scratchpad-")
+    os.makedirs(SCRATCH, exist_ok=True)
+    return SCRATCH
+
 
 def _runless(value):
     if isinstance(value, str):
-        return RUN_SKILLS.sub("skills/", value)
+        return SCRATCHPAD.sub("{SCRATCHPAD}", RUN_SKILLS.sub("skills/", value))
     if isinstance(value, list):
         return [_runless(v) for v in value]
     if isinstance(value, dict):
@@ -106,6 +123,8 @@ def from_placeholders(value):
         if mark not in seen:       # a placeholder goes back to its real folder, not an alias
             seen.add(mark)
             value = _swap(value, mark, os.path.realpath(path))
+    if "{SCRATCHPAD}" in json.dumps(value):
+        value = _swap(value, "{SCRATCHPAD}", scratch())
     return value
 
 
