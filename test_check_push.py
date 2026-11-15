@@ -57,7 +57,9 @@ class TestWhatMustRun(unittest.TestCase):
 
     def test_a_recording_reaches_the_scenarios_playing_it(self):
         self.assertEqual(picks("e2e/recordings/smoke.json"), ["smoke"])
-        self.assertEqual(picks("e2e/recordings/rework-fix.json"), ["rework-fix"])
+        # Every scenario playing it: the end-of-MR ones replay rework-fix's recording too.
+        self.assertEqual(picks("e2e/recordings/rework-fix.json"),
+                         ["rework-fix", "rework-pipeline", "rework-refused"])
 
     def test_a_scenario_that_is_the_start_of_another_is_left_to_the_whole_one(self):
         for part, whole in (("try-pushed-fix", "rework-fix"), ("try-pushed-twice", "rework-twice")):

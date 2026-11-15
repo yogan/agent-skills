@@ -164,6 +164,43 @@ REWORK_FIX = [
             Check("git branch --show-current", r"^main$"),
 ]
 
+# The end of MR !3 past a plain merge, staged from outside on `rework-fix`'s recording once the
+# box offers the merge: no step after that needs the model. The rig has no runner, so a
+# pipeline is a status `news.py` posts on the MR's head.
+SETTLED = next(i for i, x in enumerate(REWORK_FIX)
+               if isinstance(x, Check) and x.command == f"{NEWS} settle") + 2
+# The sidebar's marks of the MR's pipeline, beside its title (panel.ts's MR_ICON).
+PIPELINE_RUNNING, PIPELINE_FAILED = "\U000f0996", "\U000f110a"
+REWORK_PIPELINE = [
+            *REWORK_FIX[:SETTLED],
+            # A failed pipeline is said whatever else stands, with the press that asks why.
+            Check(f"{NEWS} pipeline failed", r"pipeline failed"),
+            Expect(r"Pipeline failed", region="panel", wait=120),
+            Expect(button('Analyze CI failure'), region="panel"),
+            Expect(PIPELINE_FAILED, region="panel"),
+            # Running again: the merge waits for it, on a press.
+            Check(f"{NEWS} pipeline running", r"pipeline running"),
+            Expect(button('Set to auto-merge'), region="panel", wait=120),
+            Expect(PIPELINE_RUNNING, region="panel"),
+            press('Set to auto-merge', region="panel"),
+            Expect(r"Waits for the pipeline", region="panel", wait=60),
+            # It passes, and GitLab merges it.
+            Check(f"{NEWS} pipeline success", r"pipeline success"),
+            Expect(r"You merged the MR", region="panel", wait=120),
+            Expect(button('Clean up locally'), region="panel"),
+]
+# GitLab refusing the merge at the press: made a draft just before it, as a person might on
+# GitLab while the box still offers the merge. The merge request is made again before every
+# run, so the draft goes with it.
+REWORK_REFUSED = [
+            *REWORK_FIX[:SETTLED],
+            Check('glab api -X PUT "projects/$P/merge_requests/3" -f title="Draft: not yet"',
+                  r'"draft":true'),
+            press('Merge', region="panel"),
+            Expect(r"Merge failed", region="panel", wait=60),
+            Expect(button('Analyze failed merge'), region="panel"),
+]
+
 # The same MR, with t1 asked for more after its push, t2's push between: t1's second fix is a
 # push of its own, its card lists both, the sidebar picks between them, and its "Fixed" reply
 # links the new push alone. A part of it is a scenario of its own (`try-pushed-twice`).
@@ -403,6 +440,14 @@ SCENARIOS = [
         needs_rig=True, mods=[MOD], fast_check=True, steps=[*REWORK_FIX]),
 
     Scenario(
+        "rework-pipeline", "MR !3 settled: a failed pipeline, auto-merge while one runs, merged when it passes", WORK,
+        needs_rig=True, mods=[MOD], fast_check=True, recording="rework-fix", steps=REWORK_PIPELINE),
+
+    Scenario(
+        "rework-refused", "MR !3 settled: GitLab refuses the merge, and the box says so", WORK,
+        needs_rig=True, mods=[MOD], fast_check=True, recording="rework-fix", steps=REWORK_REFUSED),
+
+    Scenario(
         "try-pushed-fix", "MR !3 up to t1's pushed fix in four files, for a person to try (--keep)", WORK,
         needs_rig=True, mods=[MOD], fast_check=True, recording="rework-fix", steps=REWORK_FIX[:21]),
 
@@ -460,7 +505,24 @@ SCENARIOS = [
         ]),
 
     Scenario(
-        "review-own", "MR !1: your own comment is matched to the agent's topic", REVIEW1,
+        "review-approve", "MR !1: every topic dropped by a press, nothing waits, approved from the box", REVIEW1,
+        needs_rig=True, mods=[MOD], recording="review-buttons", steps=[
+            Prompt("/review-mr !1", timeout=600),
+            press('My review is done'),
+            *[step for t in ("t1", "t2", "t3", "t4", "t5") for step in (
+                Expect(current(t), region="panel", wait=30),
+                Expect(button('Drop'), region="screen", wait=30),
+                press('Drop'))],
+            # Nothing waits on the author: the box's last line is the reviewer's approval.
+            Expect(button('Approve'), region="panel", wait=60),
+            press('Approve', region="panel"),
+            Expect(r"Approved by you", region="panel", wait=60),
+            Check('glab api "projects/$P/merge_requests/1/approvals"'
+                  " | python3 -c 'import json,sys; print([a[\"user\"][\"username\"] for a in json.load(sys.stdin)[\"approved_by\"]])'",
+                  r"frank", wait=30),
+        ]),
+    Scenario(
+        "review-own","MR !1: your own comment is matched to the agent's topic", REVIEW1,
         needs_rig=True, mods=[MOD], steps=[
             Prompt("/review-mr !1", timeout=600),
             # The user's own review, posted straight to GitLab: one comment making t1's point.
