@@ -2422,7 +2422,7 @@ class TestAnswersInCode(unittest.TestCase):
             F.check_pushes(self.state, None, 1, "b0")
 
     def test_a_push_on_the_comment_s_lines_is_news(self):
-        self.push(TestTouchedDiff.REWRITE)
+        self.push(TouchedDiff.REWRITE)
         self.assertEqual(F.topic_status(self.state, self.t), "needs_ack")
         self.assertEqual(F.news_of(self.state, self.t)[0], ["push"])
         self.assertEqual(F.needs_verdict(self.state), ["t1"])
@@ -2430,16 +2430,16 @@ class TestAnswersInCode(unittest.TestCase):
         self.assertIn("pushed a change to the lines", F.judge_brief(self.state, 1))
 
     def test_a_push_is_noted_once_however_often_the_check_runs(self):
-        self.push(TestTouchedDiff.REWRITE)
+        self.push(TouchedDiff.REWRITE)
         at = self.t["pushed"]["at"]
         with patch.object(F, "now_iso", return_value="2099-01-01T00:00:00+00:00"):
-            self.push(TestTouchedDiff.REWRITE)
+            self.push(TouchedDiff.REWRITE)
         self.assertEqual(self.t["pushed"]["at"], at)
 
     def test_a_review_the_check_never_saw_compares_from_the_last_review(self):
         del self.state["seen_head"]
         self.state["last_reviewed_head"] = "c0"
-        self.push(TestTouchedDiff.REWRITE)
+        self.push(TouchedDiff.REWRITE)
         self.assertEqual(len(self.state["pushes"]), 1)
         self.assertEqual(self.state["pushes"][0]["topics"], ["t1"])
 
@@ -2449,28 +2449,75 @@ class TestAnswersInCode(unittest.TestCase):
         self.state["seen_head"] = "c1"
         self.t["code_seen"] = {"sha": "c1", "mark": F.decision_mark(self.state, self.t)}
         self.state["threads"]["d1"]["last_at"] = "2026-11-05T10:00:00Z"     # their reply
-        self.push(TestTouchedDiff.REWRITE)
+        self.push(TouchedDiff.REWRITE)
         self.assertEqual(F.topic_status(self.state, self.t), "open")
         self.assertEqual(self.t["watch"]["sha"], "c1")
         self.assertNotIn("pushed", self.t)
 
-    def test_a_push_that_only_moves_the_lines_keeps_the_topic_waiting(self):
-        self.push("@@ -2,0 +3,2 @@\n+x\n+y\n")
+    def test_a_push_to_another_file_keeps_the_topic_waiting(self):
+        files = [{"new_path": "b.ts", "old_path": "b.ts", "diff": "@@ -2,0 +3,2 @@\n+x\n+y\n"}]
+        with patch.object(F, "mr_head", return_value="c1"), patch.object(F, "_compare", return_value=files), \
+                patch.object(F, "_gl_compare", return_value={"stat": "`+2/−0` · 1 file"}):
+            F.check_pushes(self.state, None, 1, "b0")
         self.assertEqual(F.topic_status(self.state, self.t), "open")
-        self.assertEqual(self.t["watch"], {"sha": "c1", "first": 13, "last": 13})
+        self.assertEqual(self.t["watch"], {"sha": "c1", "first": 11, "last": 11})
         self.assertEqual(self.state["pushes"][0]["topics"], [])
+
+    def test_a_push_to_the_comment_s_file_beside_its_lines_is_news_to_judge(self):
+        """The fix was a `.catch` two lines below the comment: the verdict was right, and
+        nothing on screen showed the push it was about, as only a push on the commented
+        lines counted as the topic's."""
+        self.push("@@ -2,0 +3,2 @@\n+x\n+y\n")
+        self.assertEqual(F.topic_status(self.state, self.t), "needs_ack")
+        self.assertTrue(self.t["pushed"]["near"])
+        self.assertEqual(self.state["pushes"][0]["topics"], ["t1"])
+        self.assertIn("though not to its lines", F.judge_brief(self.state, 1))
+        self.assertIn("--unrelated-push", F.judge_brief(self.state, 1))
+
+    def test_a_push_beside_the_lines_judged_to_be_about_something_else_is_waited_out(self):
+        self.push("@@ -2,0 +3,2 @@\n+x\n+y\n")
+        self.t["fixes"] = [{"before": "c0", "after": "c1", "near": True}]
+        F.store_verdict(self.state, self.t, "wait", "Unrelated: an import was added.", unrelated=True)
+        self.assertEqual(F.topic_status(self.state, self.t), "open")
+        self.assertEqual(F.fixes_of(self.t), [])
+
+    def test_a_push_beside_the_lines_judged_to_answer_the_comment_is_its_fix(self):
+        self.push("@@ -2,0 +3,2 @@\n+x\n+y\n")
+        self.t["fixes"] = [{"before": "c0", "after": "c1", "near": True}]
+        F.store_verdict(self.state, self.t, "settled", "The guard above the line covers it.")
+        self.assertEqual(F.fixes_of(self.t), [{"before": "c0", "after": "c1"}])
 
     def test_a_rebase_that_moved_the_lines_without_the_author_is_no_news(self):
         own = [{"new_path": "a.ts", "old_path": "a.ts", "diff": "@@ -1 +1 @@\n-x\n+y\n"}]
-        moved = [{"new_path": "a.ts", "old_path": "a.ts", "diff": TestTouchedDiff.REWRITE}]
+        moved = [{"new_path": "a.ts", "old_path": "a.ts", "diff": TouchedDiff.REWRITE}]
 
         def compare(ctx, frm, to):
             return own if (frm, to) in (("b0", "c0"), ("b1", "c1")) else moved
         with patch.object(F, "mr_head", return_value="c1"), patch.object(F, "_compare", compare), \
-                patch.object(F, "_gl_compare", return_value=None):
+                patch.object(F, "_gl_compare", return_value=None), \
+                patch.object(F, "mr_object", return_value={"target_branch": "main"}):
             F.check_pushes(self.state, None, 1, "b1")
         self.assertEqual(F.topic_status(self.state, self.t), "open")
-        self.assertEqual(self.state["pushes"][0], {**self.state["pushes"][0], "rebase": True, "topics": []})
+        self.assertEqual(self.state["pushes"][0], {**self.state["pushes"][0], "rebase": True, "topics": [],
+                                                    "onto": "main"})
+
+    def test_a_rebase_that_came_with_a_change_to_the_file_names_its_topic(self):
+        """Alex rebased onto main and fixed two topics in the same push: News said "rebased ·
+        changes 2 of its files" and named no topic, and the topic whose file changed beside
+        its lines stayed waiting, unjudged."""
+        before = [{"new_path": "a.ts", "old_path": "a.ts", "diff": "@@ -1 +1 @@\n-x\n+y\n"}]
+        after = [{"new_path": "a.ts", "old_path": "a.ts", "diff": "@@ -1 +1 @@\n-x\n+y\n@@ -30 +30 @@\n-p\n+q\n"}]
+        head_to_head = [{"new_path": "a.ts", "old_path": "a.ts", "diff": "@@ -30 +30 @@\n-p\n+q\n"}]
+
+        def compare(ctx, frm, to):
+            return {("b0", "c0"): before, ("b1", "c1"): after}.get((frm, to), head_to_head)
+        with patch.object(F, "mr_head", return_value="c1"), patch.object(F, "_compare", compare), \
+                patch.object(F, "_gl_compare", return_value=None), \
+                patch.object(F, "mr_object", return_value={"target_branch": "main"}):
+            F.check_pushes(self.state, None, 1, "b1")
+        self.assertEqual(F.topic_status(self.state, self.t), "needs_ack")
+        self.assertEqual(self.state["pushes"][0]["topics"], ["t1"])
+        self.assertEqual((self.state["pushes"][0]["own"], self.state["pushes"][0]["onto"]), (1, "main"))
 
     def test_a_push_that_left_the_code_as_it_was_is_said_as_such(self):
         """Squashed or reworded, the code as before: GitLab's diff of it is empty. The inbox
@@ -2482,7 +2529,7 @@ class TestAnswersInCode(unittest.TestCase):
         self.assertEqual(self.state["seen_head"], "c1")
 
     def test_an_ack_answers_the_push_and_the_next_one_is_checked_from_it(self):
-        self.push(TestTouchedDiff.REWRITE)
+        self.push(TouchedDiff.REWRITE)
         self.t.update(state="acked", acked_at="2026-11-05T12:00:00Z")
         self.assertEqual(F.topic_status(self.state, self.t), "acked")
         self.push("", head="c2")
@@ -2490,7 +2537,7 @@ class TestAnswersInCode(unittest.TestCase):
         self.assertEqual(self.t["watch"]["sha"], "c1")
 
 
-class TestTouchedDiff:
+class TouchedDiff:
     REWRITE = "@@ -8,7 +8,8 @@\n a8\n a9\n a10\n-a11\n+b11\n+b12\n a12\n a13\n a14\n"
 
 
@@ -2972,7 +3019,23 @@ class TestAuthorFixes(unittest.TestCase):
         self.push("B", 2, [{"new_path": "a.ts", "old_path": "a.ts", "diff": "@@ -1,0 +2,2 @@\n+a\n+b\n"}])
         self.push("C", 3, [{"new_path": "a.ts", "old_path": "a.ts", "diff": "@@ -42 +42 @@\n-old\n+new\n"}])
         self.walk()
+        fixes = F.fixes_of(self.t)
+        self.assertEqual([(f["before"], f["after"], bool(f.get("near"))) for f in fixes],
+                         [("A", "B", True), ("B", "C", False)])
+        # The first changed the file beside the comment's lines: a change to its file until
+        # the agent judges it, and not the topic's once it found it about something else.
+        with patch.dict(os.environ, {"REVIEW_UI_DRAWN": "1"}), patch.object(F, "get_worktree", return_value=None):
+            self.assertIn("pushed a change to its file", F.answer_steps(
+                {**self.state, "topics": [{**self.t, "fixes": fixes[:1]}]}, {**self.t, "fixes": fixes[:1]})[0])
+        F.settle_near_fixes(self.t, "more", "not-fixed")
         self.assertEqual([(f["before"], f["after"]) for f in F.fixes_of(self.t)], [("B", "C")])
+
+    def test_a_topic_closed_here_takes_no_later_change_to_its_file_for_a_fix(self):
+        self.t.update(state="acked", acked_at="2026-11-05T09:00:00Z")
+        self.push("B", 2, [{"new_path": "a.ts", "old_path": "a.ts", "diff": "@@ -1,0 +2,2 @@\n+a\n+b\n"}])
+        with patch.object(F, "topic_status", return_value="acked"):
+            self.walk()
+        self.assertEqual(F.fixes_of(self.t), [])
 
     def test_a_rebase_that_only_moved_the_file_is_no_fix_one_with_a_change_may_hold_more(self):
         # B: a rebase onto a new base; the MR's own change to a.ts is the same as before.

@@ -661,7 +661,11 @@ time the topic is judged and left out after. `--did` is one English sentence ("P
 sentences, code in all three in backticks. A `more` names its case, the card's verdict heading:
 `not-fixed`, `partly-fixed`, `fix-wrong`, or `comment-wrong` when the author did as asked and the
 comment itself was mistaken. Its text ends on one next step (a reply asking for X, accepting a
-follow-up MR, …): **Send follow-up** hands that step back to you to draft. Another reviewer's thread is theirs to settle, and the user watches it: the judgment is
+follow-up MR, …): **Send follow-up** hands that step back to you to draft. A push counts as a
+topic's where it changed the file the comment is on, on its lines or beside them, also in a
+rebase; one beside them is listed as "a change to its file" until judged. Where it has nothing to
+do with the comment, say so with `--unrelated-push` (with `wait`, where nothing else answers the
+comment): it is then no longer the topic's. Another reviewer's thread is theirs to settle, and the user watches it: the judgment is
 `peer <t> fyi|needs --why "…"` (with `--summary "…"` for a new one). `fyi` is the usual answer;
 `needs` only when the user has something to add (a question to them: `--advice reply`; a point
 that repeats one of their topics: `--advice merge --into <t>`), its `--why` ending on a

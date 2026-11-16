@@ -1389,8 +1389,13 @@ def answer_steps(state, t):
                 + (" · with a rebase" if f.get("rebase")
                    else " · may include other changes" if f.get("mixed") else ""))
 
+    def did(f):
+        # A push that changed the comment's file elsewhere is a fix once the agent judged it
+        # one; until then it is what is known of it, a change to the file.
+        return "pushed a change to its file" if f.get("near") else "pushed a fix"
+
     if len(fixes) == 1:
-        out.append(ui.step_md(ui.STEP_DONE_ICON, f"{author} pushed a fix{said(fixes[0])}", fixes[0].get("at")))
+        out.append(ui.step_md(ui.STEP_DONE_ICON, f"{author} {did(fixes[0])}{said(fixes[0])}", fixes[0].get("at")))
     elif fixes:
         out.append(ui.step_md(ui.STEP_DONE_ICON, f"{author} pushed a fix · {len(fixes)} pushes"))
         out += [ui.step_md(ui.PUSHED_ICON, f"push {k}{said(f)}", f.get("at"), indent=1)
@@ -1941,9 +1946,18 @@ def check_pushes(state, ctx, iid, base):
         hit, a, b = code_view.touched((d or {}).get("diff"), w["first"], w["last"])
         if hit and authored is not None and x["file"] not in authored:
             hit = False                   # the rebase moved it, not the author
-        if hit:
+        # The author's push changed the comment's file elsewhere: an answer in code is as
+        # often beside the commented lines as on them (a `.catch` two lines down, a guard
+        # above), so the topic is the user's to look at too, and the agent judges whether
+        # the change concerns it. After a rebase only where the MR's own change to the file
+        # is known to differ: what the target branch brought along is nobody's answer.
+        near = (not hit and bool(((d or {}).get("diff") or "").strip())
+                and (not rebased or (authored is not None and x["file"] in authored)))
+        if hit or near:
             t["pushed"] = {"from": (p or {}).get("from") or w["sha"], "to": head,
                            "at": now_iso()}
+            if near:
+                t["pushed"]["near"] = True
             t["pushed"]["mark"] = decision_mark(state, t)
             touched.append(t["id"])
         elif not p:
@@ -1957,6 +1971,8 @@ def check_pushes(state, ctx, iid, base):
         state.setdefault("pushes", []).append({
             "at": now_iso(), "head": head, "from": seen, "stat": (stat or {}).get("stat"),
             "topics": touched, "rebase": rebased,
+            # What it was rebased onto, for the line that says so.
+            "onto": (mr_object(ctx, iid) or {}).get("target_branch") if rebased else None,
             "same": (stat or {}).get("paths") == [],
             "own": len(authored) if rebased and authored is not None else None})
 
@@ -1998,7 +2014,8 @@ def verdict_word(state, t, v):
     return word if mine else word.replace("Your comment", "The comment")
 
 
-def store_verdict(state, t, says, text, did=None, asked=None, unless_judged=False, case=None):
+def store_verdict(state, t, says, text, did=None, asked=None, unless_judged=False, case=None,
+                  unrelated=False):
     """Store the agent's judgment of the answer standing on `t`. With `unless_judged` (the
     background agent's way), nothing is stored where that answer already has a verdict: the
     agent judges what was unjudged when it started, and one stored since, by the user's
@@ -2010,6 +2027,7 @@ def store_verdict(state, t, says, text, did=None, asked=None, unless_judged=Fals
     t["verdict"] = {"says": says, "text": text, "did": did, "on": answer_mark(state, t)}
     if says == "more" and case:
         t["verdict"]["case"] = case
+    settle_near_fixes(t, says, case, unrelated)
     if says == "wait":
         t["draft"] = None               # waiting is choosing not to send it
         t.pop("draft_on", None)
@@ -2132,7 +2150,7 @@ def inbox_json(state, topics):
         "threads": [{"id": x["id"], "by": (topic_for(state, x["id"]) or {}).get("by"),
                      "fyi": x["inbox"] == "fyi"}
                     for x in fresh if "thread" in x["news"]],
-        "pushes": [{k: p.get(k) for k in ("at", "stat", "topics", "rebase", "url", "same", "own")} for p in pushes],
+        "pushes": [{k: p.get(k) for k in ("at", "stat", "topics", "rebase", "url", "same", "own", "onto")} for p in pushes],
         "mr": state.get("mr_news") or [],
         # When the last round ended: news from before it arrived while the user worked.
         "round_end": state.get("round_end"),
@@ -2195,8 +2213,14 @@ def judge_brief(state, iid, skip=()):
             " --asked \"<one sentence: the problem the comment raised and what it asked for, "
             "e.g. '`save()` drops its promise, so a failed write goes unnoticed; asked for an "
             "`await`.'>\"")
-        what = ("the author pushed a change to the lines the comment is on, and said nothing"
-                if kinds == ["push"] else "the author answered")
+        near = bool((pushed_of(state, t) or {}).get("near"))
+        what = (("the author pushed a change to the file the comment is on, though not to its "
+                 "lines, and said nothing: it may answer the comment from beside it, or be "
+                 "about something else" if near else
+                 "the author pushed a change to the lines the comment is on, and said nothing")
+                if kinds == ["push"] else
+                "the author answered, and pushed a change to the comment's file (not its lines)"
+                if near else "the author answered")
         out += [f"- {tid} ({t.get('summary') or 'no summary'}): {what}. Read the thread "
                 f"(in `bodies`) and the change since the comment (`diff {tid}`), then store "
                 f"one verdict: `verdict {tid} settled|more|wait --unless-judged{asked} --did \"<one sentence: what "
@@ -2207,7 +2231,10 @@ def judge_brief(state, iid, skip=()):
                 f"comment-wrong` (the last when the author did as asked and the comment itself "
                 f"was mistaken) and ends its text on one next step (a reply asking for X, "
                 f"accepting a follow-up MR, …). `wait` when the author agreed and the change is still to "
-                f"come: the topic goes back to waiting on them, until they push or write."]
+                f"come: the topic goes back to waiting on them, until they push or write."
+                + (" Where the pushed change has nothing to do with the comment, add "
+                   "`--unrelated-push` (and `wait`, where nothing else answers it): the push is "
+                   "then no longer listed as the topic's." if near else "")]
     if j["own"]:
         out += ["", "Comments the user posted on GitLab themselves since the topics started. "
                 "Compare each with the topics by what it says (file and line are a hint, never "
@@ -2973,14 +3000,24 @@ def walk_fixes(state, ctx, iid, vs=None):
             d = _file_diff(diffs, w["file"])
             hit, first, last = code_view.touched((d or {}).get("diff"), w["first"], w["last"])
             rebase = cur.get("base_commit_sha") != prev.get("base_commit_sha")
-            if hit and rebase:
+            # The push changed the comment's file: its lines (`hit`), or elsewhere in it
+            # (`near`, as `check_pushes` notes it: the agent judges whether it concerns the
+            # comment, `settle_near_fixes`). Not for a topic closed here: a later change to
+            # its file is no answer to it.
+            near = (not hit and bool(((d or {}).get("diff") or "").strip())
+                    and topic_status(state, t) not in ("acked", "dropped"))
+            if (hit or near) and rebase:
                 before, after = own_change(prev, w["file"]), own_change(cur, w["file"])
                 if before is not None and before == after:
-                    hit = False                   # the rebase moved it, not the author
-            if hit:
+                    hit = near = False            # the rebase moved it, not the author
+                elif before is None or after is None:
+                    near = False                  # GitLab could not say whose change it is
+            if hit or near:
                 fix = {"before": prev.get("head_commit_sha"), "after": cur.get("head_commit_sha"),
                        "at": cur.get("created_at") or now_iso(), "mixed": rebase, "rebase": rebase,
                        "url": f"{web}/diffs?diff_id={cur.get('id')}&start_sha={prev.get('head_commit_sha')}"}
+                if near:
+                    fix["near"] = True
                 if rebase:
                     # What the viewer and the files list show of it: the files the MR itself
                     # changes, the target branch's own left out. A file both changed still
@@ -2995,13 +3032,29 @@ def walk_fixes(state, ctx, iid, vs=None):
 
 def fixes_of(t):
     """The author's fixes to `t` since its comment, oldest first: one per push that changed
-    its lines (`walk_fixes`). A topic from before they were recorded has its one noted push,
-    if any (`t["pushed"]`)."""
+    its lines, or its file where the agent did not find that change to be about something
+    else (`walk_fixes`, `settle_near_fixes`). A topic from before they were recorded has its
+    one noted push, if any (`t["pushed"]`)."""
     if t.get("fixes"):
-        return t["fixes"]
+        return [f for f in t["fixes"] if not f.get("off")]
     p = t.get("pushed") or {}
     return [{"before": p["from"], "after": p["to"], "at": p.get("at"), "mixed": False, "url": None,
              "legacy": True}] if p.get("from") and p.get("to") else []
+
+
+def settle_near_fixes(t, says, case=None, unrelated=False):
+    """Once the agent judged the answer on `t`: each push noted for changing the comment's
+    file but not its lines is its fix where the verdict found the author did something about
+    the comment, and not its push where it did not (the author only agreed, nothing is
+    fixed, or the agent said the change is about something else). Until then such a push is
+    listed as a change to the file, which is all that is known of it."""
+    its = not (unrelated or says == "wait" or case == "not-fixed")
+    for f in t.get("fixes") or []:
+        if f.get("near") and not f.get("off"):
+            if its:
+                f.pop("near")
+            else:
+                f["off"] = True
 
 
 def fix_key(t, n):
@@ -3594,6 +3647,9 @@ def main():
                     help="with `more`: what is wrong, the verdict's heading on the card")
     pv.add_argument("--unless-judged", action="store_true",
                     help="store nothing where the answer already has a verdict")
+    pv.add_argument("--unrelated-push", action="store_true",
+                    help="the push noted for changing the comment's file has nothing to do "
+                    "with the comment: it is no longer listed as the topic's")
     pv.add_argument("--did", help="one English sentence: what the author did since the "
                     "comment (replied …, pushed …), shown above the verdict")
     pv.add_argument("--text", required=True,
@@ -4143,7 +4199,8 @@ def main():
             die("--case names what is wrong with an answer, so it goes with `more` only")
         before = verdict_of(state, t)
         if not store_verdict(state, t, args.says, args.text, did=args.did, asked=args.asked,
-                             unless_judged=args.unless_judged, case=args.case):
+                             unless_judged=args.unless_judged, case=args.case,
+                             unrelated=args.unrelated_push):
             die(f"{tref(args.topic)}: already judged since you started; nothing stored")
         if before and ui.drawn() and not args.unless_judged and args.says != "wait":
             # A verdict the chat changed (Analyse more): the topic's card is up already, so

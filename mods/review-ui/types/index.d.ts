@@ -91,7 +91,7 @@ export type ReviewInbox = {
   threads: { id: string; by?: string | null; fyi?: boolean }[]
   // `same`: the code is as it was (commits rewritten); `own`: for a rebase, how many of the
   // MR's own files it changed (0: the MR's change is as it was).
-  pushes: { at: string; stat?: string | null; topics: string[]; rebase: boolean; url?: string | null; same?: boolean | null; own?: number | null }[]
+  pushes: { at: string; stat?: string | null; topics: string[]; rebase: boolean; url?: string | null; same?: boolean | null; own?: number | null; onto?: string | null }[]
   // What changed in the MR as a whole: merged, closed, auto-merge set, approved.
   mr?: { kind: 'merged' | 'closed' | 'auto-merge' | 'approved'; at: string; by?: string | null }[]
   own: { thread: string; into: string }[]

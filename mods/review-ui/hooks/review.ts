@@ -913,12 +913,14 @@ export const inboxOf = (review: ReviewState | null, judging: { topics: string[];
     ...box.pushes.map(p => {
       const isSame = p.same === true || (p.stat ? sizeOf(p.stat)?.size.files : undefined) === 0
       const isRebaseOnly = p.rebase && p.own === 0
+      // "changes 2 of its files" left open whose files: the count is of the files the
+      // author's own change differs in, apart from what the target branch brought along.
       const what = isSame ? 'no change to the code' : isRebaseOnly ? 'no change to the MR'
-        : p.rebase && p.own ? `changes ${p.own} of its files` : null
+        : p.rebase && p.own ? `and changed ${p.own} file${p.own === 1 ? '' : 's'}` : null
       return { at: p.at, line: {
         tone: 'info' as const, kind: p.rebase ? 'rebase' : 'push', url: isSame || isRebaseOnly ? undefined : p.url ?? undefined,
         size: what || p.rebase ? undefined : p.stat?.replace(/`/g, '') || undefined,
-        at: p.at, what: `${author} ${p.rebase ? 'rebased' : 'pushed'}${what ? ` · ${what}` : ''}${p.topics.length ? ` · touches ${p.topics.join(', ')}` : ''}` } }
+        at: p.at, what: `${author} ${p.rebase ? `rebased${p.onto ? ` onto ${p.onto}` : ''}` : 'pushed'}${what ? ` · ${what}` : ''}${p.topics.length ? ` · touches ${p.topics.join(', ')}` : ''}` } }
     }),
     ...(box.mr ?? []).filter(m => m.kind === 'approved' || (m.kind === 'auto-merge' && !isMerged)).map(m => ({ at: m.at, line: {
       tone: 'info' as const, kind: m.kind, at: m.at, what: m.kind === 'approved' ? `${m.by ?? 'Someone'} approved the MR` : 'Auto-merge set' } })),

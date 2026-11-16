@@ -2764,6 +2764,7 @@ test('every push is a dim line of the box saying what it did; auto-merge goes on
       { at: '2026-11-09T15:12:00Z', stat: '\u{f4d2} 1 file +2 −0', topics: ['t1'], rebase: false },
       { at: '2026-11-09T15:13:00Z', stat: '\u{f4d2} 40 files +900 −100', topics: [], rebase: true, own: 0 },
       { at: '2026-11-09T15:14:00Z', stat: '\u{f4d2} 41 files +902 −100', topics: [], rebase: true, own: 1 },
+      { at: '2026-11-09T15:15:00Z', stat: '\u{f4d2} 42 files +905 −100', topics: ['t2', 't4'], rebase: true, own: 2, onto: 'main' },
     ],
     mr: [{ kind: 'auto-merge', at: '2026-11-09T15:11:00Z', by: null }, { kind: 'merged', at: '2026-11-09T15:20:00Z', by: 'Jan' }],
   }) }))
@@ -2772,7 +2773,10 @@ test('every push is a dim line of the box saying what it did; auto-merge goes on
     '15:10 info Jan pushed · no change to the code',
     '15:12 info Jan pushed · touches t1 [\u{f4d2} 1 file +2 −0]',
     '15:13 info Jan rebased · no change to the MR',          // no size: it would count the target's commits
-    '15:14 info Jan rebased · changes 1 of its files',
+    '15:14 info Jan rebased · and changed 1 file',
+    // Whose files "changes 2 of its files" meant was anybody's guess; and the topics whose
+    // code the rebased push changed are named, as a plain push's are.
+    '15:15 info Jan rebased onto main · and changed 2 files · touches t2, t4',
   ])
 })
 
