@@ -1492,9 +1492,13 @@ const drawCard = async ($: EngineInterface, e: Parameters<EngineInterface['ui'][
             </Text>
           </Box>
           {/* The step's card closes: back to the sidebar's overview, the topic as it is.
-              Not while the topic must be finished first. */}
+              Not while the topic must be finished first. The column of space before it is
+              the title's to keep: a title that fills its line wraps a word earlier instead
+              of running into the ✕. */}
           {isNewest && s && !isDim && !isHeldTopic(topic) && (
-            iconKey({ Button, Text }, 'card-close', GLYPH.close, () => { void leaveTopic($, s) })
+            <Box key="card-close-gap" marginLeft={1} flexShrink={0}>
+              {iconKey({ Button, Text }, 'card-close', GLYPH.close, () => { void leaveTopic($, s) })}
+            </Box>
           )}
         </Box>
         {title.tail && <Markdown text={title.tail} dimColor />}

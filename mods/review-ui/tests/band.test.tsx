@@ -2617,6 +2617,19 @@ test('the last topic of a round offers no way on; its card closes with a ✕ ins
   expect(w.ran.map(r => r.argv.slice(2).join(' '))).toContain('leave --iid 42')
 })
 
+test("a card's ✕ keeps a column of space from its title, so a long title wraps before it", async ($, on) => {
+  const head = '\u{f0182} **t1** **summary of t1** · `src/cache.ts:17`'
+  const out = `${head}\n\nthe analysis\n\n<!-- paste-gate:critical\n` + JSON.stringify({ first: head, critical: [], topic: 't1', focus: 't1', review: REVIEW }) + '\n-->'
+  const w = world(on, [stateOf('t1', [topic('t1', 'needs_ack')], { in_round: true, round: ['t1'] })])
+  await openReview($, w, out)
+  const card = await $.ui.mount(cardRow('tu-open', out))
+  const gap = await card.find({ type: 'Box', key: 'card-close-gap' })
+  expect(gap?.props.marginLeft).toBe(1)
+  expect(gap?.props.flexShrink).toBe(0)
+  expect(JSON.stringify(gap?.children)).toContain('card-close')
+  await card.unmount()
+})
+
 test('a posted comment waiting on its author: its card offers to keep waiting, follow up or accept, and closes with its ✕', async ($, on) => {
   const head = '\u{f0182} **t1** **summary of t1** · `src/cache.ts:17`'
   const out = `${head}\n\nthe analysis\n\n<!-- paste-gate:critical\n` + JSON.stringify({ first: head, critical: [], topic: 't1', focus: 't1', review: REVIEW }) + '\n-->'
