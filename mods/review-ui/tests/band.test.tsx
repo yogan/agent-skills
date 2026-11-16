@@ -279,11 +279,11 @@ test("review-mr: the author resolving with a fix pushed recommends the ack, the 
   await ui.unmount()
 })
 
-test('an answer that needs more offers the follow-up first, or accepting it anyway', async ($, on) => {
+test('an answer that needs more offers the follow-up first, or resolving it all the same', async ($, on) => {
   const w = world(on, [stateOf('t2', [{ ...topic('t2', 'needs_ack'), verdict: 'more', verdict_text: 'Writes still skip the locale. Ask for writes.' }], { lang: 'de' })])
   await openReview($, w, view('t2'))
   const ui = await mountStep($, 'terminal')
-  expect(await labels(ui)).toEqual(['Send follow-up', 'Wait for author', 'Accept anyway', 'Analyse more', 'Next', 'Show sidebar'])
+  expect(await labels(ui)).toEqual(['Send follow-up', 'Wait for author', 'Resolve', 'Analyse more', 'Next', 'Show sidebar'])
   await ui.press({ key: 'follow' })
   await ui.unmount()
   // The chat did not judge it: the prompt hands it the stored verdict, and the language.
@@ -333,8 +333,9 @@ test('a card a press finished ends with what happened, and a link to it', async 
   await card.unmount()
   const again = await $.ui.mount(cardRow('tu-open', view('t1', 'v7')))
   expect(JSON.stringify(await again.findAll({ type: 'Text' }))).toContain('"text":"\u{F048A}"')   // the button's icon, one sentence
-  expect(JSON.stringify(await again.findAll({ type: 'Text' }))).toContain(' posted it')
-  expect((await again.find({ type: 'Link' }))?.props).toMatchObject({ href: 'https://gl/g/p/-/merge_requests/42#note_9', label: 'thread \u{f03cc}' })
+  // The words themselves are the link, to the very comment: no "· thread" after them.
+  expect((await again.find({ type: 'Link' }))?.props).toMatchObject({ href: 'https://gl/g/p/-/merge_requests/42#note_9', label: 'posted the initial comment \u{f03cc}' })
+  expect(JSON.stringify(await again.findAll({ type: 'Text' }))).not.toContain(' · ')
   await again.unmount()
 })
 
@@ -1648,7 +1649,7 @@ test('beside the sidebar, a waiting topic\'s card that only held its code and th
   const ui = await $.ui.mount({ ...(cardRow('tu-other', out) as object), viewport: { columns: 120, rows: 50, isFullscreen: true } } as never)
   // Its title and where it is, then the one line; no code, no thread.
   expect((await ui.findAll({ type: 'Markdown' })).map(m => m.props.text)).toEqual(['`src/cache.ts:17`'])
-  expect((await ui.findAll({ type: 'Text' })).map(t => String(t.text ?? '')).filter(t => /sidebar\.$/.test(t))).toEqual(['Waiting for the author: its code and its thread are in the sidebar.'])
+  expect((await ui.findAll({ type: 'Text' })).map(t => String(t.text ?? '')).filter(t => /^Waiting for /.test(t))).toEqual(['Waiting for the author.'])
   await ui.unmount()
 })
 
@@ -1661,7 +1662,8 @@ test('beside the sidebar, a closed topic\'s card says where it stands, and keeps
   w.panes.push('review-ui-topics')
   const ui = await $.ui.mount({ ...(cardRow('tu-other', out) as object), viewport: { columns: 120, rows: 50, isFullscreen: true } } as never)
   const texts = (await ui.findAll({ type: 'Text' })).map(t => String(t.text ?? ''))
-  expect(texts.some(t => /^Closed: its code and its thread are in the sidebar\.$/.test(t))).toBe(true)
+  expect(texts.some(t => /^Closed\.$/.test(t))).toBe(true)
+  expect(texts.some(t => /in the sidebar/.test(t))).toBe(false)      // true only while it is current
   expect(JSON.stringify(await ui.findAll({ type: 'Markdown' }))).not.toContain('please rename it')
   await ui.unmount()
 })
@@ -2195,7 +2197,7 @@ test("rework-mr: a push the model finished brings up the topic's next card, and 
   await $.turn.complete({ answer: 'pushed' } as never)
   expect(w.placed.length).toBe(1)
   const old = await $.ui.mount(cardRow('tu-open', fixCard))
-  expect(JSON.stringify(await old.findAll({ type: 'Text' }))).toContain('pushed the fix')
+  expect(JSON.stringify(await old.findAll({ type: 'Text' }))).toContain('pushed a fix')
   expect((await old.find({ type: 'Link' }))?.props).toMatchObject({ href: 'http://gl/g/p/-/merge_requests/42/diffs?diff_id=7', label: 'diff \u{f03cc}' })
   expect(await old.find({ type: 'Button', key: 'post-fixed' })).toBeUndefined()      // the buttons moved on
   await old.unmount()
@@ -2537,10 +2539,14 @@ test('a posted comment waiting on its author: its card offers to keep waiting, f
   await openReview($, w, out)
   const card = await $.ui.mount(cardRow('tu-open', out))
   expect((await card.findAll({ type: 'Button' })).map(b => b.key)).toEqual(['card-close', 'keep-waiting', 'follow', 'resolve'])
-  expect(await labels(card)).toEqual(['\u{F0156}', 'Keep waiting', 'Follow up', 'Accept anyway'])
+  expect(await labels(card)).toEqual(['\u{F0156}', 'Keep waiting', 'Follow up', 'Resolve'])
   await card.press({ key: 'keep-waiting' })
   await card.unmount()
   expect(w.ran.map(r => r.argv.slice(2).join(' '))).toContain('leave --iid 42')
+  // Keep waiting only closes its card: no event, so no line "You chose to wait" on it.
+  const again = await $.ui.mount(cardRow('tu-open', out))
+  expect(JSON.stringify(await again.findAll({ type: 'Text' }))).not.toContain('chose to wait')
+  await again.unmount()
 })
 
 test('an error in the band goes once another card comes up', async ($, on) => {
@@ -3155,7 +3161,7 @@ test('every step button has its icon, one per action in both skills', () => {
     'Explain further', 'Analyse more', 'Post', 'Send follow-up', 'Post + resolve',
     '“Fixed” + resolve', 'Check my post', 'Check again', 'Keep as posted', 'Review in hunk',
     'Redo…', 'Run the checks', 'Fix the checks', 'Push', 'Push and resolve', 'Drop', 'Summarize', 'Merge into t3',
-    'Keep separate', 'Link as t3\'s comment', 'Judge', 'Ack', 'Accept', 'Accept + resolve', 'Accept anyway',
+    'Keep separate', 'Link as t3\'s comment', 'Judge', 'Ack', 'Accept', 'Accept + resolve', 'Resolve',
     'Not enough…', 'Wait for author', 'Nothing to add', 'Seen', 'Generate explainer', 'Skip explainer',
     'My review is done', 'Next', 'Apply edit']
   expect(labels.filter(l => !iconOf(l))).toEqual([])

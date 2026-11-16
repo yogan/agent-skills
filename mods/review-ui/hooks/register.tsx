@@ -1353,10 +1353,11 @@ const cardButtons = async ($: EngineInterface, e: Parameters<EngineInterface['ui
   const buttons = isInSidebar ? all.filter(b => !HUNK_KEYS.includes(b.key) || isNotesKey(b, r)) : all
   if (!isHosted || buttons.length === 0) return null
   const els = $.ui.resolve(e)
-  const { Box } = els
+  const { Box, Text } = els
   // The way on is a different kind of press from the decisions: it stands apart, at the
   // right end of the row, and never gives way to them: the decisions wrap instead.
   const way = buttons.filter(b => b.key === 'next')
+  const who = r.skill === 'rework-mr' ? 'the reviewer wrote' : `${r.author ?? 'the author'} did`
   return (
     <Box flexDirection="row" marginTop={1} width="100%">
       <Box flexDirection="row" flexWrap="wrap" columnGap={1} flexGrow={1}>
@@ -1485,15 +1486,16 @@ const drawCard = async ($: EngineInterface, e: Parameters<EngineInterface['ui'][
   )
 }
 
-// Where a topic stands, in a few words, for a card that has nothing else to say: the rest
-// of it (its code, its thread) is in the sidebar.
+// Where a topic stands, in a few words, for a card that has nothing else to say. Never
+// where the rest of it is: "its code and its thread are in the sidebar" stopped being true
+// the moment another topic was current, and a card left in the chat cannot bring it back.
 const standing = (r: ReviewState | null, t: ReviewState['topics'][number] | undefined): string | null => {
   const other = r?.skill === 'rework-mr' ? 'the reviewers' : r?.author ?? 'the author'
   const word = !t ? null : t.state === 'waiting' || t.status === 'waiting' ? `Waiting for ${other}`
     : ['done', 'acked', 'wontfix'].includes(t.state ?? '') || t.status === 'done' ? 'Closed'
     : t.state === 'dropped' ? 'Dropped'
     : null
-  return word && `${word}: its code and its thread are in the sidebar.`
+  return word && `${word}.`
 }
 
 // When a press happened, as its card's last line says it; nothing where no clock answers.
@@ -1517,7 +1519,7 @@ const outcomeLine = ($: EngineInterface, e: Parameters<EngineInterface['ui']['re
       {o.icon ? `${o.icon} ` : ''}
       {isYou && <Text bold color={isDim ? undefined : YOU_COLOR} dimColor={isDim || undefined}>{YOU}</Text>}
       {isYou ? o.text.slice(3) : o.text}
-      {o.url && ' · '}
+      {o.url && (o.isInline ? ' ' : ' · ')}
       {o.url && <Link href={o.url} label={`${o.label ?? 'open'} ${LINK_ICON}`} />}
       {o.url && o.after ? ` ${o.after}` : ''}
     </Text>
@@ -1572,7 +1574,7 @@ const stepControls = async ($: EngineInterface, s: ReviewSession, r: ReviewState
   // last line.
   const finish = async (pressed: BandButton['press'], stdout: string) => {
     const at = await read($, hostCard)
-    const done = outcomeOf(pressed, stdout, await pressTime($))
+    const done = outcomeOf(pressed, stdout, await pressTime($), r.skill === 'review-mr' && topic?.posted === true)
     if (at && done && at.topic === (topic?.id ?? null)) await update($, outcomes, m => ({ ...m, [at.id]: done }))
   }
 

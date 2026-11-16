@@ -729,5 +729,12 @@ test("a step's text is one flow of runs: names, code, links and a size", () => {
 test("a press's line goes on under the card's steps, and stands apart from anything else", () => {
   const o = { when: '14:02', icon: '\u{F048A}', text: 'You posted it', url: 'u', label: 'thread' }
   expect(withOutcome('13:55 \u{F012C} You agreed the plan', o, '\u{F03CC}')).toBe('13:55 \u{F012C} You agreed the plan\n14:02 \u{F048A} You posted it · [thread \u{F03CC}](u)')
-  expect(withOutcome('**Draft**\n\nHallo', o, '\u{F03CC}')).toBe('**Draft**\n\nHallo\n\n14:02 \u{F048A} You posted it · [thread \u{F03CC}](u)')
+  expect(withOutcome('**Draft**\n\nHallo', o, '\u{F03CC}')).toBe('**Draft**\n\nHallo\n\n14:02 \u{F048A} You posted it · [thread \u{F03CC}](u)')  // The link as the line's own last words, as a story line says a comment.
+  const said = { when: '14:02', icon: '\u{F048A}', text: 'You', url: 'u', label: 'replied', isInline: true, after: 'and resolved it' }
+  expect(withOutcome('**Draft**\n\nHallo', said, '\u{F03CC}')).toBe('**Draft**\n\nHallo\n\n14:02 \u{F048A} You [replied \u{F03CC}](u) and resolved it')
+  // A card that ended on whom it waits on loses that line to the press's own: "Waits on
+  // Alex" above "You resolved it" said both.
+  const closed = { when: '14:03', icon: '\u{F012C}', text: 'You resolved it' }
+  expect(withOutcome('13:55 \u{F012C} You posted the initial comment\n\u{F051F} Waits on Alex', closed, '\u{F03CC}'))
+    .toBe('13:55 \u{F012C} You posted the initial comment\n14:03 \u{F012C} You resolved it')
 })

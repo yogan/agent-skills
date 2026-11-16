@@ -177,6 +177,37 @@ def step_md(icon, text, at=None, indent=0):
     return (f"{when} " if when else "") + "\u00a0" * (2 * indent) + f"{icon} {text}"
 
 
+def story_md(events):
+    """A topic's story as its card tells it, in both skills: one `step_md` line per event,
+    in the order they happened. `events`: `{"at", "icon", "text"}` each (`indent` where one
+    belongs under the line before it), listed in any order. The whole story or none: a card
+    that picked one event out of several (the latest reply, with the comment and the push
+    before it left out) gave nobody the means to check the verdict above it; and events
+    grouped by kind ran backwards in time, a plan agreed at 19:26 above a push of 19:19.
+
+    An event whose time is not known stays behind the one it was listed after."""
+    def instant(value):
+        try:
+            t = datetime.datetime.fromisoformat(str(value).replace("Z", "+00:00")) if value else None
+        except ValueError:
+            return None
+        return t.astimezone() if t and t.tzinfo else t.replace(tzinfo=datetime.timezone.utc) if t else None
+
+    keyed, last = [], datetime.datetime.min.replace(tzinfo=datetime.timezone.utc)
+    for i, e in enumerate(events):
+        last = instant(e.get("at")) or last
+        keyed.append((last, i, e))
+    keyed.sort(key=lambda k: k[:2])
+    return [step_md(e["icon"], e["text"], e.get("at"), e.get("indent", 0)) for _when, _i, e in keyed]
+
+
+def said_md(verb, url):
+    """What somebody did in a thread, as a story line says it, the word itself the link to
+    that very comment (`replied ↗`): one link, on the comment it is about. A separate
+    `· thread ↗` after it led to the whole thread, and `replied · reply ↗` said it twice."""
+    return link_md(verb, url) if url else verb
+
+
 def link_md(label, url):
     """A link on a step line: a bare noun (`thread`, `diff`, `reply`) and the link icon."""
     from lib.fences import LINK_ICON
@@ -185,10 +216,11 @@ def link_md(label, url):
 
 def closed_md(text, at=None, url=None):
     """A topic's closing line, the last of its card before the buttons in both skills: when,
-    who closed it and how (`Miriam resolved it`), and its thread's link, which the sidebar
-    stops showing once another topic is current. The review-ui mod draws the same words as
-    the outcome of the press that closed it."""
-    return step_md(STEP_DONE_ICON, text + (f" · {link_md('thread', url)}" if url else ""), at)
+    who closed it and how (`Miriam resolved it`). It carries no link: a resolve is no
+    comment to open, and the comments of the story above it each link themselves (`url` is
+    taken and not drawn, for the callers that still pass it). The review-ui mod draws the
+    same words as the outcome of the press that closed it."""
+    return step_md(STEP_DONE_ICON, text, at)
 
 
 def heading_md(icon, words):

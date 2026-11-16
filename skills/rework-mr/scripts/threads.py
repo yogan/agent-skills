@@ -1172,10 +1172,12 @@ def _step_parts(state, t):
             if body:
                 out += [*_change_blocks(body), ""]
     elif is_pushed_fix(t) and st in ("reply", "none") and is_fix(t):
-        out += [*pushed_steps(state, t), ""]
+        out += [*story_steps(state, t), ""]
+    elif st == "reply" and is_pushed_fix(t) and t.get("plan") and t.get("decision"):
+        # A pushed fix defended: the story tells it whole, the plan agreed last (to push
+        # back) its newest line, so no heading says it a second time.
+        out += [*story_steps(state, t), ""]
     elif st in ("fix", "reply") and t.get("plan") and t.get("decision"):
-        if is_pushed_fix(t):
-            out += [*pushed_steps(state, t), ""]      # the fix the reply defends
         word = OUTCOME_WORD.get(t.get("outcome") or "fix", "Fix")
         out += [ui.heading_md(ui.ASKED_ICON, f"Agreed plan: {word}"), "", t["plan"].strip(), ""]
         kept = t.get("kept") or {}
@@ -1184,7 +1186,7 @@ def _step_parts(state, t):
                                f"{names_md(kept['who'])} wrote again; the plan still holds",
                                kept.get("at")), ""]
     if st == "none" and not is_pushed_fix(t):
-        out += [*replied_steps(state, t), ""]
+        out += [*story_steps(state, t), ""]
     if st == "fixed":
         out += [render_fix(state, t["id"]).split("\n", 2)[-1], ""]
     if differs_now(state, t):
@@ -1362,65 +1364,75 @@ def reviewer_of(state, t):
     return first_name((first or {}).get("author") or x.get("author")) or "the reviewer"
 
 
-def pushed_steps(state, t):
-    """A pushed fix's card, step by step, one line each: the plan agreed (its first line),
-    the push (its size, where the fix is kept in git, and GitLab's link to it), the reply
-    posted since and whom it waits on now. What the fix changed is the diff viewer's to
-    show (Show fix in hunk), not a copy here."""
+def plans_of(t):
+    """Every plan agreed on `t`, oldest first (`note_plan`): `{"at", "plan", "outcome"}`
+    each. A topic from before they were kept has its current one alone."""
+    if t.get("plans"):
+        return t["plans"]
+    return [{"at": t.get("plan_at"), "plan": t.get("plan"), "outcome": t.get("outcome")}] if t.get("decision") else []
+
+
+def note_plan(t):
+    """Keep the plan just agreed on `t` in its history: a later round replaces `plan` and
+    `plan_at`, and the card's story tells every round."""
+    if "plans" not in t:
+        t["plans"] = []
+    t["plans"].append({"at": t.get("plan_at"), "plan": t.get("plan"), "outcome": t.get("outcome") or "fix"})
+
+
+def story_steps(state, t):
+    """`t`'s whole story for its card, one line per event in the order they happened
+    (`ui.story_md`): every comment in its threads (the reviewer's and your own, each the
+    link to itself), every plan agreed, every fix pushed (its GitLab link, and how it
+    differed from its plan), a fix dropped, then whom it waits on now. Every round of it:
+    a topic the reviewer reopened still tells its first plan, fix and reply. What the fix
+    changed is the sidebar's and the diff viewer's to show, not a copy here."""
     done = ui.STEP_DONE_ICON
-    # The plan whole up to about five lines of a card: it is what the fix is judged against.
-    plan = _gist(t.get("plan"))
-    out = [ui.step_md(done, f"You agreed the plan: {plan}" if plan else "You agreed the plan", t.get("plan_at"))]
+    comments = []
+    for x in t["thread_ids"]:
+        for i, n in enumerate((state["threads"].get(x) or {}).get("notes") or []):
+            mine = bool(n.get("mine"))
+            who = "You" if mine else first_name(n.get("author")) or "The reviewer"
+            verb = "replied" if mine or i else "commented"
+            comments.append({"at": n.get("at"), "icon": done if mine else ui.STATE_ICON["answered"],
+                             "text": f"{who} {ui.said_md(verb, n.get('url'))}"})
+    # Listed as a topic usually runs (the comment, the plan, the fix, the replies), which is
+    # where an event with no time kept stays; the times put the rest in order.
+    events = comments[:1]
+    for p in plans_of(t):
+        gist = _gist(p.get("plan"))
+        word = OUTCOME_WORD.get(p.get("outcome") or "fix", "Fix")
+        events.append({"at": p.get("at"), "icon": done,
+                       "text": f"You agreed the plan: {word}" + (f". {gist}" if gist else "")})
 
     def said(f):
-        # Its size is the sidebar's to say, over the fix's files (mirrors findings.py's).
         link = f" · {ui.link_md('diff', f['url'])}" if f.get("url") else ""
         # A push that was another topic's too says which; one that carried more than the fix
-        # (a rebase, other commits) says it may hold more. Mirrors findings.py's `answer_steps`.
+        # (a rebase, other commits) says it may hold more. Mirrors findings.py's `story_steps`.
         also = [x["id"] for x in state["topics"] if x is not t and f.get("after")
                 and any(p.get("after") == f["after"] for p in x.get("pushes") or [])]
         return link + (f" · also {', '.join(also)}" if also
-                              else " · may include other changes" if f.get("mixed") else "")
-
-    def differs(f, indent=0):
-        # What the fix did beyond or instead of the plan stays part of the story once it is
-        # pushed: the reviewer has not been told yet, and "Fixed" alone would not tell them.
-        return ([ui.step_md(ui.DIFFERS_ICON, f"It differs from the plan agreed: {f['differs'].strip()}",
-                            f.get("at"), indent=indent)] if f.get("differs") else [])
+                       else " · may include other changes" if f.get("mixed") else "")
 
     # A topic pushed before its pushes were kept one by one has its link alone.
-    fixes = kept_fixes(state, t) or [{"url": t["diff_url"]}]
-    if len(fixes) == 1:
-        out.append(ui.step_md(done, f"You pushed a fix{said(fixes[0])}", fixes[0].get("at")))
-        out += differs(fixes[0])
-    else:
-        out.append(ui.step_md(done, f"You pushed a fix · {len(fixes)} pushes"))
-        for k, f in enumerate(fixes, 1):
-            out += [ui.step_md(ui.PUSHED_ICON, f"push {k}{said(f)}", f.get("at"), indent=1),
-                    *differs(f, indent=1)]
-    url = reply_posted(state, t)
-    if url:
-        note = next((n for x in t["thread_ids"] for n in (state["threads"].get(x) or {}).get("notes") or []
-                     if n.get("url") == url), {})
-        out.append(ui.step_md(done, f"You replied · {ui.link_md('reply', url)}", note.get("at")))
+    fixes = (kept_fixes(state, t) or [{"url": t["diff_url"]}]) if is_pushed_fix(t) or t.get("pushes") else []
+    for k, f in enumerate(fixes, 1):
+        nth = f" (push {k})" if len(fixes) > 1 else ""
+        events.append({"at": f.get("at"), "icon": ui.PUSHED_ICON, "text": f"You pushed a fix{nth}{said(f)}"})
+        if f.get("differs"):
+            # What the fix did beyond or instead of the plan stays part of the story once it
+            # is pushed: the reviewer has not been told yet, and "Fixed" alone would not.
+            events.append({"at": f.get("at"), "icon": ui.DIFFERS_ICON, "indent": 1,
+                           "text": f"It differs from the plan agreed: {f['differs'].strip()}"})
+    for d in t.get("dropped") or []:
+        at = datetime.datetime.fromtimestamp(d["at"], datetime.timezone.utc).isoformat() if d.get("at") else None
+        why = _gist(d.get("why"), 160)
+        events.append({"at": at, "icon": done, "text": "You put the fix aside, kept in git" if d.get("aside")
+                       else "You dropped the fix" + (f": {why}" if why else "")})
+    out = ui.story_md(events + comments[1:])
     resolved = bool(t["thread_ids"]) and all(
         (state["threads"].get(x) or {}).get("resolved") for x in t["thread_ids"])
-    if url and not resolved:
-        out.append(ui.step_md(ui.STEP_WAITS_ICON, f"Waits on {reviewer_of(state, t)}"))
-    return out
-
-
-def replied_steps(state, t):
-    """A topic answered with a reply alone and left to the reviewer, as a pushed fix's card
-    tells its steps (`pushed_steps`): the reply posted, then whom it waits on while its thread
-    is open. Nothing where the thread's last word is not the user's."""
-    x = state["threads"].get((t["thread_ids"] or [None])[0]) or {}
-    last = (x.get("notes") or [{}])[-1]
-    if not last.get("mine"):
-        return []
-    link = f" · {ui.link_md('reply', last['url'])}" if last.get("url") else ""
-    out = [ui.step_md(ui.STEP_DONE_ICON, f"You replied{link}", last.get("at"))]
-    if not all((state["threads"].get(i) or {}).get("resolved") for i in t["thread_ids"]):
+    if t.get("state") == "waiting" and not resolved:
         out.append(ui.step_md(ui.STEP_WAITS_ICON, f"Waits on {reviewer_of(state, t)}"))
     return out
 
@@ -1437,9 +1449,9 @@ def closing_line(state, t):
     if c and (x.get("resolved_mine") or not x.get("resolved_by")):
         how = {"fixed": "fixed", "replied": "replied"}.get(c.get("how"))
         return ui.closed_md(f"You {how} and resolved it" if how else "You resolved it",
-                            x.get("resolved_at") or c.get("at"), x.get("url"))
+                            x.get("resolved_at") or c.get("at"))
     who = "You" if x.get("resolved_mine") else first_name(x.get("resolved_by")) or "The reviewer"
-    return ui.closed_md(f"{who} resolved it", x.get("resolved_at"), x.get("url"))
+    return ui.closed_md(f"{who} resolved it", x.get("resolved_at"))
 
 
 def context_digest(state, tid):
@@ -2339,7 +2351,10 @@ def drop_fix(state, iid, t, why, plan, outcome, new=(), aside=False):
               *(() if aside else ("reply_early", "agreed_change", "change", "answer_now"))):
         t.pop(k, None)
     if not aside:
+        if "plans" not in t:
+            t["plans"] = plans_of(t)      # the plan it replaces, from before plans were kept
         t.update(outcome=outcome, decision=why, plan=plan, plan_on=reviewer_mark(state, t), plan_at=datetime.datetime.now(datetime.timezone.utc).isoformat())
+        note_plan(t)
     t.pop("state", None)
     t.setdefault("dropped", []).append({"key": kept, "why": why, "at": int(time.time()),
                                         **({"aside": True} if aside else {})})
@@ -2649,7 +2664,9 @@ def render_fix(state, tid):
     title = title_md(state, t, t.get("summary") or "")
     out = [f"{title} · {loc_md(path)}" if path else title, ""]
     if t.get("plan"):
-        out += [ui.heading_md(ui.ASKED_ICON, "Agreed plan"), "", t["plan"].strip(), ""]
+        # One form for the plan agreed wherever a card heads it: with its kind.
+        word = OUTCOME_WORD.get(t.get("outcome") or "fix", "Fix")
+        out += [ui.heading_md(ui.ASKED_ICON, f"Agreed plan: {word}"), "", t["plan"].strip(), ""]
     # What changed, in short: the plan is above it and the thread in the sidebar, so neither
     # is told again; the checks only where they did not pass, as passing is what a shown
     # fix means.
@@ -3587,9 +3604,12 @@ def main():
         p = proposal_of(state, t) or die(f"{tref(args.topic)} has no proposed plan to agree")
         if p.get("says") == "fyi":
             die(f"{tref(args.topic)} asks nothing of you: `wait {args.topic}` closes it")
+        if "plans" not in t:
+            t["plans"] = plans_of(t)      # the plan it replaces, from before plans were kept
         t.update(decision=p.get("why"), plan=p.get("plan"), outcome=p.get("outcome") or "fix",
                  agreed_change=p.get("change"), plan_on=reviewer_mark(state, t), plan_at=datetime.datetime.now(datetime.timezone.utc).isoformat(),
                  answer_now=bool(p.get("answer_now")))
+        note_plan(t)
         start_fix_round(t)
         save(path, state)
         print(f"agreed the plan for {tref(args.topic)}")
@@ -3864,6 +3884,8 @@ def main():
     elif cmd == "set":
         t = topic_for(state, args.topic) or die(f"no topic {args.topic}")
         held = draft_holds(state, t) and args.reply is None
+        if (args.decision is not None or args.outcome) and "plans" not in t:
+            t["plans"] = plans_of(t)      # the plan it replaces, from before plans were kept
         if args.drop_reply:
             if args.reply is not None or args.keep_reply:
                 die("--drop-reply takes the stored reply out of use: not with --reply or --keep-reply")
@@ -3930,10 +3952,13 @@ def main():
             t["plan_on"] = reviewer_mark(state, t)
             t["plan_at"] = datetime.datetime.now(datetime.timezone.utc).isoformat()             # when, for the step its card says it in
             t["agreed_change"] = t.get("change")
+            note_plan(t)
             start_fix_round(t)
         elif args.outcome:
             # The plan's kind changed in the chat, the plan itself kept.
             t["outcome"] = args.outcome
+            t["plan_at"] = datetime.datetime.now(datetime.timezone.utc).isoformat()
+            note_plan(t)
             start_fix_round(t)
         if (args.reply is not None or args.keep_reply) and t.get("reply"):
             # The round the draft is for, taken last: a plan stored in the same call is its plan.

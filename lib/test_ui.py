@@ -115,9 +115,32 @@ class TestClosingLine(unittest.TestCase):
 
     def test_it_says_what_closed_it_then_when(self):
         self.assertEqual(ui.closed_md("Miriam resolved it"), f"{ui.STEP_DONE_ICON} Miriam resolved it")
-        # The time leads, so the mod draws it in a column of its own; the thread's link last.
+        # The time leads, so the mod draws it in a column of its own. No link: a resolve is
+        # no comment to open, and the comments above it each link themselves.
         self.assertRegex(ui.closed_md("Miriam resolved it", "2026-11-05T11:38:00Z", "http://gl/n1"),
-                         r"^(\w{3} \d+, )?\d\d:\d\d \S+ Miriam resolved it · \[thread .\]\(http://gl/n1\)$")
+                         r"^(\w{3} \d+, )?\d\d:\d\d \S+ Miriam resolved it$")
+
+
+class TestStory(unittest.TestCase):
+    """A topic's story on its card: every event, in the order they happened."""
+
+    def test_events_listed_by_kind_come_out_in_time_order(self):
+        events = [{"at": "2026-11-05T09:00:00Z", "icon": "c", "text": "Robin commented"},
+                  {"at": "2026-11-05T12:00:00Z", "icon": "c", "text": "Robin replied"},
+                  {"at": "2026-11-05T10:00:00Z", "icon": "p", "text": "You agreed the plan"},
+                  {"at": "2026-11-05T11:00:00Z", "icon": "u", "text": "You pushed a fix"}]
+        self.assertEqual([x.split()[-1] for x in ui.story_md(events)], ["commented", "plan", "fix", "replied"])
+
+    def test_an_event_with_no_time_stays_behind_the_one_it_was_listed_after(self):
+        events = [{"at": "2026-11-05T09:00:00Z", "icon": "c", "text": "first"},
+                  {"at": None, "icon": "p", "text": "untimed"},
+                  {"at": "2026-11-05T08:00:00Z", "icon": "c", "text": "earlier"}]
+        self.assertEqual([x.split()[-1] for x in ui.story_md(events)], ["earlier", "first", "untimed"])
+
+    def test_a_comment_s_word_is_its_own_link(self):
+        from lib.fences import LINK_ICON
+        self.assertEqual(ui.said_md("replied", "http://gl/n9"), f"[replied {LINK_ICON}](http://gl/n9)")
+        self.assertEqual(ui.said_md("replied", None), "replied")
 
 
 if __name__ == "__main__":

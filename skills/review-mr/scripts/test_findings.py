@@ -2243,8 +2243,12 @@ class TestVerdict(unittest.TestCase):
         self.t["pushed"] = {"from": "a", "to": "b", "at": "2026-11-05T11:30:00Z"}
         with self.drawn(), patch.object(F, "verdict_of", return_value=self.t["verdict"]):
             card = F.render_quote(self.state, "t1")
-        self.assertRegex(card.splitlines()[-1], rf"^(Nov 5, )?\d\d:30 {F.ui.STEP_DONE_ICON} Alex pushed a fix")
-        self.assertNotIn("replied", card)          # the push came after the reply
+        lines = card.splitlines()
+        self.assertRegex(lines[-1], rf"^(Nov 5, )?\d\d:30 {F.ui.PUSHED_ICON} Alex pushed a fix")
+        # The whole story above it, in the order it happened: the comment, the reply, the
+        # push. One line picked out of it left nothing to check the verdict against.
+        self.assertRegex(lines[-3], r"You posted the initial comment$")
+        self.assertRegex(lines[-2], r"Alex replied$")
 
     def test_an_answered_card_carries_no_copy_of_the_change(self):
         """The sidebar shows the author's change, every file of it, old and new: the same
@@ -2922,19 +2926,18 @@ class TestPostedCommentCard(unittest.TestCase):
                          "resolved_at": "2026-11-10T17:02:00Z"})
         self.assertNotIn("Recommendation", out)
         self.assertIn("The section is stale.", out)
-        posted = out.index("You posted the initial comment")
+        # The link is on the comment's own line, the words themselves, and leads to that
+        # comment: no "· thread" entry after it, and none on the resolve.
+        posted = out.index(f"You [posted the initial comment {F.LINK_ICON}]({self.URL})")
         self.assertLess(out.index("The section is stale."), posted)
-        self.assertIn(f"[thread {F.LINK_ICON}]({self.URL})", out)
-        # Its time first; its thread's link last: the sidebar stops showing it once another
-        # topic is current.
-        self.assertRegex(self.last_line(out), r"^(Nov 10, )?\d\d:\d\d \S+ Jonas resolved it"
-                         + re.escape(f" · [thread {F.LINK_ICON}]({self.URL})") + "$")
+        self.assertNotIn("[thread", out)
+        self.assertRegex(self.last_line(out), r"^(Nov 10, )?\d\d:\d\d \S+ Jonas resolved it$")
         self.assertNotIn("toggle", out)
 
     def test_the_close_goes_on_under_the_timeline_with_no_gap(self):
         out = self.card({"resolved": True, "resolved_by": "Jonas Keller", "resolved_username": "jonas"})
         lines = out.strip().splitlines()
-        self.assertIn("You posted the initial comment", lines[-2])
+        self.assertIn("You [posted the initial comment", lines[-2])
         self.assertIn("Jonas resolved it", lines[-1])
 
     def test_an_open_comment_ends_on_whom_it_waits_on(self):
@@ -2955,22 +2958,31 @@ class TestPostedCommentCard(unittest.TestCase):
     def test_resolved_by_the_user_says_so(self):
         out = self.card({"resolved": True, "resolved_by": "Frank", "resolved_mine": True,
                          "resolved_username": "frank"}, status="needs_ack")
-        self.assertRegex(self.last_line(out), r"^\S+ You resolved it( · .+)?$")
+        self.assertRegex(self.last_line(out), r"^\S+ You resolved it$")
 
     def test_a_closed_topic_ends_on_how_it_was_closed(self):
         resolved = {"resolved": True, "resolved_by": "Frank", "resolved_mine": True}
         at = "2026-11-10T17:02:00Z"
         for closed, thread, said in (
-                ({"how": "accepted", "at": at}, resolved, "You accepted Robin's answer and resolved it"),
+                # Resolved with no answer from the author: there was none to accept.
+                ({"how": "accepted", "at": at}, resolved, "You resolved it"),
+                ({"how": "replied", "at": at}, resolved, "You replied and resolved it"),
                 ({"how": "fixed", "at": at}, {}, "Robin fixed it · you acked it"),
                 ({"how": "acked", "at": at}, {"resolved": True, "resolved_by": "Robin Lang",
                                               "resolved_username": "robin.l"}, "Robin resolved it · you acked it"),
                 ({"how": "acked", "at": at}, {}, "You acked it")):
             with self.subTest(said):
                 out = self.card(thread, {"state": "acked", "closed": closed}, status="acked")
-                self.assertRegex(self.last_line(out), rf"^(Nov 10, )?\d\d:\d\d {F.ui.STEP_DONE_ICON} {re.escape(said)} · \[thread .\]\(.+\)$")
+                self.assertRegex(self.last_line(out), rf"^(Nov 10, )?\d\d:\d\d {F.ui.STEP_DONE_ICON} {re.escape(said)}$")
                 self.assertNotIn("Waits on", out)
                 self.assertNotIn("toggle", out)
+
+    def test_an_answer_accepted_says_whose(self):
+        state = {"iid": 2, "author": "Robin", "threads": {"d1": {"mine": True, "resolved": True, "resolved_mine": True, "notes": [
+            {"body": "Stale.", "mine": True}, {"body": "Fixed.", "mine": False, "author": "Robin"}]}},
+            "topics": [{"id": "t2", "thread_ids": ["d1"], "state": "acked", "closed": {"how": "accepted", "at": "2026-11-10T17:02:00Z"}}]}
+        with patch.dict(os.environ, {"REVIEW_UI_DRAWN": "1"}), patch.object(F, "topic_status", return_value="acked"):
+            self.assertIn("You accepted Robin's answer and resolved it", F.closing_line(state, state["topics"][0]))
 
 
 class TestAuthorFixes(unittest.TestCase):
@@ -3051,8 +3063,8 @@ class TestAuthorFixes(unittest.TestCase):
         # The first changed the file beside the comment's lines: a change to its file until
         # the agent judges it, and not the topic's once it found it about something else.
         with patch.dict(os.environ, {"REVIEW_UI_DRAWN": "1"}), patch.object(F, "get_worktree", return_value=None):
-            self.assertIn("pushed a change to its file", F.answer_steps(
-                {**self.state, "topics": [{**self.t, "fixes": fixes[:1]}]}, {**self.t, "fixes": fixes[:1]})[0])
+            self.assertIn("pushed a change to its file", "\n".join(F.story_steps(
+                {**self.state, "topics": [{**self.t, "fixes": fixes[:1]}]}, {**self.t, "fixes": fixes[:1]})))
         F.settle_near_fixes(self.t, "more", "not-fixed")
         self.assertEqual([(f["before"], f["after"]) for f in F.fixes_of(self.t)], [("B", "C")])
 
@@ -3084,8 +3096,8 @@ class TestAuthorFixes(unittest.TestCase):
                            {"new_path": "b.ts", "old_path": "b.ts", "diff": self.ELSEWHERE}])
         self.walk()
         with patch.object(F, "get_worktree", return_value=None):
-            self.assertIn("· also t2", F.answer_steps(self.state, self.t)[0])
-            self.assertIn("· also t1", F.answer_steps(self.state, self.state["topics"][1])[0])
+            self.assertIn("· also t2", "\n".join(F.story_steps(self.state, self.t)))
+            self.assertIn("· also t1", "\n".join(F.story_steps(self.state, self.state["topics"][1])))
 
     def test_a_fix_that_came_with_a_rebase_says_so_and_shows_only_the_mr_s_own_files(self):
         self.push("B", 2, [{"new_path": "a.ts", "old_path": "a.ts", "diff": self.FIX},
@@ -3096,7 +3108,7 @@ class TestAuthorFixes(unittest.TestCase):
         (f,) = F.fixes_of(self.t)
         self.assertEqual(f["paths"], ["a.ts"])            # upstream.ts is the target branch's
         with patch.object(F, "get_worktree", return_value=None):
-            line = F.answer_steps(self.state, self.t)[0]
+            line = next(x for x in F.story_steps(self.state, self.t) if "pushed" in x)
         self.assertIn("· with a rebase", line)
         self.assertNotIn("may include other changes", line)
 

@@ -32,7 +32,7 @@ How it fits together:
   answer first and drawn as the primary, Explain after it wherever something is decided
   (Explain further once pressed): Comment and Drop for a new topic; Post, Copy, I posted my own for a draft (Post + resolve beside Post for a drafted reply, which settles its thread and closes the topic); for an answer the agent judged, its
   verdict's own answer first: Accept + resolve, Not enough… and Analyse more, or Send
-  follow-up, Accept anyway and Analyse more; Next, apart at the row's end, where another waits; for another reviewer's thread, which the user watches, Seen and
+  follow-up, Resolve and Analyse more; Next, apart at the row's end, where another waits; for another reviewer's thread, which the user watches, Seen and
   Reply…, with Merge into tN first where the agent advised merging; for one of
   your own comments the agent matched, its recommendation (Merge into tN or Keep separate)
   first among the answers. They sit on the newest card, where a click presses one; a step

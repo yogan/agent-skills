@@ -1345,12 +1345,16 @@ class TestCodeContext(unittest.TestCase):
         self.assertNotIn("Changed since the comment", out)
         self.assertNotIn("+const line10 = 100", out)
         self.assertNotIn("Agreed plan", out)
-        self.assertIn(f"{T.ui.STEP_DONE_ICON} You agreed the plan: Make it 100, as the reviewer asked, and say so in the docs too.", out)
+        self.assertIn(f"{T.ui.STEP_DONE_ICON} You agreed the plan: Fix. Make it 100, as the reviewer asked, and say so in the docs too.", out)
         # Its size is the sidebar's to say, over the fix's files: not counted here again.
-        self.assertIn(f"{T.ui.STEP_DONE_ICON} You pushed a fix · [diff {LINK_ICON}](http://gl/d)", out)
+        self.assertIn(f"{T.ui.PUSHED_ICON} You pushed a fix · [diff {LINK_ICON}](http://gl/d)", out)
         self.assertNotIn(T.diffsize.text(1, 1, 1), out)
-        # Not posted yet: nothing waits on the reviewer.
-        self.assertNotIn("You replied", out)
+        # Every comment of the thread is a line, the word itself its link.
+        self.assertIn(f"{T.ui.STATE_ICON['answered']} Robin [commented {LINK_ICON}](http://gl/n1)", out)
+        self.assertIn(f"{T.ui.STEP_DONE_ICON} You [replied {LINK_ICON}](http://gl/n2)", out)
+        self.assertNotIn("· [thread", out)
+        self.assertNotIn("· [reply", out)
+        # Nothing says the topic waits: nothing waits on the reviewer.
         self.assertNotIn("Waits on", out)
 
     def test_once_its_reply_is_posted_it_waits_on_the_reviewer(self):
@@ -1360,9 +1364,9 @@ class TestCodeContext(unittest.TestCase):
                 mock.patch.object(T, "step_of", return_value="none"):
             out = T.render_quote(state, "t1")
         # Pushed before the fix was kept in git: the link alone, no size.
-        self.assertIn(f"{T.ui.STEP_DONE_ICON} You pushed a fix · [diff {LINK_ICON}](http://gl/d)", out)
-        self.assertIn(f"{T.ui.STEP_DONE_ICON} You replied · [reply {LINK_ICON}](http://gl/n3)", out)
-        self.assertIn(f"{T.ui.STEP_WAITS_ICON} Waits on Robin", out)
+        self.assertIn(f"{T.ui.PUSHED_ICON} You pushed a fix · [diff {LINK_ICON}](http://gl/d)", out)
+        self.assertIn(f"{T.ui.STEP_DONE_ICON} You [replied {LINK_ICON}](http://gl/n2)", out)
+        self.assertTrue(out.rstrip().endswith(f"{T.ui.STEP_WAITS_ICON} Waits on Robin"))
         state["threads"]["d1"]["resolved"] = True
         with mock.patch.dict(os.environ, {"REVIEW_UI_DRAWN": "1"}), \
                 mock.patch.object(T, "step_of", return_value="none"):
@@ -3116,16 +3120,16 @@ class TestFixPerPush(unittest.TestCase):
                                "differs": "It also renames the file."})
         t.update(plan="Rename the factory.", decision="d", thread_ids=[])
         with mock.patch.dict(os.environ, {"REVIEW_UI_DRAWN": "1"}), mock.patch.object(T, "_git", return_value=""):
-            steps = T.pushed_steps(state, t)
-        self.assertRegex(steps[1], r"You pushed a fix")
-        self.assertRegex(steps[2], rf"^\S.*{T.ui.DIFFERS_ICON} It differs from the plan agreed: It also renames the file\.$")
-        self.assertRegex(steps[2], T._STEP.pattern)                # a step of the story, timed
+            steps = T.story_steps(state, t)
+        at = next(i for i, x in enumerate(steps) if "You pushed a fix" in x)
+        self.assertRegex(steps[at + 1], rf"^\S.*{T.ui.DIFFERS_ICON} It differs from the plan agreed: It also renames the file\.$")
+        self.assertRegex(steps[at + 1], T._STEP.pattern)           # a step of the story, timed
 
     def test_a_fix_as_agreed_adds_no_line(self):
         state, t = self.topic(self.push("A", "B", 2))
         t.update(plan="Rename the factory.", decision="d", thread_ids=[])
         with mock.patch.dict(os.environ, {"REVIEW_UI_DRAWN": "1"}), mock.patch.object(T, "_git", return_value=""):
-            self.assertEqual(len(T.pushed_steps(state, t)), 2)
+            self.assertNotIn("differs", "\n".join(T.story_steps(state, t)))
 
     def test_a_push_between_keeps_two_fixes(self):
         _, t = self.topic(self.push("A", "B", 2), self.push("X", "C", 4))
@@ -3159,19 +3163,20 @@ class TestFixPerPush(unittest.TestCase):
         state, t = self.topic(self.push("A", "B", 2), self.push("X", "C", 4, clean=False))
         t["plan"] = "p"
         with mock.patch.object(T, "_git", return_value=""):
-            out = T.pushed_steps(state, t)
-        self.assertEqual(out[1:4], [f"{T.ui.STEP_DONE_ICON} You pushed a fix · 2 pushes",
-                                    f"\u00a0\u00a0{T.ui.PUSHED_ICON} push 1 · [diff {LINK_ICON}](G/diffs?diff_id=2&start_sha=A)",
-                                    f"\u00a0\u00a0{T.ui.PUSHED_ICON} push 2 · [diff {LINK_ICON}](G/diffs?diff_id=4&start_sha=X)"
-                                    " · may include other changes"])
+            out = [x for x in T.story_steps(state, t) if "pushed" in x]
+        # Each push a line of its own at its own time, never grouped under one heading:
+        # grouped, a plan agreed between two pushes stood above both.
+        self.assertEqual(out, [f"{T.ui.PUSHED_ICON} You pushed a fix (push 1) · [diff {LINK_ICON}](G/diffs?diff_id=2&start_sha=A)",
+                               f"{T.ui.PUSHED_ICON} You pushed a fix (push 2) · [diff {LINK_ICON}](G/diffs?diff_id=4&start_sha=X)"
+                               " · may include other changes"])
 
     def test_a_push_that_was_another_topic_s_too_says_which(self):
         state, t = self.topic(self.push("A", "B", 2))
         state["topics"].append({"id": "t3", "thread_ids": [], "pushes": [self.push("A", "B", 2)]})
         t["plan"] = "p"
         with mock.patch.object(T, "_git", return_value=""):
-            out = T.pushed_steps(state, t)
-        self.assertTrue(out[1].endswith(" · also t3"), out[1])
+            out = [x for x in T.story_steps(state, t) if "pushed" in x]
+        self.assertTrue(out[0].endswith(" · also t3"), out[0])
 
 
 class TestStateByWord(unittest.TestCase):
@@ -3255,10 +3260,14 @@ class TestStateByWord(unittest.TestCase):
         self.run_cmd("set", "t1", "--decision", "keep it", "--plan", "explain why", "--outcome", "push-back")
         self.assertEqual(T.step_of(self.state, self.t1), "reply")
         self.assertTrue(T.state_json(self.state)["topics"][0]["pushed"])
-        with mock.patch.object(T, "pushed_steps", return_value=["PUSHED"]):
+        with mock.patch.object(T, "_git", return_value=""):
             parts = T._step_parts(self.state, self.t1)
-        self.assertIn("PUSHED", parts)
-        self.assertTrue(any("Agreed plan: Push back" in x for x in parts))
+        # The whole story, the fix it defends in it, and the plan to push back its newest
+        # line: said once, with no heading repeating it.
+        self.assertTrue(any("You pushed a fix" in x for x in parts))
+        self.assertTrue(any(x.endswith("You agreed the plan: Push back. explain why") for x in parts))
+        self.assertFalse(any("**" in x and "Agreed plan" in x for x in parts))
+        self.assertTrue(any("Robin [replied" in x or "Robin replied" in x for x in parts))
         self.run_cmd("set", "t1", "--reply", "-", stdin="Bewusst so, weil …\n")
         self.assertNotIn("Fixed", self.t1["reply"])
 
@@ -3268,7 +3277,7 @@ class TestStateByWord(unittest.TestCase):
         self.pushed()
         th = self.state["threads"]["d1"]
         th.update(resolved=True, resolved_by="Haas, Miriam - X1", resolved_at="2026-02-01T13:02:00Z")
-        with mock.patch.object(T, "pushed_steps", return_value=["PUSHED"]):
+        with mock.patch.object(T, "story_steps", return_value=["PUSHED"]):
             parts = [x for x in T._step_parts(self.state, self.t1) if x]
         self.assertRegex(parts[-1], rf"^((Nov|Feb) \d+, )?\d\d:\d\d {T.ui.STEP_DONE_ICON} Miriam resolved it$")
         th.update(resolved=False, resolved_by=None, resolved_at=None)
@@ -3276,12 +3285,12 @@ class TestStateByWord(unittest.TestCase):
             T.post_reply(self.state, {"enc": "g%2Fp", "web": "https://gl/g/p"}, 1, "t1", None,
                          fixed=True, resolve=True)
         th.update(resolved=True, resolved_by="Me", resolved_mine=True)
-        with mock.patch.object(T, "pushed_steps", return_value=["PUSHED"]):
+        with mock.patch.object(T, "story_steps", return_value=["PUSHED"]):
             parts = [x for x in T._step_parts(self.state, self.t1) if x]
-        self.assertRegex(parts[-1], rf"^((Nov|Feb) \d+, )?\d\d:\d\d {T.ui.STEP_DONE_ICON} You fixed and resolved it"
-                         + (rf" · \[its thread .\]\({re.escape(th['url'])}\)" if th.get("url") else "") + "$")
+        self.assertRegex(parts[-1], rf"^((Nov|Feb) \d+, )?\d\d:\d\d {T.ui.STEP_DONE_ICON} You fixed and resolved it$")
+        # A resolve is no comment to open: the line carries no link of its own.
         th["url"] = "https://gl/g/p/-/merge_requests/1#note_1"
-        self.assertTrue(T.closing_line(self.state, self.t1).endswith(f" · [thread {LINK_ICON}]({th['url']})"))
+        self.assertNotIn("](", T.closing_line(self.state, self.t1))
         th.update(resolved=False)
         self.assertIsNone(T.closing_line(self.state, self.t1))
 
@@ -3293,8 +3302,43 @@ class TestStateByWord(unittest.TestCase):
         with mock.patch.object(T, "_git", return_value=""):
             parts = T._step_parts(self.state, self.t1)
         steps = parts[:parts.index("")]
-        self.assertRegex(steps[0], r"^(Feb 1, )?\d\d:00 \S+ You agreed the plan: p$")
+        self.assertTrue(any(re.search(r"^(Feb 1, )?\d\d:00 \S+ You agreed the plan: Fix\. p$", x) for x in steps))
         self.assertRegex(steps[-1], r" Miriam resolved it$")        # no gap before the close
+
+    def test_the_story_tells_every_round_in_the_order_things_happened(self):
+        """A topic the reviewer reopened: its card started at the second plan, the first
+        round gone but for its push, and "19:26 You agreed the plan" stood above "19:19
+        push 1", as the pushes were grouped under one line."""
+        th = self.state["threads"]["d1"]
+        th["notes"] = [
+            {"author": "Robin", "body": "Rename it.", "at": "2026-02-01T19:05:00Z", "mine": False, "url": "https://gl/n1"},
+            {"author": "Me", "body": "Fixed: …", "at": "2026-02-01T19:20:00Z", "mine": True, "url": "https://gl/n2"},
+            {"author": "Robin", "body": "And a doc comment?", "at": "2026-02-01T19:25:00Z", "mine": False, "url": "https://gl/n3"}]
+        self.t1.update(
+            plans=[{"at": "2026-02-01T19:10:00Z", "plan": "Rename it.", "outcome": "fix"},
+                   {"at": "2026-02-01T19:26:00Z", "plan": "Add the doc comment.", "outcome": "fix"}],
+            pushes=[{"before": "A", "start": "A", "after": "B", "clean": True, "at": "2026-02-01T19:19:00Z", "url": "https://gl/d1"},
+                    {"before": "C", "start": "C", "after": "D", "clean": True, "at": "2026-02-01T19:30:00Z", "url": "https://gl/d2"}],
+            diff_url="https://gl/d2")
+        with mock.patch.object(T, "_git", return_value=""):
+            steps = T.story_steps(self.state, self.t1)
+        said = [re.sub(r"^\S*\d\d:\d\d \S+ |^[A-Z][a-z]{2} \d+, \d\d:\d\d \S+ ", "", re.sub(r"\]\([^)]*\)", "]", x)) for x in steps]
+        self.assertEqual(said, [
+            f"Robin [commented {LINK_ICON}]",
+            "You agreed the plan: Fix. Rename it.",
+            f"You pushed a fix (push 1) · [diff {LINK_ICON}]",
+            f"You [replied {LINK_ICON}]",
+            f"Robin [replied {LINK_ICON}]",
+            "You agreed the plan: Fix. Add the doc comment.",
+            f"You pushed a fix (push 2) · [diff {LINK_ICON}]"])
+
+    def test_each_plan_agreed_is_kept_for_the_story(self):
+        self.t1["plan_at"] = "2026-02-01T12:00:00Z"
+        self.reviewer_writes("Anders, bitte.")
+        self.run_cmd("set", "t1", "--decision", "redo", "--plan", "do it as asked", "--outcome", "fix")
+        self.run_cmd("set", "t1", "--outcome", "push-back")
+        self.assertEqual([(p["plan"], p["outcome"]) for p in self.t1["plans"]],
+                         [("p", "fix"), ("do it as asked", "fix"), ("do it as asked", "push-back")])
 
     def test_a_reply_alone_says_it_is_posted_and_whom_it_waits_on(self):
         self.t1.update(outcome="reply", reply="Bewusst so.\n")
@@ -3305,7 +3349,8 @@ class TestStateByWord(unittest.TestCase):
                             "at": "2026-02-01T13:02:00Z", "url": "https://gl/n9"})
         th["awaiting"] = "reviewer"
         parts = [x for x in T._step_parts(self.state, self.t1) if x]
-        self.assertRegex(parts[-2], rf"^((Nov|Feb) \d+, )?\d\d:\d\d {T.ui.STEP_DONE_ICON} You replied · \[reply .\]\(https://gl/n9\)$")
+        # "You replied · reply ↗" said reply twice: the word itself is the link.
+        self.assertRegex(parts[-2], rf"^((Nov|Feb) \d+, )?\d\d:\d\d {T.ui.STEP_DONE_ICON} You \[replied .\]\(https://gl/n9\)$")
         self.assertEqual(parts[-1], f"{T.ui.STEP_WAITS_ICON} Waits on Robin")
 
     def test_a_pushed_fix_redone_is_a_new_fix_round(self):

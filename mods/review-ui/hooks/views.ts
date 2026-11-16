@@ -377,10 +377,16 @@ export const inlineOf = (md: string, people: readonly string[] = []): InlineRun[
 
 // A card's text with the line a press left on it as its last step: right under the steps
 // above it where the text ends on one (a timeline goes on), set apart from anything else.
-export const withOutcome = (md: string, o: { when?: string | null; icon?: string | null; text: string; url?: string | null; label?: string | null; after?: string | null }, linkIcon: string): string => {
+// `isInline`: the link is the line's own last words ("You replied ↗"), not a noun after it.
+// A card that ended on whom the topic waits on loses that line: whatever was pressed on it,
+// the wait it spoke of is over, and "Waits on Alex" above "You resolved it" said both.
+const WAITS_LINE = /^(?:\u00a0)*\u{F051F} Waits on /u
+export const withOutcome = (md: string, o: { when?: string | null; icon?: string | null; text: string; url?: string | null; label?: string | null; after?: string | null; isInline?: boolean | null }, linkIcon: string): string => {
   const line = `${o.when ? `${o.when} ` : ''}${o.icon ?? '\u{F012C}'} ${o.text}`
-    + (o.url ? ` · [${o.label ?? 'open'} ${linkIcon}](${o.url})` : '') + (o.url && o.after ? ` ${o.after}` : '')
-  const body = md.trimEnd()
+    + (o.url ? `${o.isInline ? ' ' : ' · '}[${o.label ?? 'open'} ${linkIcon}](${o.url})` : '') + (o.url && o.after ? ` ${o.after}` : '')
+  const lines = md.trimEnd().split('\n')
+  if (WAITS_LINE.test(lines[lines.length - 1] ?? '')) lines.pop()
+  const body = lines.join('\n').trimEnd()
   const last = body.split('\n').pop() ?? ''
   return body ? `${body}${STEP_LINE.test(last) ? '\n' : '\n\n'}${line}` : line
 }

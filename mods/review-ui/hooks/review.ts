@@ -178,7 +178,7 @@ const ICON: Record<string, string> = {
   'Summarize': '\u{F0279}', // md-format_list_bulleted
   'Keep separate': '\u{F093C}', // md-arrow_split_vertical
   'Judge': '\u{F029B}', // md-gavel
-  'Ack': '\u{F0514}', 'Ack + resolve': '\u{F0514}', 'Accept': '\u{F0514}', 'Accept + resolve': '\u{F0514}', 'Accept anyway': '\u{F0514}', // md-thumb_up_outline
+  'Ack': '\u{F0514}', 'Ack + resolve': '\u{F0514}', 'Accept': '\u{F0514}', 'Accept + resolve': '\u{F0514}', 'Resolve': '\u{F0514}', // md-thumb_up_outline
   'Not enough…': '\u{F0512}', // md-thumb_down_outline
   'Wait for author': '\u{F051F}', 'Keep waiting': '\u{F051F}', // md-timer_sand
   'Nothing to add': '\u{F0855}', // md-check_outline
@@ -338,7 +338,9 @@ const stepButtons = (review: ReviewState | null): BandButton[] | null => {
           { key: 'follow', label: 'Send follow-up', isPrimary: true,
             press: ask(`Draft the follow-up reply for ${t}${inLang(review)}. The verdict on its card, which the background check stored: ${topic.verdict_text ?? '(see its card)'}`) },
           { key: 'wait', label: 'Wait for author', press: { kind: 'wait' } },
-          accept('Accept anyway'),
+          // GitLab's own word for it: the thread is resolved and the topic closed, whatever
+          // the verdict says is still missing. Resolved on GitLab already, it is an ack.
+          topic?.resolved ? ack : { key: 'resolve', label: 'Resolve', press: { kind: 'resolve' } },
           analyse,
         ]
       }
@@ -377,10 +379,11 @@ const stepButtons = (review: ReviewState | null): BandButton[] | null => {
         { key: 'reply', label: 'Reply…', press: { kind: 'fill', text: `Draft my reply for ${t}${inLang(review)}: ` } },
       ]
     case 'waiting': {
-      // Already resolved on GitLab, accepting is an ack; otherwise it resolves the thread too.
+      // Already resolved on GitLab, closing it here is an ack; otherwise Resolve (GitLab's
+      // word) resolves the thread too: settled in person, say, with no answer in the thread.
       const accept: BandButton = topic?.resolved
-        ? { key: 'ack', label: 'Accept anyway', press: { kind: 'ack' } }
-        : { key: 'resolve', label: 'Accept anyway', press: { kind: 'resolve' } }
+        ? { key: 'ack', label: 'Ack', press: { kind: 'ack' } }
+        : { key: 'resolve', label: 'Resolve', press: { kind: 'resolve' } }
       return [
         { key: 'keep-waiting', label: 'Keep waiting', press: { kind: 'keep-waiting' }, isPrimary: true },
         { key: 'follow', label: 'Follow up', press: ask(`Draft a follow-up reply for ${t}${inLang(review)}.`) },
@@ -640,7 +643,9 @@ const DID: Partial<Record<Press['kind'], string>> = {
 // pushed diff) as a bare noun after it. Null for a press that leaves its card as it was (a
 // prompt for the model, a copy, opening the viewer).
 const STEP = /^(?:(\d\d:\d\d|[A-Z][a-z]{2} \d{1,2}, \d\d:\d\d) )?(\S+) (.*)$/u
-export const outcomeOf = (press: Press, stdout: string, now?: string): ReviewOutcome | null => {
+// `wasPosted`: review-mr, whether the topic had its comment on GitLab before the press, so
+// a Post is a reply and not the initial comment.
+export const outcomeOf = (press: Press, stdout: string, now?: string, wasPosted = false): ReviewOutcome | null => {
   const url = /https?:\/\/\S+/.exec(stdout)?.[0] ?? null
   // A press that closed its topic: the scripts' closing line (lib/ui.py's `closed_md`), the
   // same words the topic's card ends on whenever it is drawn again.
@@ -658,11 +663,17 @@ export const outcomeOf = (press: Press, stdout: string, now?: string): ReviewOut
     ({ icon: iconOf(button) ?? null, when: now ?? null, text, ...(link && url ? { url, label: link.label } : {}) })
   switch (press.kind) {
     case 'post': {
+      // As the topic's story says a comment (lib/ui.py's `said_md`): the word itself is the
+      // link to the very comment posted, with no "· thread" after it.
       const button = press.fixed ? (press.resolve ? '“Fixed” + resolve' : '“Fixed”') : press.resolve ? 'Post + resolve' : 'Post'
-      return said(button, `You posted ${press.fixed ? '“Fixed”' : 'it'}${press.resolve ? ' and resolved it' : ''}`, { label: 'thread' })
+      const verb = press.reply || press.fixed || wasPosted ? 'replied' : 'posted the initial comment'
+      return url
+        ? { icon: iconOf(button) ?? null, when: now ?? null, text: 'You', url, label: verb, isInline: true, ...(press.resolve ? { after: 'and resolved it' } : {}) }
+        : said(button, `You ${verb}${press.resolve ? ' and resolved it' : ''}`)
     }
     case 'push':
-      return said('Push', 'You pushed the fix', { label: 'diff' })
+      // One wording for a push, the story's: "You pushed a fix".
+      return said('Push', 'You pushed a fix', { label: 'diff' })
     case 'aside':
       return said('Put aside', 'You put it aside, kept in git for later')
     case 'apply-edit':
@@ -676,8 +687,9 @@ export const outcomeOf = (press: Press, stdout: string, now?: string): ReviewOut
     case 'ack':
       return said('Ack', 'You acked it')
     case 'wait':
-    case 'keep-waiting':
-      return said(press.kind === 'wait' ? 'Wait for author' : 'Keep waiting', 'You chose to wait for the author')
+      return said('Wait for author', 'You chose to wait for the author')
+    // Keep waiting only closes its card: nothing about the topic changed, so it is no
+    // event and leaves no line. A press that only dismisses something changes no state.
     case 'handled':
       return said(press.label ?? 'Seen', press.done ?? 'You saw it')
     case 'posted-ok':

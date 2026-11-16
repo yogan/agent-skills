@@ -1320,13 +1320,10 @@ def _render_quote(state, tid, refine=False):
         out += ["", ui.heading_md(ui.VERDICT_ICON, f"Verdict: {verdict_word(state, t, v)}"), "",
                 v["text"].strip()]
     if is_own_posted:
-        # The topic's story step by step, as rework-mr's pushed fix tells its own: the comment
-        # posted, what the author did since, then whom it waits on or what closed it, the
-        # latest event last, right under the others.
-        mine = next((n for n in first.get("notes") or [] if n.get("mine")), None)
-        link = f" · {ui.link_md('thread', mine['url'])}" if (mine or {}).get("url") else ""
-        out += ["", ui.step_md(ui.STEP_DONE_ICON, f"You posted the initial comment{link}", (mine or {}).get("at")),
-                *answer_steps(state, t)]
+        # The topic's whole story, as rework-mr's card tells its own: every comment, every
+        # push of the author's, then whom it waits on or what closed it, the latest event
+        # last, right under the others.
+        out += ["", *story_steps(state, t)]
         if closing:
             out.append(closing)
         elif topic_status(state, t) == "open":
@@ -1358,7 +1355,11 @@ def closing_line(state, t):
     if topic_status(state, t) == "acked" and t.get("source") not in ("peer", "author"):
         at = c.get("at") or t.get("acked_at")
         if c.get("how") == "accepted":
-            return ui.closed_md(f"You accepted {author}'s answer and resolved it", at, url)
+            # Resolved with no answer from the author (settled in person, say): there was
+            # no answer to accept.
+            answered = fixes_of(t) or any(not n.get("mine") for x in thr for n in x.get("notes") or [])
+            return ui.closed_md(f"You accepted {author}'s answer and resolved it" if answered
+                                else "You resolved it", at, url)
         if c.get("how") == "replied":
             return ui.closed_md("You replied and resolved it", at, url)
         if c.get("how") == "fixed":
@@ -1378,18 +1379,23 @@ def closing_line(state, t):
     return ui.closed_md(f"{'You' if who == 'you' else who} resolved it", res.get("resolved_at"), url)
 
 
-def answer_steps(state, t):
-    """What the author did since the comment, as a card's step lines, oldest first: each of
-    their fixes (one per push that changed its lines, with its size and GitLab link), then
-    their latest reply where it came after the last fix. The reply's words are the sidebar's
-    thread; the verdict above them is the agent's judgment of it."""
+def story_steps(state, t):
+    """`t`'s whole story for its card, one line per event in the order they happened
+    (`ui.story_md`): every comment in its threads (yours and the others', each the link to
+    itself) and every push of the author's noted for it (its GitLab link). The whole of it
+    or none: a card that picked the latest reply out, with the comment, the answers and the
+    push before it left out, gave nobody the means to check the verdict above it. What a
+    comment says is the sidebar's thread; what a push changed, the sidebar's file. Mirrors
+    threads.py's `story_steps`, whose events differ (plans, your own pushes)."""
     author = first_name(state.get("author")) or "the author"
-
-    def stamp(v):
-        when = _ts(v)
-        return when.timestamp() if when else 0
-
-    out = []
+    events = []
+    for k, x in enumerate(t["thread_ids"]):
+        for i, n in enumerate((state["threads"].get(x) or {}).get("notes") or []):
+            mine = bool(n.get("mine"))
+            who = "You" if mine else first_name(n.get("author")) or author
+            verb = ("posted the initial comment" if mine else "commented") if i == 0 and k == 0 else "replied"
+            events.append({"at": n.get("at"), "icon": ui.STEP_DONE_ICON if mine else ui.STATE_ICON["answered"],
+                           "text": f"{who} {ui.said_md(verb, n.get('url'))}"})
     fixes = kept_fixes(state, t)
 
     def said(f):
@@ -1401,24 +1407,13 @@ def answer_steps(state, t):
                 + (" · with a rebase" if f.get("rebase")
                    else " · may include other changes" if f.get("mixed") else ""))
 
-    def did(f):
+    for k, f in enumerate(fixes, 1):
         # A push that changed the comment's file elsewhere is a fix once the agent judged it
         # one; until then it is what is known of it, a change to the file.
-        return "pushed a change to its file" if f.get("near") else "pushed a fix"
-
-    if len(fixes) == 1:
-        out.append(ui.step_md(ui.STEP_DONE_ICON, f"{author} {did(fixes[0])}{said(fixes[0])}", fixes[0].get("at")))
-    elif fixes:
-        out.append(ui.step_md(ui.STEP_DONE_ICON, f"{author} pushed a fix · {len(fixes)} pushes"))
-        out += [ui.step_md(ui.PUSHED_ICON, f"push {k}{said(f)}", f.get("at"), indent=1)
-                for k, f in enumerate(fixes, 1)]
-    said_by = [n for x in t["thread_ids"] for n in (state["threads"].get(x) or {}).get("notes") or []
-               if not n.get("mine")]
-    note = max(said_by, key=lambda n: stamp(n.get("at")), default=None)
-    if note and (not fixes or stamp(note.get("at")) > stamp(fixes[-1].get("at"))):
-        out.append(ui.step_md(ui.STATE_ICON["answered"], f"{first_name(note.get('author')) or author} replied",
-                              note.get("at")))
-    return out
+        did = "pushed a change to its file" if f.get("near") else "pushed a fix"
+        nth = f" (push {k})" if len(fixes) > 1 else ""
+        events.append({"at": f.get("at"), "icon": ui.PUSHED_ICON, "text": f"{author} {did}{nth}{said(f)}"})
+    return ui.story_md(events)
 
 
 def author_resolved(state, t):
@@ -1461,7 +1456,7 @@ def render_answered(state, t, summ, v):
     out += ["", ui.heading_md(ui.VERDICT_ICON, f"Verdict: {verdict_word(state, t, v)}"), "",
             v["text"].strip()]
     # What the author did, then what closed it: one timeline, the latest event last.
-    steps = answer_steps(state, t) + [x for x in [closing_line(state, t)] if x]
+    steps = story_steps(state, t) + [x for x in [closing_line(state, t)] if x]
     if steps:
         out += ["", *steps]
     out += _draft_block(state, t, t.get("draft"), follow_up=True)

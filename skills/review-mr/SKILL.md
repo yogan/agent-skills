@@ -529,9 +529,10 @@ python3 $SD/findings.py resume --iid <n>  # pushes since your baseline + overvie
 ```
 
 Where cards are drawn, `resume` shows no pushes: what arrived since the last review is in the
-sidebar's inbox, where the user opens a round (*Rounds and verdicts*). With no topic current it
-shows nothing at all; your opener is then one line, and it neither summarises the news nor
-offers to start on a topic.
+sidebar's **News** box, where the user opens a round (*Rounds and verdicts*). With no topic
+current it shows nothing at all; your opener is then one line, and it neither summarises the
+news nor offers to start on a topic. Call that box "News", as the sidebar heads it: never
+"the inbox", which is a word the user does not see anywhere.
 
 It is one call on purpose. As two steps ("run `updates`, then run `present`") the second gets
 dropped once you start digging into the current topic, and the overview table — the user's only
@@ -634,8 +635,8 @@ push, `set-head` to move the baseline. Always end a check with what's still left
 
 The mod's update check only takes notes: news (an author's answer, a push that changed the lines
 a comment is on, another reviewer's thread, a comment of the user's own) marks its topic in the
-sidebar's inbox and never becomes the current topic by itself. The user opens a **round** from the
-inbox or a row; each decision moves to the next topic that needs them, and `Later` puts one off.
+sidebar's News box and never becomes the current topic by itself. The user opens a **round** from
+that box or a row; each decision moves to the next topic that needs them, and `Later` puts one off.
 The news is judged before the user gets to it, by a background agent the mod starts with
 `findings.py judge-brief`: its judgments are stored with each topic, so a card a press brings
 up carries one.
@@ -672,7 +673,7 @@ that repeats one of their topics: `--advice merge --into <t>`), its `--why` endi
 `**Recommendation:**` sentence. Nothing the user does there resolves it. The user's buttons follow the verdict, its own answer first: settled → `Accept &
 resolve` (resolves the GitLab thread and closes the topic; theirs to press) / `Not good
 enough…` (their reply, which you draft) / `Analyse more`; more → `Send follow-up` / `Wait for
-author` / `Accept anyway` / `Analyse more`. On `Analyse more`, a verdict you change
+author` / `Resolve` / `Analyse more`. On `Analyse more`, a verdict you change
 prints a card of the change itself: leave the topic unshown, your reply carries the details. A verdict lasts until a new answer arrives, and so
 does a follow-up draft: a newer answer, or `wait`, drops it.
 

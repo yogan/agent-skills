@@ -205,7 +205,7 @@ The two passes stay: a plan for every open topic, then the fixes one topic at a 
 runs them as **rounds** from the sidebar: agreeing a plan moves on to the next topic without
 one; once every open topic has a plan, the fix pass runs; a thread that arrives during the fix
 pass waits until that pass is through, then its plan comes up. A reviewer's new thread or reply
-lands in the sidebar's inbox, and a background agent of the mod's prepares a plan for it
+lands in the sidebar's News box (say "News", as the sidebar heads it, never "the inbox"), and a background agent of the mod's prepares a plan for it
 (`judge-brief`), so its card carries one by the time the user opens it.
 
 - **A topic you researched gets a proposal before it is shown.** Store your analysis and plan,

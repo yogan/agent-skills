@@ -219,9 +219,11 @@ REWORK_TWICE = [
             # A doc comment in one commit: the script's push alone.
             press('Ack and push'),
             Expect(button('“Fixed” + resolve'), region="screen", wait=60),
-            # Two fixes, t2's push between them: the card lists both, the sidebar shows the
-            # latest and steps back to the first.
-            Expect(r"You pushed a fix · 2 pushes", region="screen"),
+            # Two fixes, t2's push between them: the card's story tells both, each a line at
+            # its own time with the round between them, and the sidebar shows the latest and
+            # steps back to the first.
+            Expect(r"You pushed a fix \(push 1\)", region="screen"),
+            Expect(r"You pushed a fix \(push 2\)", region="screen"),
             Expect(r"push 2 of 2", region="panel"),
 ]
 TRY_TWICE = len(REWORK_TWICE)
