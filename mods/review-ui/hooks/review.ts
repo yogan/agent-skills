@@ -757,7 +757,8 @@ export const waitingOf = (review: ReviewState | null): { count: number; who: str
 // The end of the MR, as the Done box's last line says it: what is happening, or what is
 // missing, and the one press that takes it on where there is one. `tone`: `busy` while
 // GitLab works on it, `needs` where something failed, `info` otherwise.
-export type EndLine = { text: string; tone: 'info' | 'busy' | 'needs'; button?: BandButton }
+// `good`: a good end reached (approved by you), drawn green: success looks like success.
+export type EndLine = { text: string; tone: 'info' | 'busy' | 'needs' | 'good'; button?: BandButton }
 
 // The prompts of the two analyses: each a turn of the model's, started by its press.
 export const CI_PROMPT = "The MR's pipeline failed. Find the failing job, read its log, say what broke and why, " +
@@ -793,7 +794,7 @@ export const endOf = (review: ReviewState | null, settled: boolean): EndLine | u
   if (!review || !mr || mr.state === 'closed') return undefined
   if (review.skill === 'review-mr') {
     if (mr.state !== 'opened' || !settled) return undefined
-    if (mr.approved_by?.includes('You')) return { text: 'Approved by you', tone: 'info' }
+    if (mr.approved_by?.includes('You')) return { text: 'Approved by you', tone: 'good' }
     return { text: '', tone: 'info', button: { key: 'approve-mr', label: 'Approve', press: { kind: 'approve-mr' }, isPrimary: true } }
   }
   // Who merged it, and when, is the box's last step line: the press alone here.
@@ -850,7 +851,8 @@ export const waitingLine = (w: { count: number; who: string }): string =>
 // `kind`: what a line only to know of is about (a push, an approval…), drawn as its icon, plain
 // (panel.ts's `INBOX_ICON`); a line that needs the person, or is being judged, has its mark.
 // `at`: when it happened, where a reliable time exists, drawn first as a card's step is.
-export type InboxLine = { tone: 'needs' | 'busy' | 'info'; what: string; topic?: string; url?: string; size?: string; kind?: string; at?: string | null }
+// `good`: a good end (the MR merged), drawn green.
+export type InboxLine = { tone: 'needs' | 'busy' | 'info' | 'good'; what: string; topic?: string; url?: string; size?: string; kind?: string; at?: string | null }
 // `during`: what arrived while the user worked through the last round, listed apart.
 export type Inbox = { lines: InboxLine[]; during: InboxLine[]; more: number; count: number; hasNews: boolean; since: string | null; first: string | null; button: string | null }
 
@@ -878,7 +880,9 @@ export const inboxOf = (review: ReviewState | null, judging: { topics: string[];
   const info: InboxLine[] = []
   // Who wrote on a topic: another reviewer's thread says who; review-mr's answers are the
   // author's; rework-mr's replies a reviewer's.
-  const byOf = (id: string) => box.threads.find(x => x.id === id)?.by ?? (isRework ? 'a reviewer' : author)
+  // rework-mr says who wrote last on each topic (`by`): "a reviewer replied" named nobody
+  // where every card names them.
+  const byOf = (id: string) => box.threads.find(x => x.id === id)?.by ?? box.by?.[id] ?? (isRework ? 'a reviewer' : author)
   const verdictOf = (id: string): { text: string; tone: InboxLine['tone'] } | null => {
     if (judging.failed.includes(id)) return { text: 'could not be judged', tone: 'needs' }
     if (judging.topics.includes(id)) return { text: 'judging…', tone: 'busy' }
@@ -934,13 +938,22 @@ export const inboxOf = (review: ReviewState | null, judging: { topics: string[];
         size: what || p.rebase ? undefined : p.stat?.replace(/`/g, '') || undefined,
         at: p.at, what: `${author} ${p.rebase ? `rebased${p.onto ? ` onto ${p.onto}` : ''}` : 'pushed'}${what ? ` · ${what}` : ''}${p.topics.length ? ` · touches ${p.topics.join(', ')}` : ''}` } }
     }),
+    // rework-mr: a reviewer resolved a thread, often without a word. Only to know of.
+    ...(box.resolves ?? []).map(x => ({ at: x.at, line: {
+      tone: 'info' as const, kind: 'resolved', topic: x.id, at: x.at, what: `${x.by ?? 'A reviewer'} resolved it` } })),
     ...(box.mr ?? []).filter(m => m.kind === 'approved' || (m.kind === 'auto-merge' && !isMerged)).map(m => ({ at: m.at, line: {
       tone: 'info' as const, kind: m.kind, at: m.at, what: m.kind === 'approved' ? `${m.by ?? 'Someone'} approved the MR` : 'Auto-merge set' } })),
+    // The pipeline that passed is part of a merge's story: it is why the merge went through,
+    // and the box went from "approved" straight to "merged". GitLab gives it no time of its
+    // own here, so it stands right before the merge, untimed.
+    ...(review.mr?.state === 'merged' && review.mr.pipeline?.status === 'passed' ? [{
+      at: review.mr.merged_at ?? '9999-12-31T00:00:00Z',
+      line: { tone: 'info' as const, kind: 'pipeline', at: null, what: 'The pipeline passed' } }] : []),
     // Merged or closed, and by whom: the last of the MR's story, under the box's heading.
     ...(review.mr?.state === 'merged' || review.mr?.state === 'closed' ? [{
       // Without a time it still comes last.
       at: (review.mr.state === 'merged' ? review.mr.merged_at : review.mr.closed_at) ?? '9999-12-31T00:00:00Z',
-      line: { tone: 'info' as const, kind: review.mr.state, at: review.mr.state === 'merged' ? review.mr.merged_at : review.mr.closed_at,
+      line: { tone: review.mr.state === 'merged' ? 'good' as const : 'info' as const, kind: review.mr.state, at: review.mr.state === 'merged' ? review.mr.merged_at : review.mr.closed_at,
         what: `${(review.mr.state === 'merged' ? review.mr.merged_by : review.mr.closed_by) ?? 'Someone'} ${review.mr.state} the MR` } }] : []),
   ]
   timeline.sort((a, b) => Date.parse(a.at) - Date.parse(b.at))

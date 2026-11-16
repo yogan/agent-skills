@@ -1269,6 +1269,12 @@ def _render_quote(state, tid, refine=False):
     if (ui.drawn() and v and v.get("says") != "wait" and not refine and t.get("closed")
             and topic_status(state, t) == "acked"):
         return render_answered(state, t, summ, v)
+    # Answered, judged, and followed up on: it waits on the author again, and its card still
+    # says what was asked, what they did and the verdict on it, with the follow-up in the
+    # story under them. Drawn again after the reply went up, it had lost all three.
+    if (ui.drawn() and v and v.get("says") != "wait" and not refine and not peer_waiting(state, t)
+            and topic_status(state, t) == "open" and (state["threads"].get(t["thread_ids"][0]) or {}).get("mine")):
+        return render_answered(state, t, summ, v)
     shown = []                            # the notes, as rendered — see `context_digest`
     # Where the mod draws, a comment of the user's own already posted ends its card on that:
     # when it went up, and, where it is, who resolved its thread. The advice that led to it
@@ -1455,8 +1461,10 @@ def render_answered(state, t, summ, v):
         out += ["", ui.heading_md(ui.DID_ICON, f"What {author} did"), "", did]
     out += ["", ui.heading_md(ui.VERDICT_ICON, f"Verdict: {verdict_word(state, t, v)}"), "",
             v["text"].strip()]
-    # What the author did, then what closed it: one timeline, the latest event last.
+    # The topic's whole story, then what closed it: one timeline, the latest event last.
     steps = story_steps(state, t) + [x for x in [closing_line(state, t)] if x]
+    if topic_status(state, t) == "open":
+        steps.append(ui.step_md(ui.STEP_WAITS_ICON, f"Waits on {author}"))
     if steps:
         out += ["", *steps]
     out += _draft_block(state, t, t.get("draft"), follow_up=True)
@@ -2097,10 +2105,36 @@ def view_context(state, topic=None):
     return extra
 
 
+def card_face(state, t):
+    """A fingerprint of what `t`'s card says now beyond its code: its name, where it stands,
+    its threads' comments, the verdict on the answer, the author's pushes noted for it, its
+    draft and how it was closed. The mod compares the one a card was drawn with (`emit`) to
+    the topic's now (`state_json`): a card open while its news arrived went on showing the
+    topic as it was, the new comment in the sidebar alone. Mirrors threads.py's."""
+    said = [[n.get("url") or n.get("at"), len(n.get("body") or "")]
+            for x in t["thread_ids"] for n in (state["threads"].get(x) or {}).get("notes") or []]
+    v = t.get("verdict") or {}
+    resolved = [bool((state["threads"].get(x) or {}).get("resolved")) for x in t["thread_ids"]]
+    return hashlib.sha1(json.dumps([
+        t.get("summary"), topic_status(state, t), said, resolved,
+        [v.get(k) for k in ("says", "case", "text", "did", "on")], t.get("asked"),
+        [[f.get("before"), f.get("after"), bool(f.get("near"))] for f in fixes_of(t)],
+        t.get("draft") or t.get("note"), t.get("closed"), t.get("why"),
+        (peer_view_of(state, t) or {}) if peer_waiting(state, t) else None,
+    ], sort_keys=True, default=str).encode()).hexdigest()[:12]
+
+
 def emit(state, block, topic=None):
     """Print a gated view with its manifest, naming the topic it is about and the current
     one, so the paste gate enforces only what belongs to the topic being decided."""
     extra = view_context(state, topic)
+    t = topic_for(state, topic) if topic else None
+    if t:
+        extra["face"] = card_face(state, t)
+        if ui.drawn() and t["thread_ids"] and topic == current_topic(state):
+            # The current topic's card, drawn (again): what arrived for it is seen now,
+            # also where it arrived while the topic was open already.
+            t["seen"] = answer_mark(state, t)
     ui.record({"review": extra["review"], "topic": topic, "focus": current_topic(state),
                "draft": extra.get("draft")})
     print(critical_manifest.with_manifest(block, topic=topic, focus=current_topic(state),
@@ -2317,7 +2351,8 @@ def state_json(state):
     cur = topic_for(state, current_topic(state)) if current_topic(state) else None
     thread = [thread_of(state["threads"][th]) for th in (cur or {}).get("thread_ids") or []
               if th in state["threads"]]
-    return {"skill": "review-mr", "iid": state.get("iid"), "title": state.get("title"),
+    return {"face": card_face(state, cur) if cur else None,
+            "skill": "review-mr", "iid": state.get("iid"), "title": state.get("title"),
             "url": state.get("mr_web_url"), "lang": state.get("lang") or DEFAULT_LANG,
             "mr": mr_json(state.get("mr_status")),
             "merged": merge_left(state) if is_over(state) else None,

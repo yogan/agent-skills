@@ -901,6 +901,15 @@ const inbox = (over: object = {}) => ({
   later: [], aside: [], waiting: 0, first: null, newer_push: false, ...over,
 })
 
+// News said "t1 a reviewer replied" where every card names them, and said nothing of a
+// reviewer resolving a thread, which they often do without a word.
+test('rework-mr: news names who replied, and says a reviewer resolved a thread', () => {
+  const r = JSON.parse(reworkState(null, [reworkTopic('t1', 'none'), { ...reworkTopic('t2', 'plan'), inbox: 'new', news: ['reply'], news_at: '2026-11-09T12:00:00Z' }],
+    { inbox: inbox({ replies: ['t2'], by: { t2: 'Miriam' }, resolves: [{ id: 't1', by: 'Miriam', at: '2026-11-09T12:10:00Z' }] }) }))
+  const lines = inboxOf(r)?.lines.map(l => `${l.topic} ${l.tone} ${l.what}`)
+  expect(lines).toEqual(['t2 needs Miriam replied', 't1 info Miriam resolved it'])
+})
+
 test("a box line about a topic links to its thread on GitLab", async ($, on) => {
   const t2 = { ...topic('t2', 'needs_ack'), thread_url: 'https://gl/g/p/-/merge_requests/42#note_7' }
   const box = inboxOf(JSON.parse(stateOf(null, [t2, topic('t3', 'open')], { author: 'Jonas', inbox: inbox({ replies: ['t2'], threads: [{ id: 't3' }] }) })))
@@ -988,10 +997,38 @@ test('an answer still being judged in the background offers nothing to decide, o
   await openReview($, w, view('t1'))
   const ui = await mountStep($, 'terminal')
   expect(await labels(ui)).toEqual(['Next', 'Show sidebar'])
-  expect(await ui.find({ type: 'Text', text: 't1: judging the news…' })).toBeDefined()
+  // The card says so itself, where its buttons will be: with the line under the chat alone,
+  // a card with no verdict and no buttons looked finished. Said once, not in the band too.
+  expect(JSON.stringify(await ui.findAll({ type: 'Text' }))).toMatch(/Judging what [^"]* did…/)
+  expect(await ui.find({ type: 'Text', text: 't1: judging the news…' })).toBeUndefined()
   await ui.press({ key: 'next' })
   await ui.unmount()
   expect(w.ran.map(r => r.argv.slice(2).join(' '))).toContain('leave --iid 42')
+})
+
+// The topic was open when its news came: the new comment was in the sidebar alone, the card
+// as before, and the topic still marked new.
+test("news for the topic whose card is up brings a fresh card of it, once it is judged", async ($, on) => {
+  const tick = heldClock(on)
+  on('tool.register' as never, (() => ({ value: undefined })) as never)
+  on('session.start' as never, ((_: unknown, e: object) => e) as never)
+  // A fix waiting for its push: the one state every update check reads again by itself.
+  const at = (face: string, judge: string[] = []) => reworkState('t1', [reworkTopic('t1', 'fixed', { checks: 'passed' })],
+    { face, judge: { topics: judge, own: [] }, hunk: { open: false, notes: 0 } })
+  const states = [at('f1')]
+  const w = world(on, states)
+  await (($ as unknown as { session: { start: (e: object) => Promise<unknown> } }).session.start({ source: 'startup', cwd: '/wt' }))
+  await openRework($, w, reworkView('t1', undefined, 'fixed', 'f1'))
+  await tick()
+  expect(w.placed).toEqual([])                         // nothing new: the card stands
+  states[0] = at('f2', ['t1'])                         // a reviewer wrote: being judged
+  await tick()
+  expect(w.placed).toEqual([])
+  states[0] = at('f3')                                 // judged: the card takes it in
+  await tick()
+  expect(w.placed.length).toBe(1)
+  await tick()
+  expect(w.placed.length).toBe(1)                      // once
 })
 
 // The agent's failures are the mod's own record, which no test reaches (see below): the
@@ -2776,6 +2813,33 @@ test('rework-mr: the model may not post on its own', async ($, on) => {
   await openRework($, w, reworkView('t1'))
   const got = await $.tool.call({ tool: 'Bash', command: 'python3 $SD/threads.py post t1 --iid 42' } as never)
   expect((got as { deny?: string }).deny).toContain('press')
+})
+
+// The Merged box was drawn like any other, and went from "approved" straight to "merged".
+test('a merged MR looks like success: its box and its merge line in green, the pipeline that passed in its story', async ($, on) => {
+  const mr = { state: 'merged', merged_at: '2026-11-09T15:20:00Z', merged_by: 'You', auto_merge: false, approved_by: ['Miriam'], pipeline: { status: 'passed' } }
+  const w = world(on, [reworkState(null, [reworkTopic('t1', 'none')], {
+    mr, in_round: false, inbox: inbox({ mr: [{ kind: 'approved', at: '2026-11-09T15:00:00Z', by: 'Miriam' }, { kind: 'merged', at: '2026-11-09T15:20:00Z', by: 'You' }] }),
+  })])
+  await openRework($, w, reworkView('t1'))
+  const panel = await $.ui.mount({ ...PANEL, surface: 'terminal' })
+  const drawn = JSON.stringify(await panel.findAll({ type: 'Box' }))
+  expect(drawn).toContain('"borderColor":"green"')
+  expect((await panel.find({ type: 'Text', text: 'Merged' }))?.props.color).toBe('green')
+  expect((await panel.find({ type: 'Text', text: 'You merged the MR' }))?.props.color).toBe('green')
+  const story = (await panel.findAll({ type: 'Text' })).map(t => String(t.text ?? '')).filter(t => /approved|pipeline|merged the MR/.test(t))
+  expect(story).toEqual(['Miriam approved the MR', 'The pipeline passed', 'You merged the MR'])
+  await panel.unmount()
+})
+
+test('news that is no good end keeps the box as it was: no green', async ($, on) => {
+  const w = world(on, [reworkState(null, [{ ...reworkTopic('t1', 'none'), state: 'waiting', status: 'waiting' }], {
+    mr: { state: 'opened' }, in_round: false, inbox: inbox({ waiting: 1 }) })])
+  await openRework($, w, reworkView('t1'))
+  const panel = await $.ui.mount({ ...PANEL, surface: 'terminal' })
+  expect(JSON.stringify(await panel.findAll({ type: 'Box' }))).not.toContain('"borderColor":"green"')
+  expect((await panel.find({ type: 'Text', text: 'Done for now' }))?.props.color).toBeUndefined()
+  await panel.unmount()
 })
 
 test('a merged MR says so at the top and in its box, with what still matters and the drafts nobody saw', async ($, on) => {

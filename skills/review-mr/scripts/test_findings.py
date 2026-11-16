@@ -2148,6 +2148,52 @@ class TestVerdict(unittest.TestCase):
         self.state["threads"]["d1"]["last_at"] = "2026-11-04T11:00:00Z"     # a new answer
         self.assertTrue(F.store_verdict(self.state, self.t, "settled", "Fine.", unless_judged=True))
 
+    def test_a_card_drawn_again_after_your_follow_up_still_says_what_was_judged(self):
+        """Back on the topic after posting: its card ended "Alex replied / Waits on Alex",
+        with no line for the reply just posted, and had lost "What you asked / What Alex
+        did / Verdict"."""
+        self.state["author"] = "Alex Novak"
+        th = self.state["threads"]["d1"]
+        th.update(mine=True, notes=[
+            {"author": "Ann", "body": "No staleTime.", "mine": True, "at": "2026-11-05T09:00:00Z"},
+            {"author": "Novak, Alex", "body": "In a follow-up MR.", "mine": False, "at": "2026-11-05T10:00:00Z"}])
+        self._judge(text="Nothing in this MR sets it.")
+        self.t["verdict"]["did"] = "Proposed a follow-up MR."
+        th["notes"].append({"author": "Ann", "body": "Fine, thanks.", "mine": True, "at": "2026-11-05T11:00:00Z"})
+        th.update(awaiting="author", last_at="2026-11-05T11:00:00Z")
+        with self.drawn(), patch.object(F, "topic_status", return_value="open"):
+            lines = F.render_quote(self.state, "t1").splitlines()
+        card = "\n".join(lines)
+        for part in ("What you asked", "What Alex did", "Verdict: Not settled", "Nothing in this MR sets it."):
+            self.assertIn(part, card)
+        self.assertRegex(lines[-2], r"You replied$")                 # the follow-up, in the story
+        self.assertEqual(lines[-1], f"{F.ui.STEP_WAITS_ICON} Waits on Alex")
+
+    def test_the_view_and_the_state_name_the_same_face_and_news_changes_it(self):
+        self._judge()
+        with self.drawn(), patch.object(F.ui, "record"), \
+                patch.object(F.critical_manifest, "with_manifest", return_value="") as wm, \
+                redirect_stdout(io.StringIO()):
+            self.state["focus"] = "t1"
+            F.emit(self.state, "card", "t1")
+            now = F.state_json(self.state)
+        face = wm.call_args.kwargs["extra"]["face"]
+        self.assertEqual(now["face"], face)
+        self.state["threads"]["d1"]["notes"] = [{"author": "Novak, Alex", "body": "Done now.", "mine": False,
+                                                 "at": "2026-11-06T10:00:00Z", "url": "u"}]
+        self.assertNotEqual(F.card_face(self.state, self.t), face)
+
+    def test_the_current_topic_s_card_drawn_again_marks_its_news_seen(self):
+        """Open while its news arrived, the topic kept its "new" dot: it is marked seen when
+        it becomes current, and it already was."""
+        self.state.update(own_review="done", in_round=True, focus="t1", seen_focus="t1")
+        with self.drawn():
+            self.assertEqual(F.inbox_of(self.state, self.t), "new")
+            with patch.object(F.ui, "record"), redirect_stdout(io.StringIO()), \
+                    patch.object(F, "current_topic", return_value="t1"):
+                F.emit(self.state, "card", "t1")
+            self.assertEqual(F.inbox_of(self.state, self.t), "yours")
+
     def test_a_changed_verdict_shows_the_change_alone(self):
         F.store_verdict(self.state, self.t, "more", "Writes still skip it.", case="partly-fixed")
         before = F.verdict_of(self.state, self.t)

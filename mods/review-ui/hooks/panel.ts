@@ -28,6 +28,7 @@ export const INBOX_ICON: Record<string, string> = {
   draft: '\u{f0cb6}', // md-pencil_outline
   rebase: '\u{f14ce}', // md-source_branch_sync
   merged: '\u{f062d}', // md-source_merge
+  pipeline: '\u{f0096}', // md-flask_outline, the checks' icon
   closed: '\u{f015a}', // md-close_circle_outline
   'auto-merge': '\u{f051f}', // md-timer_sand
   approved: '\u{f0514}', // md-thumb_up_outline

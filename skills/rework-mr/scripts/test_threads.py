@@ -2010,6 +2010,28 @@ class TestRounds(unittest.TestCase):
         self.assertEqual(T.judge_list(state)["topics"], [])
         self.assertEqual(T.state_json(state)["topics"][1]["proposal"]["outcome"], "fix")
 
+    def test_a_reviewer_s_resolve_is_news_and_news_names_who_wrote(self):
+        """After the reviewer resolved three threads and approved, News said only "approved
+        the MR"; and a reply was "a reviewer replied" where every card names them."""
+        state = self.state(2)
+        T.start_round(state)
+        live = {k: dict(v) for k, v in state["threads"].items()}
+        live["d1"].update(resolved=True, resolved_by="Haas, Miriam - X1", resolved_at="2026-02-01T13:02:00Z")
+        live["d2"]["notes"] = [*live["d2"]["notes"],
+                               {"author": "Haas, Miriam - X1", "body": "And tests?", "at": "2026-02-01T13:05:00Z", "mine": False}]
+        T.sync(state, live)
+        T.sync(state, live)                               # noted once, however often it syncs
+        box = T.state_json(state)["inbox"]
+        self.assertEqual(box["resolves"], [{"id": "t1", "by": "Miriam", "at": "2026-02-01T13:02:00Z"}])
+        self.assertEqual(box["by"], {"t2": "Miriam"})
+        # Your own resolve is none; and a new round has seen the news.
+        mine = {k: dict(v) for k, v in live.items()}
+        mine["d2"].update(resolved=True, resolved_mine=True)
+        T.sync(state, mine)
+        self.assertEqual(len(state["resolves"]), 1)
+        T.start_round(state)
+        self.assertEqual(T.state_json(state)["inbox"]["resolves"], [])
+
     def test_a_topic_shown_without_a_proposal_says_to_store_one(self):
         state = self.state(1)
         self.assertIn("propose t1", T.proposal_note(state, "t1"))

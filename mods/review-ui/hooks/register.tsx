@@ -334,6 +334,7 @@ const check = async ($: EngineInterface) => {
     const isDue = isClose || isFirst || n % CHECK_TICKS === 0
     if (isDue) await checkNow($, s)
     else await startJudging($, s, r)   // one the last check could not start, a turn ran
+    await cardForNews($)
     const now = await $.clock.now()
     const left = isClose || (isFirst && !(await read($, checks)).last) ? 1 : CHECK_TICKS - (n % CHECK_TICKS)
     await update($, checks, c => ({ ...c, next: now + left * tickMs }))
@@ -460,6 +461,7 @@ const endJudging = async ($: EngineInterface, agentId: string) => {
   await update($, judging, v => ({ agentId: null, topics: [], own: [], failed, ids: v.ids }))
   if (!s || !r) return
   await fillPending($, s)
+  await cardForNews($)
   await startJudging($, s, r)
 }
 
@@ -739,6 +741,21 @@ const syncCode = async ($: EngineInterface, s: ReviewSession, r: ReviewState,
     const { [want.key]: _old, ...rest } = m
     return Object.fromEntries([...Object.entries(rest), [want.key, { stamp: now, view }]].slice(-CODE_KEPT))
   })
+}
+
+// News that arrived for the topic whose card is up (a reply, a push, a verdict come in): the
+// card went on showing the topic as it was, the new comment in the sidebar alone and the
+// topic still marked new. A fresh card takes the news in, once it is judged (while the
+// background agent is on it, the card says so, `drawCard`). Never beside a turn or a press.
+const cardForNews = async ($: EngineInterface) => {
+  const s = await read($, session)
+  const r = await read($, review)
+  const host = await read($, hostCard)
+  if (!s || !r?.current || !host || host.topic !== r.current || !host.face || !r.face || host.face === r.face) return
+  if ((await read($, working)) || (await read($, busy))) return
+  const j = await read($, judging)
+  if ((r.judge?.topics ?? []).includes(r.current) && !j.failed.includes(r.current)) return
+  await placeTopic($, s, r.current)
 }
 
 // A turn that moved the review on without showing where it went (the model finishing a
@@ -1351,7 +1368,12 @@ const cardButtons = async ($: EngineInterface, e: Parameters<EngineInterface['ui
   // But notes the person left there: reading them is what the card is about now, so the
   // key is the card's own (and the sidebar's line gives it up, below).
   const buttons = isInSidebar ? all.filter(b => !HUNK_KEYS.includes(b.key) || isNotesKey(b, r)) : all
-  if (!isHosted || buttons.length === 0) return null
+  // Its news still with the background agent: the card says so itself, where its buttons
+  // will be, not only the band's line under the chat. A card with no verdict and no
+  // buttons otherwise looked finished, and there was nothing on it to act on.
+  const isJudging = isHosted && !!r.current && (r.judge?.topics ?? []).includes(r.current)
+    && !(await read($, judging)).failed.includes(r.current) && !buttons.some(b => b.key !== 'next')
+  if (!isHosted || (buttons.length === 0 && !isJudging)) return null
   const els = $.ui.resolve(e)
   const { Box, Text } = els
   // The way on is a different kind of press from the decisions: it stands apart, at the
@@ -1361,6 +1383,7 @@ const cardButtons = async ($: EngineInterface, e: Parameters<EngineInterface['ui
   return (
     <Box flexDirection="row" marginTop={1} width="100%">
       <Box flexDirection="row" flexWrap="wrap" columnGap={1} flexGrow={1}>
+        {isJudging && <Text key="card-judging" color="yellow">{`${iconOf('Judge') ?? ''} Judging what ${who}…`}</Text>}
         {buttons.filter(b => b.key !== 'next').map(b => drawChip(els, b, press(b)))}
       </Box>
       <Box flexDirection="row" flexShrink={0}>{way.map(b => drawChip(els, b, press(b)))}</Box>
@@ -2939,7 +2962,7 @@ export const register: Register = on => {
         {boxWhen > 0 && <Box flexShrink={0}><Text dimColor>{(l.at ? whenOf(l.at) : '').padEnd(boxWhen)}</Text></Box>}
         {/* Its kind's icon, plain: the list beside it marks what needs the person, so the
             box does not mark it again. What needs them is drawn bright, the rest dim. */}
-        <Text dimColor={l.tone !== 'needs' || undefined}>{(l.kind && INBOX_ICON[l.kind]) || '·'}</Text>
+        <Text color={l.tone === 'good' ? 'green' : undefined} dimColor={(l.tone !== 'needs' && l.tone !== 'good') || undefined}>{(l.kind && INBOX_ICON[l.kind]) || '·'}</Text>
         {/* The topic's handle opens it here; the rest of the line goes to GitLab, and says so. */}
         {l.topic && (
           <Button key={`${part}-topic-${i}`} plain onPress={() => { void showTopic($, s, l.topic as string) }}>
@@ -2949,17 +2972,21 @@ export const register: Register = on => {
         {/* A topic's line links to its thread on GitLab; a push's, to what it changed. */}
         {l.url
           ? <Markdown text={`[${l.what} ${LINK_ICON}](${l.url})`} dimColor={l.tone !== 'needs' || undefined} />
-          : <Text dimColor={l.tone !== 'needs' || undefined} wrap="wrap">{l.what}</Text>}
+          : <Text color={l.tone === 'good' ? 'green' : undefined} dimColor={(l.tone !== 'needs' && l.tone !== 'good') || undefined} wrap="wrap">{l.what}</Text>}
         {l.size && sizeOf(l.size) && <Text>{drawSize(Text, (sizeOf(l.size) as { size: DiffSize }).size, true)}</Text>}
       </Box>
     )
+    // A good end looks like one: merged, approved by you with every topic settled, or every
+    // topic settled with nothing new. The box's border and its heading are green then.
+    const isGoodEnd = !!waiting && (r.mr?.state === 'merged' || end?.tone === 'good'
+      || (r.mr?.state !== 'closed' && waiting.count === 0 && !box?.hasNews))
     const waitPart = waiting && (
       <Box key="waiting" flexGrow={1} flexDirection="column" justifyContent="center" alignItems="center">
-        <Box borderStyle="round" borderDimColor paddingX={2} flexDirection="column" alignItems="center">
+        <Box key="waiting-box" borderStyle="round" borderDimColor={!isGoodEnd || undefined} borderColor={isGoodEnd ? 'green' : undefined} paddingX={2} flexDirection="column" alignItems="center">
           {/* One word for where the MR stands, as a card's heading names its part: who did
               what, and when, is in the step lines under it. The line under it says what
               waits, and on whom: the heading does not say it again. */}
-          <Text bold>
+          <Text key="waiting-head" bold color={isGoodEnd ? 'green' : undefined}>
             {r.mr?.state === 'merged' ? 'Merged' : r.mr?.state === 'closed' ? 'Closed'
               : box?.hasNews ? 'News' : waiting.count > 0 ? 'Done for now' : 'Done'}
           </Text>
@@ -3005,7 +3032,7 @@ export const register: Register = on => {
             : end && (
               <Box flexDirection="column" alignItems="center" marginTop={1}>
                 {end.text && (
-                  <Text color={end.tone === 'needs' ? 'yellow' : undefined} dimColor={end.tone === 'info' || undefined}>
+                  <Text color={end.tone === 'needs' ? 'yellow' : end.tone === 'good' ? 'green' : undefined} dimColor={end.tone === 'info' || undefined}>
                     {end.tone === 'busy' ? `${INBOX_ICON.judging} ${end.text}` : end.text}
                   </Text>
                 )}
@@ -3131,7 +3158,8 @@ export const register: Register = on => {
         {waiting && (box?.count
           ? <Text color="yellow">{`${box.count} topic${box.count === 1 ? ' has' : 's have'} news`}</Text>
           : <Text dimColor>{waitingLine(waiting)}</Text>)}
-        {isJudging && !e.props.isWorking && (
+        {/* On the topic's card where one is up (`cardButtons`): said once. */}
+        {isJudging && !e.props.isWorking && (isUnjudged || !isHosted) && (
           <Text dimColor>{isUnjudged ? `${topic?.id}: the news could not be judged in the background` : `${topic?.id}: judging the news…`}</Text>
         )}
         {/* Wraps onto a second line where the band is narrower than its buttons. */}

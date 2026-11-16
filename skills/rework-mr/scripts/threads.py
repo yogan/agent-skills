@@ -359,6 +359,12 @@ def sync(state, live):
                 for k, v in state["threads"][tid].items()
                 if k in LOCAL_THREAD_FIELDS
             }
+            if rec.get("resolved") and not state["threads"][tid].get("resolved") and not rec.get("resolved_mine"):
+                # A reviewer resolved it: news of its own, as their reply would be. They often
+                # resolve without a word, and the topic then left the list with nothing said.
+                state.setdefault("resolves", []).append(
+                    {"thread": tid, "by": rec.get("resolved_by"),
+                     "at": rec.get("resolved_at") or datetime.datetime.now(datetime.timezone.utc).isoformat()})
             state["threads"][tid] = {**rec, **local}
         else:
             state["threads"][tid] = rec
@@ -1700,6 +1706,10 @@ def emit(state, block, topic=None):
         # view of the current topic is a card: one of another topic is the model's research,
         # which the mod draws no card for (views.ts, `viewOf`).
         state["shown"] = t["id"]
+        if ui.drawn():
+            # Drawn (again), what the reviewers wrote on it is seen, also where they wrote
+            # while the topic was open already. Mirrors findings.py's `emit`.
+            t["seen"] = reviewer_mark(state, t)
     ui.record({"review": extra["review"], "topic": topic, "focus": focus,
                "draft": extra.get("draft")})
     print(
@@ -2506,6 +2516,7 @@ def start_round(state, tid=None):
     """Open `tid`, or the round's first topic: a round runs from here."""
     state["in_round"] = True
     state["mr_news"] = []
+    state["resolves"] = []
     state["pass"] = pass_now(state)
     t = topic_for(state, tid) if tid else round_pick(state, None, state["pass"])
     if t:
@@ -2544,7 +2555,19 @@ def inbox_json(state, topics):
     yours, so a push is news to nobody."""
     fresh = [x for x in topics if x["inbox"] in ("new", "fyi")]
     first = round_pick(state, None, pass_now(state))
+    of_thread = {x: t["id"] for t in state["topics"] for x in t["thread_ids"]}
+    # Who wrote last on each topic with news: News names them, as every card does.
+    by = {}
+    for x in fresh:
+        notes = [n for th in (topic_for(state, x["id"]) or {}).get("thread_ids") or []
+                 for n in (state["threads"].get(th) or {}).get("notes") or [] if not n.get("mine")]
+        if notes and first_name(notes[-1].get("author")):
+            by[x["id"]] = first_name(notes[-1].get("author"))
     return {
+        "by": by,
+        # Threads a reviewer resolved since the last round: who, and when.
+        "resolves": [{"id": of_thread[r["thread"]], "by": first_name(r.get("by")) or None, "at": r.get("at")}
+                     for r in state.get("resolves") or [] if r.get("thread") in of_thread],
         "since": min([x["news_at"] for x in fresh if x["news_at"]] or [None]) if fresh else None,
         "replies": [x["id"] for x in fresh if "reply" in x["news"]],
         "resolved": [],

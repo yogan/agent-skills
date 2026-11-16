@@ -88,6 +88,10 @@ export type ReviewTopic = {
 export type ReviewInbox = {
   since: string | null
   replies: string[]; resolved: string[]
+  // rework-mr: who wrote last on each topic with news, by topic; and the threads a reviewer
+  // resolved since the last round.
+  by?: Record<string, string>
+  resolves?: { id: string; by?: string | null; at: string }[]
   threads: { id: string; by?: string | null; fyi?: boolean }[]
   // `same`: the code is as it was (commits rewritten); `own`: for a rebase, how many of the
   // MR's own files it changed (0: the MR's change is as it was).
