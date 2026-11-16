@@ -127,7 +127,14 @@ says none of them.
   calls fold into one `ToolGroup`, drawn through its own `ui.render` hook. The engine's
   "Prompt dropped by a hook" line cannot be changed by a mod.
 - A background agent's report reaches the main loop as a prompt of `origin.kind` `peer`,
-  marked as a hand-back.
+  marked as a hand-back, with `isMeta` set by the engine. Measured in real sessions, none of
+  these keeps it from becoming a prompt, so dropping it (and the engine's line that goes
+  with a drop) is what a mod can do: it never passes `session.receive`; an agent told to end
+  in plain text without a hand-back has its last text handed back all the same; a mod's
+  `tool.call` hook hears none of a subagent's tool calls; and a mod's own hooks are not run
+  for an agent it spawned itself (`agent.spawn`, the agent's `turn.start`). Answering the
+  prompt without `next` only swaps the line for "Prompt not submitted". The way left is an
+  agent outside the session (a `claude -p` process that reports through the state file).
 - A running session keeps the SKILL.md it loaded: a script's arguments must stay usable by
   the older text, and a prompt the mod sends carries the whole contract it relies on.
 
