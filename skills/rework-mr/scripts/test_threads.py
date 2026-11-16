@@ -1968,6 +1968,25 @@ class TestRounds(unittest.TestCase):
         self.assertEqual(T.current_topic(state), "t2")
         self.assertEqual(state["pass"], "plan")
 
+    def test_a_plan_agreed_with_its_reply_drafted_next_keeps_its_topic_current(self):
+        """The last plan agreed starts the fix pass, at t1: while t3's reply was drafted, the
+        sidebar's highlight sat on t1, and came back only with the draft's view."""
+        for focus, current in (((), "t1"), (("--focus",), "t3")):
+            state = self.state()
+            T.start_round(state)
+            self.agree(state, "t1")
+            self.agree(state, "t2")
+            t3 = T.topic_for(state, "t3")
+            t3["proposal"] = {"says": "needs", "why": "w", "plan": "p", "outcome": "reply",
+                              "on": T.reviewer_mark(state, t3)}
+            with mock.patch.object(sys, "argv", ["threads.py", "agree", "t3", *focus, "--iid", "1"]), \
+                    mock.patch.object(T, "load", return_value=state), mock.patch.object(T, "save"), \
+                    mock.patch.object(T, "hold"), mock.patch.object(T, "state_file", return_value="/state"), \
+                    mock.patch.object(T, "context", return_value={"slug": "g-p", "enc": "g%2Fp", "web": "https://gl/g/p"}), \
+                    mock.patch("sys.stdout", new_callable=io.StringIO):
+                T.main()
+            self.assertEqual(T.current_topic(state), current, focus)
+
     def test_a_reviewer_writing_again_reopens_the_plan(self):
         state = self.state(1)
         self.agree(state, "t1")

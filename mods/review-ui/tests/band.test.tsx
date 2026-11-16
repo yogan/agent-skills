@@ -1935,7 +1935,9 @@ test('rework-mr: Agree and reply agrees the plan and asks for a reply ahead of t
   const ui = await mountStep($, 'terminal')
   await ui.press({ key: 'agree-reply' })
   await ui.unmount()
-  expect(w.ran.map(r => r.argv.slice(2).join(' '))).toContain('agree t1 --iid 42')
+  // --focus: agreeing moves the pass on, and the sidebar's highlight went to the next topic
+  // while this one's reply was drafted.
+  expect(w.ran.map(r => r.argv.slice(2).join(' '))).toContain('agree t1 --focus --iid 42')
   expect(w.placed).toEqual([])                         // no card of t2 to be left at once
   expect(w.prompts).toEqual([expect.stringContaining('set t1 --reply - --early')])
 })
@@ -1948,7 +1950,7 @@ test('rework-mr: a plan that is itself a reply is drafted with one press, or tur
   expect(await labels(ui)).toEqual(['Reply', 'Fix instead…', 'Explain', 'Next', 'Show sidebar'])
   await ui.press({ key: 'draft-reply' })
   await ui.unmount()
-  expect(w.ran.map(r => r.argv.slice(2).join(' '))).toContain('agree t3 --iid 42')
+  expect(w.ran.map(r => r.argv.slice(2).join(' '))).toContain('agree t3 --focus --iid 42')
   expect(w.prompts).toEqual([expect.stringContaining('set t3 --reply -')])
   expect(w.prompts[0]).not.toContain('--early')
 })

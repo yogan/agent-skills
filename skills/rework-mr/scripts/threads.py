@@ -3365,6 +3365,9 @@ def main():
         pp = sub.add_parser(name, help=hlp)
         pp.add_argument("topic", nargs="?" if name == "open" else None)
         pp.add_argument("--iid", type=int)
+        if name == "agree":
+            pp.add_argument("--focus", action="store_true",
+                            help="its reply is drafted next: <t> stays the current topic")
         if name == "hunk-show":
             pp.add_argument("--pushed", action="store_true",
                             help="the fix as pushed, from the commits kept in git, not the "
@@ -3659,6 +3662,11 @@ def main():
                  answer_now=bool(p.get("answer_now")))
         note_plan(t)
         start_fix_round(t)
+        if args.focus:
+            # Agreeing a plan moves the pass on, but a press that has the topic's reply
+            # drafted next is not done with it: without this the sidebar shows the next
+            # topic until the draft's view brings this one back.
+            CURRENT.jump(state, t["id"])
         save(path, state)
         print(f"agreed the plan for {tref(args.topic)}")
     elif cmd == "wait":

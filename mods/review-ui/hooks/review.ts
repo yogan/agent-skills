@@ -568,7 +568,8 @@ export const argsFor = (press: Press, topic: string, card: ReviewCard | null): s
       return ['post', topic, ...(press.fixed ? ['--fixed'] : card?.topic === topic && card.draft ? ['--expect', card.draft] : []),
         ...(press.resolve ? ['--resolve'] : [])]
     case 'agree':
-      return ['agree', topic]
+      // Its reply is drafted next, so the topic stays the current one meanwhile.
+      return ['agree', topic, ...(press.reply || press.draft ? ['--focus'] : [])]
     case 'handled':
       return ['wait', topic]
     case 'hunk':
