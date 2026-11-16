@@ -2597,7 +2597,7 @@ def judge_brief(state, iid, skip=()):
            "For each, store one proposal:",
            "`propose <t> --says needs|fyi --why \"<1–3 English sentences: what the reviewer "
            "asks, what the code does, and the trade-off; end on a **Recommendation:** "
-           "sentence>\" [--summary \"<English one-liner>\"] [--outcome fix|reply|push-back|"
+           "sentence>\" [--outcome fix|reply|push-back|"
            "question --plan \"<one sentence: what to do>\"] [--answer-now] [--change - <<'CHANGE_EOF' … "
            "CHANGE_EOF]`.",
            "`fyi` where the comment asks nothing of the user (a thank-you, an OK on what they "
@@ -2620,7 +2620,9 @@ def judge_brief(state, iid, skip=()):
     for tid in todo:
         t = topic_for(state, tid)
         kinds, _ = news_of(state, t)
-        title = "" if t.get("summary") else " (no summary yet: give it `--summary`)"
+        # A topic keeps its name: what the reviewer wrote last is news, told in its story.
+        title = "" if t.get("summary") else (" (it has no name yet: add `--summary \"<English "
+                                             "one-liner: the point the reviewer first made>\"`)")
         what = "wrote again in its thread" if kinds == ["reply"] else "opened it"
         agreed = " (plan agreed)" if t.get("decision") else ""
         out.append(f"- {tid}{title}{agreed}: {first_name(_thread_by(state, tid)) or 'a reviewer'} {what}.")
@@ -3332,7 +3334,8 @@ def main():
     pq2.add_argument("--iid", type=int)
     pq2.add_argument("--says", choices=("needs", "fyi"), required=True)
     pq2.add_argument("--why", required=True)
-    pq2.add_argument("--summary")
+    pq2.add_argument("--summary", help="an English one-liner for a topic that has no name yet; "
+                     "a topic that has one keeps it")
     pq2.add_argument("--outcome", choices=OUTCOMES)
     pq2.add_argument("--plan")
     pq2.add_argument("--change", help="`-`: the change from stdin, as `@@ <path>:<first>-<last>` "
@@ -3671,7 +3674,10 @@ def main():
                 change = change_of.of(repo_root(), change)
             except ValueError as e:
                 die(f"the change was not stored: {e}")
-        if args.summary:
+        if args.summary and not t.get("summary"):
+            # A proposal names a topic that has no name yet, and never renames one: a topic
+            # is known by its name, and the latest comment on it is its story's to tell.
+            # Renaming is the chat's, on the user's word (`set --summary`).
             t["summary"] = args.summary
         t["proposal"] = {"says": args.says, "why": args.why, "outcome": args.outcome,
                          "plan": args.plan, "change": change, "on": reviewer_mark(state, t)}

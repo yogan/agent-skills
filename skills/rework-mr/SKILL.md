@@ -88,6 +88,10 @@ from that. **In English, always** — the reviewer's language governs one thing 
 of a reply you post into their thread. A topic with no summary is marked `✍️ needs summary`
 in the table and a summary that reads as German is called out under it; the `Stop` hook
 refuses to let either reach the user, so this is not optional.
+**A topic keeps its name.** It is what the user knows the topic by, in the list and on every
+card: never rewrite a summary to what the reviewer wrote last ("now asks to revert the
+rename"). What was said since is the topic's story, on its card and in its thread. Rename one
+only on the user's word.
 
 **Classify status semantically — don't trust who spoke last.** A thread defaults to `open`
 (work for you). Mark it `waiting` **only if, reading the notes, YOU already fully addressed

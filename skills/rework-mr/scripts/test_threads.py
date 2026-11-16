@@ -2604,6 +2604,19 @@ class TestKeepPlan(unittest.TestCase):
                 mock.patch("sys.stdout", new_callable=io.StringIO):
             T.main()
 
+    def test_a_proposal_names_a_topic_once_and_never_renames_it(self):
+        """The background check rewrote every title to the latest news ("Miriam now asks to
+        revert the rename"): the topic no longer said which thread it was."""
+        self.assertEqual(self.t1["summary"], "point 1")
+        self.assertNotIn("--summary", T.judge_brief(self.state, 1))      # named: not asked for one
+        self.run_cli("propose", "t1", "--says", "fyi", "--why", "w", "--summary", "Robin now agrees")
+        self.assertEqual(self.t1["summary"], "point 1")
+        self.t1["summary"] = None
+        self.t1.pop("proposal")
+        self.assertIn("it has no name yet", T.judge_brief(self.state, 1))
+        self.run_cli("propose", "t1", "--says", "fyi", "--why", "w", "--summary", "Cache key ignores locale")
+        self.assertEqual(self.t1["summary"], "Cache key ignores locale")
+
     def test_an_acknowledgement_keeps_the_plan_and_the_card_says_so(self):
         self.assertEqual(T.step_of(self.state, self.t1), "plan")            # the reviewer wrote
         self.assertEqual(T.judge_list(self.state)["topics"], ["t1"])

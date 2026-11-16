@@ -4232,7 +4232,9 @@ def main():
         advice = "seen" if args.says == "fyi" else (args.advice or "reply")
         if advice == "merge" and not topic_for(state, args.into or ""):
             die("--advice merge needs --into <topic>, the topic it repeats")
-        if args.summary:
+        if args.summary and (needs_title(state, t) or not t.get("summary")):
+            # Named once: a thread that has a name keeps it, whatever was written in it since
+            # (mirrors threads.py's `propose`).
             t["summary"], t["needs_title"] = args.summary, False
         if args.why:
             t["why"] = args.why
