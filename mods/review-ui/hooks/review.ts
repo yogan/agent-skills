@@ -772,6 +772,7 @@ export const MERGE_PROMPT = 'Merging the MR failed. Look at the failed merge on 
 
 // What GitLab's `detailed_merge_status` says is missing, where it is not something the line
 // says on its own (approvals, the pipeline). Anything else: GitLab's own word, spaced.
+// Mirrors lib/gitlab.py's MERGE_MISSING: one thing, one wording.
 const MERGE_MISSING: Record<string, string> = {
   conflict: 'Has conflicts', need_rebase: 'Needs a rebase', draft_status: 'Still a draft',
   discussions_not_resolved: 'Threads still open on GitLab', blocked_status: 'Blocked by another MR',

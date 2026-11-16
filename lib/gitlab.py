@@ -8,6 +8,7 @@ one cohesive concern, not two — see CLAUDE.md's "Sharing vs. duplication".
 """
 import functools
 import json
+import re
 import subprocess
 from urllib.parse import quote
 
@@ -254,7 +255,33 @@ def merge(ctx, iid):
         # the other's.
         body.update(auto_merge=True, merge_when_pipeline_succeeds=True)
     _, why = api_try(f"projects/{ctx['enc']}/merge_requests/{iid}/merge", body, method="PUT")
-    return ("auto" if is_auto else "merge"), why
+    return ("auto" if is_auto else "merge"), why and merge_refusal(mr, why)
+
+
+# What GitLab's `detailed_merge_status` says is missing, in the words the end of the MR uses
+# for it. Mirrors mods/review-ui/hooks/review.ts's MERGE_MISSING: one thing, one wording.
+MERGE_MISSING = {
+    "conflict": "Has conflicts", "need_rebase": "Needs a rebase", "draft_status": "Still a draft",
+    "discussions_not_resolved": "Threads still open on GitLab", "blocked_status": "Blocked by another MR",
+    "checking": "GitLab is checking it", "unchecked": "GitLab is checking it", "preparing": "GitLab is checking it",
+    "ci_must_pass": "Needs a passing pipeline", "ci_still_running": "Waits for the pipeline",
+    "not_approved": "Waits for approval", "jira_association_missing": "Needs a Jira issue",
+    "requested_changes": "Changes were requested", "security_policy_violations": "Blocked by a security policy",
+}
+
+
+def merge_refusal(mr, why):
+    """Why GitLab refused to merge `mr`, as a person can act on it. Its refusal is often a bare
+    HTTP status (a draft gets `405 Method Not Allowed`), while the MR's `detailed_merge_status`
+    names the cause: that, in the words the end of the MR uses, where it is one of those;
+    else GitLab's own message, or its status spaced where the message says no more than the
+    HTTP status."""
+    s = mr.get("detailed_merge_status") or ""
+    if s in MERGE_MISSING:
+        return MERGE_MISSING[s]
+    if s and s != "mergeable" and re.fullmatch(r"\d{3}(\s.*)?", why.strip()):
+        return s[0].upper() + s[1:].replace("_", " ")
+    return why
 
 
 def approve(ctx, iid):

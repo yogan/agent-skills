@@ -242,6 +242,24 @@ class TestTheEndOfTheMr(unittest.TestCase):
                                          else fake_result(stdout='{"sha": "abc"}'))
         self.assertEqual(G.merge({"enc": "g%2Fp"}, 3), ("merge", "Branch cannot be merged"))
 
+    def test_a_merge_refused_with_a_bare_http_status_says_what_is_missing(self):
+        """A draft is refused with `405 Method Not Allowed`: the MR's own status says why."""
+        def refused(status):
+            mr = json.dumps({"sha": "abc", "detailed_merge_status": status})
+            G.run = lambda cmd, input=None: (fake_result(1, '{"message":"405 Method Not Allowed"}') if "-X" in cmd
+                                             else fake_result(stdout=mr))
+            return G.merge({"enc": "g%2Fp"}, 3)[1]
+        self.assertEqual(refused("draft_status"), "Still a draft")
+        self.assertEqual(refused("need_rebase"), "Needs a rebase")
+        # A status the end of the MR has no words for: GitLab's own, spaced.
+        self.assertEqual(refused("merge_request_blocked"), "Merge request blocked")
+        # Nothing more to say than GitLab's message: that, not nothing.
+        self.assertEqual(refused("mergeable"), "405 Method Not Allowed")
+
+    def test_gitlabs_own_message_stands_where_the_status_is_unknown_to_the_map(self):
+        self.assertEqual(G.merge_refusal({"detailed_merge_status": "merge_time"}, "Merge after 10:00"),
+                         "Merge after 10:00")
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
