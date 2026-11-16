@@ -12,7 +12,7 @@ import {
 } from './panel.ts'
 import { blocksOf, type DiffSize, type SizeRun, inlineOf, withEmoji, withOutcome, withoutDraft, isPostCommand, isViewCommand, partsOf, sizeOf, sizeRunsOf, withoutPasted, withSuggestions, manifestOf, titleOf, viewOf, withNote, withoutExcerpt, withoutExcerptLabel, withoutThread } from './views.ts'
 import {
-  askedFor, barCells, clampOffset, codeArgsOf, codeWindow, currentOwn, firstOffset, jumpOf, markedCells, phaseOf, pushOf, stepOwn,
+  askedFor, barCells, clampOffset, codeArgsOf, changeCells, codeWindow, currentOwn, firstOffset, jumpOf, markedCells, phaseOf, pushOf, stepOwn,
   type CodeView,
 } from './sidebar.ts'
 import { COMMENTED, iconOfFile } from './files.ts'
@@ -2140,9 +2140,14 @@ export const register: Register = on => {
     // `mark`: rows out of the window that hold what the area is about (a thread's lines, out
     // of the file's window), a tick on the track in the accent colour, a press on which
     // brings them back.
+    // `signs`: each row's diff sign, for a file's bar: where its changes are, as a diff
+    // viewer's overview ruler shows them, in the left half of a cell for a removed row and the
+    // right half for an added one, so a cell with both shows both. Under the thumb and the
+    // accent's tick, which say more of where the person is.
     const scrollBar = (tag: string, count: number, shown: number, from: number, rows: number,
-      jump: (to: number) => void, mark?: { rows: number[]; press: () => void }) => {
+      jump: (to: number) => void, mark?: { rows: number[]; press: () => void }, signs?: string[]) => {
       const ticks = markedCells(count, shown, from, rows, mark?.rows ?? [])
+      const changes = signs ? changeCells(count, rows, signs) : new Map<number, { isRemoved: boolean; isAdded: boolean }>()
       return (
         <Box key={`${tag}-bar`} flexDirection="column" flexShrink={0} width={1}>
           {barCells(count, shown, from, rows).map((c, i) => {
@@ -2156,9 +2161,13 @@ export const register: Register = on => {
                 </Button>
               )
             }
+            const change = changes.get(i)
             return (
-              <Button key={`${tag}-${c.at}-${i}`} plain onPress={() => jump(jumpOf(count, shown, rows, i))}>
-                <Text color={BAR_THUMB} backgroundColor={BAR_TRACK}> </Text>
+              <Button key={`${tag}-${change ? 'change' : c.at}-${i}`} plain onPress={() => jump(jumpOf(count, shown, rows, i))}>
+                {!change ? <Text color={BAR_THUMB} backgroundColor={BAR_TRACK}> </Text>
+                  : change.isRemoved
+                    ? <Text color="red" backgroundColor={change.isAdded ? 'green' : BAR_TRACK}>▌</Text>
+                    : <Text color="green" backgroundColor={BAR_TRACK}>▐</Text>}
               </Button>
             )
           })}
@@ -2668,6 +2677,11 @@ export const register: Register = on => {
       // is in the window: one place, one mark, however many rows its lines and box take.
       const linesOut = hasBox && v.at !== null && (anchor < start || v.at[0] > start + H - 1)
       const markRows = linesOut && v.at ? [Math.floor((v.at[0] + anchor) / 2) - 1] : []
+      // Each row's diff sign at its place on the bar, the thread box's rows after the lines it
+      // is on. None for a file the MR adds or removes whole: one colour from top to bottom
+      // marks nothing, as in the file itself.
+      const signs = v.whole ? undefined
+        : [...v.rows.slice(0, anchor).map(row => row[0]), ...Array.from({ length: B }, () => ' '), ...v.rows.slice(anchor).map(row => row[0])]
       // What the line says of the file, past its name: a word each, and only where the code
       // would otherwise look unexpected (or is the person's own, not pushed yet).
       const where = `${v.file}${v.line ? `:${v.start && v.start !== v.line ? `${v.start}–` : ''}${v.line}` : ''}`
@@ -2694,7 +2708,7 @@ export const register: Register = on => {
             <Box flexDirection="column" flexGrow={1} flexShrink={1}>{runs}</Box>
             {isFileScrolled && <Text> </Text>}
             {isFileScrolled && scrollBar('code', N + B, H, start - 1, H, jump,
-              markRows.length ? { rows: markRows, press: back } : undefined)}
+              markRows.length ? { rows: markRows, press: back } : undefined, signs)}
           </Box>
         </Box>
       )

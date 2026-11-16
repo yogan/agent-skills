@@ -203,6 +203,22 @@ export const markedCells = (count: number, shown: number, from: number, rows: nu
   new Set(marks.filter(m => m < from || m >= from + shown)
     .map(m => Math.min(rows - 1, Math.floor(m * rows / Math.max(1, count)))))
 
+// The cells of the track that stand for changed rows, as a diff viewer's overview ruler marks
+// them: for each, whether a row it stands for is removed and whether one is added. `signs` is
+// each row's diff sign at its place on the track (rows the track has that are no line, such
+// as a box set in among them, as ' '). Unlike `markedCells`, rows in the window count too: a
+// change does not stop being one while it shows.
+export const changeCells = (count: number, rows: number, signs: string[]): Map<number, { isRemoved: boolean; isAdded: boolean }> => {
+  const out = new Map<number, { isRemoved: boolean; isAdded: boolean }>()
+  signs.forEach((sign, m) => {
+    if (sign !== '-' && sign !== '+') return
+    const cell = Math.min(rows - 1, Math.floor(m * rows / Math.max(1, count)))
+    const was = out.get(cell) ?? { isRemoved: false, isAdded: false }
+    out.set(cell, sign === '-' ? { ...was, isRemoved: true } : { ...was, isAdded: true })
+  })
+  return out
+}
+
 // Where a press on cell `cell` of a scrollbar's track scrolls to (the row the window then
 // starts at): its share of the way down the track, of the way the window can go. A press on
 // the top cell goes to the top, on the bottom one to the end, from wherever the window is.

@@ -1315,6 +1315,37 @@ test("the thread scrolls out of view with its lines, marked on the file's scroll
   await ui.unmount()
 })
 
+test("the file's scrollbar ticks where the file has changes, in their colours, a press there going to them", async ($, on) => {
+  // 200 lines: line 150 replaced, line 180 added, out of the window that opens on line 10.
+  const rows: unknown[][] = [...codeOf(200, [10, 10]).rows]
+  rows.splice(149, 1, ['-', 150, null, 'old'], ['+', null, 150, 'new'])
+  rows.splice(180, 0, ['+', null, 181, 'added'])
+  const code = codeOf(200, [10, 10], { rows })
+  const w = world(on, [stateOf('t1', [topic('t1', 'open')])], { code: { stdout: JSON.stringify(code) } })
+  await openReview($, w, view('t1'))
+  const ui = await $.ui.mount({ ...PANEL, surface: 'terminal' })
+  const ticks = (await ui.findAll({ type: 'Button' })).filter(b => String(b.key ?? '').startsWith('code-change-'))
+  expect(ticks.length).toBe(2)
+  const glyphs = JSON.stringify(ticks.map(t => t.children))
+  expect(glyphs).toContain('"color":"red","backgroundColor":"green"')     // replaced: both halves
+  expect(glyphs).toContain('▐')                                           // added alone: the right half
+  // The ticks lie in the lower part of the bar, in order.
+  const cells = ticks.map(t => Number(String(t.key).split('-').pop()))
+  expect(cells[0]).toBeLessThan(cells[1] as number)
+  await ui.press({ key: ticks[0]?.key as string })
+  expect(firstLine((await ui.findAll({ type: 'Code' }))[0]?.props.source)).toBeGreaterThan(100)
+  await ui.unmount()
+})
+
+test("a file the MR adds whole has no change ticks: one colour from top to bottom marks nothing", async ($, on) => {
+  const code = codeOf(200, [10, 10], { whole: 'added', rows: codeOf(200, [10, 10]).rows.map(r => ['+', null, r[2], r[3]]) })
+  const w = world(on, [stateOf('t1', [topic('t1', 'open')])], { code: { stdout: JSON.stringify(code) } })
+  await openReview($, w, view('t1'))
+  const ui = await $.ui.mount({ ...PANEL, surface: 'terminal' })
+  expect((await ui.findAll({ type: 'Button' })).filter(b => String(b.key ?? '').startsWith('code-change-'))).toHaveLength(0)
+  await ui.unmount()
+})
+
 test("a thread on a line near the file's end is in view whenever its line is, scrolled to the end too", async ($, on) => {
   const code = codeOf(77, [73, 73])
   const thread = [{ url: 'u', file: 'src/cache.ts', line: 73, notes: [{ author: 'Kim', body: 'risky default', url: 'http://gl/x#note_2' }] }]
