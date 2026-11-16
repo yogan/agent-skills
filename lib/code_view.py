@@ -284,13 +284,31 @@ def view(repo, path, line, since=None, start=None, side="new", base=None, commit
     - `at`: the first and last row the comment is on, or None;
     - `changed`: the rows that changed since the comment;
     - `file`, `side`, `line`, `start`, `moved`: where the comment is, in line numbers of
-      its side (`start` where a comment on a range of lines begins, `line` its end).
+      its side (`start` where a comment on a range of lines begins, `line` its end);
+    - `gone`: the file was removed since the comment (no rename carries it on): the rows are
+      the file as the comment saw it, the lines it is on marked, as GitLab shows an outdated
+      thread. A comment on code is never shown without code.
 
     `commit`: the commit the file is read at, against `base`, instead of the files on disk (a
     pushed fix, from the commit before it to the one it made).
 
     A comment on the new side is carried through the changes since it was posted; one on
     a line the MR removed (`side` "old") stays where it was."""
+    if since and side != "old" and commit is None and removed_since(repo, since, path):
+        was_there = _git_out(repo, "show", f"{since}:{path}")
+        if was_there is not None:
+            rows = [[" ", i, i, t] for i, t in enumerate(was_there.splitlines(), 1)]
+            try:
+                n = int(line) if line else None
+                first = int(start) if start else n
+            except (TypeError, ValueError):
+                n = first = None
+            if not (n and first and 1 <= first < n):
+                first = n
+            at = rows_at(rows, "new", first, n)
+            return {"file": path, "side": "new", "line": n if at else None, "start": first if at else None,
+                    "moved": False, "rows": rows, "at": at, "renamed_from": None, "changed": [],
+                    "whole": None, "gone": True}
     # Read where the file is now: a rename since the comment moved it.
     posted, path = path, now_at(repo, since, path, commit) if since and side != "old" else path
     full = os.path.join(repo or "", path or "")
@@ -468,6 +486,26 @@ def commented(repo, thread):
     """The file `thread`'s comment is on, under its name in the files on disk (a rename
     since followed), or None for a comment on no file."""
     return now_at(repo, thread.get("head_sha"), thread.get("file")) if thread.get("file") else None
+
+
+def place_now(repo, thread):
+    """`path:line` of where `thread`'s comment is now, for a card's heading: the file under
+    its name now and the line carried through the changes since the comment, as the sidebar
+    beside the card shows them. A card naming the old path, or the line as posted, beside a
+    sidebar that follows both reads as another place. A comment on a removed line, and one
+    git cannot follow, keeps the place it was posted on. "" for a comment on no file."""
+    path, line = thread.get("file"), thread.get("line")
+    if not path:
+        return ""
+    now = commented(repo, thread) if repo else path
+    if repo and line and thread.get("head_sha") and thread.get("side") != "old":
+        diff = _diff_since(repo, thread.get("head_sha"), path)
+        if diff is not None:
+            try:
+                line = carry(diff, int(line))[0]
+            except (TypeError, ValueError):
+                pass
+    return f"{now}:{line or ''}"
 
 
 def fix_view(repo, thread, files, pick=None, base="HEAD", commit=None):

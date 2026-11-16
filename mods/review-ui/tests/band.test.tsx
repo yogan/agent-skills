@@ -863,6 +863,18 @@ const codeOf = (n: number, at: [number, number] | null, more: Record<string, unk
 // The first new-side line number of a hunk the sidebar drew.
 const firstLine = (source: unknown) => Number(/^@@ -\d+,\d+ \+(\d+),/.exec(String(source))?.[1])
 
+// A comment on code is never shown without code: a file removed since is shown as the
+// comment saw it, and the line above it says so, as GitLab marks an outdated thread.
+test('a file removed since the comment is shown as it was reviewed, and said to be gone', async ($, on) => {
+  const code = codeOf(20, [3, 3], { gone: true })
+  const w = world(on, [stateOf('t1', [topic('t1', 'open')])], { code: { stdout: JSON.stringify(code) } })
+  await openReview($, w, view('t1'))
+  const panel = await $.ui.mount({ ...PANEL, surface: 'terminal' })
+  expect((await panel.find({ type: 'Text', text: 'this code is gone now' }))?.props.color).toBe('red')
+  expect(JSON.stringify(await panel.findAll({ type: 'Code' }))).toContain('const line3 = 3')
+  await panel.unmount()
+})
+
 test("the sidebar shows the current topic's file, the discussed lines on a background, and moves it on a key", async ($, on) => {
   const code = codeOf(200, [98, 100], { changed: [101] })
   const w = world(on, [stateOf('t1', [topic('t1', 'draft')])], { code: { stdout: JSON.stringify(code) } })

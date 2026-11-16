@@ -589,6 +589,19 @@ def _loc(state, t, full=False):
     return f"{f if full else os.path.basename(f)}:{line or ''}"
 
 
+def _place(state, x):
+    """`path:line` of a thread for a card's heading: where the mod draws, under the file's
+    name now in the review worktree (`code_view.place_now`), as the sidebar beside the card
+    follows a rename the author pushed since; elsewhere, and with no worktree, as posted.
+    "" for a thread on the MR itself."""
+    if not x.get("file"):
+        return ""
+    wt = get_worktree(state.get("slug") or "", state.get("iid")) if ui.drawn() else None
+    if wt and os.path.isdir(wt):
+        return code_view.place_now(wt, x)
+    return f"{x['file']}:{x.get('line') or ''}"
+
+
 def _thread_loc(x):
     """`basename:line` for a thread's diff position, or "" when it has none — a
     discussion on the merge request itself carries no position, and every caller has
@@ -1266,7 +1279,7 @@ def _render_quote(state, tid, refine=False):
         x = state["threads"].get(th, {})
         # An MR-level thread carries no diff position at all, so there is no path to
         # print — `None:` is what an unguarded f-string produced there.
-        path = f"{x['file']}:{x.get('line') or ''}" if x.get("file") else ""
+        path = _place(state, x)
         if i == 0:
             title = title_md(state, t, summ)
             # Where the mod draws, the draft's own label carries the language.
@@ -1433,7 +1446,7 @@ def render_answered(state, t, summ, v):
     read as if the point still stood, so they are left out. A topic judged before recaps
     were has none, and the card goes from its title straight to what the author did."""
     x = state["threads"].get(t["thread_ids"][0], {})
-    path = f"{x['file']}:{x.get('line') or ''}" if x.get("file") else ""
+    path = _place(state, x)
     title = title_md(state, t, summ)
     out = [f"{title} · {loc_md(path)}" if path else title]
     asked = (t.get("asked") or v.get("asked") or "").strip()
@@ -1470,7 +1483,7 @@ def render_verdict_change(state, t, before):
     was. The rest of the topic's card is unchanged and up already."""
     v = verdict_of(state, t)
     x = state["threads"].get(t["thread_ids"][0], {})
-    path = f"{x['file']}:{x.get('line') or ''}" if x.get("file") else ""
+    path = _place(state, x)
     title = title_md(state, t, t.get("summary") or short_summary(state, t))
     was = verdict_word(state, t, before)
     out = [f"{title} · {loc_md(path)}" if path else title, "",

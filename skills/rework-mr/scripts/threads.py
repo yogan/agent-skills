@@ -1089,7 +1089,9 @@ def render_quote(state, tid, remember=True):
         x = state["threads"].get(th, {})
         # An MR-level thread carries no diff position at all, so there is no path to
         # print — `None:` is what an unguarded f-string produced there.
-        path = f"{x['file']}:{x.get('line') or ''}" if x.get("file") else ""
+        # Where the mod draws, under the file's name now: the sidebar follows a rename.
+        path = (code_view.place_now((_git("rev-parse", "--show-toplevel") or "").strip(), x)
+                if ui.drawn() else f"{x['file']}:{x.get('line') or ''}") if x.get("file") else ""
         if i == 0:
             title = title_md(state, t, summ)
             out.append(f"{title} · {loc_md(path)}")
@@ -2643,7 +2645,7 @@ def render_fix(state, tid):
     t = topic_for(state, tid) or die(f"no topic {tid}")
     f = t.get("fix") or {}
     x = state["threads"].get((t["thread_ids"] or [None])[0]) or {}
-    path = f"{x['file']}:{x.get('line') or ''}" if x.get("file") else ""
+    path = code_view.place_now((_git("rev-parse", "--show-toplevel") or "").strip(), x)
     title = title_md(state, t, t.get("summary") or "")
     out = [f"{title} · {loc_md(path)}" if path else title, ""]
     if t.get("plan"):

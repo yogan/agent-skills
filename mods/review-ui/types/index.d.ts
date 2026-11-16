@@ -235,6 +235,8 @@ export type ReviewCode = {
   commented?: string | null
   // A file the MR adds or removes whole (never a renamed one), drawn plain and marked so.
   whole?: 'added' | 'removed' | null
+  // The file was removed since the comment: the rows are the file as the comment saw it.
+  gone?: boolean | null
 }
 
 declare module 'claude-code' {

@@ -2619,6 +2619,8 @@ export const register: Register = on => {
       const said: Seg[] = []
       if (v.whole === 'added') said.push({ text: 'new file', color: 'green' })
       if (v.whole === 'removed') said.push({ text: 'deleted file', color: 'red' })
+      // Removed since the comment: the rows are the code as it was reviewed.
+      if (v.gone) said.push({ text: 'this code is gone now', color: 'red' })
       if (v.side === 'old' && v.at && !v.whole) said.push({ text: 'removed', isDim: true })
       // Where the comment's lines moved to is the highlighted lines' to say, not a word.
       if (v.renamed_from) said.push({ text: 'renamed', isDim: true })

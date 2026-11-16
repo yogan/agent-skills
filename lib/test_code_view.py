@@ -179,6 +179,12 @@ class TestView(unittest.TestCase):
                 self.assertEqual(code_view.now_at(repo, sha, "t.md"), "t.md")
                 self.assertTrue(code_view.removed_since(repo, sha, "t.md"))
                 self.assertIsNone(code_view.since_fence(repo, sha, "t.md", 3, 3))
+                # The sidebar still shows the code the comment is on, as it was reviewed,
+                # and says it is gone: only a thread on the MR itself goes without code.
+                v = code_view.view(repo, "t.md", 3, sha, start=2, base=sha)
+                self.assertEqual((v["gone"], v["file"], v["at"], v["line"], v["start"]), (True, "t.md", [2, 3], 3, 2))
+                self.assertEqual([r[3] for r in v["rows"]], self.SHORT)
+                self.assertEqual({r[0] for r in v["rows"]}, {" "})
 
     def test_a_rename_then_a_rewrite_is_followed_commit_by_commit(self):
         # As `git log --follow` does: renamed in one commit, rewritten in the next, where the
@@ -197,6 +203,13 @@ class TestView(unittest.TestCase):
         v = code_view.view(repo, "t.md", 10, since=base, base=base)
         self.assertEqual((v["file"], v["renamed_from"], v["line"], v["whole"]),
                          ("moved.md", "t.md", 10, None))
+        # A card's heading names the file as the sidebar does, not as the comment was posted.
+        thread = {"file": "t.md", "line": 10, "side": "new", "head_sha": base}
+        self.assertEqual(code_view.place_now(repo, thread), "moved.md:10")
+        # The line is carried as the sidebar carries it: line 2 was rewritten with the eight
+        # above line 9, and lands on the rewrite's first line.
+        self.assertEqual(code_view.place_now(repo, {**thread, "line": 2}), "moved.md:1")
+        self.assertEqual(code_view.place_now(repo, {"file": None}), "")
         fence = code_view.since_fence(repo, base, "t.md", 2, 2)
         self.assertEqual(fence[0], "```diff path=moved.md")
         self.assertIn("+rewritten 2", fence)
