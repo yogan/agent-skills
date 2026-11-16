@@ -2183,6 +2183,14 @@ class TestVerdict(unittest.TestCase):
                                                  "at": "2026-11-06T10:00:00Z", "url": "u"}]
         self.assertNotEqual(F.card_face(self.state, self.t), face)
 
+    def test_what_is_new_in_a_thread_is_what_others_wrote_since_you_last_acted(self):
+        th = self.state["threads"]["d1"]
+        th["notes"] = [{"author": "Ann", "body": "Stale.", "mine": True, "at": "2026-11-05T09:00:00Z"},
+                       {"author": "Novak, Alex", "body": "Done.", "mine": False, "at": "2026-11-05T10:00:00Z"}]
+        self.assertEqual(F.thread_new(self.state, self.t), 1)
+        self.t["acked_at"] = "2026-11-05T11:00:00Z"
+        self.assertEqual(F.thread_new(self.state, self.t), 0)
+
     def test_the_current_topic_s_card_drawn_again_marks_its_news_seen(self):
         """Open while its news arrived, the topic kept its "new" dot: it is marked seen when
         it becomes current, and it already was."""

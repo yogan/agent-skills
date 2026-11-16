@@ -2023,7 +2023,8 @@ export const register: Register = on => {
     }
     const box = area.box
     if (box && row >= box.top && row < box.bottom) {
-      await update($, boxAt, m => ({ ...m, [box.key]: Math.min(box.max, Math.max(0, (m[box.key] ?? 0) + e.by)) }))
+      // Not moved yet, the box stands at its end (`layBox`).
+      await update($, boxAt, m => ({ ...m, [box.key]: Math.min(box.max, Math.max(0, (m[box.key] ?? box.max) + e.by)) }))
       return {}
     }
     const view = area.view
@@ -2297,9 +2298,23 @@ export const register: Register = on => {
     // Another of a fix's files, picked from its list: the comment is not on it, so its thread
     // is not drawn under it.
     const isOtherFile = !!code?.view.commented && code.view.file !== code.view.commented
-    const notes = isOtherFile ? [] : threads.flatMap(th => th.notes)
+    const posted = isOtherFile ? [] : threads.flatMap(th => th.notes)
+    // review-mr, a draft not posted yet: the comment as it will stand under its lines, the
+    // one thing a box there is for before the thread exists (as GitLab shows a pending
+    // comment). A topic with neither has no box: its title and analysis are in the list and
+    // on its card, and the bar beside its lines says where it is.
+    const draftOf = phase === 'topics' && posted.length === 0 && !isOtherFile && isReview && r.draft_text
+      ? [{ author: YOU, body: r.draft_text, at: null, url: null } as ReviewNote] : []
+    const notes = posted.length ? posted : draftOf
     // Per item, not per file picked from a fix: a pick keeps what was folded and scrolled.
     const openKey = code?.base ?? (phase === 'own' ? `thread:${own?.id}` : `topic:${r.current}`)
+    // How the person left the box (folded or not, scrolled where) holds for the thread as
+    // it was then: a comment added since starts it over, open on what is new.
+    const boxKey = `${openKey}#${notes.length}`
+    // Something in the thread is new (written since the person last acted on the topic, the
+    // scripts' `thread_new`): it is what they opened the topic to read, so the box starts in
+    // full. Nothing new, it starts as the view has it (folded under a fix).
+    const isUnread = phase === 'topics' && (r.thread_new ?? 0) > 0
 
     // A comment as the sidebar reads it: the author leads it, its link a glyph after the
     // name.
@@ -2315,9 +2330,10 @@ export const register: Register = on => {
     // Open while the thread is what the person reads, so planning has the reviewer's words in
     // full; folded under the person's own fix, where the code is what they look at. Either
     // way as the person last left it on that view.
-    // Folded at first under the person's own fix, in the working tree or pushed.
+    // Folded at first under a fix, in the working tree or pushed, where nothing in the thread
+    // is new; in full where somebody else wrote last (`isUnread`).
     // With no file the thread is what the sidebar shows, always in full.
-    const isOpen = !code || ((await read($, threadOpen))[openKey] ?? !(code?.view.mode === 'fix' || code?.view.mode === 'pushed'))
+    const isOpen = !code || ((await read($, threadOpen))[boxKey] ?? (isUnread || !(code?.view.mode === 'fix' || code?.view.mode === 'pushed')))
     // The box's inner width, BAR cells less where the file beside it scrolls (worked out below,
     // once the file's room is known).
     let inner = cols - 6
@@ -2326,20 +2342,6 @@ export const register: Register = on => {
     let short = shortAt(inner)
     const isShortened = short.some(x => x.isCut)
     const boxText = notes.map(n => reflow(withEmoji(n.body ?? ''))).join('\n\n')
-    // A topic with no thread yet stands in its own box under its lines, as one line: its
-    // severity (or kind) and its title. On code the MR added, the lines' own colour hides
-    // the background that marks them, so the box is what says where the topic is.
-    const finding = phase === 'topics' && notes.length === 0 && !isOtherFile ? currentTopic(r) : undefined
-    const findingRow = finding && (() => {
-      const slot = kindSlot(finding)
-      const title = oneLineNote(finding.summary ?? '', Math.max(8, inner - 2)).text
-      return (
-        <Box key="finding" flexDirection="row" gap={1}>
-          {isReview && <Text color={slot.color} dimColor={slot.isDim || undefined}>{slot.icon}</Text>}
-          <Markdown text={title} />
-        </Box>
-      )
-    })()
     // Opened, a suggestion in a comment is a diff against the lines it replaces, counted from
     // the line the thread is on, in the file the sidebar holds.
     const fileLines = code ? code.view.rows.filter(row => row[2] !== null).map(row => row[3]) : null
@@ -2348,7 +2350,7 @@ export const register: Register = on => {
     // line for who wrote it and when, its text wrapped to the box, its code blocks folded.
     const opened = await read($, codeOpen)
     const ext = (code?.view.file ?? '').split('.').pop() ?? ''
-    const rowsAt = (width: number): BoxRow[] => isOpen && !findingRow && notes.length > 0
+    const rowsAt = (width: number): BoxRow[] => isOpen && notes.length > 0
       ? boxRowsOf(notes.map(n => withEmoji(n.body ?? '')), Math.max(8, width), (i, b) => `${openKey}:${i}:${b}`,
         (k, byDefault) => opened[k] ?? byDefault, blk => withSuggestions(blk, code?.view.file, anchor, fileLines), ext, !code)
       : []
@@ -2501,11 +2503,13 @@ export const register: Register = on => {
     const boxScrollAt = await read($, boxAt)
     const layBox = () => {
       const isScrolled = openRows.length > boxCap
-      const body = isOpen && !findingRow ? Math.min(openRows.length, boxCap) : notes.length
+      const body = isOpen ? Math.min(openRows.length, boxCap) : notes.length
       return {
         isScrolled, body,
-        from: Math.min(Math.max(0, openRows.length - body), boxScrollAt[openKey] ?? 0),
-        rows: findingRow ? 3 : notes.length === 0 ? 0 : 2 + body + (code?.view.mode === 'since' ? 1 : 0),
+        // At its end where the person has not moved it: the newest comment is what is new,
+        // as a chat opens on its last message. Opened at the top, a reply stood cut off below.
+        from: Math.min(Math.max(0, openRows.length - body), boxScrollAt[boxKey] ?? Infinity),
+        rows: notes.length === 0 ? 0 : 2 + body + (code?.view.mode === 'since' ? 1 : 0),
       }
     }
     let laid = layBox()
@@ -2515,7 +2519,7 @@ export const register: Register = on => {
     // cells the thread box set in among its lines then leaves free. Counted with the line
     // that says where a thread out of view is, which takes a row of the file's.
     const isCodeScrolled = !!code && code.view.rows.length > room - 1
-    if (isCodeScrolled && laid.rows > 0 && !findingRow) {
+    if (isCodeScrolled && laid.rows > 0) {
       inner -= BAR
       short = shortAt(inner)
       openRows = rowsAt(inner - 1)
@@ -2527,11 +2531,11 @@ export const register: Register = on => {
     // Folding offered only where it leaves something out: its key on the box's top border at
     // the right, as a window's maximize and restore are, never among the box's text.
     // Never with no file: there the thread is always in full.
-    const foldKey = !!code && !findingRow && hasFoot && (
+    const foldKey = !!code && hasFoot && (
       iconKey({ Button, Text }, 'thread-open', isOpen ? GLYPH.restore : GLYPH.maximize,
-        () => { void update($, threadOpen, m => ({ ...m, [openKey]: !isOpen })) })
+        () => { void update($, threadOpen, m => ({ ...m, [boxKey]: !isOpen })) })
     )
-    const shownRows = isOpen && !findingRow ? drawBoxRows(openRows.slice(boxFrom, boxFrom + boxBody)) : closedRowsOf()
+    const shownRows = isOpen ? drawBoxRows(openRows.slice(boxFrom, boxFrom + boxBody)) : closedRowsOf()
     const boxMax = openRows.length - boxBody
     const rowsOfBox = (
       <Box key="box-text" flexDirection="column" flexGrow={1} flexShrink={1}>{shownRows}</Box>
@@ -2541,7 +2545,7 @@ export const register: Register = on => {
         <Box key="box-rows" flexDirection="row">
           {rowsOfBox}
           {isBoxScrolled && scrollBar('box', openRows.length, boxBody, boxFrom, boxBody,
-            to => update($, boxAt, m => ({ ...m, [openKey]: Math.min(boxMax, Math.max(0, to)) })))}
+            to => update($, boxAt, m => ({ ...m, [boxKey]: Math.min(boxMax, Math.max(0, to)) })))}
         </Box>
       )
       : null
@@ -2553,8 +2557,8 @@ export const register: Register = on => {
     const threadBox = boxRows > 0 && (
       <Box key="box" flexDirection="column" position="relative" marginLeft={2}>
         <Box paddingLeft={1} paddingRight={isBoxScrolled ? 0 : 1} borderStyle="round" borderDimColor flexDirection="column">
-          {code?.view.mode === 'since' && !findingRow && <Text dimColor>written on the code before the push; above, what changed since</Text>}
-          {findingRow ?? noteRows}
+          {code?.view.mode === 'since' && <Text dimColor>written on the code before the push; above, what changed since</Text>}
+          {noteRows}
         </Box>
         {foldKey && (
           <Box key="box-key" position="absolute" top={0} right={2} flexDirection="row">
@@ -2592,21 +2596,41 @@ export const register: Register = on => {
       const after = Math.max(0, Math.min(N - anchor, H - before - boxShown))
       const firstAfter = Math.max(anchor + 1, start - B)
       const w1 = before > 0 ? codeWindow(shape, before, start) : null
-      const w2 = after > 0 ? codeWindow(shape, after, firstAfter) : null
+      // The rows a discussed line takes once wrapped: the code's own width is the area's less
+      // the gutter (the bar, the number in its column, the sign) and the scrollbar.
+      const numWidth = String(Math.max(1, ...v.rows.map(row => row[2] ?? row[1] ?? 0))).length + 1
+      const codeWidth = Math.max(8, cols - 1 - numWidth - 2 - (N + B > H ? BAR : 0))
+      const rowsOfLines = (source: string) => source.split('\n').slice(1)
+        .map(line => Math.max(1, Math.ceil(cells(line.slice(1)) / codeWidth)))
+      // What wrapping adds to the stretch before the box comes off the stretch after it, so
+      // the window keeps its height.
+      const wrapped = (w1?.runs ?? []).filter(run => run.isDiscussed)
+        .reduce((n, run) => n + rowsOfLines(run.source).reduce((a, x) => a + x - 1, 0), 0)
+      const w2 = after - wrapped > 0 ? codeWindow(shape, after - wrapped, firstAfter) : null
       const isBoxIn = boxShown > 0
       const move = (to: number) => update($, codeAt, m => ({ ...m, [code.key]: Math.min(maxStart, Math.max(1, to)) }))
       const back = () => move(firstOffset(v, room))
       const isFileScrolled = N + B > H
-      // The runs of each stretch of the file, the discussed lines on a background.
+      // The runs of each stretch of the file. The lines the topic is about carry a bar in the
+      // gutter, left of their numbers and over exactly them, in the topic's severity colour
+      // (the accent where it has none): it points at the place and repeats nothing. No
+      // background: on a diff the red and green are the lines' own, and hid one. Those lines
+      // wrap where every other is cut at the edge, as what is discussed is as often at a
+      // line's end as at its start.
+      const about = phase === 'topics' ? currentTopic(r) : undefined
+      const barColor = (isReview && about ? kindSlot(about).color : undefined) ?? ACCENT
       const runsOf = (w: ReturnType<typeof codeWindow> | null) => (w ? w.runs.map(run => {
         const marks = w.changed.slice(run.from - w.start, run.to - w.start + 1)
+        const spans = run.isDiscussed ? rowsOfLines(run.source) : marks.map(() => 1)
         return (
           <Box key={`run-${run.from}`} flexDirection="row" flexShrink={0}>
             <Box flexDirection="column">
-              {marks.map((m, i) => <Text key={`mark-${run.from + i}`} color="green">{m ? '▎' : ' '}</Text>)}
+              {marks.flatMap((m, i) => Array.from({ length: spans[i] ?? 1 }, (_, k) => (run.isDiscussed
+                ? <Text key={`at-${run.from + i}-${k}`} color={barColor}>▌</Text>
+                : <Text key={`mark-${run.from + i}-${k}`} color="green">{m ? '▎' : ' '}</Text>)))}
             </Box>
-            <Box flexGrow={1} backgroundColor={run.isDiscussed ? DISCUSSED_BG : undefined}>
-              <Code source={run.source} path={v.file} format="diff" wrap="truncate-end" />
+            <Box flexGrow={1}>
+              <Code source={run.source} path={v.file} format="diff" wrap={run.isDiscussed ? 'wrap' : 'truncate-end'} />
             </Box>
           </Box>
         )
@@ -2626,11 +2650,11 @@ export const register: Register = on => {
       const top = listArea + GAP + 1
       // The box's own rows, where it scrolls on its own: right under the lines it is on, while
       // it is whole in the window.
-      const boxTop = top + before
+      const boxTop = top + before + wrapped
       codeAreas.set(sid, {
         top, bottom: top + H, key: code.key, rows: H, start, max: maxStart, view: v,
         ...(isBoxScrolled && isBoxIn && cut === 0 && boxShown === B && before + B <= H
-          ? { box: { top: boxTop, bottom: boxTop + boxRows, key: openKey, max: openRows.length - boxBody } } : {}),
+          ? { box: { top: boxTop, bottom: boxTop + boxRows, key: boxKey, max: openRows.length - boxBody } } : {}),
         lists,
       })
       // The file's scrollbar, where it does not fit: the area's whole height, the thread box
@@ -3068,7 +3092,7 @@ export const register: Register = on => {
       codeAreas.set(sid, {
         top: -1, bottom: -1, key: '', rows: 0, start: 0, lists,
         ...(freeBox && isBoxScrolled
-          ? { box: { top: freeBox.top, bottom: freeBox.top + freeBox.rows, key: openKey, max: openRows.length - boxBody } } : {}),
+          ? { box: { top: freeBox.top, bottom: freeBox.top + freeBox.rows, key: boxKey, max: openRows.length - boxBody } } : {}),
       })
     }
     return (
@@ -3155,9 +3179,6 @@ export const register: Register = on => {
     // a chip against the screen's edge reads as cut off.
     return (
       <Box flexDirection="column" paddingX={1}>
-        {waiting && (box?.count
-          ? <Text color="yellow">{`${box.count} topic${box.count === 1 ? ' has' : 's have'} news`}</Text>
-          : <Text dimColor>{waitingLine(waiting)}</Text>)}
         {/* On the topic's card where one is up (`cardButtons`): said once. */}
         {isJudging && !e.props.isWorking && (isUnjudged || !isHosted) && (
           <Text dimColor>{isUnjudged ? `${topic?.id}: the news could not be judged in the background` : `${topic?.id}: judging the news…`}</Text>
@@ -3171,6 +3192,12 @@ export const register: Register = on => {
           {/* The way on stands apart from the decisions, at the right, as on a card. */}
           <Box flexDirection="row" columnGap={2} flexShrink={0}>
             {!isHosted && buttons.map(b => (b.key === 'next' ? drawChip({ Box, Button, Text }, b, press(b)) : null))}
+            {/* What waits in the closed sidebar, beside the button that opens it: both on
+                the side where it appears, not the line at the far left and the button at
+                the far right. */}
+            {waiting && (box?.count
+              ? <Text key="band-news" color="yellow">{`${box.count} topic${box.count === 1 ? ' has' : 's have'} news`}</Text>
+              : <Text key="band-news" dimColor>{waitingLine(waiting)}</Text>)}
             {toggle}
           </Box>
         </Box>

@@ -1210,27 +1210,29 @@ test('a thread taller than its room keeps five lines of the file above and below
   const ui = await $.ui.mount({ ...PANEL, surface: 'terminal' })
   const md = async () => (await ui.findAll({ type: 'Markdown' })).map(m => m.props.text as string)
   const lines = async () => (await ui.findAll({ type: 'Code' })).flatMap(c => String(c.props.source).split('\n').slice(1))
-  expect(await md()).toContain('paragraph 1')
-  expect(await md()).not.toContain('paragraph 60')
+  // At its end, where the newest of the thread is, as a chat opens on its last message:
+  // opened at the top, a reply stood cut off below the box's edge.
+  expect(await md()).toContain('paragraph 60')
+  expect(await md()).not.toContain('paragraph 1')
   // The file keeps five lines around line 20.
   for (const n of [15, 16, 17, 18, 19, 21, 22, 23, 24, 25]) expect(await lines()).toContain(` const line${n} = ${n}`)
-  // At the top: the box's own scrollbar, its thumb at the top; a press below it moves the
-  // box, and the file stays where it was.
-  expect((await bar(ui, 'box'))?.[0]).toBe('thumb')
+  // The box's own scrollbar, its thumb at the end; a press above it moves the box, and the
+  // file stays where it was.
+  expect((await bar(ui, 'box'))?.at(-1)).toBe('thumb')
   const file = await lines()
-  await page(ui, 'box', 'down')
-  expect(await md()).not.toContain('paragraph 1')
+  await page(ui, 'box', 'up')
+  expect(await md()).not.toContain('paragraph 60')
   expect(await lines()).toEqual(file)
   await ui.unmount()
 })
 
 // The fold key a rework topic's thread box shows on the code view `mode` names: the fix's, or
 // the comment's own while planning.
-const reworkFoldKey = async ($: Engine, on: Parameters<typeof world>[0], mode?: string) => {
+const reworkFoldKey = async ($: Engine, on: Parameters<typeof world>[0], mode?: string, threadNew = 0) => {
   const long = `seems bad, ${'and more words '.repeat(20)}`
   const thread = [{ url: 'u', file: 'src/cache.ts', line: 3, notes: [{ author: 'Kim', body: long, url: 'http://gl/x#note_2' }] }]
   const code = codeOf(20, [3, 3], mode ? { mode } : {})
-  const w = world(on, [reworkState('t1', [reworkTopic('t1', mode ? 'fixed' : 'plan')], { thread })], { code: { stdout: JSON.stringify(code) } })
+  const w = world(on, [reworkState('t1', [reworkTopic('t1', mode ? 'fixed' : 'plan')], { thread, thread_new: threadNew })], { code: { stdout: JSON.stringify(code) } })
   await openRework($, w, reworkView('t1'))
   const panel = await $.ui.mount({ ...PANEL, surface: 'terminal' })
   const label = (await panel.find({ type: 'Button', key: 'thread-open' }))?.props.label
@@ -1244,6 +1246,16 @@ test('rework-mr: while planning, the thread under the code is in full', async ($
 
 test('rework-mr: under the fix the thread is folded, so the code has the room', async ($, on) => {
   expect(await reworkFoldKey($, on, 'fix')).toBe('\u{F05AF}')   // the key opens it
+})
+
+// A topic opened for a reviewer's new comment showed its thread one line a comment, at the
+// top: the comment it was opened for had to be unfolded and scrolled to.
+test('rework-mr: under a pushed fix the thread is in full where a reviewer wrote since', async ($, on) => {
+  expect(await reworkFoldKey($, on, 'pushed', 1)).toBe('\u{F05B2}')   // the key folds it
+})
+
+test('rework-mr: under a pushed fix with nothing new in the thread, it stays folded', async ($, on) => {
+  expect(await reworkFoldKey($, on, 'pushed', 0)).toBe('\u{F05AF}')   // the key opens it
 })
 
 test('a file renamed since the comment is shown under its name now, said in a word', async ($, on) => {
@@ -1421,16 +1433,51 @@ test("rework-mr: a thread under the code and the comments on the MR are drawn to
   await ui.unmount()
 })
 
-test('a topic with no thread yet stands in a box under its lines: its severity and its title', async ($, on) => {
-  const w = world(on, [stateOf('t1', [topic('t1', 'draft')])], { code: { stdout: JSON.stringify(codeOf(50, [17, 17])) } })
+// The box under a new topic's lines repeated its title, which the list and the card say
+// already, and cut it. The place is marked by a bar in the gutter alone.
+test("a topic's lines carry a bar in the gutter, in its severity's colour, and no box repeating its title", async ($, on) => {
+  const w = world(on, [stateOf('t1', [topic('t1', 'draft')])], { code: { stdout: JSON.stringify(codeOf(50, [17, 18])) } })
   await openReview($, w, view('t1'))
   const ui = await $.ui.mount({ ...PANEL, surface: 'terminal' })
   const runs = await ui.findAll({ type: 'Code' })
   expect(runs.some(c => firstLine(c.props.source) === 17)).toBe(true)
-  expect((await ui.findAll({ type: 'Markdown' })).some(m => m.props.text === 'summary of t1')).toBe(true)
-  const icon = (await ui.findAll({ type: 'Text' })).filter(t => t.text.trim() === '\u{f013f}')   // high, in the box and in the list
-  expect(icon.length).toBe(2)
-  expect(icon.every(t => t.props.color !== undefined)).toBe(true)
+  // Over exactly its lines, one cell each, in the colour of the severity's icon in the list.
+  const icon = (await ui.findAll({ type: 'Text' })).filter(t => t.text.trim() === '\u{f013f}')   // high: in the list alone
+  expect(icon.length).toBe(1)
+  const bars = (await ui.findAll({ type: 'Text' })).filter(t => t.text === '▌' && t.props.color === icon[0]?.props.color)
+  expect(bars.length).toBe(2)
+  // No title under the lines, and no background on them: on a diff the colours are the lines' own.
+  expect((await ui.findAll({ type: 'Markdown' })).some(m => m.props.text === 'summary of t1')).toBe(false)
+  expect(JSON.stringify(await ui.findAll({ type: 'Box' }))).not.toContain('#2b3a55')
+  await ui.unmount()
+})
+
+test('a draft not posted yet stands under its lines, as the comment it will be', async ($, on) => {
+  const w = world(on, [stateOf('t1', [topic('t1', 'draft', 'v1')], { draft_text: 'Nit: this map is rebuilt on every call.' })],
+    { code: { stdout: JSON.stringify(codeOf(50, [17, 17])) } })
+  await openReview($, w, view('t1', 'v1'))
+  const ui = await $.ui.mount({ ...PANEL, surface: 'terminal' })
+  expect((await ui.findAll({ type: 'Markdown' })).some(m => String(m.props.text).includes('this map is rebuilt on every call'))).toBe(true)
+  await ui.unmount()
+})
+
+// What a comment is about is as often at a line's end as at its start: cut at the edge, the
+// `.catch` a verdict spoke of was the "…".
+test('the lines a topic is about wrap where the rest of the file is cut at the edge', async ($, on) => {
+  const code = codeOf(30, [5, 5])
+  ;(code.rows[4] as unknown[])[3] = `const loaded = await ${'load'.repeat(60)}().catch(() => null)`
+  const w = world(on, [stateOf('t1', [topic('t1', 'open')], { thread: [{ url: 'u', file: 'src/cache.ts', line: 5, notes: [{ author: 'You', body: 'x', mine: true }] }] })],
+    { code: { stdout: JSON.stringify(code) } })
+  await openReview($, w, view('t1'))
+  const ui = await $.ui.mount({ ...PANEL, surface: 'terminal' })
+  const runs = await ui.findAll({ type: 'Code' })
+  const about = runs.find(c => String(c.props.source).includes('.catch(() => null)'))
+  expect(about?.props.wrap).toBe('wrap')
+  expect(runs.filter(c => c !== about).every(c => c.props.wrap === 'truncate-end')).toBe(true)
+  // The bar runs down every row the wrapped line takes.
+  const icon = (await ui.findAll({ type: 'Text' })).find(t => t.text.trim() === '\u{f013f}')
+  const bars = (await ui.findAll({ type: 'Text' })).filter(t => t.text === '▌' && t.props.color === icon?.props.color)
+  expect(bars.length).toBeGreaterThan(1)
   await ui.unmount()
 })
 
@@ -2003,7 +2050,6 @@ test('rework-mr: picking keeps the list where it was scrolled, draws no topic bo
   expect(scrolled).toContain('file-pick-src/f9.ts')
   await panel.press({ key: 'file-pick-src/f9.ts' })
   expect(await rows()).toEqual(scrolled)
-  expect(await panel.find({ type: 'Box', key: 'finding' })).toBeUndefined()
   // Back on the comment's own file: drawn from what was read before, nothing asked again.
   const asked = w.ran.filter(r => r.argv[2] === 'code').length
   await page(panel, 'files', 'up')
@@ -2941,10 +2987,12 @@ test('a thread with no file is the thread box, always in full, scrolling on its 
   // further down coming into view as it scrolls.
   expect(await panel.find({ type: 'Box', key: 'box-bar' })).toBeDefined()
   const md = async () => (await panel.findAll({ type: 'Markdown' })).map(m => String(m.props.text))
-  expect(await md()).not.toContain('will check')
-  await toEnd(panel, 'box')
+  // At its end, on the newest comment; the thread's start comes into view as it scrolls up.
   expect(await md()).toContain('will check')
   expect((await md()).some(t => t.includes('Paragraph 1,'))).toBe(false)
+  for (let i = 0; i < 40 && (await bar(panel, 'box'))?.[0] !== 'thumb'; i += 1) await page(panel, 'box', 'up')
+  expect(await md()).not.toContain('will check')
+  expect((await md()).some(t => t.includes('Paragraph 1,'))).toBe(true)
   await panel.unmount()
 })
 

@@ -1672,6 +1672,18 @@ def view_context(state):
     }
 
 
+def thread_new(state, t):
+    """How many comments the reviewers wrote on `t` since the user last acted on it (agreed a
+    plan, pushed, or wrote there): what is new in its thread. The sidebar opens the thread in
+    full on them; with none it stays as the code view has it (folded under a fix)."""
+    acts = [t.get("plan_at"), *[p.get("at") for p in t.get("pushes") or []]]
+    notes = [n for x in t["thread_ids"] for n in (state["threads"].get(x) or {}).get("notes") or []]
+    acts += [n.get("at") for n in notes if n.get("mine")]
+    last = max([m for m in map(_instant, acts) if m], default=None)
+    return sum(1 for n in notes if not n.get("mine")
+               and (last is None or ((m := _instant(n.get("at"))) is not None and m > last)))
+
+
 def card_face(state, t):
     """A fingerprint of what `t`'s card says now beyond its code: its name, its thread's
     comments, and the step's parts (the plan proposed or agreed, the fix, the story, the
@@ -1845,6 +1857,7 @@ def state_json(state):
             "current": cur, "topics": topics, "thread": thread,
             # What the current topic's card would say now: one drawn with another is stale.
             "face": card_face(state, t) if t else None,
+            "thread_new": thread_new(state, t) if t else 0,
             "hunk": hunk_window() if t and step_of(state, t) == "fixed" else None,
             "round": round_order(state) if ui.drawn() else [],
             "pass": pass_now(state), "in_round": bool(state.get("in_round")),

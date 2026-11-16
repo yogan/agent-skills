@@ -2032,6 +2032,20 @@ class TestRounds(unittest.TestCase):
         T.start_round(state)
         self.assertEqual(T.state_json(state)["inbox"]["resolves"], [])
 
+    def test_what_is_new_in_a_thread_is_what_reviewers_wrote_since_you_last_acted(self):
+        """The sidebar opens a thread in full on what is new, and folded under a fix where
+        nothing is: a comment the fix already answered is not new."""
+        state = self.state(1)
+        t1 = state["topics"][0]
+        self.assertEqual(T.thread_new(state, t1), 1)                  # never acted on
+        t1["plan_at"] = "2026-01-02T00:00:00Z"
+        self.assertEqual(T.thread_new(state, t1), 0)                  # planned since
+        state["threads"]["d1"]["notes"].append(
+            {"author": "Robin", "body": "And tests?", "at": "2026-01-03T00:00:00Z", "mine": False})
+        self.assertEqual(T.thread_new(state, t1), 1)
+        t1["pushes"] = [{"at": "2026-01-04T00:00:00Z"}]
+        self.assertEqual(T.state_json(state)["thread_new"] if T.current_topic(state) else T.thread_new(state, t1), 0)
+
     def test_a_topic_shown_without_a_proposal_says_to_store_one(self):
         state = self.state(1)
         self.assertIn("propose t1", T.proposal_note(state, "t1"))

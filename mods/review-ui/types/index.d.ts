@@ -139,6 +139,12 @@ export type ReviewState = {
   // rework-mr, a fix waiting for its push: the diff viewer's window for it, and how many
   // notes the user left there (null where the viewer could not be asked).
   hunk?: { open: boolean; notes: number | null } | null
+  // review-mr: the current topic's draft, while it is not posted yet: the sidebar shows it
+  // under the lines it will be posted on.
+  draft_text?: string | null
+  // How many comments others wrote in the current topic's thread since the person last
+  // acted on it: the sidebar opens the thread in full on them.
+  thread_new?: number | null
   // What the current topic's card would say now, as a fingerprint: a card drawn with
   // another one shows the topic as it was.
   face?: string | null

@@ -2105,6 +2105,17 @@ def view_context(state, topic=None):
     return extra
 
 
+def thread_new(state, t):
+    """How many comments others wrote on `t` since the user last acted on it (wrote there, or
+    closed it here): what is new in its thread. Mirrors threads.py's `thread_new`, whose
+    acts differ (a plan, a push)."""
+    notes = [n for x in t["thread_ids"] for n in (state["threads"].get(x) or {}).get("notes") or []]
+    acts = [n.get("at") for n in notes if n.get("mine")] + [t.get("acked_at"), (t.get("closed") or {}).get("at")]
+    last = max([m for m in map(_ts, acts) if m], default=None)
+    return sum(1 for n in notes if not n.get("mine")
+               and (last is None or ((m := _ts(n.get("at"))) is not None and m > last)))
+
+
 def card_face(state, t):
     """A fingerprint of what `t`'s card says now beyond its code: its name, where it stands,
     its threads' comments, the verdict on the answer, the author's pushes noted for it, its
@@ -2352,6 +2363,10 @@ def state_json(state):
     thread = [thread_of(state["threads"][th]) for th in (cur or {}).get("thread_ids") or []
               if th in state["threads"]]
     return {"face": card_face(state, cur) if cur else None,
+            "thread_new": thread_new(state, cur) if cur else 0,
+            # The current topic's draft while it is not on GitLab yet: the sidebar shows it
+            # under the lines it will be posted on, as GitLab shows a pending comment.
+            "draft_text": (cur.get("draft") or cur.get("note")) if cur and not cur["thread_ids"] else None,
             "skill": "review-mr", "iid": state.get("iid"), "title": state.get("title"),
             "url": state.get("mr_web_url"), "lang": state.get("lang") or DEFAULT_LANG,
             "mr": mr_json(state.get("mr_status")),
