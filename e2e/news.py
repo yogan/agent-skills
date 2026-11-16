@@ -1,37 +1,79 @@
 #!/usr/bin/env python3
-"""Make MR !1 change while its review waits, as its author would: for trying the review-ui
-mod's inbox and rounds against the local GitLab, with the demo open. And MR !3, frank's own,
-as a whole: approved by its reviewer, then merged.
+"""Change the rig's merge requests from outside while a session works on them, as the other
+people on them would: for trying the review-ui mod's News box and rounds by hand, and for the
+scenarios' checks.
 
-    python3 e2e/news.py reply   # author-bot answers frank's thread on auth.ts
-    python3 e2e/news.py push    # author-bot pushes the missing await in comments.ts, no word
-    python3 e2e/news.py both
-    python3 e2e/news.py fix     # author-bot pushes the auth.ts fix and says it is fixed now
-    python3 e2e/news.py approve # reviewer-bot approves MR !3, frank's own
-    python3 e2e/news.py merge   # frank merges MR !3
-    python3 e2e/news.py settle  # reviewer-bot resolves MR !3's open threads and approves it
-    python3 e2e/news.py pipeline running|success|failed   # a pipeline on MR !3's head
-    python3 e2e/news.py more    # reviewer-bot reopens MR !3's naming thread and asks for more
-    python3 e2e/news.py doubt   # reviewer-bot reopens it and doubts the pushed rename
+MR !1, which you review; Alex (author-bot) is its author:
 
-Each runs once per rig: a second `push` finds the fix already there and says so. Never
-resets anything; `fixture.py` (or tmux-demo.sh --force) is the way back to the start.
+    python3 e2e/news.py reply   # Alex answers your thread on /auth/me (auth.ts): fix to come
+    python3 e2e/news.py push    # Alex pushes the missing await in comments.ts, with no word
+    python3 e2e/news.py fix     # Alex pushes the /auth/me fix and says in its thread it is fixed
+    python3 e2e/news.py both    # Alex answers your thread on loadDb (db.ts) and pushes its fix
+                                # at the same time: a reply and a push in one go
+
+`reply`, `fix` and `both` answer YOUR thread on that point. Where you have none (none of yours
+on that file is about it), they first post one as you, with the point the review's own topic
+makes, and say so: the answer then always fits the comment it answers.
+
+MR !2, which you re-review; main moves under it:
+
+    python3 e2e/news.py main        # Chidi (peer-bot) lands a docs change on main
+    python3 e2e/news.py rebase-fix  # Alex rebases !2 onto main and pushes one commit that fixes
+                                    # t2 (the prefetch's errors) well and t4 (the repeated key)
+                                    # only partly, and answers on t2 alone
+
+MR !3, your own; Miriam (reviewer-bot) reviews it:
+
+    python3 e2e/news.py approve     # Miriam approves it
+    python3 e2e/news.py settle      # Miriam resolves its open threads and approves it
+    python3 e2e/news.py pipeline running|success|failed   # a pipeline on its head
+    python3 e2e/news.py more        # Miriam reopens the naming thread and asks for more
+    python3 e2e/news.py doubt       # Miriam reopens it and doubts the pushed rename
+    python3 e2e/news.py merge       # you merge it
+
+Which commands exclude each other:
+
+- Each runs once per rig. Run again, it refuses and changes nothing.
+- `reply` refuses after `fix`: it promises a fix that is pushed already.
+- `rebase-fix` needs `main` first: without it there is nothing to rebase onto.
+- `approve` refuses where Miriam approved already (`settle` approves too).
+- `more` and `doubt` go in either order; after `merge`, nothing on !3 does.
+- Everything else goes in any order: `both` touches nothing the others do.
+
+Every command checks everything first and only then changes anything, so a refused command
+leaves the rig as it was. Never resets anything; `fixture.py` (or `tmux-demo.sh --force`) is
+the way back to the start. Note that after `main`, `fixture.py --mr N` makes the whole rig
+again (main is no longer where a reset leaves it).
+
+On a scenario's copy of the rig, the environment names it, as for `fixture.py`:
+`E2E_PROJECT=demo/e2e-<scenario> E2E_SRC=~/src/agent-skills-e2e/<scenario> python3 news.py …`.
 """
 import os
+import re
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import fixture as fx  # noqa: E402
 from lib.cli import die  # noqa: E402
 
+AGAIN = ("Each command runs once per rig; `fixture.py` (or `tmux-demo.sh --force`) starts over. "
+         "Which commands exclude each other: `python3 e2e/news.py help`.")
+
+
+class Refused(Exception):
+    """A check failed: nothing has been changed."""
+
+
+# ---------------------------------------------------------------- MR !1
+
 IID = 1
-REPLY_ON = "src/testing/mocks/handlers/auth.ts"
-REPLY = ("Good point: /auth/me now answers 401 when there is no user, like the other "
-         "handlers, and the dead catch is gone. Pushing it in a minute.")
-FIX_FILE = "src/testing/mocks/handlers/comments.ts"
+AUTH_FILE = "src/testing/mocks/handlers/auth.ts"
+COMMENTS_FILE = "src/testing/mocks/handlers/comments.ts"
+DB_FILE = "src/testing/mocks/db.ts"
+
 UNAWAITED = "        persistDb('comment');\n"
-# /auth/me as the MR leaves it, and as frank's comment asks for it: 401 without a user, like
-# every other handler, and no catch that can no longer be reached.
+# /auth/me as the MR leaves it, and as the comment asks for it: 401 without a user, like every
+# other handler, and no catch that can no longer be reached.
 AUTH_ME = """    try {
       const { user } = requireAuth(cookies);
       return HttpResponse.json(user);
@@ -52,87 +94,315 @@ AUTH_ME_FIXED = """    const { user, error } = requireAuth(cookies);
   }),
 ];
 """
+# loadDb as the MR leaves it, and fixed: a file that is there but unreadable fails loudly
+# instead of handing its callers a null they dereference.
+LOAD_DB = """        console.error('Error loading mocked DB:', error);
+        return null;
+"""
+LOAD_DB_FIXED = """        throw new Error(`Cannot load the mocked DB from ${dbFilePath}: ${error?.message}`);
+"""
+
+# The points `reply`, `fix` and `both` answer, each as the review's own topic makes it: the
+# file, the line the comment goes on where it has to be posted, what a comment about this
+# point says (any comment of yours on the file matching it is answered), and the comment.
+AUTH = {
+    "file": AUTH_FILE, "needle": "const { user } = requireAuth(cookies);",
+    "about": r"auth/me|401|\bnull\b|\bcatch\b",
+    "body": ("`/auth/me` is the only handler that still answers 200 with a `null` user when "
+             "nobody is logged in; every other one answers 401. And `requireAuth` no longer "
+             "throws, so the catch below can never run. Could it answer 401 like the rest, "
+             "without the catch?"),
+}
+DB = {
+    "file": DB_FILE, "needle": "return null;",
+    "about": r"loadDb|\bnull\b|throw",
+    "body": ("When the file is there but cannot be read or parsed, `loadDb` logs and returns "
+             "`null`, and both callers (`persistDb`, `initializeDb`) use the result straight "
+             "away: the real error turns into a TypeError one call later. Could it throw "
+             "instead?"),
+}
+
+REPLY = ("Good point: /auth/me now answers 401 when there is no user, like the other "
+         "handlers, and the dead catch is gone. Pushing it in a minute.")
 FIXED_REPLY = "It is fixed now: /auth/me answers 401 without a user, and the dead catch is gone."
+DB_REPLY = ("Right, a broken file should fail where it is read. loadDb throws now, with the "
+            "file and the reason in the message; only a missing file still starts an empty DB.")
 
 
-def reply(text=REPLY):
-    """author-bot's answer in frank's own thread on REPLY_ON."""
-    discs = fx.api(f"projects/{fx.project_path_enc()}/merge_requests/{IID}/discussions?per_page=100")
+# ---------------------------------------------------------------- reading, never changing
+
+
+def ensure_build():
+    """The throwaway clone the commits are made in (fixture.py's), made where it is missing."""
+    if not os.path.isdir(fx.BUILD):
+        fx.ensure_cache()
+        fx.fresh_build()
+
+
+def tip(branch, user="root"):
+    """The commit `branch` is at on GitLab now, fetched into the build clone (nothing on
+    GitLab changes)."""
+    ensure_build()
+    ref = f"refs/news/{branch}"
+    fx.git("fetch", "--quiet", "--force", fx.push_url(user), f"+refs/heads/{branch}:{ref}",
+           cwd=fx.BUILD)
+    return fx.git("rev-parse", ref, cwd=fx.BUILD).stdout.strip()
+
+
+def file_at(sha, path):
+    return fx.git("show", f"{sha}:{path}", cwd=fx.BUILD).stdout
+
+
+def discussions(iid):
+    return fx.api(f"projects/{fx.project_path_enc()}/merge_requests/{iid}/discussions?per_page=100")
+
+
+def first_note(d):
+    return (d.get("notes") or [{}])[0]
+
+
+def fitting_thread(discs, user, path, about):
+    """`user`'s thread on `path` whose first comment is about the point `about` matches, or
+    None: a thread of theirs on the file about something else is not one an answer fits."""
     for d in discs:
-        first = (d.get("notes") or [{}])[0]
-        pos = first.get("position") or {}
-        if (first.get("author") or {}).get("username") == "frank" and pos.get("new_path") == REPLY_ON:
-            fx.reply(IID, d["id"], "author-bot", text)
-            fx.info(f"!{IID}: author-bot replied in frank's thread on {REPLY_ON}")
-            return
-    die(f"no thread of frank's on {REPLY_ON} in MR !{IID}: post one in the demo first")
+        n = first_note(d)
+        if ((n.get("author") or {}).get("username") == user
+                and (n.get("position") or {}).get("new_path") == path
+                and re.search(about, n.get("body") or "", re.I)):
+            return d
+    return None
 
 
-def push_change(file, old, new, message):
-    """author-bot's commit on MR !1's branch, replacing `old` in `file` with `new`."""
-    b, url = fx.BUILD, fx.push_url("author-bot")
-    fx.git("fetch", "--quiet", url, fx.MR1_BRANCH, cwd=b)
-    fx.git("checkout", "--quiet", "--detach", "FETCH_HEAD", cwd=b)
-    path = os.path.join(b, file)
-    with open(path) as f:
-        text = f.read()
-    if old not in text:
-        die(f"{file} is changed there already: pushed before")
-    with open(path, "w") as f:
-        f.write(text.replace(old, new, 1))
-    fx.git("commit", "--quiet", "-am", message, cwd=b, user="author-bot")
-    fx.git("push", "--quiet", url, f"HEAD:refs/heads/{fx.MR1_BRANCH}", cwd=b)
-    fx.info(f"!{IID}: author-bot pushed '{message}' ({file})")
+def thread_on(discs, path):
+    """The thread whose first comment is on `path`, or None."""
+    return next((d for d in discs if (first_note(d).get("position") or {}).get("new_path") == path), None)
 
 
-def push():
-    """author-bot's fix for the un-awaited persistDb call, with no word in the thread."""
-    push_change(FIX_FILE, UNAWAITED, "        await persistDb('comment');\n",
-                "await the comment-delete persistDb")
+def said(d, user, text):
+    """Whether `user` has already written `text` in thread `d`."""
+    return any((n.get("author") or {}).get("username") == user and n.get("body", "").strip() == text.strip()
+               for n in d.get("notes") or [])
 
 
-def fix():
-    """author-bot's fix for /auth/me, then the word in frank's thread that it is fixed."""
-    push_change(REPLY_ON, AUTH_ME, AUTH_ME_FIXED, "answer 401 from /auth/me without a user")
-    reply(FIXED_REPLY)
+# ---------------------------------------------------------------- plans
+#
+# A command is checked whole before anything is done: it returns its plan, a list of
+# (what is done, how), and only a plan that came back whole is carried out. A step's `how`
+# takes the plan's shared dict, where an earlier step leaves what a later one needs (the
+# thread a reply goes into, once it is posted).
 
+
+def answer(iid, point, text, who, cmd):
+    """The steps that answer your thread on `point` with `text` as `who`: posting that thread
+    first, as you, where none of yours is about it. Refused where it was answered so already."""
+    discs = discussions(iid)
+    d = fitting_thread(discs, "frank", point["file"], point["about"])
+    name = fx.IDENT[who][0].split(", ")[1].split(" ")[0]
+    if d and said(d, who, text):
+        raise Refused(f"{name} has answered your thread on {point['file']} with this already: "
+                      f"`{cmd}` ran before.")
+    steps = []
+    if d:
+        steps.append(("", lambda s: s.update(thread=d["id"])))
+    else:
+        def post(s):
+            s["thread"] = fx.post_thread(iid, "frank", point["file"], point["needle"], point["body"])["id"]
+        steps.append((f"!{iid}: posted a thread of yours on {point['file']} first (none of yours "
+                      "there was about this point)", post))
+    steps.append((f"!{iid}: {who} replied in your thread on {point['file']}",
+                   lambda s: fx.reply(iid, s["thread"], who, text)))
+    return steps
+
+
+def change(iid, branch, who, edits, message, cmd, force=False, onto=None):
+    """The steps of a commit by `who` on `branch` (MR !`iid`'s) that makes `edits` ({file: (old, new)}),
+    pushed: refused where the branch has it already. `onto`: (new base, old base) to rebase
+    the branch onto first, pushed with force."""
+    sha = tip(branch, who)
+    for path, (old, _new) in edits.items():
+        if old not in file_at(sha, path):
+            raise Refused(f"{path} is changed on {branch} already: `{cmd}` ran before.")
+
+    def push(_s):
+        b = fx.BUILD
+        fx.git("checkout", "--quiet", "--force", "--detach", sha, cwd=b)
+        if onto:
+            r = fx.git("rebase", "--quiet", "--onto", onto[0], onto[1], cwd=b, user=who, check=False)
+            if r.returncode:
+                fx.git("rebase", "--abort", cwd=b, check=False)
+                die(f"the rebase of {branch} onto main conflicted:\n{r.stderr.strip()}")
+        for path, (old, new) in edits.items():
+            full = os.path.join(b, path)
+            with open(full) as f:
+                text = f.read()
+            with open(full, "w") as f:
+                f.write(text.replace(old, new, 1))
+        fx.git("commit", "--quiet", "-am", message, cwd=b, user=who)
+        fx.git("push", "--quiet", *(["--force"] if force else []), fx.push_url(who),
+               f"HEAD:refs/heads/{branch}", cwd=b)
+    files = ", ".join(os.path.basename(p) for p in edits)
+    what = "rebased onto main and pushed" if onto else "pushed"
+    return [(f"!{iid}: {who} {what} '{message}' ({files})", push)]
+
+
+def plan_reply():
+    sha = tip(fx.MR1_BRANCH, "author-bot")
+    if AUTH_ME not in file_at(sha, AUTH_FILE):
+        raise Refused("/auth/me is fixed on !1 already (`fix` ran): a reply that promises the "
+                      "fix would come after it.")
+    return answer(IID, AUTH, REPLY, "author-bot", "reply")
+
+
+def plan_push():
+    return change(IID, fx.MR1_BRANCH, "author-bot",
+                  {COMMENTS_FILE: (UNAWAITED, "        await persistDb('comment');\n")},
+                  "await the comment-delete persistDb", "push")
+
+
+def plan_fix():
+    """Your thread first where it has to be posted, then the push, then the word in it."""
+    pushed = change(IID, fx.MR1_BRANCH, "author-bot", {AUTH_FILE: (AUTH_ME, AUTH_ME_FIXED)},
+                    "answer 401 from /auth/me without a user", "fix")
+    said_ = answer(IID, AUTH, FIXED_REPLY, "author-bot", "fix")
+    return said_[:-1] + pushed + said_[-1:]
+
+
+def plan_both():
+    pushed = change(IID, fx.MR1_BRANCH, "author-bot", {DB_FILE: (LOAD_DB, LOAD_DB_FIXED)},
+                    "throw from loadDb when the mocked DB cannot be read", "both")
+    said_ = answer(IID, DB, DB_REPLY, "author-bot", "both")
+    return said_[:-1] + pushed + said_[-1:]
+
+
+# ---------------------------------------------------------------- MR !2 and main
+
+IID2 = 2
+README_LINE = "\nRun `npm run check` before pushing: it runs the quick source check.\n"
+PROTECTED = "src/routes/protected.tsx"
+LIST_FILE = "src/features/discussions/api/getDiscussions.ts"
+CATCH = "await client.ensureQueryData(getDiscussionQueryOptions(params.discussionId)).catch(() => null);"
+# t2 fixed well: only a missing discussion becomes null, anything else fails the route.
+CATCH_FIXED = ("await client\n"
+               "              .ensureQueryData(getDiscussionQueryOptions(params.discussionId))\n"
+               "              .catch((error) => {\n"
+               "                // Only a missing discussion is the view's to show; anything else fails the route.\n"
+               "                if (error?.response?.status !== 404) throw error;\n"
+               "                return null;\n"
+               "              });")
+# t4 fixed partly: useDiscussions takes the key from the options, but still repeats their
+# queryFn, and useDiscussion repeats ['discussion', id] as before.
+LIST_KEY = "    ...config,\n    queryKey: ['discussions'],\n"
+LIST_KEY_FIXED = "    ...config,\n    queryKey: getDiscussionsQueryOptions().queryKey,\n"
+T2 = {"file": PROTECTED, "about": r"prefetch fails"}
+T2_REPLY = "Done: only a 404 becomes null now; anything else is rethrown and fails the route."
+
+
+def plan_main():
+    sha = tip("main")
+    if README_LINE.strip() in file_at(sha, "README.md"):
+        raise Refused("main has Chidi's change already: `main` ran before.")
+
+    def land(_s):
+        b = fx.BUILD
+        fx.git("checkout", "--quiet", "--force", "--detach", sha, cwd=b)
+        with open(os.path.join(b, "README.md"), "a") as f:
+            f.write(README_LINE)
+        fx.git("commit", "--quiet", "-am", "docs: mention the quick source check", cwd=b, user="peer-bot")
+        # main is protected: only a maintainer pushes to it. The commit stays Chidi's.
+        fx.git("push", "--quiet", fx.push_url("root"), "HEAD:refs/heads/main", cwd=b)
+        fx.info(f"main moved to {fx.git('rev-parse', 'HEAD', cwd=b).stdout.strip()[:8]} (peer-bot)")
+    return [("", land)]
+
+
+def plan_rebase_fix():
+    mr2 = tip(fx.MR2_BRANCH, "author-bot")
+    main = tip("main")
+    base = fx.git("merge-base", mr2, main, cwd=fx.BUILD).stdout.strip()
+    pushed = change(IID2, fx.MR2_BRANCH, "author-bot",
+                    {PROTECTED: (CATCH, CATCH_FIXED), LIST_FILE: (LIST_KEY, LIST_KEY_FIXED)},
+                    "rethrow all but 404 in the discussion prefetch, share the list key",
+                    "rebase-fix", force=True, onto=(main, base))
+    if base == main:
+        raise Refused("main has not moved since !2 branched off it: run `news.py main` first, so "
+                      "the rebase has something to rebase onto.")
+    d = fitting_thread(discussions(IID2), "frank", T2["file"], T2["about"])
+    if not d:
+        raise Refused(f"no thread of yours on {PROTECTED} asking what happens when the prefetch "
+                      "fails: !2 is not as fixture.py seeds it.")
+    return pushed + [(f"!{IID2}: author-bot replied on t2 (the prefetch's errors) alone",
+                      lambda _s: fx.reply(IID2, d["id"], "author-bot", T2_REPLY))]
+
+
+# ---------------------------------------------------------------- MR !3
 
 REWORK_IID = 3
 
 
-def approve():
-    fx.api(f"projects/{fx.project_path_enc()}/merge_requests/{REWORK_IID}/approve", "POST",
-           {}, user="reviewer-bot")
-    fx.info(f"!{REWORK_IID}: reviewer-bot approved it")
+def mr3():
+    return fx.api(f"projects/{fx.project_path_enc()}/merge_requests/{REWORK_IID}")
 
 
-def settle():
-    """reviewer-bot resolves every thread still open on MR !3, then approves it: every topic
+def open_mr3(cmd):
+    if (mr := mr3())["state"] != "opened":
+        raise Refused(f"!{REWORK_IID} is {mr['state']}: `{cmd}` changes an open MR only.")
+    return mr
+
+
+def approved_by_miriam():
+    a = fx.api(f"projects/{fx.project_path_enc()}/merge_requests/{REWORK_IID}/approvals")
+    return any(x["user"]["username"] == "reviewer-bot" for x in a.get("approved_by") or [])
+
+
+def approve_step():
+    return ("", lambda _s: (fx.api(f"projects/{fx.project_path_enc()}/merge_requests/{REWORK_IID}/approve",
+                                   "POST", {}, user="reviewer-bot"),
+                            fx.info(f"!{REWORK_IID}: reviewer-bot approved it")))
+
+
+def plan_approve():
+    open_mr3("approve")
+    if approved_by_miriam():
+        raise Refused(f"Miriam has approved !{REWORK_IID} already (`approve` or `settle` ran).")
+    return [approve_step()]
+
+
+def plan_settle():
+    """Miriam resolves every thread still open on MR !3, then approves it: every topic
     settled, and the MR ready for the Done box's Merge."""
+    open_mr3("settle")
     enc = fx.project_path_enc()
-    for d in fx.api(f"projects/{enc}/merge_requests/{REWORK_IID}/discussions?per_page=100"):
-        first = (d.get("notes") or [{}])[0]
-        if first.get("resolvable") and not first.get("resolved"):
-            fx.api(f"projects/{enc}/merge_requests/{REWORK_IID}/discussions/{d['id']}?resolved=true",
+    still = [d["id"] for d in discussions(REWORK_IID)
+             if first_note(d).get("resolvable") and not first_note(d).get("resolved")]
+    approved = approved_by_miriam()
+    if not still and approved:
+        raise Refused(f"!{REWORK_IID} has no open thread and Miriam approved it: `settle` ran before.")
+
+    def resolve(_s):
+        for did in still:
+            fx.api(f"projects/{enc}/merge_requests/{REWORK_IID}/discussions/{did}?resolved=true",
                    "PUT", {}, user="reviewer-bot")
-    approve()
-    fx.info(f"!{REWORK_IID}: reviewer-bot resolved its threads")
+    return [("", resolve), *([] if approved else [approve_step()]),
+            (f"!{REWORK_IID}: reviewer-bot resolved its threads", lambda _s: None)]
 
 
-def pipeline(status):
-    """A pipeline on MR !3's head in `status` (running, success, failed), from an external
-    commit status: the rig has no runner, and GitLab makes a pipeline of a status all the same."""
-    enc = fx.project_path_enc()
-    mr = fx.api(f"projects/{enc}/merge_requests/{REWORK_IID}")
-    fx.api(f"projects/{enc}/statuses/{mr['sha']}", "POST",
-           {"state": status, "name": "ci", "ref": mr["source_branch"]})
-    fx.info(f"!{REWORK_IID}: pipeline {status}")
+PIPELINE = ("running", "success", "failed")
 
 
-def merge():
-    fx.api(f"projects/{fx.project_path_enc()}/merge_requests/{REWORK_IID}/merge", "PUT",
-           {}, user="frank")
-    fx.info(f"!{REWORK_IID}: frank merged it")
+def plan_pipeline(status):
+    """A pipeline on MR !3's head in `status`, from an external commit status: the rig has no
+    runner, and GitLab makes a pipeline of a status all the same."""
+    mr = open_mr3("pipeline")
+
+    def post(_s):
+        fx.api(f"projects/{fx.project_path_enc()}/statuses/{mr['sha']}", "POST",
+               {"state": status, "name": "ci", "ref": mr["source_branch"]})
+    return [(f"!{REWORK_IID}: pipeline {status}", post)]
+
+
+def plan_merge():
+    open_mr3("merge")
+    return [(f"!{REWORK_IID}: frank merged it", lambda _s: fx.api(
+        f"projects/{fx.project_path_enc()}/merge_requests/{REWORK_IID}/merge", "PUT", {}, user="frank"))]
 
 
 # The naming thread once its rename is pushed: one more small change, so the topic is fixed
@@ -149,40 +419,61 @@ DOUBT = ("Thinking about it more, I'm not sure about the rename after all: every
          "Should we go back to `queryKeys`?")
 
 
-def more(text=MORE):
-    """reviewer-bot's follow-up in MR !3's thread on MORE_ON, reopened if resolved."""
+def plan_more(text, cmd):
+    """Miriam's follow-up in MR !3's thread on MORE_ON, reopened if resolved."""
+    open_mr3(cmd)
+    d = thread_on(discussions(REWORK_IID), MORE_ON)
+    if not d:
+        raise Refused(f"no thread on {MORE_ON} in MR !{REWORK_IID}")
+    if said(d, "reviewer-bot", text):
+        raise Refused(f"Miriam has written this in the thread on {MORE_ON} already: `{cmd}` ran before.")
     enc = fx.project_path_enc()
-    discs = fx.api(f"projects/{enc}/merge_requests/{REWORK_IID}/discussions?per_page=100")
-    for d in discs:
-        pos = (d.get("notes") or [{}])[0].get("position") or {}
-        if pos.get("new_path") == MORE_ON:
-            fx.api(f"projects/{enc}/merge_requests/{REWORK_IID}/discussions/{d['id']}?resolved=false",
-                   "PUT", {}, user="reviewer-bot")
-            fx.reply(REWORK_IID, d["id"], "reviewer-bot", text)
-            fx.info(f"!{REWORK_IID}: reviewer-bot {'asked for more' if text == MORE else 'doubts the fix'} on {MORE_ON}")
-            return
-    die(f"no thread on {MORE_ON} in MR !{REWORK_IID}")
+
+    def post(_s):
+        fx.api(f"projects/{enc}/merge_requests/{REWORK_IID}/discussions/{d['id']}?resolved=false",
+               "PUT", {}, user="reviewer-bot")
+        fx.reply(REWORK_IID, d["id"], "reviewer-bot", text)
+    return [(f"!{REWORK_IID}: reviewer-bot {'asked for more' if text == MORE else 'doubts the fix'} "
+             f"on {MORE_ON}", post)]
 
 
-def main():
-    what = sys.argv[1] if len(sys.argv) > 1 else ""
-    if what == "pipeline" and len(sys.argv) > 2:
-        fx.E = fx.env()
-        return pipeline(sys.argv[2])
-    if what in ("approve", "merge", "more", "doubt", "settle"):
-        fx.E = fx.env()
-        return {"approve": approve, "merge": merge, "more": more, "settle": settle,
-                "doubt": lambda: more(DOUBT)}[what]()
-    if what not in ("reply", "push", "both", "fix"):
-        die(__doc__.strip())
+# ---------------------------------------------------------------- the commands
+
+COMMANDS = {
+    "reply": plan_reply, "push": plan_push, "fix": plan_fix, "both": plan_both,
+    "main": plan_main, "rebase-fix": plan_rebase_fix,
+    "approve": plan_approve, "settle": plan_settle, "merge": plan_merge,
+    "more": lambda: plan_more(MORE, "more"), "doubt": lambda: plan_more(DOUBT, "doubt"),
+}
+
+
+def carry_out(plan):
+    """Each step of a plan that came back whole, in order, saying what it did."""
+    shared = {}
+    for what, how in plan:
+        how(shared)
+        if what:
+            fx.info(what)
+
+
+def main(argv=None):
+    argv = sys.argv[1:] if argv is None else argv
+    what = argv[0] if argv else ""
+    if what == "pipeline" and len(argv) > 1 and argv[1] in PIPELINE:
+        build = lambda: plan_pipeline(argv[1])  # noqa: E731
+    elif what in COMMANDS:
+        build = COMMANDS[what]
+    else:
+        print(__doc__.strip())
+        return 0 if what in ("help", "-h", "--help") else 2
     fx.E = fx.env()
-    if what in ("reply", "both"):
-        reply()
-    if what in ("push", "both"):
-        push()
-    if what == "fix":
-        fix()
+    try:
+        plan = build()
+    except Refused as why:
+        die(f"{what}: {why} Nothing was changed.\n{AGAIN}")
+    carry_out(plan)
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

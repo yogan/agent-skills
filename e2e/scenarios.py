@@ -143,6 +143,12 @@ REWORK_FIX = [
             # the reply, whom it waits on, and the pushed fix to look at. No round runs.
             Click("\U000f09e4 t2 ", offset=3),
             Expect(r"Waits on Miriam", region="screen", wait=30),
+            # Its story, one line per event in the order they happened, inside the one card.
+            Expect(r"Miriam commented[^╰]*You agreed the plan: Fix[^╰]*You pushed a fix[^╰]*"
+                   r"You replied[^╰]*Waits on Miriam", region="main"),
+            # The reply it posted is spent: no draft of it is offered again.
+            Expect(r"Draft reply", region="screen", absent=True),
+            Expect(button('Post'), region="screen", absent=True),
             # Beside the sidebar, its diff viewer's key is the line over the fix's files.
             Expect(r"Show in hunk", region="panel"),
             Expect(button('Next'), region="screen", absent=True),
@@ -197,7 +203,9 @@ REWORK_REFUSED = [
             Check('glab api -X PUT "projects/$P/merge_requests/3" -f title="Draft: not yet"',
                   r'"draft":true'),
             press('Merge', region="panel"),
-            Expect(r"Merge failed", region="panel", wait=60),
+            # In the words the end of the MR uses for it, never GitLab's bare "405".
+            Expect(r"Merge failed: Still a draft", region="panel", wait=60),
+            Expect(r"Merge failed: \d{3}", region="panel", absent=True),
             Expect(button('Analyze failed merge'), region="panel"),
 ]
 
@@ -206,8 +214,17 @@ REWORK_REFUSED = [
 # links the new push alone. A part of it is a scenario of its own (`try-pushed-twice`).
 POSTED_T2 = next(i for i, x in enumerate(REWORK_FIX)
                  if isinstance(x, Expect) and x.pattern == current("t2") and x.absent) + 1
+# t2's fix pushed, by the script alone: what follows it in REWORK_FIX is a reply typed for it,
+# which a card only offers where the fix is the plan's and nothing more.
+PUSHED_T2 = next(i for i, x in enumerate(REWORK_FIX)
+                 if isinstance(x, Expect) and x.pattern == button('Reply…'))
 REWORK_TWICE = [
-            *REWORK_FIX[:POSTED_T2],
+            *REWORK_FIX[:PUSHED_T2],
+            # "Fixed" is on the card whether or not the model's fix went beyond the plan, and
+            # leaves the thread to the reviewer: t2 is done here either way.
+            Expect(button('“Fixed”'), region="screen", wait=60),
+            press('“Fixed”'),
+            Expect(current("t2"), region="panel", absent=True, wait=60),
             Check(f"{NEWS} more", r"asked for more"),
             # The update check brings t1 back with the reviewer's word; opened from the list.
             Expect(r"\bt1\b", region="panel", wait=240),
@@ -219,6 +236,9 @@ REWORK_TWICE = [
             # A doc comment in one commit: the script's push alone.
             press('Ack and push'),
             Expect(button('“Fixed” + resolve'), region="screen", wait=60),
+            # The first round's "Fixed" was posted: the new push offers no draft from that round.
+            Expect(r"Draft reply", region="screen", absent=True),
+            Expect(button('Post'), region="screen", absent=True),
             # Two fixes, t2's push between them: the card's story tells both, each a line at
             # its own time with the round between them, and the sidebar shows the latest and
             # steps back to the first.
@@ -314,7 +334,9 @@ REWORK_MIND = [
             Expect(button('Ack and push'), region="screen"),
             Prompt("Stop, I don't want this fix after all: drop it, and draft a reply asking "
                    "Miriam which of her two options she prefers.", timeout=600),
-            Expect(button('Post', 'Post + resolve'), region="screen", wait=60),
+            # A question back waits for its answer: Post alone, nothing that resolves the thread.
+            Expect(button('Post'), region="screen", wait=60),
+            Expect(button('Post + resolve'), region="screen", absent=True),
             Check("git status --porcelain | wc -l", r"^\s*0$"),      # the working tree as it was
             Check(DROPPED, r"refs/rework-mr/mr3/t2/dropped1/after"),   # the fix, kept in git
             Check("git fetch -q && git rev-parse HEAD @{u} | uniq | wc -l", r"^\s*1$"),
@@ -395,6 +417,14 @@ SCENARIOS = [
             Click(" t1 ", offset=1, region="panel"),
             Expect(r"Alex pushed a fix · .*diff", region="screen", wait=60),
             Expect(r"Show in hunk", region="panel"),
+            # The fix's own change: the commented file's old lines beside its new ones, and the
+            # fix's other files listed under it.
+            Expect(r"-export const queryClient = new QueryClient\(", region="panel"),
+            Expect(r"src/providers/app\.tsx", region="panel"),
+            # t2's commented line, the loader's signature, is longer than the sidebar is wide:
+            # it wraps, so its end is on screen instead of a "…".
+            Click(" t2 ", offset=1, region="panel"),
+            Expect(r"\}\) => \{", region="panel", wait=30),
         ]),
     Scenario(
         "rework-3", "MR !3, rework: three reviewer threads", WORK,

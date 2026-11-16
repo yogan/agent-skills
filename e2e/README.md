@@ -20,7 +20,7 @@ Talk-day checklist and run of show: [RUNBOOK.md](RUNBOOK.md).
 | `timing.py` | where a verify run's time went (reset, claude's start, each kind of step), and one set of runs against another |
 | `screenshot.py` | a colour capture (`.ansi`) as a PNG drawn as Ghostty draws it, the whole screen or the sidebar alone |
 | `transcript.py` | what a session ran, from its transcript: prompts, replies, calls, results, engine notes; a failed verify run keeps it as `transcript.txt` |
-| `news.py` | MR !1 changes while its review waits: `reply`, `push`, `both` or `fix`, as its author (the review-ui mod's inbox); MR !3 as a whole: `approve` (its reviewer), `merge` |
+| `news.py` | the MRs change from outside while a session works on them, as the other people on them would: MR !1's author answers and pushes (`reply`, `push`, `fix`, `both`), `main` moves and MR !2 is rebased onto it with a fix (`main`, `rebase-fix`), MR !3 is approved, settled, given a pipeline, reopened, merged. Each command checks everything before it changes anything, runs once, and says which commands exclude each other (`python3 news.py help`) |
 | `.runs/` | `drive.py verify` captures, one folder per run (gitignored) |
 | `patches/` | the frozen MR diffs (`mr1-flaws.patch`, `mr2/`, `mr3/`) |
 | `artifacts/` | MR !1's frozen explainer and review-branch seed — tracked, so the live first pass generates neither |
@@ -121,7 +121,7 @@ the number GitLab then gives is checked.
 
 It does this only on a rig that is otherwise whole: the project, `main` and
 `release/2024-06` where a full reset leaves them, all four merge requests there, the working
-copy a checkout. Anything else (a merged MR !3 has moved `main`; a rig never reset) and it
+copy a checkout. Anything else (a merged MR !3 or `news.py main` has moved `main`; a rig never reset) and it
 says why and runs everything. `drive.py verify` asks for it before every rig scenario.
 
 ### A copy of the rig for every test scenario
