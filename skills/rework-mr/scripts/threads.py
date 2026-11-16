@@ -74,6 +74,7 @@ if _REPO_ROOT not in sys.path:
 from lib import change as change_of, checks, code_view, critical_manifest, diffsize, fix_refs, focus, hunk, posted, tab, ui  # noqa: E402
 from lib.ui import analysis_heading  # noqa: E402
 from lib.hunk import diff_stat  # noqa: E402
+from lib.cli import iid_option  # noqa: E402
 from lib.gitlab import (
     api,
     api_post,
@@ -2625,6 +2626,16 @@ def judge_list(state):
                        and not proposal_of(state, t)], "own": []}
 
 
+# How a background agent writes its commands, said in its brief. Both are the forms its first
+# calls got wrong in recorded runs: a variable holding `python3 <script>` run as the command
+# (zsh splits no variable into words, so it fails), and a text in double quotes with backticks
+# in it, which the shell runs as a command and cuts out of the text.
+# Mirrors review-mr's findings.py's SHELL_FORM, word for word.
+SHELL_FORM = ("Spell that out in full in every call: zsh, the shell here, runs no command kept "
+              "in a variable. Pass every text in single quotes, an apostrophe in it as `'\\''`: "
+              "inside double quotes the shell runs whatever is in backticks.")
+
+
 def judge_brief(state, iid, skip=()):
     """The task the mod hands its background agent: each topic with what to read and what to
     store, but those in `skip` (what an agent failed on before, which the chat takes
@@ -2638,18 +2649,18 @@ def judge_brief(state, iid, skip=()):
     out = [f"Reviewers wrote on GitLab MR !{iid}, which the user authored and is reworking. "
            "Prepare each topic below in the background, so its card carries your proposal by "
            "the time the user opens it. Nobody reads your replies: only what you store counts.",
-           "", f"Run every command as `{run_as}`. Store with `propose` (or `keep-plan`, below) and "
-           "nothing else: never "
+           "", f"Run every command as `{run_as}`. {SHELL_FORM} Store with `propose` (or "
+           "`keep-plan`, below) and nothing else: never "
            "edit code, commit, push, post, resolve, or show anything (no `set`, `agree`, "
            "`post`, `open`, `later`, `quote --focus`, `show_topic`).", "",
            "Read first: `bodies` (every open thread, first and last comment), then `quote <t>` "
            "for each topic (the code the comment is on and the whole thread), then the code "
            "itself where the point needs it.", "",
            "For each, store one proposal:",
-           "`propose <t> --says needs|fyi --why \"<1–3 English sentences: what the reviewer "
+           "`propose <t> --says needs|fyi --why '<1–3 English sentences: what the reviewer "
            "asks, what the code does, and the trade-off; end on a **Recommendation:** "
-           "sentence>\" [--outcome fix|reply|push-back|"
-           "question --plan \"<one sentence: what to do>\"] [--answer-now] [--change - <<'CHANGE_EOF' … "
+           "sentence>' [--outcome fix|reply|push-back|"
+           "question --plan '<one sentence: what to do>'] [--answer-now] [--change - <<'CHANGE_EOF' … "
            "CHANGE_EOF]`.",
            "`fyi` where the comment asks nothing of the user (a thank-you, an OK on what they "
            "did): no outcome then. `needs` takes `--outcome` and `--plan`; `fix` for every "
@@ -2666,14 +2677,14 @@ def judge_brief(state, iid, skip=()):
         out += ["A topic marked *plan agreed* had its plan agreed before the reviewer wrote "
                 "again (`plans` shows it). Where the new comment only acknowledges it (a "
                 "thank-you, \"sounds good\") and changes nothing about that plan, keep it: "
-                "`keep-plan <t> --why \"<one English sentence: what they said>\"`. Where it "
+                "`keep-plan <t> --why '<one English sentence: what they said>'`. Where it "
                 "asks for anything else, propose anew as above.", ""]
     for tid in todo:
         t = topic_for(state, tid)
         kinds, _ = news_of(state, t)
         # A topic keeps its name: what the reviewer wrote last is news, told in its story.
-        title = "" if t.get("summary") else (" (it has no name yet: add `--summary \"<English "
-                                             "one-liner: the point the reviewer first made>\"`)")
+        title = "" if t.get("summary") else (" (it has no name yet: add `--summary '<English "
+                                             "one-liner: the point the reviewer first made>'`)")
         what = "wrote again in its thread" if kinds == ["reply"] else "opened it"
         agreed = " (plan agreed)" if t.get("decision") else ""
         out.append(f"- {tid}{title}{agreed}: {first_name(_thread_by(state, tid)) or 'a reviewer'} {what}.")
@@ -3424,6 +3435,7 @@ def main():
     pm.add_argument("into")
     pm.add_argument("others", nargs="+")
     pm.add_argument("--iid", type=int)
+    iid_option(ap, sub)
     args = ap.parse_args()
     cmd = args.cmd or "sync"
 

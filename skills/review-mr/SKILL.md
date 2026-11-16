@@ -7,7 +7,8 @@ description: >-
 # Review MR
 
 Reviewing **someone else's** GitLab MR. glab-only; nothing reaches GitLab but what the user posts.
-`SD=~/.claude/skills/review-mr/scripts`.
+`SD=~/.claude/skills/review-mr/scripts`. Every call spells out `python3 $SD/findings.py <command>`:
+zsh, the shell here, runs no command kept in a variable.
 
 ## ⛔ Read this first — it is the whole skill
 

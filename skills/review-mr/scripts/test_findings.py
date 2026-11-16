@@ -2255,6 +2255,15 @@ class TestVerdict(unittest.TestCase):
         self.assertIn("`bodies t1`", brief)
         self.assertIn("a TODO with the ticket is enough", F.render_bodies(self.state, ["t1"]))
 
+    def test_the_brief_gives_commands_that_run_in_zsh_as_written(self):
+        """Mirrors test_threads.py's: texts full of backticks go in single quotes, and the
+        command is spelled out, never kept in a variable."""
+        with self.drawn():
+            brief = F.judge_brief(self.state, 1)
+        self.assertIn(F.SHELL_FORM, brief)
+        self.assertNotIn('"<', brief)
+        self.assertIn("--text '<", brief)
+
     def test_what_an_agent_failed_on_is_left_out_of_the_next_brief(self):
         with self.drawn():
             self.assertEqual(F.judge_brief(self.state, 1, skip=["t1"]), "")
@@ -3180,6 +3189,34 @@ class TestAuthorFixes(unittest.TestCase):
         self.t.update(state="acked", closed={"how": "fixed", "push": 2, "at": "2026-11-05T15:00:00Z"})
         with patch.object(F, "topic_status", return_value="acked"):
             self.assertIn("Robin fixed it (push 2) · you acked it", F.closing_line(self.state, self.t))
+
+
+class TestIidEitherSide(unittest.TestCase):
+    """`--iid` before the subcommand as well as after it (`findings.py --iid 3 sync`), and on a
+    command that is about no MR (`lang`) too. Mirrors test_threads.py's."""
+
+    def parsed(self, *argv):
+        import argparse
+        real = argparse.ArgumentParser.parse_args
+
+        def stop(self, args=None, namespace=None):
+            raise LookupError(real(self, args, namespace))
+        with patch.object(argparse.ArgumentParser, "parse_args", stop), \
+                patch.object(sys, "argv", ["findings.py", *argv]), \
+                self.assertRaises(LookupError) as got:
+            F.main()
+        a = got.exception.args[0]
+        return a.cmd, a.iid
+
+    def test_both_orders_and_both_given(self):
+        self.assertEqual(self.parsed("--iid", "3", "sync"), ("sync", 3))
+        self.assertEqual(self.parsed("sync", "--iid", "3"), ("sync", 3))
+        self.assertEqual(self.parsed("--iid", "3", "quote", "t1"), ("quote", 3))
+        self.assertEqual(self.parsed("--iid", "3", "sync", "--iid", "5"), ("sync", 5))
+        self.assertEqual(self.parsed("sync"), ("sync", None))
+
+    def test_a_command_about_no_mr_takes_it_too(self):
+        self.assertEqual(self.parsed("lang", "--iid", "3"), ("lang", 3))
 
 
 if __name__ == "__main__":

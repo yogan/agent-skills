@@ -2657,6 +2657,15 @@ class TestKeepPlan(unittest.TestCase):
         self.run_cli("propose", "t1", "--says", "fyi", "--why", "w", "--summary", "Cache key ignores locale")
         self.assertEqual(self.t1["summary"], "Cache key ignores locale")
 
+    def test_the_brief_gives_commands_that_run_in_zsh_as_written(self):
+        """Recorded agents kept `python3 <script>` in a variable (zsh runs no command from one)
+        and passed texts full of backticks in double quotes, where the shell runs them."""
+        self.t1["summary"] = None
+        brief = T.judge_brief(self.state, 1)
+        self.assertIn(T.SHELL_FORM, brief)
+        self.assertNotIn('"<', brief)                     # every text template single-quoted
+        self.assertIn("--why '<", brief)
+
     def test_an_acknowledgement_keeps_the_plan_and_the_card_says_so(self):
         self.assertEqual(T.step_of(self.state, self.t1), "plan")            # the reviewer wrote
         self.assertEqual(T.judge_list(self.state)["topics"], ["t1"])
@@ -3708,6 +3717,34 @@ class TestFixStoredWithoutTheMod(unittest.TestCase):
         t = saved[0]["topics"][0]
         self.assertEqual((t["fix"]["fixup"], t["fix"]["new"]), (["abc123 feat: a"], ["fix: b"]))
         self.assertEqual(t["proposal"]["why"], "judged meanwhile")
+
+
+class TestIidEitherSide(unittest.TestCase):
+    """`--iid` before the subcommand as well as after it, as a model writes it first (`threads.py
+    --iid 3 sync`), and on a command that is about no MR (`hunk-notes`) too."""
+
+    def parsed(self, *argv):
+        real = argparse.ArgumentParser.parse_args
+
+        def stop(self, args=None, namespace=None):
+            raise LookupError(real(self, args, namespace))
+        with mock.patch.object(argparse.ArgumentParser, "parse_args", stop), \
+                mock.patch.object(sys, "argv", ["threads.py", *argv]), \
+                self.assertRaises(LookupError) as got:
+            T.main()
+        a = got.exception.args[0]
+        return a.cmd, a.iid
+
+    def test_both_orders_and_both_given(self):
+        self.assertEqual(self.parsed("--iid", "3", "sync"), ("sync", 3))
+        self.assertEqual(self.parsed("sync", "--iid", "3"), ("sync", 3))
+        self.assertEqual(self.parsed("--iid", "3", "quote", "t1"), ("quote", 3))
+        self.assertEqual(self.parsed("--iid", "3", "sync", "--iid", "5"), ("sync", 5))
+        self.assertEqual(self.parsed("sync"), ("sync", None))
+
+    def test_a_command_about_no_mr_takes_it_too(self):
+        self.assertEqual(self.parsed("hunk-notes", "--iid", "3"), ("hunk-notes", 3))
+        self.assertEqual(self.parsed("--iid", "3", "check-handles"), ("check-handles", 3))
 
 
 if __name__ == "__main__":

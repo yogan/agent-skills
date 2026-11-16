@@ -112,6 +112,7 @@ from lib import code_view, critical_manifest, diffsize, fix_refs, focus, hunk, p
 from lib.fences import (LINK_ICON, SUGGESTION_INFO, YOU, block_lang, fence, suggestion_reach,  # noqa: E402
                         diff_info, lang_for, note_md, quoted_fence, segments,
                         suggestion_diff, when_of)
+from lib.cli import iid_option  # noqa: E402
 from lib.gitlab import (api, api_post, approve, context, current_user, die, file_at, mr_base, remember_user,  # noqa: E402
                         mr_head, mr_object, mr_status, mr_view, versions, web_base)
 from lib.mr_common import (DEFAULT_LANG, LANG_GIVEAWAYS, MR_LEVEL, first_name, people,  # noqa: E402
@@ -2214,6 +2215,16 @@ def judge_list(state):
             "own": unsettled_own(state) if state.get("own_review") in ("done", "skipped") else []}
 
 
+# How a background agent writes its commands, said in its brief. Both are the forms its first
+# calls got wrong in recorded runs: a variable holding `python3 <script>` run as the command
+# (zsh splits no variable into words, so it fails), and a text in double quotes with backticks
+# in it, which the shell runs as a command and cuts out of the text.
+# Mirrors rework-mr's threads.py's SHELL_FORM, word for word.
+SHELL_FORM = ("Spell that out in full in every call: zsh, the shell here, runs no command kept "
+              "in a variable. Pass every text in single quotes, an apostrophe in it as `'\\''`: "
+              "inside double quotes the shell runs whatever is in backticks.")
+
+
 def judge_brief(state, iid, skip=()):
     """The task the mod hands its background agent when the update check found news: each
     item with what to read and what to store, but those in `skip` (what an agent failed on
@@ -2227,8 +2238,8 @@ def judge_brief(state, iid, skip=()):
     out = [f"New activity arrived on GitLab MR !{iid} while the user reviews it. Judge it in "
            "the background, so that each topic's card carries your judgment by the time the "
            "user opens it. Nobody reads your replies: only what you store counts.",
-           "", f"Run every command as `{run}`. Store with the commands below and nothing "
-           "else: never post, resolve, open or show anything (no `post`, `resolve`, `open`, "
+           "", f"Run every command as `{run}`. {SHELL_FORM} Store with the commands below "
+           "and nothing else: never post, resolve, open or show anything (no `post`, `resolve`, `open`, "
            "`later`, `quote --focus`, `show_topic`).", ""]
     if j["topics"]:
         out += [f"Read first, once for all of them: `bodies {' '.join(j['topics'])}` (their "
@@ -2241,11 +2252,11 @@ def judge_brief(state, iid, skip=()):
         if peer_waiting(state, t):
             who = t.get("by") or "someone else"
             title = "" if t.get("summary") and not t.get("needs_title") else \
-                " --summary \"<English one-liner>\""
+                " --summary '<English one-liner>'"
             out += [f"- {tid}: a thread by {who}, new or with new comments. It is {who}'s to "
                     f"settle; the user watches it and steps in only when they have something "
                     f"to add. Read it (in `bodies`) and store your view: `peer {tid} fyi|needs "
-                    f"--unless-judged{title} --why \"<1–2 English sentences: what it says>\"`. "
+                    f"--unless-judged{title} --why '<1–2 English sentences: what it says>'`. "
                     f"`needs` only when it is the user's to answer: a question to them, a point "
                     f"that repeats or contradicts one of their topics (`--advice merge --into "
                     f"<t>`), or one they would want to clarify (`--advice reply`); its --why then "
@@ -2254,9 +2265,9 @@ def judge_brief(state, iid, skip=()):
         kinds, _ = news_of(state, t)
         # The recap is about the comment, so a topic keeps the one it was first given.
         asked = "" if t.get("asked") else (
-            " --asked \"<one sentence: the problem the comment raised and what it asked for, "
-            "e.g. '`save()` drops its promise, so a failed write goes unnoticed; asked for an "
-            "`await`.'>\"")
+            " --asked '<one sentence: the problem the comment raised and what it asked for, "
+            "e.g. `save()` drops its promise, so a failed write goes unnoticed; asked for an "
+            "`await`.>'")
         near = bool((pushed_of(state, t) or {}).get("near"))
         what = (("the author pushed a change to the file the comment is on, though not to its "
                  "lines, and said nothing: it may answer the comment from beside it, or be "
@@ -2267,10 +2278,10 @@ def judge_brief(state, iid, skip=()):
                 if near else "the author answered")
         out += [f"- {tid} ({t.get('summary') or 'no summary'}): {what}. Read the thread "
                 f"(in `bodies`) and the change since the comment (`diff {tid}`), then store "
-                f"one verdict: `verdict {tid} settled|more|wait --unless-judged{asked} --did \"<one sentence: what "
-                f"the author did, e.g. 'Pushed the `await` on the commented line; no reply.'>\" "
-                f"--text \"<1–3 sentences: whether it holds and why>\"`. Code in backticks (`persistDb`, "
-                f"`await persistDb('comment')`), as a card shows it as code. `settled` when the "
+                f"one verdict: `verdict {tid} settled|more|wait --unless-judged{asked} --did '<one sentence: what "
+                f"the author did, e.g. Pushed the `await` on the commented line; no reply.>' "
+                f"--text '<1–3 sentences: whether it holds and why>'`. Code in backticks (`persistDb`, "
+                f"`await persistDb(comment)`), as a card shows it as code. `settled` when the "
                 f"comment is answered; `more` takes `--case not-fixed|partly-fixed|fix-wrong|"
                 f"comment-wrong` (the last when the author did as asked and the comment itself "
                 f"was mistaken) and ends its text on one next step (a reply asking for X, "
@@ -2283,11 +2294,11 @@ def judge_brief(state, iid, skip=()):
         out += ["", "Comments the user posted on GitLab themselves since the topics started. "
                 "Compare each with the topics by what it says (file and line are a hint, never "
                 "the test), and settle every one:",
-                "`propose <discussion_id> --into <t> --summary \"<English one-liner>\" --why "
-                "\"<what both say, and where they differ>\" [--recommend separate|link]` for the "
+                "`propose <discussion_id> --into <t> --summary '<English one-liner>' --why "
+                "'<what both say, and where they differ>' [--recommend separate|link]` for the "
                 "same point as a topic (merge is the default; `link` when it is that topic's own "
                 "draft, posted by hand), or `add --thread <discussion_id> --source human --file "
-                "<f> --line <n> --summary \"<English one-liner>\"` for a point of its own.", ""]
+                "<f> --line <n> --summary '<English one-liner>'` for a point of its own.", ""]
         for tid in j["own"]:
             x = state["threads"].get(tid) or {}
             out.append(f"- {tid} at {_thread_loc(x) or MR_LEVEL}: "
@@ -3739,6 +3750,7 @@ def main():
                          "topic's file (the 'I just posted it by hand' case)")
     pl.add_argument("--iid", type=int)
     pl.add_argument("--start-sha", dest="start_sha")
+    iid_option(ap, sub)
 
     args = ap.parse_args()
     cmd = args.cmd or "sync"

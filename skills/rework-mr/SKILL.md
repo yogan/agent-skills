@@ -70,7 +70,8 @@ A reply that has no pasted table, touches more than one topic, or edits code is 
 
 ## The opener — your first reply, exactly this
 
-Do the prep silently (it prints nothing the user needs):
+Do the prep silently (it prints nothing the user needs). Every call, here and later, spells out
+`python3 $SD/threads.py <command>`: zsh, the shell here, runs no command kept in a variable.
 
 ```bash
 python3 $SD/threads.py sync                        # fetch + reconcile
