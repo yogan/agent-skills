@@ -1346,7 +1346,9 @@ class TestCodeContext(unittest.TestCase):
         self.assertNotIn("+const line10 = 100", out)
         self.assertNotIn("Agreed plan", out)
         self.assertIn(f"{T.ui.STEP_DONE_ICON} You agreed the plan: Make it 100, as the reviewer asked, and say so in the docs too.", out)
-        self.assertIn(f"{T.ui.STEP_DONE_ICON} You pushed a fix · {T.diffsize.text(1, 1, 1)} · [diff {LINK_ICON}](http://gl/d)", out)
+        # Its size is the sidebar's to say, over the fix's files: not counted here again.
+        self.assertIn(f"{T.ui.STEP_DONE_ICON} You pushed a fix · [diff {LINK_ICON}](http://gl/d)", out)
+        self.assertNotIn(T.diffsize.text(1, 1, 1), out)
         # Not posted yet: nothing waits on the reviewer.
         self.assertNotIn("You replied", out)
         self.assertNotIn("Waits on", out)
@@ -2816,6 +2818,43 @@ class TestFixInTheSidebar(unittest.TestCase):
         self.assertEqual(got["commented"], "b.ts")
         # A name that is not the fix's shows the comment's file, as with no pick.
         self.assertEqual(self.run_code("--file", "elsewhere.ts")[1]["path"], "b.ts")
+
+
+class TestPushedFixInTheSidebar(unittest.TestCase):
+    """A pushed fix kept in git is what the sidebar opens on, whichever of its files: the
+    comment's where the fix touched it, else the fix's first."""
+
+    def run_code(self, stat, *extra):
+        state = TestRounds.state(1)
+        state["threads"]["d1"].update(file="b.ts", line=2, head_sha="H")
+        T.topic_for(state, "t1")["diff_url"] = "u"
+        seen = {}
+
+        def view(root, path, line, *a, **k):
+            seen.update(path=path, line=line, base=k.get("base"), commit=k.get("commit"))
+            return {"file": path, "rows": [["+", None, 1, "x"]], "at": [1, 1]}
+        with mock.patch.object(sys, "argv", ["threads.py", "code", "t1", "--iid", "1", *extra]), \
+                mock.patch.object(T, "load", return_value=state), mock.patch.object(T, "save"), \
+                mock.patch.object(T, "state_file", return_value="/state"), \
+                mock.patch.object(T, "context", return_value={"slug": "g-p", "enc": "g%2Fp", "web": "https://gl/g/p"}), \
+                mock.patch.object(T, "kept_fix", return_value=("A", "B")), \
+                mock.patch.object(T.fix_refs, "stat", return_value=stat), \
+                mock.patch.object(T.code_view, "view", side_effect=view), \
+                mock.patch.object(T.code_view, "now_at", side_effect=lambda r, s, p, c=None: p), \
+                mock.patch("sys.stdout", new_callable=io.StringIO) as out:
+            T.main()
+        return json.loads(out.getvalue()), seen
+
+    def test_the_comment_s_file_as_the_fix_changed_it(self):
+        got, seen = self.run_code([("a.ts", 4, 4), ("b.ts", 1, 1)])
+        self.assertEqual((got["mode"], seen["path"], seen["base"], seen["commit"]), ("pushed", "b.ts", "A", "B"))
+
+    def test_a_fix_that_left_the_comment_s_file_alone_opens_on_its_first_file(self):
+        """It showed the comment's file as the MR changes it ("new file"), the fix's files
+        listed under it, and no change of the fix on screen until one was picked."""
+        got, seen = self.run_code([("a.ts", 4, 4), ("c.ts", 1, 0)])
+        self.assertEqual((got["mode"], seen["path"], seen["line"]), ("pushed", "a.ts", None))
+        self.assertEqual((got["commented"], got["fix_files"]), ("b.ts", [["a.ts", 4, 4], ["c.ts", 1, 0]]))
 
 
 class TestChangeBlocks(unittest.TestCase):

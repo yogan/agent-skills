@@ -1736,10 +1736,34 @@ class TestStateForTheMod(unittest.TestCase):
                     redirect_stdout(io.StringIO()) as out:
                 F.main()
             return json.loads(out.getvalue())
+        # The comment's own file is shown as the fix changes it too, the commit before the
+        # fix to the one it made: drawn as the MR changes it, a file the MR adds was all
+        # new, and what the author did about the comment could not be told from the rest.
         got = code()
-        self.assertEqual((got["fix_files"], got["commented"], got["mode"]), ([list(f) for f in files], "a.ts", "mr"))
+        self.assertEqual((got["fix_files"], got["commented"], got["mode"]), ([list(f) for f in files], "a.ts", "pushed"))
+        self.assertEqual(shown[-1], ("a.ts", 1, "A"))
         got = code("--file", "b.ts")
         self.assertEqual((got["file"], got["mode"], shown[-1]), ("b.ts", "pushed", ("b.ts", None, "A")))
+
+    def test_a_fix_not_kept_in_git_is_shown_as_the_change_since_the_comment(self):
+        state = new_state()
+        state["iid"] = 7
+        F.add_topic(state, summary="a", file="a.ts", line=1)
+        state["topics"][0].update(thread_ids=["d1"], fixes=[{"before": "B", "after": "C"}])
+        state["threads"] = {"d1": {"file": "a.ts", "line": 1, "side": "new", "head_sha": "B"}}
+        bases = []
+
+        def view(repo, path, line, *a, **k):
+            bases.append(k.get("base"))
+            return {"file": path, "line": line, "side": "new", "rows": [["+", None, 1, "x"]], "at": [1, 1]}
+        with patch.object(F, "resolve_state", return_value=(CTX, 7, "/s", state)), \
+                patch.object(F, "get_worktree", return_value="/wt"), \
+                patch.object(F, "picked_fix", return_value={"ends": None}), \
+                patch.object(F.code_view, "view", side_effect=view), \
+                patch.object(sys, "argv", ["findings.py", "code", "t1", "--iid", "7"]), \
+                redirect_stdout(io.StringIO()) as out:
+            F.main()
+        self.assertEqual((json.loads(out.getvalue())["mode"], bases), ("since", ["B"]))
 
     def test_a_view_names_its_review_and_the_draft_it_shows(self):
         state = new_state()
@@ -2222,16 +2246,18 @@ class TestVerdict(unittest.TestCase):
         self.assertRegex(card.splitlines()[-1], rf"^(Nov 5, )?\d\d:30 {F.ui.STEP_DONE_ICON} Alex pushed a fix")
         self.assertNotIn("replied", card)          # the push came after the reply
 
-    def test_a_file_the_author_removed_is_said_in_a_line_under_what_they_did(self):
+    def test_an_answered_card_carries_no_copy_of_the_change(self):
+        """The sidebar shows the author's change, every file of it, old and new: the same
+        hunk on the card under "What Alex did" was the same code twice on one screen."""
         self.state["threads"]["d1"].update(file="a.ts", line=3, side="new", head_sha="B")
-        self.t["verdict"] = {"says": "settled", "text": "Gone with the file.", "did": "Removed the file.",
+        self.t["verdict"] = {"says": "settled", "text": "Awaited now.", "did": "Pushed the await.",
                              "on": F.answer_mark(self.state, self.t)}
         with self.drawn(), patch.object(F, "get_worktree", return_value="/wt"), \
-                patch.object(F.code_view, "since_fence", return_value=None), \
-                patch.object(F.code_view, "removed_since", return_value=True) as removed:
+                patch.object(F.code_view, "since_fence", return_value=["```diff path=a.ts", "-x", "+y", "```"]) as fence:
             card = F.render_quote(self.state, "t1")
-        removed.assert_called_once_with("/wt", "B", "a.ts")
-        self.assertLess(card.index("Removed the file."), card.index("_Since removed._"))
+        fence.assert_not_called()
+        self.assertIn("Pushed the await.", card)
+        self.assertNotIn("```", card)
 
     def test_a_verdict_without_a_recap_goes_straight_to_what_was_done(self):
         self.t["verdict"] = {"says": "settled", "text": "Done.", "did": "Pushed it.",

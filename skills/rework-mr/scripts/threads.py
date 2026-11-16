@@ -1371,17 +1371,15 @@ def pushed_steps(state, t):
     # The plan whole up to about five lines of a card: it is what the fix is judged against.
     plan = _gist(t.get("plan"))
     out = [ui.step_md(done, f"You agreed the plan: {plan}" if plan else "You agreed the plan", t.get("plan_at"))]
-    root = (_git("rev-parse", "--show-toplevel") or "").strip()
 
     def said(f):
-        stat = fix_refs.stat(root, f["ends"]) if f.get("ends") else None
-        size = f" · {diffsize.of_stat(stat)}" if stat else ""
+        # Its size is the sidebar's to say, over the fix's files (mirrors findings.py's).
         link = f" · {ui.link_md('diff', f['url'])}" if f.get("url") else ""
         # A push that was another topic's too says which; one that carried more than the fix
         # (a rebase, other commits) says it may hold more. Mirrors findings.py's `answer_steps`.
         also = [x["id"] for x in state["topics"] if x is not t and f.get("after")
                 and any(p.get("after") == f["after"] for p in x.get("pushes") or [])]
-        return size + link + (f" · also {', '.join(also)}" if also
+        return link + (f" · also {', '.join(also)}" if also
                               else " · may include other changes" if f.get("mixed") else "")
 
     def differs(f, indent=0):
@@ -3765,11 +3763,13 @@ def main():
         else:
             ends = kept_fix(state, t, args.push)
             files = [[f, a, r] for f, a, r in fix_refs.stat(root, ends)] if ends else []
-            names = [f for f, _a, _r in files]
-            if files and (args.file in names or code_view.commented(root, x) in names):
-                v = code_view.fix_view(root, x, files, args.file, *ends)
-                if v:
-                    v["mode"] = "pushed"      # the rows are the pushed fix's change
+            # The pushed fix's change, whichever of its files is shown: the one picked, the
+            # comment's where the fix touched it, else the fix's first. A fix that left the
+            # comment's file alone showed that file as the MR changes it, with the fix's
+            # files listed under it and no change of the fix on screen until one was picked.
+            v = code_view.fix_view(root, x, files, args.file, *ends) if files else None
+            if v:
+                v["mode"] = "pushed"          # the rows are the pushed fix's change
             else:
                 v = code_view.view(root, x.get("file"), x.get("line_end") or x.get("line"),
                                    x.get("head_sha"), start=x.get("line_start"),

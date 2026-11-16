@@ -1391,13 +1391,12 @@ def answer_steps(state, t):
 
     out = []
     fixes = kept_fixes(state, t)
-    wt = get_worktree(state.get("slug") or "", state.get("iid")) if fixes else None
 
     def said(f):
-        stat = fix_refs.stat(wt, f["ends"], f.get("paths")) if wt and f.get("ends") else None
+        # Its size is the sidebar's to say, over the fix's files: here it was a second
+        # count of the same change.
         also = shared_with(state, t, f)
-        return ((f" · {diffsize.of_stat(stat)}" if stat else "")
-                + (f" · {ui.link_md('diff', f['url'])}" if f.get("url") else "")
+        return ((f" · {ui.link_md('diff', f['url'])}" if f.get("url") else "")
                 + (f" · also {', '.join(also)}" if also else "")
                 + (" · with a rebase" if f.get("rebase")
                    else " · may include other changes" if f.get("mixed") else ""))
@@ -1441,8 +1440,7 @@ def author_resolved(state, t):
 def render_answered(state, t, summ, v):
     """The card of a topic the author answered, where the mod draws: what the comment asked
     for (the agent's recap: the thread itself is in the sidebar), what the author did since
-    (the agent's sentence, and the code that changed on the comment's lines), and the
-    agent's verdict. The finding's own analysis and recommendation are history by now, and
+    (the agent's sentence; the change is the sidebar's), and the agent's verdict. The finding's own analysis and recommendation are history by now, and
     read as if the point still stood, so they are left out. A topic judged before recaps
     were has none, and the card goes from its title straight to what the author did."""
     x = state["threads"].get(t["thread_ids"][0], {})
@@ -1455,18 +1453,11 @@ def render_answered(state, t, summ, v):
         out += ["", ui.heading_md(ui.ASKED_ICON, whose), "", asked]
     author = first_name(state.get("author")) or "the author"
     did = (v.get("did") or "").strip()
-    part = ["", ui.heading_md(ui.DID_ICON, f"What {author} did")] + (["", did] if did else [])
-    # The code on the comment's lines since it was posted, once the worktree holds the push.
-    wt = get_worktree(state.get("slug") or "", state.get("iid"))
-    if wt and x.get("head_sha") and x.get("file") and x.get("line") and x.get("side") == "new":
-        first = x.get("line_start") or x["line"]
-        fence = code_view.since_fence(wt, x["head_sha"], x["file"], int(first), int(x["line"]))
-        if fence:
-            part += ["", *fence]
-        elif code_view.removed_since(wt, x["head_sha"], x["file"]):
-            part += ["", "_Since removed._"]
-    if did or len(part) > 2:
-        out += part
+    # What they did, in the agent's sentence. The change itself is the sidebar's, every file
+    # of it, old and new, with the diff viewer a press away: a second copy of part of it
+    # here was the same code twice on one screen.
+    if did:
+        out += ["", ui.heading_md(ui.DID_ICON, f"What {author} did"), "", did]
     out += ["", ui.heading_md(ui.VERDICT_ICON, f"Verdict: {verdict_word(state, t, v)}"), "",
             v["text"].strip()]
     # What the author did, then what closed it: one timeline, the latest event last.
@@ -3770,27 +3761,34 @@ def main():
             line = (x or {}).get("line") or t.get("line")
             since = (x or {}).get("head_sha")
         wt = get_worktree(state.get("slug") or "", state.get("iid"))
+        fix = picked_fix(state, t, args.push) if not args.thread else None
+        ends = (fix or {}).get("ends")
+        files = [[f, a, r] for f, a, r in fix_refs.stat(wt, ends, fix.get("paths"))] if ends else []
         # Since the comment: what the author did about it, the diff from the code it was
-        # posted on (a topic whose lines a push changed opens on it in the sidebar).
-        mine = bool(args.since_comment and since and (x or {}).get("side") != "old")
+        # posted on. Asked for by the sidebar for a topic whose news is a push, and what a
+        # topic with a fix of the author's falls back to where the fix is not kept in git
+        # (the worktree not fetched since): never the MR's whole change, in which a file the
+        # MR adds is all new and the fix cannot be told from the rest.
+        mine = bool((args.since_comment or (not args.thread and fixes_of(t) and not files))
+                    and since and (x or {}).get("side") != "old")
         v = code_view.view(wt, file, line, since, start=(x or {}).get("line_start"),
                            side=(x or {}).get("side") or "new",
                            base=since if mine else state.get("diff_base"))
+        if files:
+            # The author's fix, kept in git: every file of it is shown the same way, as the
+            # fix changes it, old and new (the commit before it to the one it made), the
+            # comment's own file too. The verdict on the card is about this change, so it
+            # is what the sidebar opens on: GitLab's "compare with previous version".
+            picked = code_view.fix_view(wt, x or {}, files, args.file, *ends)
+            if picked:
+                v = {**picked, "mode": "pushed"}
+            elif v:
+                # The fix's files with their sizes, under the file: the viewer's.
+                v.update(fix_files=files, commented=code_view.commented(wt, x or {}))
         if v:
-            v["mode"] = "since" if mine else "mr"
+            v.setdefault("mode", "since" if mine else "mr")
             push = pushed_of(state, t) if not args.thread else None
             v["since_at"] = (push or {}).get("at")
-            fix = picked_fix(state, t, args.push) if not args.thread else None
-            ends = (fix or {}).get("ends")
-            files = [[f, a, r] for f, a, r in fix_refs.stat(wt, ends, fix.get("paths"))] if ends else []
-            if files and args.file and args.file != code_view.commented(wt, x or {}):
-                # Another file of the author's fix, picked in the sidebar: its change in it.
-                picked = code_view.fix_view(wt, x or {}, files, args.file, *ends)
-                if picked:
-                    v = {**picked, "mode": "pushed"}
-            if files:
-                # The author's fix's files with their sizes, under the file: the viewer's.
-                v.update(fix_files=files, commented=code_view.commented(wt, x or {}))
         if v and v["line"] and v["side"] == "new" and not args.thread:
             # Where the code the topic names begins, as its card's snippet reaches back to.
             at = _anchor_view(code_view.new_lines(v), v["line"], _names(t.get("summary")))[0]

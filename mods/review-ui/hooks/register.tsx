@@ -2057,9 +2057,11 @@ export const register: Register = on => {
     // `middle`: a key after the line's words, a short stretch of line between them, the rest
     // of the line after it. `inline`: keys within the words, after the first of them. `lead`:
     // keys that open the line, before any words.
+    // `isFlush`: the right element ends the line, with no rule after it, where it has to sit
+    // in the columns of the rows under it (a fix's total over its files' sizes).
     const rule = (key: string, segs: Seg[], right?: { el: JSX.Element; width: number }, middle?: { el: JSX.Element; width: number },
-      inline?: { el: JSX.Element; width: number }, lead?: { el: JSX.Element; width: number }) => {
-      const tail = (right ? right.width + 3 : 1) + (middle ? middle.width + 2 : 0) + (inline?.width ?? 0) + (lead?.width ?? 0)
+      inline?: { el: JSX.Element; width: number }, lead?: { el: JSX.Element; width: number }, isFlush = false) => {
+      const tail = (right ? right.width + (isFlush ? 1 : 3) : 1) + (middle ? middle.width + 2 : 0) + (inline?.width ?? 0) + (lead?.width ?? 0)
       const room = Math.max(4, cols - 4 - tail - 1)
       let parts = segs.filter(x => x.text)
       const total = () => parts.reduce((n, x) => n + cells(x.text), 0)
@@ -2090,7 +2092,7 @@ export const register: Register = on => {
           {middle && <Text dimColor>{` ${'─'.repeat(Math.max(1, dashes - before))}`}</Text>}
           {right && <Text> </Text>}
           {right?.el}
-          <Text dimColor>{right ? ' ─' : '─'}</Text>
+          {!(right && isFlush) && <Text dimColor>{right ? ' ─' : '─'}</Text>}
         </Box>
       )
     }
@@ -2653,8 +2655,20 @@ export const register: Register = on => {
     const pathCut = (f: string, width: number) => (cells(f) <= width ? f : `…${[...f].slice(cells(f) - width + 1).join('')}`)
     let filesPart: JSX.Element | null = null
     if (code && fixFiles.length > 0) {
-      const addedWidth = Math.max(...fixFiles.map(([, a]) => `+${a}`.length), 0)
-      const sizeWidth = addedWidth + 1 + Math.max(...fixFiles.map(([, , d]) => `−${d}`.length), 0)
+      // The fix's total stands over its files' sizes, in their columns: each number is
+      // right-aligned, so units sit under units (+15 over +2), the total's among them.
+      const sumAdded = fixFiles.reduce((n, [, a]) => n + a, 0)
+      const sumRemoved = fixFiles.reduce((n, [, , d]) => n + d, 0)
+      const addedWidth = Math.max(...fixFiles.map(([, a]) => `+${a}`.length), `+${sumAdded}`.length)
+      const removedWidth = Math.max(...fixFiles.map(([, , d]) => `−${d}`.length), `−${sumRemoved}`.length)
+      const sizeWidth = addedWidth + 1 + removedWidth
+      const sizeOfFix = (a: number, d: number, key: string) => (
+        <Box key={key} flexDirection="row">
+          <Text color="green">{`+${a}`.padStart(addedWidth)}</Text>
+          <Text>{' '}</Text>
+          <Text color="red">{`−${d}`.padStart(removedWidth)}</Text>
+        </Box>
+      )
       // A row: the bar, the file's icon and a space, its path (whole where it fits: two of a
       // fix's files often share a name, `query-keys.ts` per feature), the comment's mark
       // where it is the comment's file, and its size at the right edge, clear of the arrows
@@ -2683,9 +2697,7 @@ export const register: Register = on => {
             </Button>
             {isCommented && <Text color={ACCENT}>{` ${COMMENTED}`}</Text>}
             <Text>{' '.repeat(Math.max(1, nameWidth - cells(name) - (isCommented ? 2 : 0)) + 2)}</Text>
-            <Text color="green">{`+${a}`.padEnd(addedWidth)}</Text>
-            <Text>{' '}</Text>
-            <Text color="red">{`−${d}`}</Text>
+            {sizeOfFix(a, d, `file-size-${f}`)}
           </Box>
         )
       })
@@ -2724,10 +2736,19 @@ export const register: Register = on => {
       const chip = hunk && drawChip({ Box, Button, Text }, { ...hunk, key: 'files-hunk', isPrimary: undefined },
         () => { void press(hunk)({ surface: 'terminal' }) })
       const lead = chip ? { el: chip, width: cells(hunkLabel) + 4 } : undefined
+      // The fix's size, at the line's right end over the files' own: said once for the fix
+      // (a card's "pushed a fix" no longer repeats it), and only where it is more than the
+      // one file's size under it. Clear of the arrows where the list scrolls, as the rows are.
+      const barPad = fixFiles.length > filesShown ? BAR : 0
+      const total = fixFiles.length > 1
+        ? { el: <Box key="files-total" flexDirection="row">{sizeOfFix(sumAdded, sumRemoved, 'files-total-size')}<Text>{' '.repeat(barPad)}</Text></Box>, width: sizeWidth + barPad }
+        : undefined
+      const atRight = picker && total
+        ? { el: <Box key="files-right" flexDirection="row">{picker}<Text>{'  '}</Text>{total.el}</Box>, width: cells(pushLabel) + 3 + 2 + total.width }
+        : total ?? (picker ? { el: picker, width: cells(pushLabel) + 3 } : undefined)
       filesPart = (
         <Box key="files" flexDirection="column">
-          {rule('files-line', [], picker ? { el: picker, width: cells(pushLabel) + 3 } : undefined,
-            undefined, undefined, lead)}
+          {rule('files-line', [], atRight, undefined, undefined, lead, !!total)}
           {fileRows.length > 0 && areaRows(`files:${code.base}`, fileRows, filesShown, filesTop, 0, null)}
         </Box>
       )

@@ -2014,6 +2014,35 @@ test("rework-mr: a pushed fix is the sidebar's files area, all its files, its vi
   expect(w.ran.map(r => r.argv.slice(2).join(' '))).toContain('hunk-show t1 --pushed --iid 42')
 })
 
+// "+15 / +2 / +3" stood left-aligned, the 5 over nothing; and the fix's total was on the
+// card's "pushed a fix" line, a second count beside the files' own.
+test("a fix's total stands over its files' sizes, every number right-aligned in its column", async ($, on) => {
+  const code = codeOf(20, [3, 3], { mode: 'pushed', file: 'src/a.ts', commented: 'src/a.ts',
+    fix_files: [['src/a.ts', 15, 4], ['src/b.ts', 2, 10], ['src/c.ts', 3, 0]] })
+  const w = world(on, [reworkState('t1', [reworkTopic('t1', 'reply', { pushed: true, fix_kept: true, pushes: 1 })])], { code: { stdout: JSON.stringify(code) } })
+  await openRework($, w, reworkView('t1'))
+  const panel = await $.ui.mount({ ...PANEL, surface: 'terminal' })
+  const sizes = async (key: string) => [...JSON.stringify(await panel.find({ type: 'Box', key })).matchAll(/"text":"([^"]*)"/g)]
+    .map(m => m[1]).join('')
+  expect(await sizes('files-total-size')).toBe('+20 −14')
+  expect(await sizes('file-size-src/a.ts')).toBe('+15  −4')
+  expect(await sizes('file-size-src/b.ts')).toBe(' +2 −10')
+  expect(await sizes('file-size-src/c.ts')).toBe(' +3  −0')
+  // The total ends the line: no rule after it, so it sits in the rows' columns.
+  const line = JSON.stringify((await panel.find({ type: 'Box', key: 'files-line' }))?.children ?? [])
+  expect(line.slice(line.indexOf('files-total-size'))).not.toMatch(/─/)
+  await panel.unmount()
+})
+
+test("a fix of one file has no total over it: the file's own size says it", async ($, on) => {
+  const code = codeOf(20, [3, 3], { mode: 'pushed', file: 'src/a.ts', commented: 'src/a.ts', fix_files: [['src/a.ts', 2, 1]] })
+  const w = world(on, [reworkState('t1', [reworkTopic('t1', 'reply', { pushed: true, fix_kept: true, pushes: 1 })])], { code: { stdout: JSON.stringify(code) } })
+  await openRework($, w, reworkView('t1'))
+  const panel = await $.ui.mount({ ...PANEL, surface: 'terminal' })
+  expect(await panel.find({ type: 'Box', key: 'files-total-size' })).toBeUndefined()
+  await panel.unmount()
+})
+
 test("rework-mr: a fix pushed twice picks its push in the files area's line, the files and the viewer's key following it", async ($, on) => {
   const latest = codeOf(20, [3, 3], { mode: 'pushed', file: 'src/a.ts', commented: 'src/a.ts', fix_files: [['src/a.ts', 2, 1]] })
   const first = codeOf(20, [3, 3], { mode: 'pushed', file: 'src/a.ts', commented: 'src/a.ts', fix_files: [['src/a.ts', 1, 1], ['src/b.ts', 5, 0]] })
