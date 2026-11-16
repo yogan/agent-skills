@@ -1763,16 +1763,30 @@ def notes_store(root):
 
 
 def viewer_notes(root):
-    """The user's notes on the fix, wherever they are now: `(session, live, left)`. `session`
-    is this session's open diff viewer or None; `live` its notes (None where it could not
-    be asked, which is never "none"); `left` the notes of a viewer closed since, from the
-    copy every read of a live one leaves on disk. Unread, either kind holds the push."""
+    """The user's notes on the fix, wherever they are now: `(session, live, left, spent)`.
+    `session` is this session's open diff viewer or None; `live` its notes, those on files
+    hidden as read included (None where it could not be asked, which is never "none");
+    `left` the notes of a viewer closed since, from the copy every read of a live one leaves
+    on disk and from the files the keep-notes Hunk extension wrote for this session's
+    viewers of `root`; `spent` those extension files, to remove once `left` has been
+    printed. Unread, either kind holds the push.
+
+    A note is listed once: the copy and the extension's file hold the same notes by the same
+    ids, and a note still in the live viewer is not also a closed one's."""
     sid = (root and hunk.installed() and hunk.find_session(root, hunk.owner_id())) or None
     store = notes_store(root)
     live = hunk.user_notes(sid) if sid else []
     if sid and live is not None and store:
         hunk.keep_notes(store, sid, live)
-    return sid, live, (hunk.kept_notes(store, but=sid) if store else [])
+    closed = hunk.closed_viewer_notes(root, hunk.owner_id()) if root else []
+    seen, left = {n[4] for n in live or []}, []
+    for n in [*(hunk.kept_notes(store, but=sid) if store else []),
+              *(n for _path, notes in closed for n in notes)]:
+        if n[4] and n[4] in seen:
+            continue
+        seen.add(n[4])
+        left.append(n)
+    return sid, live, left, [path for path, _notes in closed]
 
 
 def hunk_window():
@@ -1781,7 +1795,7 @@ def hunk_window():
     asked), those of a viewer closed since among them. Asked while a fix waits for its push,
     where the card offers to read the notes."""
     root = (_git("rev-parse", "--show-toplevel") or "").strip()
-    sid, live, left = viewer_notes(root)
+    sid, live, left, _spent = viewer_notes(root)
     return {"open": bool(sid), "notes": None if live is None else len(live) + len(left)}
 
 
@@ -3031,7 +3045,7 @@ def push_fix(ctx, iid, path, tid, committed=False):
         raise Handoff(f"The repository's checks changed since they ran on {tid}'s fix "
                       f"({why or 'the record was written again'}): run `threads.py verify "
                       f"{tid}` and show the fix again.")
-    sid, left, closed = viewer_notes(root)
+    sid, left, closed, _spent = viewer_notes(root)
     if left is None:
         # Unread is not none: a note the user left could be the reason not to push.
         raise Handoff(f"The diff viewer's notes on {tid}'s fix could not be read: run "
@@ -3556,7 +3570,7 @@ def main():
         # "no output" is the common answer and the one that means "go ahead and push".
         # Which is exactly why every OTHER outcome has to say something — see below.
         root = (_git("rev-parse", "--show-toplevel") or "").strip()
-        sid, notes, closed = viewer_notes(root)
+        sid, notes, closed, spent = viewer_notes(root)
         if notes is None:
             die(
                 "could not read the viewer's notes — the daemon did not answer. This is "
@@ -3576,6 +3590,9 @@ def main():
             hunk.drop_note(sid, nid)
         if store := notes_store(root):
             hunk.forget_notes(store)
+        # Only the closed viewers' files read above, all of whose notes were just printed;
+        # never the open viewer's, which goes on recording the notes still to come.
+        hunk.forget_viewer_files(spent)
         return
 
     if cmd == "hunk-close":

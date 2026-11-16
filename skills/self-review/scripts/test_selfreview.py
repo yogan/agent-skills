@@ -25,6 +25,14 @@ sys.path.insert(0, HERE)
 import selfreview as S  # noqa: E402
 
 
+def setUpModule():
+    """Never read the notes the keep-notes Hunk extension saved on this machine: they would
+    add notes to what the faked viewer lists."""
+    stub = patch.object(S.hunk, "keep_dir", lambda: None)
+    stub.start()
+    unittest.addModuleCleanup(stub.stop)
+
+
 def sh(*args, cwd):
     subprocess.run(args, cwd=cwd, check=True, capture_output=True, text=True)
 
@@ -271,7 +279,7 @@ class TestReply(unittest.TestCase):
         self.assertIsNone(S.resolve("3", self.NOTES))
         self.assertIsNone(S.resolve("user:404", self.NOTES))
 
-    def run_reply(self, ref, lands=True, posted=None):
+    def run_reply(self, ref, lands=True, posted=None, hidden=()):
         posted = [] if posted is None else posted
         state = {"notes": list(self.NOTES)}
 
@@ -285,6 +293,7 @@ class TestReply(unittest.TestCase):
 
         with patch.object(S, "own_session", lambda cwd=None: "s1"), \
                 patch.object(S.hunk, "notes", lambda sid: list(state["notes"])), \
+                patch.object(S.hunk, "whole_review", lambda sid: ([], [], list(hidden))), \
                 patch.object(S.hunk, "reply", post), \
                 contextlib.redirect_stdout(io.StringIO()), \
                 contextlib.redirect_stderr(io.StringIO()):
@@ -310,6 +319,16 @@ class TestReply(unittest.TestCase):
     def test_a_reply_missing_from_the_window_afterwards_is_an_error(self):
         with self.assertRaises(SystemExit):
             self.run_reply("2", lands=False)
+
+    def test_a_thread_on_a_hidden_file_says_why_no_reply_can_go_there(self):
+        """Hunk refuses a reply under a note on a file it hides ("no longer available as a
+        reply parent"); the thread itself is read, numbered as when nothing is hidden."""
+        posted, err = [], io.StringIO()
+        with self.assertRaises(SystemExit), contextlib.redirect_stderr(err):
+            self.run_reply("2", posted=posted, hidden=["f.txt"])
+        self.assertEqual(posted, [])
+        self.run_reply("2", posted=posted, hidden=["other.txt"])
+        self.assertEqual(posted, ["user:1792059099999-1"])
 
     def test_an_unknown_thread_posts_nothing(self):
         posted = []
@@ -392,6 +411,17 @@ class TestHidden(Repo):
         tree = S.snapshot(self.clone)
         write(self.path("later.txt"), "a fix made since the window was loaded\n")
         self.assertEqual(self.hidden(tree, [("new.txt", 1, 0)], ("vcs", None)), ["f.txt"])
+
+    def test_a_file_hidden_with_its_notes_kept_is_not_missing(self):
+        """With the keep-notes extension a hidden file is still loaded, and its notes read:
+        the guard has nothing to refuse."""
+        write(self.path("h.txt"), "h\n")
+        sh("git", "add", ".", cwd=self.clone)
+        commit(self.clone, "f.txt", "a\nB\nc\nd\ne\n", "four")
+        sha = S.commits(self.clone)[3][0]
+        whole = (sorted([("f.txt", 1, 0), ("h.txt", 1, 0)]), [("f.txt", 1, 0)], ["h.txt"])
+        with patch.object(S.hunk, "whole_review", lambda sid: whole):
+            self.assertEqual(self.hidden(sha, [("f.txt", 1, 0)], ("show", sha)), [])
 
     def test_a_window_that_cannot_be_read_hides_nothing(self):
         self.assertEqual(self.hidden("", None, None), [])
@@ -495,7 +525,7 @@ class TestPoint(unittest.TestCase):
     """The agent's own diff note, started only because the author asked for a place to be
     pointed out."""
 
-    def run_point(self, lands=True, side="new"):
+    def run_point(self, lands=True, side="new", hidden=()):
         w = FakeWindow([])
         added = []
 
@@ -506,6 +536,7 @@ class TestPoint(unittest.TestCase):
         with patch.object(S, "own_session", lambda cwd=None: "s1"), \
                 patch.object(S.hunk, "notes", lambda sid: list(w.notes)), \
                 patch.object(S.hunk, "add_note", add), \
+                patch.object(S.hunk, "whole_review", lambda sid: ([], [], list(hidden))), \
                 contextlib.redirect_stdout(io.StringIO()) as out, \
                 contextlib.redirect_stderr(io.StringIO()):
             S.point("a.py", 32, "names[0] is read here", side=side)
@@ -518,6 +549,12 @@ class TestPoint(unittest.TestCase):
 
     def test_a_removed_line_is_pointed_at_on_the_old_side(self):
         self.assertEqual(self.run_point(side="old")[0][0][2], "old")
+
+    def test_a_file_hidden_as_read_is_named_as_the_reason(self):
+        """Hunk takes no note on a file it does not show."""
+        with self.assertRaises(SystemExit):
+            self.run_point(hidden=["a.py"])
+        self.assertEqual(self.run_point(hidden=["b.py"])[0], [("a.py", 32, "new", "agent")])
 
     def test_a_line_outside_the_piece_is_an_error(self):
         with self.assertRaises(SystemExit):

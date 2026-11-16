@@ -224,6 +224,10 @@ that are usually thrown away.
   skills' cards, buttons and sidebar are `mods/review-ui`). TypeScript, tested by the engine
   with no model; `mods/test_mods.py` runs each mod's tests, type check and validation inside
   the suite. Its README holds what the engine does that its types do not say.
+- `hunk-extensions/<name>/` — an extension for Hunk, the diff viewer: TypeScript run by
+  Hunk's own Bun, tested with `bun test` through its `test_*.py`. `keep-notes` saves the
+  notes a user writes in a viewer to disk at once, where `lib/hunk.py` reads them; its README
+  says how it is loaded.
 - `e2e/` — local GitLab demo/test rig for `review-mr`/`rework-mr` (see `e2e/README.md`).
   What only the demo or the rig needs is set up there (`fixture.py`, `drive.py`), never in
   `lib/` or a SKILL.md: a demo fix once made in the checks' shared brief would have switched

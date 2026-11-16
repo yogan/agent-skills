@@ -24,12 +24,17 @@ from lib import hunk                                   # noqa: E402
 REPO = "/w/acme-api"
 
 
+KEEP_DIR = hunk.keep_dir
+
+
 def setUpModule():
     """Never read the machine's own Claude Code session records: in a background session
-    they would decide which pane these tests see."""
-    stub = patch.object(hunk.tmux, "_records", lambda: [])
-    stub.start()
-    unittest.addModuleCleanup(stub.stop)
+    they would decide which pane these tests see. Nor the notes the keep-notes extension
+    saved on this machine: they would add notes to every read, and calls to the fakes."""
+    for stub in (patch.object(hunk.tmux, "_records", lambda: []),
+                 patch.object(hunk, "keep_dir", lambda: None)):
+        stub.start()
+        unittest.addModuleCleanup(stub.stop)
 
 
 def stat_of(n):
@@ -823,6 +828,203 @@ class TestOwnReview(HunkCase):
         with patch.object(hunk, "_run", return_value=(0, json.dumps(
                 {"session": {"inputKind": "vcs"}}))):
             self.assertEqual(hunk.loaded_input("s1"), ("vcs", None))
+
+
+class TestKeepNotesFiles(unittest.TestCase):
+    """The keep-notes Hunk extension's files: what a hidden file's notes and a closed
+    viewer's notes are read from. Fixtures shaped like what the extension wrote under
+    Hunk 0.25.0, with invented paths and ids."""
+
+    LAUNCHED = "2026-03-01T10:00:00.400Z"
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.dir = tmp.name
+        stub = patch.object(hunk, "keep_dir", lambda: self.dir)
+        stub.start()
+        self.addCleanup(stub.stop)
+
+    def write(self, pid, notes, started="2026-03-01T10:00:00.100Z", repo=REPO, tag="me",
+              review=None):
+        path = os.path.join(self.dir, f"{pid}-1772359200100.json")
+        with open(path, "w") as fh:
+            json.dump({"version": 1, "pid": pid, "startedAt": started, "cwd": repo,
+                       "repoRoot": repo, "tag": tag, "updatedAt": started,
+                       **({"review": review} if review else {}), "notes": notes}, fh)
+        return path
+
+    @staticmethod
+    def kept(nid, file="hidden.py", line=4, text="stop, this is wrong", side="new"):
+        return {"id": nid, "file": file, "side": side, "line": line, "end": line,
+                "text": text, "createdAt": "2026-03-01T10:01:00.000Z"}
+
+    def run_with(self, listed, live=({"pid": 501},)):
+        """A `_run` whose daemon knows `live` sessions and lists `listed` comments."""
+        calls = []
+
+        def run(argv, timeout=None, stdin=None):
+            calls.append(argv[:4])
+            if argv[:3] == ["hunk", "session", "list"]:
+                return 0, json.dumps({"sessions": [
+                    dict(session(f"s{i + 1}"), launchedAt=self.LAUNCHED, **s)
+                    for i, s in enumerate(live)]})
+            if argv[:4] == ["hunk", "session", "comment", "list"]:
+                return 0, json.dumps({"comments": listed})
+            return 1, ""
+        return run, calls
+
+    VISIBLE = {"noteId": "user:1", "source": "user", "filePath": "shown.py",
+               "newRange": [2, 2], "body": "fine", "createdAt": "2026-03-01T10:00:30.000Z"}
+
+    def test_a_note_on_a_hidden_file_is_read_with_the_listed_ones_once_each(self):
+        self.write(501, [self.kept("user:1", "shown.py", 2, "fine"), self.kept("user:2")])
+        run, _ = self.run_with([self.VISIBLE])
+        with patch.object(hunk, "_run", run):
+            self.assertEqual(hunk.user_notes("s1"), [
+                ("shown.py", "new", 2, "fine", "user:1"),
+                ("hidden.py", "new", 4, "stop, this is wrong", "user:2")])
+            self.assertEqual([(n["id"], n["source"], n["file"], n["line"])
+                              for n in hunk.notes("s1")],
+                             [("user:1", "user", "shown.py", 2),
+                              ("user:2", "user", "hidden.py", 4)])
+
+    def test_only_the_sessions_own_viewer_file_counts(self):
+        """Another viewer's file, and an earlier process's that had the same pid."""
+        self.write(502, [self.kept("user:7")])
+        os.rename(self.write(501, [self.kept("user:8")], started="2026-02-20T09:00:00.000Z"),
+                  os.path.join(self.dir, "501-1771578000000.json"))
+        run, _ = self.run_with([self.VISIBLE])
+        with patch.object(hunk, "_run", run):
+            self.assertEqual([n[4] for n in hunk.user_notes("s1")], ["user:1"])
+
+    def test_without_the_extensions_files_nothing_more_is_asked(self):
+        run, calls = self.run_with([self.VISIBLE])
+        with open(os.path.join(self.dir, "notes.json"), "w") as fh:
+            fh.write("{}")                                  # not a name the extension gives
+        with patch.object(hunk, "_run", run):
+            self.assertEqual([n[4] for n in hunk.user_notes("s1")], ["user:1"])
+        self.assertEqual(calls, [["hunk", "session", "comment", "list"]])
+
+    def test_an_unreadable_viewer_is_still_none_whatever_the_file_says(self):
+        self.write(501, [self.kept("user:2")])
+        with patch.object(hunk, "_run", lambda *a, **k: (1, "")):
+            self.assertIsNone(hunk.user_notes("s1"))
+            self.assertIsNone(hunk.notes("s1"))
+
+    def test_a_closed_viewers_notes_are_found_for_its_repository_and_tag_only(self):
+        closed = self.write(777, [self.kept("user:3")])
+        self.write(501, [self.kept("user:4")])                         # still running
+        self.write(778, [self.kept("user:5")], repo="/w/other")        # another repository
+        self.write(779, [self.kept("user:6")], tag=None)               # opened by hand
+        run, _ = self.run_with([])
+        with patch.object(hunk, "_run", run):
+            self.assertEqual(hunk.closed_viewer_notes(REPO, "me"), [
+                (closed, [("hidden.py", "new", 4, "stop, this is wrong", "user:3")])])
+
+    def test_with_no_daemon_a_file_is_closed_once_its_process_is_gone(self):
+        gone = self.write(777, [self.kept("user:3")])
+        self.write(501, [self.kept("user:4")])
+        with patch.object(hunk, "_run", lambda *a, **k: (1, "")), \
+                patch.object(hunk, "_alive", lambda pid: pid == 501):
+            self.assertEqual([p for p, _ in hunk.closed_viewer_notes(REPO, "me")], [gone])
+
+    AGENT = {"id": "mcp:9", "source": "agent", "author": "agent", "file": "hidden.py",
+             "side": "new", "line": 4, "end": 4, "text": "because the cache is per user",
+             "parentId": "user:2", "createdAt": "2026-03-01T10:02:00.000Z"}
+
+    def test_the_agents_answers_on_a_hidden_file_are_read_with_the_users_note(self):
+        """A thread on a hidden file reads whole, so it does not look unanswered; only the
+        user's notes count as the user's."""
+        self.write(501, [self.kept("user:2"), self.AGENT])
+        run, _ = self.run_with([self.VISIBLE])
+        with patch.object(hunk, "_run", run):
+            self.assertEqual([n[4] for n in hunk.user_notes("s1")], ["user:1", "user:2"])
+            self.assertEqual([(n["id"], n["source"], n["author"], n["parent"], n["file"])
+                              for n in hunk.notes("s1")],
+                             [("user:1", "user", "", None, "shown.py"),
+                              ("user:2", "user", "user", None, "hidden.py"),
+                              ("mcp:9", "agent", "agent", "user:2", "hidden.py")])
+
+    def test_a_closed_viewers_agent_notes_are_not_the_users(self):
+        self.write(777, [self.kept("user:3"), self.AGENT])
+        run, _ = self.run_with([])
+        with patch.object(hunk, "_run", run):
+            self.assertEqual([n[4] for _, ns in hunk.closed_viewer_notes(REPO, "me")
+                              for n in ns], ["user:3"])
+
+    REVIEW = {"sourceLabel": REPO, "loadedAt": 1772359300000, "files": [
+        {"path": "f0.py", "additions": 1, "deletions": 0, "hidden": False},
+        {"path": "f1.py", "additions": 1, "deletions": 0, "hidden": True}]}
+
+    def confirm(self, review, shown, count, since=1772359299.0, expect=2):
+        """`_confirm` for a window that reports `shown` files and a reload of `count`."""
+        self.write(501, [], review=review)
+        run, _ = self.run_with([])
+        with patch.object(hunk, "_run", run), \
+                patch.object(hunk, "loaded_stat", lambda _s: shown), \
+                patch.object(hunk, "window_of", lambda _s: "9 (!123)"):
+            return hunk._confirm("s1", count, stat_of(expect), since)
+
+    def test_a_window_hiding_read_files_holds_the_diff_its_record_says_it_loaded(self):
+        self.assertEqual(self.confirm(self.REVIEW, stat_of(1), 1), ("s1", "9 (!123)"))
+
+    def test_nothing_but_a_fresh_exact_record_lets_a_short_window_through(self):
+        stale = dict(self.REVIEW, loadedAt=1772359200000)
+        other = dict(self.REVIEW, files=[dict(self.REVIEW["files"][0]),
+                                         dict(self.REVIEW["files"][1], additions=7)])
+        shown_differs = dict(self.REVIEW, files=[dict(self.REVIEW["files"][0], hidden=True),
+                                                 dict(self.REVIEW["files"][1])])
+        for review, shown, count in [(None, stat_of(1), 1),            # no extension
+                                     (stale, stat_of(1), 1),           # an earlier load's
+                                     (other, stat_of(1), 1),           # not the card's diff
+                                     (shown_differs, stat_of(1), 1),   # shows other files
+                                     (self.REVIEW, stat_of(1), 2)]:    # reload said 2 shown
+            with self.subTest(review=review, count=count):
+                self.assertIsNone(self.confirm(review, shown, count))
+        self.assertIsNone(self.confirm(self.REVIEW, stat_of(1), 1, since=None))
+
+    def test_the_agents_window_is_shown_while_it_hides_read_files(self):
+        """The rework card's diff and the self-review piece, each in a window that hides one
+        of their two files as read: shown, not refused."""
+        self.write(501, [], review=dict(self.REVIEW, loadedAt=4102444800000))
+        for show in (lambda: hunk.show_working_diff(REPO, "!123", stat_of(2), sleep=None),
+                     lambda: hunk.show_review(REPO, "!123", ["show", "abc"], stat_of(2))):
+            fake = FakeRun([dict(session("mine", pane="%4"), pid=501, launchedAt=self.LAUNCHED)],
+                           owners={"%4": "me"}, reload_files=1, loaded=stat_of(1))
+            with patch.dict(os.environ, {"TMUX": "/tmp/x", "CLAUDE_CODE_SESSION_ID": "me"}), \
+                    patch.object(hunk, "installed", lambda: True), \
+                    patch.object(hunk, "_run", fake):
+                self.assertEqual(show(), ("mine", "9 (!123)"))
+
+    def test_whole_review_lists_hidden_files(self):
+        self.write(501, [], review=self.REVIEW)
+        run, _ = self.run_with([])
+        with patch.object(hunk, "_run", run):
+            self.assertEqual(hunk.whole_review("s1"),
+                             (stat_of(2), stat_of(1), ["f1.py"]))
+
+    def test_forgetting_removes_exactly_the_files_named(self):
+        a, b = self.write(777, [self.kept("user:3")]), self.write(501, [self.kept("user:4")])
+        hunk.forget_viewer_files([a])
+        self.assertEqual(os.listdir(self.dir), [os.path.basename(b)])
+
+    def test_the_directory_is_the_extensions(self):
+        home = os.path.expanduser("~")
+        for env, want in [({}, os.path.join(home, ".local/state/hunk-keep-notes")),
+                          ({"XDG_STATE_HOME": "/st"}, "/st/hunk-keep-notes"),
+                          ({"XDG_STATE_HOME": "rel"}, os.path.join(home, ".local/state/hunk-keep-notes")),
+                          ({"HUNK_KEEP_NOTES_DIR": "/mine", "XDG_STATE_HOME": "/st"}, "/mine"),
+                          ({"HUNK_KEEP_NOTES": "off", "HUNK_KEEP_NOTES_DIR": "/mine"}, None)]:
+            with patch.dict(os.environ, env, clear=True), patch.dict(os.environ, {"HOME": home}):
+                self.assertEqual(KEEP_DIR(), want, env)
+
+    def test_the_agents_viewer_is_tagged_with_its_owner(self):
+        fake = FakeRun(new_pane="%9")
+        with patch.object(hunk, "_run", fake):
+            hunk.spawn_session(REPO, "!123", "me", sleep=lambda _s: None)
+        argv = next(c for c in fake.calls if c[:2] == ["tmux", "new-window"])
+        self.assertEqual(argv[argv.index("-e") + 1], "HUNK_KEEP_NOTES_TAG=me")
 
 
 if __name__ == "__main__":

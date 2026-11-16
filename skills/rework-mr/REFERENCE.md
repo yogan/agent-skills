@@ -55,8 +55,10 @@ the reply (step 7).
    push — answer each note and go back to step 5. No output means go ahead. Run it whatever
    they typed, so there is nothing for them to remember. Reading a note **removes it from
    the window**, so that output is your only copy — address every line of it in this turn.
-   A note the user wrote in a window they closed since is printed too: the script keeps a
-   copy of every note it has seen, and the push refuses until that copy is read here.
+   A note the user wrote in a window they closed since is printed too, and one on a file
+   hidden as read: the keep-notes Hunk extension saves each note the moment it is written
+   (without it, the script keeps a copy of every note it has seen), and the push refuses
+   until those are read here.
    Your own notes are cleared each time a diff goes up, so the window never shows an
    annotation belonging to a diff that has been replaced.
    Then push — **a fixup, not a new commit** (the target was determined in step 4):

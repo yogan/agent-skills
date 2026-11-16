@@ -42,9 +42,12 @@ author has signed off on what the window shows.
 """
 import json
 import os
+import re
 import shlex
 import shutil
 import subprocess
+import time
+from datetime import datetime
 
 from lib import diffsize, tmux
 
@@ -190,7 +193,6 @@ def spawn_session(repo, label, owner, sleep=None, cmd="hunk diff HEAD"):
     would be wrong the moment two agents start a window at the same time.
     """
     if sleep is None:
-        import time
         sleep = time.sleep
     # `-a` against the agent's own window puts the viewer immediately to its right,
     # shifting the rest along, instead of at the far end of the window list. The two are
@@ -199,8 +201,10 @@ def spawn_session(repo, label, owner, sleep=None, cmd="hunk diff HEAD"):
     # identified, which only leaves the placement to tmux's default.
     here = _window_of_pane(_own_pane())
     place = ["-a", "-t", here] if here else []
+    # The tag lets `closed_viewer_notes` tell this agent's viewers' files (the keep-notes
+    # extension's) from those of a viewer the user opened by hand in the same repository.
     rc, out = _run(["tmux", "new-window", "-d", "-P", "-F", "#{pane_id}"] + place
-                   + ["-n", label, "-c", repo, cmd])
+                   + ["-e", f"{KEEP_TAG_ENV}={owner}", "-n", label, "-c", repo, cmd])
     pane = out.strip()
     if rc != 0 or not pane:
         return None
@@ -399,6 +403,9 @@ def user_notes(session_id):
     `body`. Reading it by the input's names — which is what a hand-written fixture
     invites — silently yields a line number of None for every comment, so both spellings
     are accepted here and the test uses a fixture captured from the real CLI.
+
+    Notes on files hidden from the review are added from the keep-notes extension's file
+    for this viewer, where it is installed (see `_unlisted`): `comment list` leaves them out.
     """
     data = _json(["hunk", "session", "comment", "list", session_id,
                   "--type", "user", "--json"])
@@ -417,7 +424,8 @@ def user_notes(session_id):
         text = (c.get("body") or c.get("summary") or "").strip()
         out.append((c.get("filePath") or "", side, line, text,
                     c.get("noteId") or c.get("id")))
-    return out
+    return out + [_kept_tuple(n) for n in _unlisted(session_id, {n[4] for n in out})
+                  if _is_users(n)]
 
 
 def _kept(path):
@@ -466,6 +474,181 @@ def forget_notes(path):
         os.remove(path)
     except OSError:
         pass
+
+
+# The keep-notes Hunk extension (hunk-extensions/keep-notes) saves every note the user
+# writes, edits or deletes the moment they do, one file per viewer process. Two things are
+# read from those files that the viewer cannot give: notes on files hidden from the review
+# (hunk-mark-read's "hide read files" filters them out of the diff, and `comment list`
+# leaves their notes out, though the viewer still holds them), and notes of a viewer that
+# has closed since. Without the extension there are no files, nothing here calls anything,
+# and every reader behaves as it did before.
+KEEP_DIR_ENV, KEEP_SWITCH_ENV, KEEP_TAG_ENV = ("HUNK_KEEP_NOTES_DIR", "HUNK_KEEP_NOTES",
+                                               "HUNK_KEEP_NOTES_TAG")
+_KEPT_NAME = re.compile(r"^(\d+)-(\d+)\.json$")
+_KEPT_FORMAT = 1
+# How far apart a viewer's process start (the file's `startedAt`) and its registration with
+# the daemon (the session's `launchedAt`) may be and still be one viewer: an earlier process
+# that had the same pid started long before. The start is ~0.3s ahead of the registration.
+_SAME_VIEWER_SECONDS = 600
+
+
+def keep_dir():
+    """Where the extension writes, or None when it is switched off.
+
+    Mirrors hunk-extensions/keep-notes/src/disk.ts's `keepDir`; a change to either is a
+    change to both. Read from this process's environment, which for the agent's own viewers
+    is the one they were started from."""
+    if os.environ.get(KEEP_SWITCH_ENV, "").lower() == "off":
+        return None
+    own = os.environ.get(KEEP_DIR_ENV)
+    if own and os.path.isabs(own):
+        return own
+    state = os.environ.get("XDG_STATE_HOME")
+    base = state if state and os.path.isabs(state) else os.path.join(
+        os.path.expanduser("~"), ".local", "state")
+    return os.path.join(base, "hunk-keep-notes")
+
+
+def _viewer_files():
+    """[(path, file's content)] for every file the extension wrote that can be read."""
+    d = keep_dir()
+    try:
+        names = sorted(os.listdir(d)) if d else []
+    except OSError:
+        return []
+    out = []
+    for name in names:
+        m = _KEPT_NAME.match(name)
+        if not m:
+            continue
+        path = os.path.join(d, name)
+        doc = _kept(path)
+        if (doc.get("version") == _KEPT_FORMAT and isinstance(doc.get("notes"), list)
+                and doc.get("pid") == int(m.group(1))):
+            out.append((path, doc))
+    return out
+
+
+def _seconds(text):
+    try:
+        return datetime.fromisoformat(str(text).replace("Z", "+00:00")).timestamp()
+    except ValueError:
+        return None
+
+
+def _file_of(session, files):
+    """Which of `files` the viewer of `session` (a `sessions()` entry) writes, or None."""
+    launched = _seconds(session.get("launchedAt") or "")
+    for path, doc in files:
+        if doc.get("pid") != session.get("pid"):
+            continue
+        started = _seconds(doc.get("startedAt") or "")
+        if launched is None or started is None \
+                or abs(launched - started) <= _SAME_VIEWER_SECONDS:
+            return path
+    return None
+
+
+def _kept_tuple(n):
+    """A note from an extension file, in `user_notes`' shape."""
+    side = n.get("side") if n.get("side") in ("new", "old") else "new"
+    return (n.get("file") or "", side, n.get("line"), (n.get("text") or "").strip(),
+            n.get("id"))
+
+
+def _is_users(n):
+    """A note from an extension file is the user's; a file from before the extension kept
+    the agent's notes too holds no `source`, and only the user's notes."""
+    return n.get("source", "user") == "user"
+
+
+def _own_doc(session_id):
+    """The content of the extension file the viewer of `session_id` writes, or None: no
+    extension, or the daemon cannot say which viewer that is. Asks the daemon only when
+    there is a file to choose from, so without the extension nothing more is called."""
+    files = _viewer_files()
+    if not files:
+        return None
+    s = next((s for s in sessions() if s.get("sessionId") == session_id), None)
+    own = s and _file_of(s, files)
+    return dict(files)[own] if own else None
+
+
+def _unlisted(session_id, listed):
+    """The notes the viewer of `session_id` saved to its file that `comment list` did not
+    return (`listed` is the ids it did): those on files hidden from the review."""
+    doc = _own_doc(session_id)
+    return [n for n in (doc or {}).get("notes") or []
+            if isinstance(n, dict) and n.get("id") and n["id"] not in listed]
+
+
+def whole_review(session_id, since=None):
+    """What the viewer of `session_id` loaded, hidden files included, as the keep-notes
+    extension recorded it at its latest load: `(everything, shown, hidden)`, the first two
+    sorted [(path, added, removed)] like `loaded_stat`, `hidden` the paths an extension's
+    filter (hunk-mark-read's "hide read files") left out. None where there is no record, or
+    none from a load finished at or after `since` (a `time.time()`): a record of an earlier
+    load says nothing about this one.
+
+    The extension records the changeset as it reached its own filter-free transform, which
+    Hunk runs before the filter of an extension loaded after it — one installed under
+    `~/.config/hunk/extensions/`, while keep-notes is loaded through `[extensions] paths`.
+    Loaded the other way round it records only what is shown, and nothing reads as hidden.
+    """
+    review = ((_own_doc(session_id) or {}).get("review"))
+    if not isinstance(review, dict) or not isinstance(review.get("files"), list):
+        return None
+    loaded_at = review.get("loadedAt")
+    if since is not None and not (isinstance(loaded_at, (int, float))
+                                  and loaded_at >= since * 1000):
+        return None
+    files = [f for f in review["files"] if isinstance(f, dict)]
+    row = lambda f: (f.get("path") or "", f.get("additions") or 0, f.get("deletions") or 0)  # noqa: E731
+    return (sorted(row(f) for f in files), sorted(row(f) for f in files if not f.get("hidden")),
+            sorted(f.get("path") or "" for f in files if f.get("hidden")))
+
+
+def _alive(pid):
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except (OSError, OverflowError, TypeError):
+        return True
+    return True
+
+
+def closed_viewer_notes(repo, tag):
+    """[(path, notes)] — what viewers that are no longer running left in their files, for
+    `repo` and opened with `tag` (`spawn_session` tags with the owner), notes in
+    `user_notes`' shape.
+
+    The tag keeps a viewer the user opened by hand in the same repository out: those notes
+    were never written to this agent, and would hold its push for as long as they lasted.
+    "No longer running" is "no session of the daemon's writes that file"; a daemon that does
+    not answer cannot say, so a file then counts as closed only once its process is gone.
+    """
+    files = [(p, d) for p, d in _viewer_files()
+             if repo and d.get("repoRoot") == repo and tag and d.get("tag") == tag]
+    if not files:
+        return []
+    data = _json(["hunk", "session", "list", "--json"])
+    live = (data or {}).get("sessions") if isinstance(data, dict) else None
+    if isinstance(live, list):
+        running = {_file_of(s, files) for s in live}
+        closed = [(p, d) for p, d in files if p not in running]
+    else:
+        closed = [(p, d) for p, d in files if not _alive(d.get("pid"))]
+    return [(p, [_kept_tuple(n) for n in d["notes"] if isinstance(n, dict) and _is_users(n)])
+            for p, d in closed]
+
+
+def forget_viewer_files(paths):
+    """Remove exactly these extension files, once every note in them has reached the model.
+    Only ever files `closed_viewer_notes` handed back: a running viewer's file is its own."""
+    for path in paths:
+        forget_notes(path)
 
 
 def drop_note(session_id, note_id):
@@ -519,18 +702,16 @@ def show_patch(path, label, cwd, owner=None, sleep=None):
     if not expect:
         return None
     sid = find_session(None, owner)
+    since = time.time()
     if sid:
-        if reload_patch(sid, path) != len(expect):
-            return None
+        count = reload_patch(sid, path)
     else:
         sid = spawn_session(cwd, label, owner, sleep=sleep,
                             cmd=f"hunk patch {shlex.quote(path)}")
         if not sid:
             return None
-    if loaded_stat(sid) != expect:
-        return None
-    where = window_of(sid)
-    return (sid, where) if where else None
+        count = len(loaded_stat(sid) or [])
+    return _confirm(sid, count, expect, since)
 
 
 def not_shown():
@@ -563,7 +744,8 @@ def show_working_diff(repo, label, expect_stat, owner=None, sleep=None):
     # Before the reload, not after: clearing is addressed by note id, and a reload can
     # re-anchor or drop a note whose line no longer exists, leaving nothing to clear.
     clear_agent_notes(sid)
-    return _confirm(sid, reload_working_diff(sid), expect_stat)
+    since = time.time()
+    return _confirm(sid, reload_working_diff(sid), expect_stat, since)
 
 
 def show_review(repo, label, args, expect_stat, owner=None, sleep=None):
@@ -578,7 +760,8 @@ def show_review(repo, label, args, expect_stat, owner=None, sleep=None):
     sid = _own_window(repo, label, owner, sleep)
     if not sid:
         return None
-    return _confirm(sid, reload_review(sid, args), expect_stat)
+    since = time.time()
+    return _confirm(sid, reload_review(sid, args), expect_stat, since)
 
 
 def _own_window(repo, label, owner, sleep):
@@ -591,16 +774,27 @@ def _own_window(repo, label, owner, sleep):
     return find_session(repo, owner) or spawn_session(repo, label, owner, sleep=sleep)
 
 
-def _confirm(sid, file_count, expect_stat):
+def _confirm(sid, file_count, expect_stat, since=None):
     """(sid, where) once the window provably holds `expect_stat`, else None.
 
     The file count first because the reload reports it for free, and it also tells a
     reload that did not happen at all (None) from one that loaded something else.
+
+    A window that hides files (hunk-mark-read's "hide read files") reports only the files it
+    shows. It still holds `expect_stat` when the keep-notes extension's record of the load
+    that finished after `since` says so: everything loaded is exactly `expect_stat`, and what
+    it shows is exactly what the window itself reports. Nothing else counts as hidden.
     """
-    if file_count != len(expect_stat):
+    expect = sorted(tuple(f) for f in expect_stat)
+    if file_count is None:
         return None
-    if loaded_stat(sid) != sorted(tuple(f) for f in expect_stat):
+    shown = loaded_stat(sid)
+    if shown is None:
         return None
+    if (file_count, shown) != (len(expect), expect):
+        whole = whole_review(sid, since) if since is not None else None
+        if not whole or whole[0] != expect or whole[1] != shown or file_count != len(shown):
+            return None
     where = window_of(sid)
     return (sid, where) if where else None
 
@@ -635,6 +829,10 @@ def notes(session_id):
 
     `source`, not `author`, tells who wrote a note: `author` is free text on `comment add`,
     while a note typed in the viewer is the only kind whose source is "user".
+
+    The user's notes on files hidden from the review come from the keep-notes extension's
+    file, as in `user_notes`; the agent's on those files are not kept there, so a thread on
+    a hidden file shows its user notes and none of the agent's answers.
     """
     data = _json(["hunk", "session", "comment", "list", session_id,
                   "--type", "all", "--json"])
@@ -649,6 +847,12 @@ def notes(session_id):
                     "file": c.get("filePath") or "", "side": side,
                     "line": rng[0] if rng else None, "end": rng[-1] if rng else None,
                     "text": (c.get("body") or "").strip(), "at": c.get("createdAt") or ""})
+    for n in _unlisted(session_id, {n["id"] for n in out}):
+        file, side, line, text, nid = _kept_tuple(n)
+        out.append({"id": nid, "parent": n.get("parentId"), "source": n.get("source", "user"),
+                    "author": n.get("author") or ("user" if _is_users(n) else ""),
+                    "file": file, "side": side, "line": line, "end": n.get("end"),
+                    "text": text, "at": n.get("createdAt") or ""})
     return sorted(out, key=lambda n: n["at"])
 
 

@@ -32,6 +32,14 @@ os.environ.setdefault("AGENT_TAB_OFF", "1")
 os.environ["REVIEW_UI_DRAWN"] = "0"   # the views as without the review-ui mod, whatever session runs this (lib/ui.py)
 
 
+def setUpModule():
+    """Never read the notes the keep-notes Hunk extension saved on this machine: a test of a
+    closed viewer says what was in its file."""
+    stub = mock.patch.object(T.hunk, "keep_dir", lambda: None)
+    stub.start()
+    unittest.addModuleCleanup(stub.stop)
+
+
 def _spec():
     with open(os.path.join(HERE, "paste-gates.json")) as fh:
         return json.load(fh)
@@ -3112,6 +3120,37 @@ class TestPushFix(unittest.TestCase):
         self.assertEqual(T.hunk_window(), {"open": False, "notes": 0})     # handed over: spent
         self.push()
         self.checks.commit_fixup.assert_called_once()
+
+    def test_a_viewer_closed_before_any_read_still_stops_the_push_and_is_read_once(self):
+        """Closed seconds after the note was written, before the next read made its copy:
+        only the keep-notes extension's file has it. The 30-second copy of an earlier
+        viewer and that file hold the same note: printed once, and the closed viewer's file
+        goes with the copy, never the open viewer's."""
+        mock.patch.object(T.hunk, "installed", return_value=True).start()
+        session = mock.patch.object(T.hunk, "find_session", return_value=None).start()
+        mock.patch.object(T.hunk, "owner_id", return_value="me").start()
+        mock.patch.object(T, "_git", return_value="/repo\n").start()
+        note = ("a.py", "new", 3, "this is wrong", "user:1")
+        other = ("b.py", "old", 5, "and this", "user:2")
+        T.hunk.keep_notes(T.notes_store("/repo"), "s0", [note])       # an earlier read's copy
+        closed = mock.patch.object(T.hunk, "closed_viewer_notes",
+                                   return_value=[("/k/1-1.json", [note, other])]).start()
+        self.assertEqual(T.hunk_window(), {"open": False, "notes": 2})
+        closed.assert_called_with("/repo", "me")
+        with self.assertRaisesRegex(T.Handoff, "hunk-notes"):
+            self.push()
+        mock.patch.object(T.hunk, "drop_note").start()
+        forget = mock.patch.object(T.hunk, "forget_viewer_files").start()
+        with mock.patch.object(sys, "argv", ["threads.py", "hunk-notes"]), \
+                mock.patch("sys.stdout", new_callable=io.StringIO) as out:
+            T.main()
+        self.assertEqual(out.getvalue().count("this is wrong"), 1)
+        self.assertIn("b.py:5 (on a removed line): and this", out.getvalue())
+        forget.assert_called_once_with(["/k/1-1.json"])
+        # A note still in the open viewer is its, not also a closed one's.
+        session.return_value = "sid"
+        mock.patch.object(T.hunk, "user_notes", return_value=[note]).start()
+        self.assertEqual(T.viewer_notes("/repo")[1:3], ([note], [other]))
 
     def test_a_new_commit_on_the_card_is_the_agent_s_to_make_first(self):
         self.t1["fix"]["new"] = ["fix: guard the old helper"]

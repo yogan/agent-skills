@@ -96,11 +96,13 @@ Each refusal is deliberate; resolve its cause, never work around it.
 - **A moved diff note is a copy.** Hunk cannot move a note, nor create one as the author's,
   so a moved diff note is re-created and the original removed. Its first note is labelled
   `you (moved from R356–383)`; the author can reply to it but no longer edit or delete it.
-- **Every file of the piece must be in the window.** An extension can hide files —
-  hunk-mark-read hides those marked read — and Hunk lists no diff notes on a hidden file,
-  so "none awaiting" would be a false ACK. `notes`, `ack`, `close` and `show` refuse while
-  files are hidden and name them: tell the author to show hidden files again and say done,
-  then read again.
+- **Hidden files.** hunk-mark-read can hide files marked read, and Hunk itself lists no
+  diff notes on a hidden file. With the keep-notes Hunk extension loaded (this repo's
+  `hunk-extensions/keep-notes`) they are read anyway, so nothing changes. Without it,
+  `notes`, `ack`, `close` and `show` refuse while files are hidden and name them: tell the
+  author to show hidden files again and say done, then read again. Either way Hunk takes no
+  reply or new note on a hidden file; `reply` and `point` say so, and the author has to show
+  the file first.
 - **Commits need a clean tree** (`sr show N`), because everything in the tree is folded into
   the commit by `sr amend`.
 - **A fix that conflicts with a later commit** is rolled back: the branch is untouched and

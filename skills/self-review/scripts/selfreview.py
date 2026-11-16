@@ -357,16 +357,19 @@ def own_session(cwd=None):
 
 
 def hidden(sid, cwd=None):
-    """Files of the shown piece that the window does not hold, sorted.
+    """Files of the shown piece whose notes cannot be read, sorted.
 
     An extension can drop files from the loaded review — hunk-mark-read hides files marked
     read — and the viewer then lists no notes on them: a note there would read as no note
-    at all, and an empty list is the author's ACK. Measured against what was shown (the
-    commit, or the snapshot the mark records), not the tree as it is now, so a fix made
-    since adds nothing here.
+    at all, and an empty list is the author's ACK. With the keep-notes Hunk extension the
+    notes on a hidden file are read from its record (`hunk.notes`), and a hidden file is
+    still loaded (`hunk.whole_review`): nothing is missing then. Measured against what was
+    shown (the commit, or the snapshot the mark records), not the tree as it is now, so a
+    fix made since adds nothing here.
     """
     shows = hunk.mark(sid, SHOWN)
-    loaded = hunk.loaded_stat(sid)
+    whole = hunk.whole_review(sid)
+    loaded = whole[0] if whole else hunk.loaded_stat(sid)
     if not shows or loaded is None:
         return []
     if hunk.loaded_input(sid) == ("show", shows):
@@ -375,6 +378,13 @@ def hidden(sid, cwd=None):
         stat = hunk.diff_stat(git(*DIFF, "diff", "--no-ext-diff", "HEAD", shows, cwd=cwd)
                               or "")
     return sorted({p for p, _, _ in stat} - {p for p, _, _ in loaded})
+
+
+def hidden_now(sid):
+    """Paths the window hides at the moment (hunk-mark-read's "hide read files"), as the
+    keep-notes extension recorded its latest load; empty without it."""
+    whole = hunk.whole_review(sid)
+    return set(whole[2]) if whole else set()
 
 
 def require_all_shown(sid, cwd=None):
@@ -426,6 +436,13 @@ def reply(ref, text, cwd=None):
         listed = ", ".join(f"#{n} {where}" for n, _, where, _ in threads(got)) or "none"
         die(f"no diff note {ref} in the window; its diff notes: {listed}")
     target = answering(tid, got)
+    on = next((n["file"] for n in got if n["id"] == tid), "")
+    if on and on in hidden_now(sid):
+        # Hunk refuses a reply to a note on a file it does not show ("no longer available as
+        # a reply parent"); saying why beats saying "refused".
+        die(f"{ref} is on {on}, which the window hides as read: Hunk takes no reply there. "
+            "Ask the author to show hidden files again (hunk-mark-read: \"Hide/show read "
+            "files\"), then answer")
     if not hunk.reply(sid, target, text):
         die(f"the reply to {ref} was refused by the viewer")
     before = {n["id"] for n in got}
@@ -447,6 +464,10 @@ def point(path, line, text, side="new", cwd=None):
     got = hunk.notes(sid)
     if got is None:
         die("the Hunk window did not answer; nothing was posted")
+    if path in hidden_now(sid):
+        die(f"{path} is hidden in the window as read, and Hunk takes no note on a file it does "
+            "not show. Ask the author to show hidden files again (hunk-mark-read: "
+            "\"Hide/show read files\"), or name that place in the chat")
     nid = hunk.add_note(sid, path, line, text, "agent", side=side)
     if not nid:
         die(f"{path}:{line} cannot carry a note: it is not a line this piece's diff shows "
