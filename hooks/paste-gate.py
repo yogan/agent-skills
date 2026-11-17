@@ -40,11 +40,14 @@ Two tiers of rule:
     required  — a pattern that may only appear once a given gate has actually fired
                 this turn. The inverse check: the ritual phrase is there, but the
                 command that was supposed to produce it never ran.
-  Engine-level, unconditional (`_leaked_manifest`, `_garbled_backtick_escape`) — always
-  checked, spec or no spec, because neither is about either skill's vocabulary: one
+  Engine-level (`_leaked_manifest`, `_garbled_backtick_escape`) — checked spec or no spec,
+  because neither is about either skill's vocabulary: one
   guards the manifest mechanism this engine itself relies on, the other guards plain
   Markdown hygiene. New engine-level checks belong here, not as one more per-spec
-  `forbidden` entry duplicated into every skill's JSON.
+  `forbidden` entry duplicated into every skill's JSON. Like everything else here they are
+  off in a session where the review-ui mod draws the views as cards: the model pastes no
+  view there for a manifest to leak through, and nearly every turn there has a manifest in
+  a result, so the leak check's wait would delay almost every stop.
 
 Contract (Claude Code Stop hook):
   stdin  — JSON with `transcript_path` and `stop_hook_active`.
@@ -827,7 +830,8 @@ def main(argv):
         _allow()
 
     rows = _load(path)
-    if rows and _cards_drawn(rows):        # the mod shows the views: nothing to paste
+    if rows and _cards_drawn(rows):        # the mod shows the views: nothing to paste, so
+        # nothing to check either, the two engine-level checks below included (docstring)
         _allow()
 
     # These two run BEFORE the stop_hook_active gate below, and without requiring any

@@ -93,8 +93,8 @@ the hook loads.
   paired tool result by `tool_use` id, which is why merely reading or grepping a skill's
   source — SKILL.md and these specs mention every gated command by name — does not trip
   it. The tool result itself does carry one addition: a trailing, non-visible manifest
-  (see below) that must never survive into your reply — enforced unconditionally, not
-  something a spec can opt out of.
+  (see below) that must never survive into your reply — enforced whatever the specs say,
+  not something a spec can opt out of (off only where the mod draws cards, below).
 - **Specific:** a block carries the evidence for itself — the lines of the command's
   output that were absent from the message, or that ended up run together with other
   text, quoted and capped at three. A gate's own `reason` only says what to do; without
@@ -161,8 +161,9 @@ for its critical lines: the install above is symlinks, but nothing enforces that
 skill *copied* into `~/.claude` once would otherwise go from protected to silently
 unprotected the moment the engine was updated on its own.
 
-The marker must never appear in your reply — checked unconditionally, independent of any
-gate or spec — since it exists purely for this hook to read.
+The marker must never appear in your reply — checked independently of any gate or spec,
+everywhere but a session whose views the mod draws as cards (no view is pasted there) —
+since it exists purely for this hook to read.
 
 ## Gate specs
 
