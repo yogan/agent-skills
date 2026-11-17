@@ -176,6 +176,13 @@ class RecordingTest(unittest.TestCase):
         self.assertNotIn("--model", cmd)
         self.assertNotIn("python3 *", cmd)          # the real-model allow list is not added
 
+    def test_recording_a_scenario_that_plays_anothers_is_refused_before_it_runs(self):
+        """It was saved under its own name, which nothing plays, after a paid run."""
+        with mock.patch.object(drive, "verify") as ran, self.assertRaises(SystemExit) as stop:
+            drive.main(["verify", "rework-pipeline", "--model", "haiku", "--record"])
+        self.assertIn("record rework-fix", str(stop.exception))
+        ran.assert_not_called()
+
     def test_every_scenario_that_runs_unattended_has_a_recording(self):
         import scenarios
         missing = [sc.name for sc in scenarios.SCENARIOS

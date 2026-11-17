@@ -1045,6 +1045,11 @@ def main(argv=None):
     if a.mode == "verify":
         if a.record and a.model == "mock":
             raise SystemExit("--record needs a real --model: a recording is made from one")
+        # It would be saved under its own name, which nothing plays: it plays another's.
+        borrowed = [sc for sc in picked if a.record and sc.recording]
+        if borrowed:
+            raise SystemExit(f"{borrowed[0].name} plays {borrowed[0].recording}'s recording, so a "
+                             f"recording of it is never played: record {borrowed[0].recording}")
         ok = all([verify(sc, a.model, a.out, a.keep, a.reset, a.record) for sc in picked])
         return 0 if ok else 1
 
