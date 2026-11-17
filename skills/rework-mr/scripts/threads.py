@@ -4067,14 +4067,16 @@ def main():
             print(note)
     elif cmd == "merge":
         into = topic_for(state, args.into) or die(f"no topic {args.into}")
-        for oid in args.others:
-            o = topic_for(state, oid)
-            if not o:
+        # All looked up before anything changes; the topic merged into is never one of its
+        # own others, which would delete it and leave its threads in no topic at all.
+        others = [topic_for(state, oid) or die(f"no topic {oid}") for oid in args.others]
+        for o in others:
+            if o is into:
                 continue
             into["thread_ids"] += [
                 x for x in o["thread_ids"] if x not in into["thread_ids"]
             ]
-            state["topics"] = [t for t in state["topics"] if t["id"] != oid]
+            state["topics"] = [t for t in state["topics"] if t is not o]
         save(path, state)
 
 

@@ -1706,6 +1706,27 @@ class TestOnlyAPressEndsTheMR(unittest.TestCase):
             acted.assert_not_called()
 
 
+class TestMergeTopics(unittest.TestCase):
+    def merge(self, *ids):
+        state = {"topics": [{"id": "t1", "thread_ids": ["d1"]}, {"id": "t2", "thread_ids": ["d2"]}],
+                 "threads": {}}
+        with mock.patch.object(T, "resolve_state", return_value=({}, 3, "/s", state)), \
+                mock.patch.object(T, "current_user", return_value="dev"), \
+                mock.patch.object(T, "save"), \
+                mock.patch.object(sys, "argv", ["threads.py", "merge", *ids, "--iid", "3"]):
+            T.main()
+        return [(t["id"], t["thread_ids"]) for t in state["topics"]]
+
+    def test_a_topic_merged_into_itself_stays(self):
+        """It was deleted, and its thread, still known, never came back as a topic."""
+        self.assertEqual(self.merge("t2", "t2"), [("t1", ["d1"]), ("t2", ["d2"])])
+        self.assertEqual(self.merge("t1", "t2", "t1"), [("t1", ["d1", "d2"])])
+
+    def test_an_unknown_topic_changes_nothing(self):
+        with redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+            self.merge("t1", "t9")
+
+
 class TestCleanUpLocally(unittest.TestCase):
     """Clean up locally, once the MR is merged: what it removes where, and what it refuses."""
 

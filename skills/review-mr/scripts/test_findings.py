@@ -1899,6 +1899,20 @@ class TestPost(unittest.TestCase):
         approve.assert_not_called()
 
 
+class TestMergeTopics(unittest.TestCase):
+    def test_a_topic_merged_into_itself_stays(self):
+        """It was deleted, and its thread, still known, never came back as a topic."""
+        state = {"iid": 2, "threads": {}, "topics": [
+            {"id": "t1", "thread_ids": ["d1"], "source": "human"},
+            {"id": "t2", "thread_ids": ["d2"], "source": "agent"}]}
+        with patch.object(F, "resolve_state", return_value=(CTX, 2, "/s", state)), \
+                patch.object(F, "current_user"), patch.object(F, "save"), \
+                patch.object(sys, "argv", ["findings.py", "merge", "t2", "t2", "t1", "--iid", "2"]):
+            F.main()
+        self.assertEqual([(t["id"], t["thread_ids"], t["source"]) for t in state["topics"]],
+                         [("t2", ["d2", "d1"], "both")])
+
+
 class TestWhereTheModDraws(unittest.TestCase):
     """lib/ui.py: in a session the review-ui mod draws, the views change for the person;
     everywhere else they stay byte for byte as they were."""
