@@ -94,6 +94,7 @@ from lib.gitlab import (
     web_base,
 )
 from lib.mr_common import (
+    SHELL_FORM,
     mr_json,
     mr_news,
     topic_handles,
@@ -1159,7 +1160,8 @@ OUTCOME_WORD = {"fix": "Fix", "reply": "Reply only", "push-back": "Push back",
 def differs_now(state, t):
     """Whether a correction of the reply the user posted by hand waits: stored, and its
     draft still this round's, not yet posted or recorded as posted (each ends it). Mirrors
-    findings.py's."""
+    findings.py's inline check in `state_json` (`post_differs`), which also asks that the
+    posted text is still to be checked."""
     return bool(t.get("post_differs") and draft_holds(state, t))
 
 
@@ -1676,7 +1678,8 @@ def view_context(state):
 def thread_new(state, t):
     """How many comments the reviewers wrote on `t` since the user last acted on it (agreed a
     plan, pushed, or wrote there): what is new in its thread. The sidebar opens the thread in
-    full on them; with none it stays as the code view has it (folded under a fix)."""
+    full on them; with none it stays as the code view has it (folded under a fix). Mirrors
+    findings.py's `thread_new`, whose acts differ (an ack, a close)."""
     acts = [t.get("plan_at"), *[p.get("at") for p in t.get("pushes") or []]]
     notes = [n for x in t["thread_ids"] for n in (state["threads"].get(x) or {}).get("notes") or []]
     acts += [n.get("at") for n in notes if n.get("mine")]
@@ -1691,7 +1694,8 @@ def card_face(state, t):
     draft). The mod compares the one a card was drawn with (`emit`) to the topic's now
     (`state_json`): a card whose plan was replaced by typing stayed up with the old plan and
     took the press that agreed the new one. Rendered like `context_digest`, with marking
-    suspended, as the render is thrown away."""
+    suspended, as the render is thrown away. Mirrors findings.py's `card_face`, whose card
+    says other things (a verdict, the author's pushes, how it was closed)."""
     with critical_manifest.suspended():
         said = [[n.get("url") or n.get("at"), len(n.get("body") or "")]
                 for x in t["thread_ids"] for n in (state["threads"].get(x) or {}).get("notes") or []]
@@ -2639,15 +2643,6 @@ def judge_list(state):
                        if t["id"] != chat and step_of(state, t) == "plan"
                        and not proposal_of(state, t)], "own": []}
 
-
-# How a background agent writes its commands, said in its brief. Both are the forms its first
-# calls got wrong in recorded runs: a variable holding `python3 <script>` run as the command
-# (zsh splits no variable into words, so it fails), and a text in double quotes with backticks
-# in it, which the shell runs as a command and cuts out of the text.
-# Mirrors review-mr's findings.py's SHELL_FORM, word for word.
-SHELL_FORM = ("Spell that out in full in every call: zsh, the shell here, runs no command kept "
-              "in a variable. Pass every text in single quotes, an apostrophe in it as `'\\''`: "
-              "inside double quotes the shell runs whatever is in backticks.")
 
 
 def judge_brief(state, iid, skip=()):

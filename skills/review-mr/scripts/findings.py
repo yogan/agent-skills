@@ -116,7 +116,7 @@ from lib.fences import (LINK_ICON, SUGGESTION_INFO, YOU, block_lang, fence, sugg
 from lib.cli import iid_option  # noqa: E402
 from lib.gitlab import (api, api_post, approve, context, current_user, die, file_at, mr_base, remember_user,  # noqa: E402
                         mr_head, mr_object, mr_status, mr_view, versions, web_base)
-from lib.mr_common import (DEFAULT_LANG, LANG_GIVEAWAYS, MR_LEVEL, first_name, people,  # noqa: E402
+from lib.mr_common import (DEFAULT_LANG, LANG_GIVEAWAYS, MR_LEVEL, SHELL_FORM, first_name, people,  # noqa: E402
                            hold, load, mr_json, mr_news, topic_handles, loc_md, num, plain_text, reads_as,
                            short_summary, state_file, topic_for, tref)
 from lib.mr_common import save as _save                          # noqa: E402
@@ -2215,15 +2215,6 @@ def judge_list(state):
     return {"topics": needs_verdict(state),
             "own": unsettled_own(state) if state.get("own_review") in ("done", "skipped") else []}
 
-
-# How a background agent writes its commands, said in its brief. Both are the forms its first
-# calls got wrong in recorded runs: a variable holding `python3 <script>` run as the command
-# (zsh splits no variable into words, so it fails), and a text in double quotes with backticks
-# in it, which the shell runs as a command and cuts out of the text.
-# Mirrors rework-mr's threads.py's SHELL_FORM, word for word.
-SHELL_FORM = ("Spell that out in full in every call: zsh, the shell here, runs no command kept "
-              "in a variable. Pass every text in single quotes, an apostrophe in it as `'\\''`: "
-              "inside double quotes the shell runs whatever is in backticks.")
 
 
 def judge_brief(state, iid, skip=()):

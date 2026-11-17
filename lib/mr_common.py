@@ -323,3 +323,12 @@ def mr_json(st):
             "merged_by": (YOU if st.get("merged_by_me") else first_name(st.get("merged_by"))) or None,
             "closed_by": first_name(st.get("closed_by")) or None,
             "approved_by": [YOU if a.get("me") else first_name(a.get("name")) for a in st.get("approved_by") or []]}
+
+
+# How a background agent writes its commands, said in the brief both MR skills give it. Both
+# are the forms its first calls got wrong in recorded runs: a variable holding `python3
+# <script>` run as the command (zsh splits no variable into words, so it fails), and a text in
+# double quotes with backticks in it, which the shell runs as a command and cuts out of the text.
+SHELL_FORM = ("Spell that out in full in every call: zsh, the shell here, runs no command kept "
+              "in a variable. Pass every text in single quotes, an apostrophe in it as `'\\''`: "
+              "inside double quotes the shell runs whatever is in backticks.")
