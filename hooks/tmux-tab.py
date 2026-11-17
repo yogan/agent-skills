@@ -15,6 +15,9 @@
     end           the SessionEnd hook: a skill's hold on the tab ends, and a window this
                   named gets back what it had before Claude Code started in it
 
+`start` and `end` act only for the Claude Code process the window belongs to: a `claude`
+run inside a session's pane fires them too, with its own session and pid.
+
 Linked from ~/.claude/hooks/tmux-tab.py; settings.json and the status line call it only
 where that link exists, so a machine without this repository runs as before. Outside tmux,
 and inside the shortener's own `claude -p`, it does nothing.
@@ -52,15 +55,22 @@ def main(argv, env=None, stdin=None):
             data = json.load(stdin or sys.stdin)
         except ValueError:
             data = {}
+        # The Claude Code process the hook runs for: it sets CLAUDE_PID to its own pid, also
+        # in a `claude` started inside another session's pane, which fires these hooks too.
+        pid = env.get("CLAUDE_PID", "")
+        pid = int(pid) if pid.isdigit() else os.getppid()
+        if tab.another_owns(pane, pid):
+            return 0
     if cmd == "start":
         if data.get("source", "startup") not in ("startup", "resume"):
             return 0
+        tab.own(pane, pid)
         tab.show(pane, tab.AGENT_ICON, data.get("session_title") or repo_name(data.get("cwd")))
     elif cmd == "title" and len(argv) > 1:
         tab.prune_seen()
         tab.show(pane, tab.AGENT_ICON, argv[1])
     elif cmd == "end":
-        # A /clear ends one session and starts the next in the same window: nothing to undo.
+        # A /clear ends one session and starts the next in the same process: nothing to undo.
         if data.get("reason") != "clear":
             tab.restore(pane)
     elif cmd == "prompt":

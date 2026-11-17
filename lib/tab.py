@@ -14,7 +14,10 @@ A window is renamed only where nobody else named it: one tmux still names after 
 (`automatic-rename`, a fresh window), or one whose name is still the last this module gave it
 (`@agent_tab_set`). A window the user renamed by hand keeps their name. While a skill holds
 the tab (`@agent_tab_skill`, `hold`/`release`), the session's title waits behind it. When the
-session ends, a window this module named gets back what it had before (`restore`).
+session ends, a window this module named gets back what it had before (`restore`). The tab
+belongs to the Claude Code process that started in the window (`@agent_tab_owner`): another
+`claude` run inside it while that one lives (`claude mcp list` from a session's own shell)
+neither names the window nor gives its name back.
 
 A tab never shows a title cut mid-thought: a title goes up at once only where it fits, or a
 model shortened it before; otherwise the tab keeps its name until the model's short form is
@@ -40,6 +43,7 @@ SKILL_OPT = "@agent_tab_skill"  # the name a skill's hold replaced, while it hol
 TMUX_NAMED = "(tmux)"           # ...where that was tmux's own naming after the process
 BEFORE_OPT = "@agent_tab_before"  # what the window was called before this module named it
 WANT_OPT = "@agent_tab_want"    # the title whose short form the model is writing
+OWNER_OPT = "@agent_tab_owner"  # the pid of the Claude Code process the window's tab belongs to
 
 CACHE = os.path.join(os.environ.get("XDG_CACHE_HOME") or os.path.expanduser("~/.cache"),
                      "agent-skills", "tab-titles.json")
@@ -167,7 +171,7 @@ def restore(pane, run=None):
     if state is None:
         return False
     now, last, before = (state.split("\t") + ["", "", ""])[:3]
-    for opt in (SET_OPT, BEFORE_OPT, WANT_OPT):
+    for opt in (SET_OPT, BEFORE_OPT, WANT_OPT, OWNER_OPT):
         run(["tmux", "set-option", "-wu", "-t", pane, opt])
     if not (last and now == last and before):
         return False                  # renamed by hand since: the user's name stays
@@ -176,6 +180,31 @@ def restore(pane, run=None):
     else:
         run(["tmux", "rename-window", "-t", pane, before])
     return True
+
+
+def _alive(pid):
+    try:
+        os.kill(pid, 0)
+    except PermissionError:
+        return True
+    except (OSError, ValueError, OverflowError):
+        return False
+    return True
+
+
+def another_owns(pane, pid, run=None):
+    """Whether `pane`'s window belongs to a Claude Code process other than `pid` that still
+    runs: a `claude` started inside a session's own pane (`claude mcp list`, `claude -p`), or
+    a second session in a split of the window. Its start and end leave the tab alone."""
+    run = run or _run
+    owner = _get(pane, f"#{{{OWNER_OPT}}}", run) if pane else None
+    return bool(owner and owner.isdigit() and int(owner) != pid and _alive(int(owner)))
+
+
+def own(pane, pid, run=None):
+    """`pane`'s window belongs to the Claude Code process `pid` from now on."""
+    run = run or _run
+    run(["tmux", "set-option", "-w", "-t", pane, OWNER_OPT, str(pid)])
 
 
 def held(pane, run=None):

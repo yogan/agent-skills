@@ -138,8 +138,11 @@ class Rig(unittest.TestCase):
         self.later = mock.patch.object(tab, "spawn").start()
         self.addCleanup(mock.patch.stopall)
 
+    # The session's Claude Code process, and a `claude` run inside its pane: both still run.
+    OUTER, NESTED = {"CLAUDE_PID": str(os.getpid())}, {"CLAUDE_PID": str(os.getppid())}
+
     def run_hook(self, *argv, data=None, env=None):
-        env = {"TMUX_PANE": "%999999", **(env or {})}
+        env = {"TMUX_PANE": "%999999", **self.OUTER, **(env or {})}
         return hook.main(list(argv), env, io.StringIO(json.dumps(data or {})))
 
 
@@ -219,6 +222,34 @@ class TestQuit(Rig):
         self.run_hook("end", data={"reason": "clear"})
         self.assertEqual(self.t.name, f"{R} {os.path.basename(ROOT)}")
 
+    def test_a_clear_and_then_the_end_of_the_session_after_it(self):
+        self.run_hook("start", data={"source": "startup", "cwd": ROOT})
+        self.run_hook("end", data={"reason": "clear"})
+        self.run_hook("start", data={"source": "clear", "cwd": ROOT})
+        self.run_hook("end", data={"reason": "prompt_input_exit"})
+        self.assertEqual(self.t.opts["automatic-rename"], "1")
+
+    def test_a_claude_run_inside_the_sessions_pane_leaves_its_tab_alone(self):
+        # What `claude mcp list` fires there: SessionEnd alone; `claude -p` a SessionStart first.
+        self.run_hook("start", data={"source": "startup", "cwd": ROOT})
+        self.run_hook("title", "tab names")
+        self.run_hook("end", data={"reason": "other"}, env=self.NESTED)
+        self.assertEqual(self.t.name, f"{R} tab names")
+        self.run_hook("start", data={"source": "startup", "cwd": "/elsewhere"}, env=self.NESTED)
+        self.run_hook("end", data={"reason": "other"}, env=self.NESTED)
+        self.assertEqual(self.t.name, f"{R} tab names")
+        self.run_hook("end", data={"reason": "prompt_input_exit"})  # the session's own end
+        self.assertEqual(self.t.opts["automatic-rename"], "1")
+
+    def test_a_claude_after_the_last_one_quit_or_crashed_names_the_window(self):
+        self.run_hook("start", data={"source": "startup", "cwd": ROOT})
+        self.run_hook("end", data={"reason": "prompt_input_exit"})
+        self.run_hook("start", data={"source": "resume", "session_title": "tab names"}, env=self.NESTED)
+        self.assertEqual(self.t.name, f"{R} tab names")
+        with mock.patch.object(tab, "_alive", return_value=False):  # ended without its hook
+            self.run_hook("start", data={"source": "startup", "session_title": "kept plan"})
+        self.assertEqual(self.t.name, f"{R} kept plan")
+
     def test_a_window_the_user_named_is_untouched_from_start_to_end(self):
         self.t.opts.update(window_name="srv", **{"automatic-rename": "0"})
         self.run_hook("start", data={"source": "startup", "cwd": ROOT})
@@ -264,6 +295,11 @@ class TestSkills(Rig):
         self.run_hook("end", data={"reason": "prompt_input_exit"})
         self.assertNotIn(tab.SKILL_OPT, self.t.opts)
         self.assertEqual(self.t.opts["automatic-rename"], "1")     # the fresh window it was
+
+    def test_a_claude_run_inside_the_sessions_pane_keeps_the_skills_hold(self):
+        tab.take(tab.REWORK_ICON, "rounding", pane="%999999")
+        self.run_hook("end", data={"reason": "other"}, env=self.NESTED)
+        self.assertEqual(self.t.name, f"{tab.REWORK_ICON} rounding")
 
     def test_given_back_the_session_title_follows_again(self):
         tab.take(tab.REWORK_ICON, "rounding", pane="%999999")

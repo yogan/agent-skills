@@ -12,7 +12,11 @@ session is about, at most 18 characters after the icon, so many windows fit the 
 
 A window you named yourself is never renamed, and neither is one renamed by hand since. When
 Claude Code quits, a window it named gets back what it had before: a fresh window goes back
-to tmux naming it after its process. The icons and the logic are in
+to tmux naming it after its process. The window belongs to the Claude Code process that
+started in it: a `claude` run inside it while that one lives (`claude mcp list` or `claude -p`
+from the session's own shell, which fire `SessionStart`/`SessionEnd` in that pane too), or a
+second session in a split of the window, neither names it nor gives its name back. After a
+`/clear` the same process goes on, so the window stays its. The icons and the logic are in
 [`lib/tab.py`](../lib/tab.py).
 
 The skills that work through an MR take their session's tab over while they do (`tab.take`):
