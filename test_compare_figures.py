@@ -10,12 +10,15 @@ is worse than no sheet, because it is trusted.
 
 Run: `python3 test_compare_figures.py`
 """
+import io
 import json
 import os
 import shutil
 import sys
 import tempfile
 import unittest
+from contextlib import redirect_stdout
+from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
@@ -123,6 +126,21 @@ class TestCaptureLayout(unittest.TestCase):
                     {"repo/arch": {"size": [10, 10], "problems": ["arch: HIDDEN TEXT"]}})
         _svgs, meta = cf._load("t")
         self.assertEqual(cf._gates(meta, "repo/arch"), ["arch: HIDDEN TEXT"])
+
+    def test_redrawing_some_figures_keeps_the_others_gate_results(self):
+        """`capture after --only arch` rewrote the record with arch's alone: every other
+        figure kept its image and lost its problems."""
+        self._write("t", {"repo.er.svg": "<svg/>"},
+                    {"repo/er": {"size": [10, 10], "problems": ["er: TINY"]}})
+        drawn = type("Fig", (), {"name": "arch", "svg": "<svg/>", "problems": [], "blocked": []})
+        with mock.patch.dict(cf.CORPORA, {"repo": {"arch": {}, "er": {}}}), \
+                mock.patch.object(cf.figure, "draw", return_value=[drawn]), \
+                mock.patch.object(cf.render, "natural_size", return_value=(1, 1)), \
+                redirect_stdout(io.StringIO()):
+            cf.capture("t", ["repo"], ["arch"], "embedded", "light")
+        _svgs, meta = cf._load("t")
+        self.assertEqual(cf._gates(meta, "repo/er"), ["er: TINY"])
+        self.assertIn("repo/arch", meta)
 
     def test_a_figure_with_no_meta_entry_reports_no_gate_problems(self):
         self.assertEqual(cf._gates({}, "repo/arch"), [])

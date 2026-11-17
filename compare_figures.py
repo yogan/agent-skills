@@ -120,7 +120,14 @@ def capture(tag, corpora, only, target, theme):
     """Render every requested figure into `/tmp/diagram-compare/<tag>/` and report."""
     out = os.path.join(ROOT, tag)
     os.makedirs(out, exist_ok=True)
-    meta = {}
+    # Added to what the tag holds: `--only` redraws some figures and leaves the others' images
+    # in place, so their gate results have to stay beside them, or the sheet shows the old
+    # image with its problems gone.
+    try:
+        with open(os.path.join(out, "meta.json")) as handle:
+            meta = json.load(handle)
+    except (OSError, ValueError):
+        meta = {}
     for corpus in corpora:
         specs = {n: s for n, s in CORPORA[corpus].items() if not only or n in only}
         if not specs:
