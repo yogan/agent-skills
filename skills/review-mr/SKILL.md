@@ -228,7 +228,10 @@ own: where the mod draws, the user answers on the card, and their answer reaches
 prompt to carry on from; without the mod, ask them in one line and wait. **An answer the user
 types instead is recorded before you go on**, as the card's press would:
 `python3 $SD/findings.py explainer --iid <n> --choose skip|generate`. On "generate", launch `explain-branch` as a **background subagent** pointed at the
-checked-out worktree, and move on immediately (it opens the HTML when ready). It must only
+checked-out worktree, with the target `base:<sha>`, where `<sha>` is what
+`python3 $SD/findings.py base --iid <n>` prints: GitLab's own base of the MR, as review-branch gets
+it. Its default guess, the branch point from `origin/main`, is wrong for an MR into another
+branch, and `mr:<n>` fetches. Move on immediately (it opens the HTML when ready). It must only
 *read* git (no checkout/fetch — that already happened) so it can't race review-branch.
 
 The user's "generate" **is** their request for this subagent — a general "don't spawn

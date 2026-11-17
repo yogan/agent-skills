@@ -13,7 +13,9 @@ import importlib.util
 import io
 import os
 import shlex
+import subprocess
 import sys
+import tempfile
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from unittest.mock import patch
@@ -120,6 +122,34 @@ class TestResolveBlank(unittest.TestCase):
         ])):
             with self.assertRaises(SystemExit):
                 RT.resolve_blank()
+
+
+class TestResolveBase(unittest.TestCase):
+    """review-mr hands over its worktree with GitLab's base of the MR. In a real repository:
+    a feature branched off `release`, whose MR targets `release`, not main."""
+
+    def test_the_given_base_is_the_range_not_the_branch_point_from_main(self):
+        with tempfile.TemporaryDirectory() as d:
+            def git(*a):
+                return subprocess.run(["git", "-c", "user.email=t@example.com", "-c", "user.name=t",
+                                       *a], cwd=d, check=True, capture_output=True, text=True).stdout.strip()
+            git("init", "-q", "-b", "main")
+            git("commit", "-q", "--allow-empty", "-m", "on main")
+            git("update-ref", "refs/remotes/origin/main", "HEAD")
+            git("switch", "-q", "-c", "release")
+            git("commit", "-q", "--allow-empty", "-m", "release only")
+            release = git("rev-parse", "HEAD")
+            git("switch", "-q", "-c", "feat")
+            git("commit", "-q", "--allow-empty", "-m", "the change")
+            here = os.getcwd()
+            os.chdir(d)
+            try:
+                out = RT.resolve_base(release[:10])
+                with redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+                    RT.resolve_base("0" * 40)
+            finally:
+                os.chdir(here)
+        self.assertEqual((out["BASE"], out["LABEL"]), (release, "feat"))
 
 
 class TestResolveBranch(unittest.TestCase):

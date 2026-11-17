@@ -16,7 +16,8 @@ Output is still critique-free: a teaching document, not a review.
 
 ### Step 1 — Resolve the target
 
-Same spec syntax as explain-diff (blank/"this branch", `branch:foo/bar`, `mr:123`, `commit:abc`).
+Same spec syntax as explain-diff (blank/"this branch", `branch:foo/bar`, `mr:123`, `commit:abc`,
+and `base:<sha>` where the caller hands over the checkout with its base).
 Run the **same script**, unmodified:
 
 ```bash

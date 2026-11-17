@@ -6,6 +6,8 @@ Usage: resolve-target.py [spec]
   spec="branch:<name>":  a local or remote branch since it diverged from origin/main|master
   spec="mr:<number>":     a GitLab MR's source branch since it diverged from its target branch (via glab)
   spec="commit:<ref>":    a single commit's own diff (ref defaults to HEAD, i.e. "last commit")
+  spec="base:<sha>":      the checkout's HEAD since <sha>, a base the caller already knows
+                          (review-mr passes GitLab's own base of the MR it reviews)
 
 Prints shell-sourceable variables: BASE, HEAD_REF, LABEL, IS_SINGLE_COMMIT, MR_NUM, MR_URL, MR_TITLE
 MR_NUM/MR_URL/MR_TITLE are only populated for an mr: spec; empty otherwise.
@@ -46,13 +48,13 @@ def merge_base(head_ref: str, main_ref: str) -> str:
     return run(["git", "merge-base", head_ref, main_ref])
 
 
-def resolve_blank() -> dict:
-    main_ref = find_main_ref()
-    if not main_ref:
-        die("Cannot find origin/main or origin/master. Are you in a git repo with a remote?")
-
+def resolve_blank(base: str = "") -> dict:
     head_ref = run(["git", "rev-parse", "HEAD"])
-    base = merge_base(head_ref, main_ref)
+    if not base:
+        main_ref = find_main_ref()
+        if not main_ref:
+            die("Cannot find origin/main or origin/master. Are you in a git repo with a remote?")
+        base = merge_base(head_ref, main_ref)
 
     branch_result = subprocess.run(
         ["git", "symbolic-ref", "--short", "HEAD"], capture_output=True, text=True
@@ -86,6 +88,17 @@ def resolve_blank() -> dict:
             branch_name = remote_branch or f"detached@{head_ref[:7]}"
 
     return {"BASE": base, "HEAD_REF": head_ref, "LABEL": branch_name, "IS_SINGLE_COMMIT": "false"}
+
+
+def resolve_base(value: str) -> dict:
+    """The checkout as it is, against a base the caller knows: review-mr passes GitLab's own
+    base of the MR, where the local guess (`origin/main`) is wrong for an MR into another
+    branch, and fetching to resolve `mr:` is not allowed in its worktree."""
+    if not value:
+        die("base spec requires a commit, e.g. base:abc1234")
+    if not run_ok(["git", "rev-parse", "--verify", "--quiet", f"{value}^{{commit}}"]):
+        die(f"Base commit '{value}' is not in this repository.")
+    return resolve_blank(run(["git", "rev-parse", f"{value}^{{commit}}"]))
 
 
 def resolve_branch(value: str) -> dict:
@@ -198,11 +211,12 @@ def main() -> None:
         "branch": lambda: resolve_branch(value),
         "mr": lambda: resolve_mr(value),
         "commit": lambda: resolve_commit(value),
+        "base": lambda: resolve_base(value),
     }
 
     resolver = resolvers.get(kind)
     if resolver is None:
-        die(f"Unknown spec kind '{kind}'. Use branch:, mr:, commit:, or leave blank for current branch.")
+        die(f"Unknown spec kind '{kind}'. Use branch:, mr:, commit:, base:, or leave blank for current branch.")
 
     result = resolver()
 

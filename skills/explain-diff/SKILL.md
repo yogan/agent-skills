@@ -26,6 +26,7 @@ Translate the user's request to one canonical spec:
 | "MR !123", "PR 123", "merge request 123" | `mr:123` |
 | "last commit", "most recent commit" | `commit:HEAD` |
 | "commit abc1234" | `commit:abc1234` |
+| another skill hands over the checkout and its base (review-mr) | `base:<sha>` |
 
 Run the bundled script (handles detached HEAD transparently, same as `/review-branch`):
 
