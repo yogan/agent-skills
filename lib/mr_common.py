@@ -2,6 +2,7 @@
 rework-mr's threads.py — genuinely identical apart from a trivial parameter, unlike the
 two skills' state machines and rendering logic, which differ for real domain reasons
 and stay duplicated (see CLAUDE.md's "Sharing vs. duplication")."""
+import datetime
 import json
 import os
 import re
@@ -332,3 +333,12 @@ def mr_json(st):
 SHELL_FORM = ("Spell that out in full in every call: zsh, the shell here, runs no command kept "
               "in a variable. Pass every text in single quotes, an apostrophe in it as `'\\''`: "
               "inside double quotes the shell runs whatever is in backticks.")
+
+
+def instant(value):
+    """An ISO time as GitLab or these scripts write it, comparable; None for anything missing
+    or unparseable, so a comparison with it reads as "no information" rather than "very old"."""
+    try:
+        return datetime.datetime.fromisoformat(str(value).replace("Z", "+00:00")) if value else None
+    except ValueError:
+        return None

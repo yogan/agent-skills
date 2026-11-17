@@ -10,10 +10,10 @@ What differs between the skills is a parameter: which of the user's notes is the
 (review-mr's comment opens its thread, rework-mr's reply is the newest) and the word the card
 uses for it.
 """
-import datetime
 import re
 
 from lib import ui, worddiff
+from lib.mr_common import instant
 
 NOTE_ID = re.compile(r"#note_(\d+)$")
 
@@ -21,11 +21,7 @@ NOTE_ID = re.compile(r"#note_(\d+)$")
 EDIT_ICON = "\U000f1a7d"
 
 
-def _time(at):
-    try:
-        return datetime.datetime.fromisoformat(str(at).replace("Z", "+00:00"))
-    except ValueError:
-        return None
+_time = instant
 
 
 def is_after(at, since):

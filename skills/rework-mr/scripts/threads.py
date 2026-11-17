@@ -95,6 +95,7 @@ from lib.gitlab import (
 )
 from lib.mr_common import (
     SHELL_FORM,
+    instant,
     mr_json,
     mr_news,
     topic_handles,
@@ -2196,12 +2197,7 @@ def start_fix_round(t):
             t.pop(k, None)
 
 
-def _instant(value):
-    """An ISO time as GitLab or this script writes it, comparable; None where unknown."""
-    try:
-        return datetime.datetime.fromisoformat(str(value).replace("Z", "+00:00")) if value else None
-    except ValueError:
-        return None
+_instant = instant
 
 
 def wrote_since_plan(state, t):

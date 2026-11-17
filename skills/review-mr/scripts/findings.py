@@ -116,7 +116,7 @@ from lib.fences import (LINK_ICON, SUGGESTION_INFO, YOU, block_lang, fence, sugg
 from lib.cli import iid_option  # noqa: E402
 from lib.gitlab import (api, api_post, approve, context, current_user, die, file_at, mr_base, remember_user,  # noqa: E402
                         mr_head, mr_object, mr_status, mr_view, versions, web_base)
-from lib.mr_common import (DEFAULT_LANG, LANG_GIVEAWAYS, MR_LEVEL, SHELL_FORM, first_name, people,  # noqa: E402
+from lib.mr_common import (DEFAULT_LANG, LANG_GIVEAWAYS, MR_LEVEL, SHELL_FORM, first_name, instant, people,  # noqa: E402
                            hold, load, mr_json, mr_news, topic_handles, loc_md, num, plain_text, reads_as,
                            short_summary, state_file, topic_for, tref)
 from lib.mr_common import save as _save                          # noqa: E402
@@ -139,15 +139,7 @@ SRC_ICON = {"llm": "🤖", "human": "👤", "both": "👥", "peer": "💬", "aut
 INBOUND = ("peer", "author")
 
 
-def _ts(value):
-    """Parse a GitLab timestamp; None for anything unparseable so comparisons fail
-    safe (treated as "no information" rather than "very old")."""
-    if not value:
-        return None
-    try:
-        return datetime.datetime.fromisoformat(str(value).replace("Z", "+00:00"))
-    except ValueError:
-        return None
+_ts = instant
 
 
 def now_iso():
