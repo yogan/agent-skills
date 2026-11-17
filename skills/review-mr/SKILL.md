@@ -375,6 +375,11 @@ are `Follow up` and `Nothing to add`. A follow-up is a reply below their comment
 like any other (`set <t> --draft '…'`, which shows it as a follow-up), short, and never a
 restatement of what their comment already says.
 
+`merge` follows the same rule. Of findings not posted yet, the user's wording, severity and
+draft win. Where one of them is posted, its words stay as they are on GitLab, and the topic
+comes up offering a follow-up for what the others add or correct: show it
+(`quote <t> --focus`) and answer the same question as above.
+
 ## The current topic
 
 Exactly one topic is **current** at a time — the one being decided. `findings.py` keeps it in
@@ -399,7 +404,7 @@ does + the real trade-off, citing `file:line`), then let the user reshape the *l
 ```bash
 python3 $SD/findings.py set <t> --severity … --summary … --source … --iid <n>       # reclassify / reword
 python3 $SD/findings.py drop <t> --iid <n>                                          # not worth raising (kept as dropped; `set <t> --state reset` undoes it)
-python3 $SD/findings.py merge <into> <other…> --iid <n>                             # same point (→ source 👥)
+python3 $SD/findings.py merge <into> <other…> --iid <n>                             # same point (→ source 👥; see below)
 python3 $SD/findings.py add --file … --line … --summary … --source human --iid <n>  # the user's own find
 ```
 

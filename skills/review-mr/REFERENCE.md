@@ -97,7 +97,9 @@ python3 $SD/findings.py add --file … --line … --summary … --source human -
 ```
 
 When the same point was found by both you and the agent, `merge` them — the source becomes
-👥 and, per the design, **your** wording/severity wins.
+👥. Not posted yet, **your** wording, severity and draft win. Already posted, what is on GitLab
+stays as posted, and what the other finding adds or corrects comes up as a follow-up reply on
+that thread, drafted together like any other draft and posted only by you.
 
 ## The re-review loop — one check, step by step
 

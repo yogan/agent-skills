@@ -1937,6 +1937,32 @@ class TestMergeTopics(unittest.TestCase):
         self.assertEqual([(t["id"], t["thread_ids"], t["source"]) for t in state["topics"]],
                          [("t2", ["d2", "d1"], "both")])
 
+    def finding(self, tid, source, thread=None, draft=None):
+        return {"id": tid, "source": source, "summary": f"{source} words", "severity": source,
+                "draft": draft, "thread_ids": [thread] if thread else []}
+
+    def test_not_posted_yet_the_users_wording_wins(self):
+        into = self.finding("t1", "llm", draft="agent text")
+        F.merge_findings(into, [self.finding("t2", "human", draft="my text")])
+        self.assertEqual((into["summary"], into["severity"], into["draft"], into["source"]),
+                         ("human words", "human", "my text", "both"))
+        self.assertNotIn("follow_up", into)
+
+    def test_two_of_the_agents_findings_merged_are_both_too(self):
+        into = self.finding("t1", "llm")
+        F.merge_findings(into, [self.finding("t2", "llm")])
+        self.assertEqual(into["source"], "both")
+
+    def test_posted_its_words_stay_and_what_the_rest_adds_is_offered_as_a_follow_up(self):
+        """Whichever of the two was posted, and whichever the other is merged into."""
+        for posted_first in (True, False):
+            posted = self.finding("t1", "human", thread="d1")
+            agent = self.finding("t2", "llm", draft="agent text")
+            into, other = (posted, agent) if posted_first else (agent, posted)
+            F.merge_findings(into, [other])
+            self.assertEqual((into["summary"], into["draft"], into["thread_ids"], into["follow_up"]),
+                             ("human words", None, ["d1"], "offer"))
+
 
 class TestWhereTheModDraws(unittest.TestCase):
     """lib/ui.py: in a session the review-ui mod draws, the views change for the person;

@@ -3362,6 +3362,30 @@ def _listed_worktree(path):
                for line in out.splitlines() if line.startswith("worktree "))
 
 
+def merge_findings(into, others):
+    """Fold `others` into `into`: the same point, found more than once, by the user, the agent
+    or both. Not on GitLab yet, the user's wording wins: their summary, severity and draft.
+    Already posted, what is on GitLab stays as posted, and what the rest adds or corrects
+    becomes a follow-up reply on that thread, drafted with the user like any other (the
+    topic comes up offering one, as a comment merged in from their own review does)."""
+    if not others:
+        return
+    group = [into, *others]
+    posted = next((x for x in group if x["thread_ids"]), None)
+    unposted = [x for x in group if not x["thread_ids"]]
+    word_of = posted or next((x for x in group if x.get("source") == "human"), into)
+    if word_of is not into:
+        into["summary"], into["severity"] = word_of.get("summary"), word_of.get("severity")
+        into["draft"] = word_of.get("draft")
+        if word_of.get("draft_at"):
+            into["draft_at"] = word_of["draft_at"]
+    for o in others:
+        into["thread_ids"] += [x for x in o["thread_ids"] if x not in into["thread_ids"]]
+    into["source"] = "both"
+    if posted and unposted:
+        into["follow_up"] = "offer"
+
+
 def keep_to_check(t):
     """A topic's draft the user posted by hand, which they often reword: where cards are
     drawn, kept to check what they posted against (`posted <t>`), however it gets linked."""
@@ -4151,14 +4175,9 @@ def main():
         into = topic_for(state, args.into) or die(f"no topic {args.into}")
         # Mirrors threads.py's `merge`: all looked up first, and never the topic merged into.
         others = [topic_for(state, oid) or die(f"no topic {oid}") for oid in args.others]
-        for o in others:
-            if o is into:
-                continue
-            into["thread_ids"] += [x for x in o["thread_ids"]
-                                   if x not in into["thread_ids"]]
-            if into.get("source") != o.get("source"):
-                into["source"] = "both"
-            state["topics"] = [t for t in state["topics"] if t is not o]
+        others = [o for o in others if o is not into]
+        merge_findings(into, others)
+        state["topics"] = [t for t in state["topics"] if not any(t is o for o in others)]
         save(path, state)
     elif cmd == "own-review":
         if args.step == "done":
