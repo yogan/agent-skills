@@ -222,7 +222,7 @@ def check(svg, name="diagram", avail_w=AVAIL_W, max_h=MAX_H + RESCUE_H,
         if m["fmodal"] > BODY_PX:
             problems.append(f"BODY modal glyph {m['fmodal']:.1f}px > body {BODY_PX:.0f}px")
     def too_small(what, rendered, floor):
-        problem = f"TINY {what}{rendered:.1f}px < {floor:.0f}px"
+        problem = f"TINY {what}{rendered:.1f}px < {floor:g}px"
         if m["scale"] < 1.0:
             # Say how much narrower, because "TINY" alone leaves the author guessing whether
             # the fix is one fewer box, shorter labels or half the diagram — and the numbers

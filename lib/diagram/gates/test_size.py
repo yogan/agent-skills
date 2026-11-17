@@ -195,6 +195,8 @@ class TestSubtitleFloor(unittest.TestCase):
     def test_a_subtitle_under_its_own_floor_fails(self):
         result = size.check(with_subtitle(1500, 300))      # scale 0.52 -> subtitle 5.7px
         self.assertTrue(any("subtitle" in p for p in result.problems), result.problems)
+        # Its floor as it is: rounded, 7.5px read as 8, under which 7.6px text passes.
+        self.assertTrue(any("< 7.5px" in p for p in result.problems), result.problems)
 
     def test_the_primary_floor_still_binds_first(self):
         """The subtitle floor is chosen so it never fails before the primary text does.
