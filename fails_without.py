@@ -13,6 +13,7 @@ checkout another session shares, it sees the unfixed file meanwhile. Before this
 did the same with `cp`, `sed -i` and a copy back by hand, a dozen times, once leaving a
 backup in /tmp to hunt down and twice needing a second `sed` to land the revert.
 """
+import signal
 import subprocess
 import sys
 
@@ -28,6 +29,10 @@ def main(argv):
         print(f"{path}: the fixed text occurs {original.count(fixed)} times, not once",
               file=sys.stderr)
         return 2
+    # A timeout or a closed pane ends a run with SIGTERM or SIGHUP, whose default handling
+    # skips `finally`: turned into an exit, the fix still goes back.
+    for sig in (signal.SIGTERM, signal.SIGHUP):
+        signal.signal(sig, lambda signum, _frame: sys.exit(128 + signum))
     try:
         with open(path, "w", encoding="utf-8") as fh:
             fh.write(original.replace(fixed, unfixed))

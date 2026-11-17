@@ -2,8 +2,10 @@
 """fails_without.py on a file of its own: the fix is taken out for one run and put back."""
 import io
 import os
+import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from contextlib import redirect_stdout
 from unittest import mock
@@ -47,6 +49,21 @@ class TestFailsWithout(unittest.TestCase):
         with mock.patch.object(F.subprocess, "run", side_effect=KeyboardInterrupt), \
                 self.assertRaises(KeyboardInterrupt):
             F.main([self.path, "'fixed'", "'broken'", "--", "true"])
+        self.assertEqual(self.read(), "value = 'fixed'\n")
+
+    def test_the_fix_is_back_when_the_run_is_terminated(self):
+        """A tool's timeout or a closed pane sends SIGTERM; its default handling skips
+        `finally`, and once left the live checkout without its fix."""
+        script = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fails_without.py")
+        run = subprocess.Popen([sys.executable, script, self.path, "'fixed'", "'broken'", "--",
+                                "sleep", "30"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        self.addCleanup(run.kill)
+        deadline = time.monotonic() + 10
+        while "broken" not in self.read() and time.monotonic() < deadline:
+            time.sleep(0.05)
+        self.assertIn("broken", self.read())
+        run.terminate()
+        run.wait(10)
         self.assertEqual(self.read(), "value = 'fixed'\n")
 
 
