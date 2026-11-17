@@ -1893,8 +1893,8 @@ export const register: Register = on => {
       return { deny: 'Posting and resolving are the user\'s press: the Post or Resolve thread button on the card. Leave it to them.' }
     }
     if (REVIEW_SCRIPT.test(e.command)) await markSession($)
-    // The background agent's own calls: no card, no note; its end reads the state back.
-    if ((e as { agentId?: string }).agentId) return next(e)
+    // Only the main loop's calls arrive here: the engine runs no mod hook for a background
+    // agent's (README), whose end reads the state back instead.
     const ran = await next(e)
     if (ran.deny !== undefined || ran.isError) return ran
     const result = ran.result as { stdout?: unknown } | undefined
