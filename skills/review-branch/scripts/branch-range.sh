@@ -40,11 +40,16 @@ fi
 
 COMMIT_COUNT=$(git log --oneline "${BASE}..HEAD" | wc -l | xargs)
 
-# Branch name — works even in detached HEAD
-BRANCH_NAME=$(git symbolic-ref --short HEAD 2>/dev/null || git describe --exact-match --tags HEAD 2>/dev/null || git log -1 --format='%D' HEAD | sed 's/.*origin\///;s/,.*//' | xargs || echo "detached@${HEAD_SHA:0:7}")
+# Branch name — works even in detached HEAD (review-mr checks an MR out detached at its
+# origin/<branch>): the branch, else a tag, else a remote branch at HEAD, else the commit.
+BRANCH_NAME=$(git symbolic-ref --short HEAD 2>/dev/null \
+  || git describe --exact-match --tags HEAD 2>/dev/null \
+  || git for-each-ref --points-at=HEAD --format='%(refname:lstrip=3)' refs/remotes/origin \
+     | grep -vx HEAD | head -1 || true)
+[ -n "$BRANCH_NAME" ] || BRANCH_NAME="detached@${HEAD_SHA:0:7}"
 
-echo "MAIN_REF='$MAIN_REF'"
-echo "BASE='$BASE'"
-echo "HEAD_SHA='$HEAD_SHA'"
-echo "COMMIT_COUNT='$COMMIT_COUNT'"
-echo "BRANCH_NAME='$BRANCH_NAME'"
+# Quoted for the shell that sources this: a branch name is the MR author's to choose, and
+# git allows quotes, `$` and parentheses in one.
+for v in MAIN_REF BASE HEAD_SHA COMMIT_COUNT BRANCH_NAME; do
+  printf '%s=%q\n' "$v" "${!v}"
+done
