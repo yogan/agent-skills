@@ -579,6 +579,11 @@ def main(argv):
         print(__doc__.strip().split("\n\n")[2])
         return
     cmd, rest = argv[0], argv[1:]
+    # Every path here is the repository's, as the viewer names it; git answers some
+    # relative to where it runs (untracked files, a pathspec), so it runs from the top.
+    top = git("rev-parse", "--show-toplevel")
+    if top:
+        os.chdir(top)
     if cmd == "plan" and not rest:
         return plan()
     if cmd == "show" and len(rest) == 1 and (rest[0] == "work" or rest[0].isdigit()):

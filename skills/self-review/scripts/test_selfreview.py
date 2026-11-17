@@ -393,6 +393,21 @@ class TestRemap(unittest.TestCase):
         self.assertEqual(S.remap([(1, 2, 0, 0)], 1, 2), (1, "deleted"))
 
 
+class TestFromASubfolder(Repo):
+    def test_a_command_run_in_a_subfolder_sees_the_whole_change_by_its_repository_paths(self):
+        """Run from `sub/`, git listed untracked files relative to it and the stat no longer
+        matched what the viewer shows, so `show work` refused."""
+        os.makedirs(self.path("sub"))
+        write(self.path("sub/new.txt"), "n\n")
+        write(self.path("f.txt"), "changed\n")
+        seen = []
+        self.addCleanup(os.chdir, os.getcwd())
+        os.chdir(self.path("sub"))
+        with patch.object(S, "show", lambda target: seen.append(S.work_stat())):
+            S.main(["show", "work"])
+        self.assertEqual(sorted(p for p, _, _ in seen[0]), ["f.txt", "sub/new.txt"])
+
+
 class TestChanges(Repo):
     def test_hunks_come_from_the_two_versions_of_the_file(self):
         one, three = S.commits(self.clone)[0][0], S.commits(self.clone)[2][0]
