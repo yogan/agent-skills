@@ -279,8 +279,9 @@ class TestReply(unittest.TestCase):
         self.assertIsNone(S.resolve("3", self.NOTES))
         self.assertIsNone(S.resolve("user:404", self.NOTES))
 
-    def run_reply(self, ref, lands=True, posted=None, hidden=()):
+    def run_reply(self, ref, lands=True, posted=None, hidden=(), unhides=False, shown=None):
         posted = [] if posted is None else posted
+        shown = [] if shown is None else shown
         state = {"notes": list(self.NOTES)}
 
         def post(sid, parent, text):
@@ -294,6 +295,10 @@ class TestReply(unittest.TestCase):
         with patch.object(S, "own_session", lambda cwd=None: "s1"), \
                 patch.object(S.hunk, "notes", lambda sid: list(state["notes"])), \
                 patch.object(S.hunk, "whole_review", lambda sid: ([], [], list(hidden))), \
+                patch.object(S.hunk, "mark", lambda sid, key: "abc"), \
+                patch.object(S.hunk, "loaded_input", lambda sid: ("show", "abc")), \
+                patch.object(S.hunk, "show_unread",
+                             lambda sid, paths, args: shown.append((paths, args)) or unhides), \
                 patch.object(S.hunk, "reply", post), \
                 contextlib.redirect_stdout(io.StringIO()), \
                 contextlib.redirect_stderr(io.StringIO()):
@@ -320,15 +325,31 @@ class TestReply(unittest.TestCase):
         with self.assertRaises(SystemExit):
             self.run_reply("2", lands=False)
 
-    def test_a_thread_on_a_hidden_file_says_why_no_reply_can_go_there(self):
+    def test_a_thread_on_a_file_hidden_as_read_is_shown_again_and_answered(self):
         """Hunk refuses a reply under a note on a file it hides ("no longer available as a
-        reply parent"); the thread itself is read, numbered as when nothing is hidden."""
-        posted, err = [], io.StringIO()
+        reply parent"), so the file is un-marked and the commit shown loaded again first."""
+        posted, shown = [], []
+        self.run_reply("2", posted=posted, hidden=["f.txt"], unhides=True, shown=shown)
+        self.assertEqual((posted, shown), (["user:1792059099999-1"],
+                                           [(["f.txt"], ["show", "abc"])]))
+
+    def test_a_thread_on_a_hidden_file_that_stays_hidden_says_why_no_reply_can_go_there(self):
+        posted, shown, err = [], [], io.StringIO()
         with self.assertRaises(SystemExit), contextlib.redirect_stderr(err):
-            self.run_reply("2", posted=posted, hidden=["f.txt"])
+            self.run_reply("2", posted=posted, hidden=["f.txt"], shown=shown)
         self.assertEqual(posted, [])
-        self.run_reply("2", posted=posted, hidden=["other.txt"])
-        self.assertEqual(posted, ["user:1792059099999-1"])
+        self.run_reply("2", posted=posted, hidden=["other.txt"], shown=shown)
+        self.assertEqual((posted, len(shown)), (["user:1792059099999-1"], 1))
+
+    def test_an_uncommitted_change_is_loaded_again_only_as_the_window_shows_it(self):
+        """A fix made in the tree since `show` must not slip into the window unannounced."""
+        with patch.object(S.hunk, "whole_review", lambda sid: ([], [], ["f.txt"])), \
+                patch.object(S.hunk, "mark", lambda sid, key: "tree1"), \
+                patch.object(S.hunk, "loaded_input", lambda sid: ("vcs", None)), \
+                patch.object(S.hunk, "show_unread", lambda sid, paths, args: args):
+            for tree, want in (("tree1", ["diff", "HEAD"]), ("tree2", False)):
+                with patch.object(S, "snapshot", lambda cwd=None: tree):
+                    self.assertEqual(S.show_unread("s1", "f.txt"), want, tree)
 
     def test_an_unknown_thread_posts_nothing(self):
         posted = []
@@ -525,7 +546,7 @@ class TestPoint(unittest.TestCase):
     """The agent's own diff note, started only because the author asked for a place to be
     pointed out."""
 
-    def run_point(self, lands=True, side="new", hidden=()):
+    def run_point(self, lands=True, side="new", hidden=(), unhides=False):
         w = FakeWindow([])
         added = []
 
@@ -537,6 +558,9 @@ class TestPoint(unittest.TestCase):
                 patch.object(S.hunk, "notes", lambda sid: list(w.notes)), \
                 patch.object(S.hunk, "add_note", add), \
                 patch.object(S.hunk, "whole_review", lambda sid: ([], [], list(hidden))), \
+                patch.object(S.hunk, "mark", lambda sid, key: "abc"), \
+                patch.object(S.hunk, "loaded_input", lambda sid: ("show", "abc")), \
+                patch.object(S.hunk, "show_unread", lambda sid, paths, args: unhides), \
                 contextlib.redirect_stdout(io.StringIO()) as out, \
                 contextlib.redirect_stderr(io.StringIO()):
             S.point("a.py", 32, "names[0] is read here", side=side)
@@ -550,7 +574,11 @@ class TestPoint(unittest.TestCase):
     def test_a_removed_line_is_pointed_at_on_the_old_side(self):
         self.assertEqual(self.run_point(side="old")[0][0][2], "old")
 
-    def test_a_file_hidden_as_read_is_named_as_the_reason(self):
+    def test_a_file_hidden_as_read_is_shown_again_for_the_note(self):
+        self.assertEqual(self.run_point(hidden=["a.py"], unhides=True)[0],
+                         [("a.py", 32, "new", "agent")])
+
+    def test_a_file_that_stays_hidden_is_named_as_the_reason(self):
         """Hunk takes no note on a file it does not show."""
         with self.assertRaises(SystemExit):
             self.run_point(hidden=["a.py"])

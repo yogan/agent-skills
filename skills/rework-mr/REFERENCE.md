@@ -60,7 +60,8 @@ the reply (step 7).
    (without it, the script keeps a copy of every note it has seen), and the push refuses
    until those are read here.
    Your own notes are cleared each time a diff goes up, so the window never shows an
-   annotation belonging to a diff that has been replaced.
+   annotation belonging to a diff that has been replaced. One on a file hidden as read
+   un-marks that file, so it shows again, unread, with the note.
    Then push — **a fixup, not a new commit** (the target was determined in step 4):
    ```bash
    python3 $SD/threads.py push <t>

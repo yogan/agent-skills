@@ -100,9 +100,12 @@ Each refusal is deliberate; resolve its cause, never work around it.
   diff notes on a hidden file. With the keep-notes Hunk extension loaded (this repo's
   `hunk-extensions/keep-notes`) they are read anyway, so nothing changes. Without it,
   `notes`, `ack`, `close` and `show` refuse while files are hidden and name them: tell the
-  author to show hidden files again and say done, then read again. Either way Hunk takes no
-  reply or new note on a hidden file; `reply` and `point` say so, and the author has to show
-  the file first.
+  author to show hidden files again and say done, then read again. Hunk takes no reply or
+  new note on a hidden file, so `reply` and `point` un-mark it as read first and load the
+  piece again: the file shows again, unread, with the new note in it. Mention that in your
+  answer. Where that cannot work (no keep-notes, read marks not saved to disk, or a fix in
+  the tree that `show` has not put in the window yet) they say so instead: ask the author to
+  show hidden files again.
 - **Commits need a clean tree** (`sr show N`), because everything in the tree is folded into
   the commit by `sr amend`.
 - **A fix that conflicts with a later commit** is rolled back: the branch is untouched and

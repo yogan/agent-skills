@@ -47,7 +47,7 @@ import shlex
 import shutil
 import subprocess
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 
 from lib import diffsize, tmux
 
@@ -307,11 +307,11 @@ def reload_working_diff(session_id):
     then fell back to an inline diff every time. The window must show exactly the change
     the message summarises, so it is the viewer that is narrowed to git's view.
     """
-    data = _json(["hunk", "session", "reload", session_id, "--json", "--", "diff", "HEAD",
-                  "--exclude-untracked"])
-    if not data:
-        return None
-    return (data.get("result") or {}).get("fileCount")
+    return reload_review(session_id, WORKING_DIFF)
+
+
+# What `reload_working_diff` loads, as `hunk session reload` takes it.
+WORKING_DIFF = ["diff", "HEAD", "--exclude-untracked"]
 
 
 def loaded_stat(session_id):
@@ -356,13 +356,17 @@ def clear_agent_notes(session_id):
     return rc == 0
 
 
-def add_notes(session_id, notes):
+def add_notes(session_id, notes, args=WORKING_DIFF):
     """Anchor the agent's rationale to lines of the loaded diff. `notes` are dicts of
     `filePath` plus one of `newLine`/`oldLine`, and `summary`.
 
     Raises ValueError above `MAX_NOTES` rather than quietly dropping the extras: a cap
     that silently truncates teaches nothing, and the point is for the caller to have
     chosen which few notes earn their place.
+
+    A file the window hides as read is shown again first (`show_unread`, with `args` what
+    the window holds): the viewer takes no note on a file it does not show, and refuses the
+    whole batch for it.
     """
     if len(notes) > MAX_NOTES:
         raise ValueError(
@@ -372,6 +376,7 @@ def add_notes(session_id, notes):
             "visible in the diff itself.")
     if not notes:
         return 0
+    show_unread(session_id, {n.get("filePath") for n in notes}, args)
     rc, _ = _run(["hunk", "session", "comment", "apply", session_id, "--stdin", "--json"],
                  stdin=json.dumps({"comments": list(notes)}))
     return len(notes) if rc == 0 else 0
@@ -607,6 +612,101 @@ def whole_review(session_id, since=None):
     row = lambda f: (f.get("path") or "", f.get("additions") or 0, f.get("deletions") or 0)  # noqa: E731
     return (sorted(row(f) for f in files), sorted(row(f) for f in files if not f.get("hidden")),
             sorted(f.get("path") or "" for f in files if f.get("hidden")))
+
+
+# hunk-mark-read (github.com/meldron/hunk-mark-read) hides the files a user marked read, and
+# the viewer then takes no note and no reply on them. It keeps its marks in files any process
+# may add to: one JSONL file per writer in a shared folder, every line an event
+# {"t": ms since the epoch, "key": …, "read": bool}, the latest event for a key winning, all
+# of them read again at every load of a viewer. A key is `<path>\0<previous path>\0<sha256
+# of the diff>`. So the agent takes a file's mark away the way another viewer would: by
+# writing an event of its own, then loading the window again. Mirrors src/sessionLog.ts of
+# hunk-mark-read 0.1.0 (commit 1a76ae8); should it change, the reload shows the file still
+# hidden, and the caller says so rather than posting into nothing.
+_MARK_READ_WRITER = "agent-note"
+
+
+def mark_read_dir():
+    """The folder hunk-mark-read keeps its marks in. Mirrors its `defaultSessionDir`."""
+    state = os.environ.get("XDG_STATE_HOME") or os.path.join(
+        os.path.expanduser("~"), ".local", "state")
+    return os.path.join(state, "hunk-mark-read", "sessions")
+
+
+def _mark_events(d):
+    """Every well-formed event in `d`, in hunk-mark-read's replay order: by time, then by
+    file and line."""
+    try:
+        names = sorted(n for n in os.listdir(d) if n.endswith(".jsonl"))
+    except OSError:
+        return []
+    events = []
+    for name in names:
+        try:
+            with open(os.path.join(d, name), encoding="utf-8") as fh:
+                lines = fh.read().splitlines()
+        except OSError:
+            continue
+        for line in lines:
+            try:
+                e = json.loads(line)
+            except ValueError:
+                continue
+            if isinstance(e, dict) and isinstance(e.get("t"), (int, float)) \
+                    and not isinstance(e["t"], bool) and isinstance(e.get("key"), str) \
+                    and isinstance(e.get("read"), bool):
+                events.append(e)
+    return sorted(events, key=lambda e: e["t"])
+
+
+def unmark_read(paths):
+    """Take away every read mark hunk-mark-read holds on `paths`; how many it took.
+
+    Every mark of the path goes, not only the one for the diff shown now: a mark is keyed by
+    the diff's content, and the agent cannot compute the key the viewer would. A mark on an
+    earlier version of the file only mattered if the file changed back to it."""
+    d = mark_read_dir()
+    latest = {}
+    for e in _mark_events(d):
+        latest[e["key"]] = e
+    gone = [e for key, e in latest.items() if e["read"] and key.split("\0", 1)[0] in paths]
+    if not gone:
+        return 0
+    t = max([int(time.time() * 1000)] + [int(e["t"]) + 1 for e in gone])
+    # Named as hunk-mark-read names its own (UTC start, label, pid), so its pruning applies.
+    stamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H-%M-%S")
+    try:
+        os.makedirs(d, exist_ok=True)
+        with open(os.path.join(d, f"{stamp}_{_MARK_READ_WRITER}_{os.getpid()}.jsonl"), "a",
+                  encoding="utf-8") as fh:
+            fh.write("".join(json.dumps({"t": t, "key": e["key"], "read": False},
+                                        separators=(",", ":")) + "\n" for e in gone))
+    except OSError:
+        return 0
+    return len(gone)
+
+
+def show_unread(session_id, paths, args):
+    """Show again those of `paths` the viewer of `session_id` hides as read, so a note can
+    go on them: their read marks go (`unmark_read`) and the window loads `args` — what it
+    holds, as `hunk session reload` takes it — again. A note the agent adds is something the
+    user has not read, so the file is unread again, as a change to it would make it.
+
+    True when none of `paths` is hidden afterwards, by the keep-notes extension's record of
+    that reload; False when one still is: the marks are not on disk (hunk-mark-read set to
+    `persist = false`, or a version that keeps them elsewhere), or the reload failed.
+    Without keep-notes nothing is known to be hidden, and nothing is done."""
+    whole = whole_review(session_id)
+    want = set(paths) & set(whole[2] if whole else ())
+    if not want:
+        return True
+    if not unmark_read(want):
+        return False
+    since = time.time()
+    if reload_review(session_id, args) is None:
+        return False
+    after = whole_review(session_id, since)
+    return bool(after) and not want & set(after[2])
 
 
 def _alive(pid):

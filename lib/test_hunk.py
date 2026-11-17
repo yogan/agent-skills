@@ -25,14 +25,17 @@ REPO = "/w/acme-api"
 
 
 KEEP_DIR = hunk.keep_dir
+MARK_READ_DIR = hunk.mark_read_dir
 
 
 def setUpModule():
     """Never read the machine's own Claude Code session records: in a background session
     they would decide which pane these tests see. Nor the notes the keep-notes extension
-    saved on this machine: they would add notes to every read, and calls to the fakes."""
+    saved on this machine: they would add notes to every read, and calls to the fakes. Nor
+    write to the read marks hunk-mark-read keeps there."""
     for stub in (patch.object(hunk.tmux, "_records", lambda: []),
-                 patch.object(hunk, "keep_dir", lambda: None)):
+                 patch.object(hunk, "keep_dir", lambda: None),
+                 patch.object(hunk, "mark_read_dir", lambda: os.devnull)):
         stub.start()
         unittest.addModuleCleanup(stub.stop)
 
@@ -830,10 +833,13 @@ class TestOwnReview(HunkCase):
             self.assertEqual(hunk.loaded_input("s1"), ("vcs", None))
 
 
-class TestKeepNotesFiles(unittest.TestCase):
-    """The keep-notes Hunk extension's files: what a hidden file's notes and a closed
-    viewer's notes are read from. Fixtures shaped like what the extension wrote under
-    Hunk 0.25.0, with invented paths and ids."""
+class KeptFilesCase(unittest.TestCase):
+    """The keep-notes Hunk extension's files in a directory of the test's own. Fixtures
+    shaped like what the extension wrote under Hunk 0.25.0, with invented paths and ids."""
+
+    REVIEW = {"sourceLabel": REPO, "loadedAt": 1772359300000, "files": [
+        {"path": "f0.py", "additions": 1, "deletions": 0, "hidden": False},
+        {"path": "f1.py", "additions": 1, "deletions": 0, "hidden": True}]}
 
     LAUNCHED = "2026-03-01T10:00:00.400Z"
 
@@ -873,6 +879,10 @@ class TestKeepNotesFiles(unittest.TestCase):
                 return 0, json.dumps({"comments": listed})
             return 1, ""
         return run, calls
+
+
+class TestKeepNotesFiles(KeptFilesCase):
+    """What a hidden file's notes and a closed viewer's notes are read from."""
 
     VISIBLE = {"noteId": "user:1", "source": "user", "filePath": "shown.py",
                "newRange": [2, 2], "body": "fine", "createdAt": "2026-03-01T10:00:30.000Z"}
@@ -953,10 +963,6 @@ class TestKeepNotesFiles(unittest.TestCase):
             self.assertEqual([n[4] for _, ns in hunk.closed_viewer_notes(REPO, "me")
                               for n in ns], ["user:3"])
 
-    REVIEW = {"sourceLabel": REPO, "loadedAt": 1772359300000, "files": [
-        {"path": "f0.py", "additions": 1, "deletions": 0, "hidden": False},
-        {"path": "f1.py", "additions": 1, "deletions": 0, "hidden": True}]}
-
     def confirm(self, review, shown, count, since=1772359299.0, expect=2):
         """`_confirm` for a window that reports `shown` files and a reload of `count`."""
         self.write(501, [], review=review)
@@ -1025,6 +1031,124 @@ class TestKeepNotesFiles(unittest.TestCase):
             hunk.spawn_session(REPO, "!123", "me", sleep=lambda _s: None)
         argv = next(c for c in fake.calls if c[:2] == ["tmux", "new-window"])
         self.assertEqual(argv[argv.index("-e") + 1], "HUNK_KEEP_NOTES_TAG=me")
+
+
+class TestShowUnread(KeptFilesCase):
+    """A file hidden as read is un-marked in hunk-mark-read's files and the window loaded
+    again, so the agent's note can go on it. Event files shaped like those hunk-mark-read
+    0.1.0 writes, with invented paths and digests."""
+
+    def setUp(self):
+        super().setUp()
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.marks = tmp.name
+        stub = patch.object(hunk, "mark_read_dir", lambda: self.marks)
+        stub.start()
+        self.addCleanup(stub.stop)
+
+    @staticmethod
+    def key(path, digest):
+        return f"{path}\0\0{digest}"
+
+    def log(self, name, *events):
+        with open(os.path.join(self.marks, name), "a") as fh:
+            for t, key, read in events:
+                fh.write(json.dumps({"t": t, "key": key, "read": read}) + "\n")
+
+    def read_keys(self):
+        """What hunk-mark-read's replay makes of the folder: the keys read now."""
+        latest = {}
+        for e in hunk._mark_events(self.marks):
+            latest[e["key"]] = e["read"]
+        return sorted(k for k, read in latest.items() if read)
+
+    def test_every_mark_of_the_path_goes_and_no_other(self):
+        now, later = self.key("f1.py", "aa"), self.key("f1.py", "bb")
+        other = self.key("f0.py", "cc")
+        self.log("2026-03-01T10-00-00_repo_HEAD_501.jsonl",
+                 (100, now, True), (110, other, True), (120, later, True))
+        # Another viewer's, written with a clock ahead of this one's.
+        self.log("2026-03-01T10-05-00_repo_HEAD_502.jsonl", (2 ** 52, later, True))
+        self.assertEqual(hunk.unmark_read({"f1.py"}), 2)
+        self.assertEqual(self.read_keys(), [other])
+        self.assertEqual(len(os.listdir(self.marks)), 3)
+
+    def test_nothing_read_writes_nothing(self):
+        self.log("a_501.jsonl", (100, self.key("f1.py", "aa"), True),
+                 (200, self.key("f1.py", "aa"), False), (300, self.key("f0.py", "cc"), True))
+        self.assertEqual(hunk.unmark_read({"f1.py"}), 0)
+        self.assertEqual(os.listdir(self.marks), ["a_501.jsonl"])
+
+    HIDDEN = KeptFilesCase.REVIEW
+
+    def window(self, still_hidden=False):
+        """A `_run` whose viewer, on a reload, records a new load in its keep-notes file."""
+        run, calls = self.run_with([])
+
+        def reload_aware(argv, timeout=None, stdin=None):
+            if argv[:3] == ["hunk", "session", "reload"]:
+                calls.append(argv)
+                files = [dict(f, hidden=f["hidden"] and still_hidden)
+                         for f in self.HIDDEN["files"]]
+                self.write(501, [], review=dict(self.HIDDEN, files=files,
+                                                loadedAt=4102444800000))
+                return 0, json.dumps({"result": {"fileCount": len(files)}})
+            if argv[:4] == ["hunk", "session", "comment", "apply"]:
+                calls.append(argv)
+                return 0, ""
+            return run(argv, timeout, stdin)
+        return reload_aware, calls
+
+    def test_a_hidden_file_is_unmarked_and_shown_again(self):
+        self.write(501, [], review=self.HIDDEN)
+        self.log("a_501.jsonl", (100, self.key("f1.py", "aa"), True))
+        run, calls = self.window()
+        with patch.object(hunk, "_run", run):
+            self.assertTrue(hunk.show_unread("s1", ["f1.py"], ["show", "abc"]))
+        self.assertEqual(self.read_keys(), [])
+        self.assertEqual([c[-2:] for c in calls if c[2] == "reload"], [["show", "abc"]])
+
+    def test_a_file_that_stays_hidden_is_reported(self):
+        self.write(501, [], review=self.HIDDEN)
+        self.log("a_501.jsonl", (100, self.key("f1.py", "aa"), True))
+        run, _ = self.window(still_hidden=True)
+        with patch.object(hunk, "_run", run):
+            self.assertFalse(hunk.show_unread("s1", ["f1.py"], ["show", "abc"]))
+
+    def test_marks_not_on_disk_load_nothing_again(self):
+        """hunk-mark-read with `persist = false` holds its marks in the viewer alone."""
+        self.write(501, [], review=self.HIDDEN)
+        run, calls = self.window()
+        with patch.object(hunk, "_run", run):
+            self.assertFalse(hunk.show_unread("s1", ["f1.py"], ["show", "abc"]))
+        self.assertEqual([c for c in calls if c[2] == "reload"], [])
+
+    def test_a_shown_file_needs_nothing(self):
+        self.write(501, [], review=self.HIDDEN)
+        run, calls = self.window()
+        with patch.object(hunk, "_run", run):
+            self.assertTrue(hunk.show_unread("s1", ["f0.py"], ["show", "abc"]))
+        self.assertEqual([c for c in calls if c[2] == "reload"], [])
+
+    def test_the_agents_notes_on_a_hidden_file_land_once_it_is_shown(self):
+        """The rework card's notes: the working diff is loaded again before they go up."""
+        self.write(501, [], review=self.HIDDEN)
+        self.log("a_501.jsonl", (100, self.key("f1.py", "aa"), True))
+        run, calls = self.window()
+        with patch.object(hunk, "_run", run):
+            self.assertEqual(hunk.add_notes("s1", [{"filePath": "f1.py", "newLine": 1,
+                                                    "summary": "x"}]), 1)
+        mine = [c for c in calls if c[2] in ("reload", "comment")]
+        self.assertEqual([c[2:4] for c in mine], [["reload", "s1"], ["comment", "apply"]])
+        self.assertEqual(mine[0][-3:], hunk.WORKING_DIFF)
+
+    def test_the_folder_is_hunk_mark_reads(self):
+        home = os.path.expanduser("~")
+        for env, want in [({}, os.path.join(home, ".local/state/hunk-mark-read/sessions")),
+                          ({"XDG_STATE_HOME": "/st"}, "/st/hunk-mark-read/sessions")]:
+            with patch.dict(os.environ, env, clear=True), patch.dict(os.environ, {"HOME": home}):
+                self.assertEqual(MARK_READ_DIR(), want, env)
 
 
 if __name__ == "__main__":

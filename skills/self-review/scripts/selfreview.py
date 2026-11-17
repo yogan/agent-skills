@@ -387,6 +387,26 @@ def hidden_now(sid):
     return set(whole[2]) if whole else set()
 
 
+def show_unread(sid, path, cwd=None):
+    """Make sure the window shows `path`, so a reply or a note can go on it: a file hidden as
+    read is un-marked and the piece loaded again (`hunk.show_unread`). True when it is shown.
+
+    Loaded again exactly as shown: the commit, or the uncommitted change only while the tree
+    is still the snapshot the window shows — a fix made since would otherwise slip into the
+    window before `show` puts it there and moves the notes it touches."""
+    if path not in hidden_now(sid):
+        return True
+    shows = hunk.mark(sid, SHOWN)
+    now = hunk.loaded_input(sid)
+    if shows and now == ("show", shows):
+        args = ["show", shows]
+    elif shows and now == ("vcs", None) and snapshot(cwd) == shows:
+        args = ["diff", "HEAD"]
+    else:
+        return False
+    return hunk.show_unread(sid, [path], args)
+
+
 def require_all_shown(sid, cwd=None):
     gone = hidden(sid, cwd)
     if gone:
@@ -437,12 +457,12 @@ def reply(ref, text, cwd=None):
         die(f"no diff note {ref} in the window; its diff notes: {listed}")
     target = answering(tid, got)
     on = next((n["file"] for n in got if n["id"] == tid), "")
-    if on and on in hidden_now(sid):
+    if on and not show_unread(sid, on, cwd):
         # Hunk refuses a reply to a note on a file it does not show ("no longer available as
         # a reply parent"); saying why beats saying "refused".
-        die(f"{ref} is on {on}, which the window hides as read: Hunk takes no reply there. "
-            "Ask the author to show hidden files again (hunk-mark-read: \"Hide/show read "
-            "files\"), then answer")
+        die(f"{ref} is on {on}, which the window hides as read and could not show again: "
+            "Hunk takes no reply there. Ask the author to show hidden files again "
+            "(hunk-mark-read: \"Hide/show read files\"), then answer")
     if not hunk.reply(sid, target, text):
         die(f"the reply to {ref} was refused by the viewer")
     before = {n["id"] for n in got}
@@ -464,10 +484,10 @@ def point(path, line, text, side="new", cwd=None):
     got = hunk.notes(sid)
     if got is None:
         die("the Hunk window did not answer; nothing was posted")
-    if path in hidden_now(sid):
-        die(f"{path} is hidden in the window as read, and Hunk takes no note on a file it does "
-            "not show. Ask the author to show hidden files again (hunk-mark-read: "
-            "\"Hide/show read files\"), or name that place in the chat")
+    if not show_unread(sid, path, cwd):
+        die(f"{path} is hidden in the window as read and could not be shown again, and Hunk "
+            "takes no note on a file it does not show. Ask the author to show hidden files "
+            "again (hunk-mark-read: \"Hide/show read files\"), or name that place in the chat")
     nid = hunk.add_note(sid, path, line, text, "agent", side=side)
     if not nid:
         die(f"{path}:{line} cannot carry a note: it is not a line this piece's diff shows "

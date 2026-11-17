@@ -71,7 +71,9 @@ readable by you alone.
 at the first save.
 
 `review` is the latest load: every file Hunk loaded, with `hidden` set on those another
-extension's filter left out of what the viewer shows. It sees the files before that filter
+extension's filter left out of what the viewer shows. `lib/hunk.py` reads it to tell where
+the agent's note cannot go: before a note on a file hunk-mark-read hides as read, it takes
+the file's read mark away (in hunk-mark-read's own files) and loads the review again. It sees the files before that filter
 only when keep-notes is loaded first, which it is when it comes through `[extensions] paths`
 and the filtering extension is installed under `~/.config/hunk/extensions/` (as
 `hunk extension install` puts it). Loaded the other way round it lists only what is shown,
