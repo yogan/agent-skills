@@ -26,8 +26,11 @@ is pasted as below.
 of the current step. A press reaches you as a `[review-ui] The user pressed a button: …` note,
 or as a prompt in the user's name: that is their decision, made. Carry on from it. **Never
 mention the buttons**: not that there are any, not what they are called, not what one does,
-not where they sit. Where you would ask the question a button answers, end on your
-recommendation instead, or on what you just did. The passes run as rounds there: see
+not where they sit. One exception, and only on the turn the user asks you to do what only a
+press does ("push it", "post the reply and resolve"): do your part, then name the press that
+does the rest in one line ("Ack and push on the card does it"). Never answer that you cannot,
+and never offer that line unasked. Where you would ask the question a button answers, end on
+your recommendation instead, or on what you just did. The passes run as rounds there: see
 *Rounds (where cards are drawn)*.
 
 **Card text is markdown.** Whatever you store for a card to show (`--why`, `--plan`, `--did`)
