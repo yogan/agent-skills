@@ -15,7 +15,7 @@ Talk-day checklist and run of show: [RUNBOOK.md](RUNBOOK.md).
 | `tmux-demo.sh` | talk day: verify the rig, reset it only if needed, build the demo tmux session |
 | `drive.py` | drives a real claude in tmux through a scenario: `verify` checks it, `showcase` shows it |
 | `scenarios.py` | the scenarios `drive.py` runs |
-| `mock_model.py` | the model's stand-in: replays a recorded run's replies to a real claude, and cuts recordings from transcripts |
+| `mock_model.py` | the model's stand-in: replays a recorded run's replies to a real claude, the mod's own model calls among them, and cuts recordings from transcripts |
 | `recordings/` | one recording per scenario, played by default; made from a passing real-model run (`--record`) |
 | `timing.py` | where a verify run's time went (reset, claude's start, each kind of step), and one set of runs against another |
 | `screenshot.py` | a colour capture (`.ansi`) as a PNG drawn as Ghostty draws it, the whole screen or the sidebar alone |
@@ -204,7 +204,9 @@ recording is re-made when a change breaks it: a prompt, a button's text or a scr
 the replay no longer matches fails the step with "the recording has no answer". It stores the
 home and source folders as `{HOME}` and `{SRC}`, follows the ids a run makes (a comment's, a
 commit's, a press's token) from each call's output to the calls after it, and may be trimmed by
-hand as long as the tool calls stay.
+hand as long as the tool calls stay. The mod's own model call, which judges the news on a merge
+request, has no transcript: a real-model run has the mod keep each call and its reply in the
+run's folder (`calls.json`), and the recording takes them from there.
 
 **verify** runs at a fixed 160×50 and leaves your
 own settings out, so your Stop hooks, skills, CLAUDE.md and permission rules play no part: the

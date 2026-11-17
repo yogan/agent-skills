@@ -602,8 +602,9 @@ def skills_plugin(out):
     return d
 
 
-def claude_command(sc, model, verify, plugins=(), mock=None):
-    """`mock`: (its environment, the tools the recording uses) for a run on a recording."""
+def claude_command(sc, model, verify, plugins=(), mock=None, calls=None):
+    """`mock`: (its environment, the tools the recording uses) for a run on a recording.
+    `calls`: a file the mod keeps its own model calls in, for a recording of the run."""
     argv = ["claude"]
     # A showcase runs on what the person has installed: their mods are already loaded, and
     # the same one loaded twice would draw every card twice.
@@ -626,6 +627,8 @@ def claude_command(sc, model, verify, plugins=(), mock=None):
         env["AGENT_TAB_OFF"] = "1"       # ...renames no window and asks no model for a tab title
     if verify and sc.fast_check:
         env["REVIEW_UI_TICK_MS"] = "2000"      # see Scenario.fast_check
+    if calls:
+        env["REVIEW_UI_CALLS"] = calls         # see mock_model.py
     prefix = "env " + " ".join(f"{k}={shlex.quote(v)}" for k, v in env.items()) + " " if env else ""
     return prefix + shlex.join(argv)
 
@@ -878,7 +881,8 @@ def verify(sc, model, out_root, keep, reset, record=False):
     w, h = VERIFY_SIZE
     cwd, cleanup = workdir(sc, env["E2E_SRC"])
     command = claude_command(sc, model, verify=True, plugins=[skills_plugin(out)],
-                             mock=mock.command if mock else None)
+                             mock=mock.command if mock else None,
+                             calls=None if mock else str(out / "calls.json"))
     tmux("new-session", "-d", "-s", session, "-x", str(w), "-y", str(h), "-c", cwd, command)
     pane = Pane(session, cwd=cwd, env=env)
     print(f"── {sc.name}: {sc.about}" + ("" if mock else f"  (real model: {model})"))
@@ -906,7 +910,7 @@ def verify(sc, model, out_root, keep, reset, record=False):
                 print(f"   improvised: {cmd[:120]}")
         if record and ran:
             path = mock_model.recording_path(sc.name)
-            mock_model.save(mock_model.record(ran), path)
+            mock_model.save(mock_model.record(ran, calls=str(out / "calls.json")), path)
             print(f"   recorded: {os.path.relpath(path, E2E)}")
     except (StepFailed, RuntimeError) as err:
         save(pane, out, n, step or Say("start"))

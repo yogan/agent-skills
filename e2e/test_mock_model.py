@@ -113,6 +113,15 @@ class Recording(unittest.TestCase):
         self.assertEqual(M.to_placeholders({"command": f"python3 {run}/threads.py"}),
                          {"command": "python3 {SRC}/agent-skills/skills/rework-mr/scripts/threads.py"})
 
+    def test_a_run_kept_elsewhere_has_its_skills_folder_kept_as_the_repos_too(self):
+        """A run with `--out` in a scratchpad recorded the skills as a scratchpad path, which
+        names a folder no replay has."""
+        run = ("/private/tmp/claude-501/-Users-someone-src/0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0/"
+               "scratchpad/runs/20261117-154317-rework-twice/skills-plugin/skills/rework-mr/scripts")
+        self.assertEqual(M.to_placeholders({"command": f"SD={run}; python3 $SD/threads.py"}),
+                         {"command": f"SD={M._repo_skills()}rework-mr/scripts; python3 $SD/threads.py"})
+        self.assertTrue(M._repo_skills().startswith("{SRC}/"))
+
     def test_a_sessions_scratchpad_is_kept_as_a_placeholder_and_each_play_gets_its_own(self):
         pad = "/private/tmp/claude-501/-Users-someone-src-agent-skills-demo/" \
               "0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0/scratchpad"
@@ -129,6 +138,16 @@ class Recording(unittest.TestCase):
             self.assertTrue(os.path.isdir(M.SCRATCH))
             self.assertIn(f"python3 {M.SCRATCH}/p.py", plays[-1])
         self.assertNotEqual(plays[0], plays[1])
+
+    def test_the_engines_nudge_after_an_empty_reply_is_left_out(self):
+        """A reply of thinking alone made the engine ask again; a replay never gives one, so
+        the recorded nudge stood as a prompt no replay sends."""
+        lines = [user("go"), said("m1", call("tu1", "ls")), result("tu1"),
+                 said("m2", {"type": "thinking", "thinking": "hm", "signature": "x"}),
+                 user("[Your previous response had no visible output. Please continue."),
+                 said("m3", text("Done."))]
+        replies = M.conversation(lines)
+        self.assertEqual(replies[-1], {"content": [text("Done.")]})
 
     def test_a_prompt_reads_the_same_with_the_engines_reminders_around_it(self):
         self.assertEqual(M.human(reminded("Do  the\nthing")), "Do the thing")
@@ -198,6 +217,49 @@ class Answering(unittest.TestCase):
         self.assertEqual(self.mock.misses, [])
 
 
+class ModCalls(unittest.TestCase):
+    """The mod's own model call has no tools and no transcript: the mod keeps it in a file,
+    the recording takes it from there, and a replay answers it by its prompt."""
+
+    HEAD = "News arrived on GitLab merge request !2, which the user is reviewing. " * 4
+
+    def recorded(self, *calls):
+        with tempfile.TemporaryDirectory() as d:
+            session, kept = os.path.join(d, "s.jsonl"), os.path.join(d, "calls.json")
+            with open(session, "w") as fh:
+                fh.write("\n".join(json.dumps(x) for x in LINES) + "\n")
+            with open(kept, "w") as fh:
+                json.dump([{"prompt": p, "reply": r} for p, r in calls], fh)
+            return M.record(session, calls=kept)
+
+    def ask(self, mock, prompt):
+        return mock.answer(request(u(prompt), tools=False))[0]["text"]
+
+    def test_a_call_is_answered_with_its_recorded_reply(self):
+        rec = self.recorded((self.HEAD + "## t1", '{"t1": {"verdict": "settled"}}'))
+        mock = M.Mock(rec)
+        self.assertEqual(json.loads(self.ask(mock, self.HEAD + "## t1")), {"t1": {"verdict": "settled"}})
+        self.assertEqual(self.ask(mock, "title this"), "ok")                  # the engine's own
+        self.assertEqual(mock.misses, [])
+
+    def test_items_asked_in_other_batches_than_recorded_are_all_answered(self):
+        mock = M.Mock(self.recorded((self.HEAD + "## t1", '{"t1": "a"}'),
+                                    (self.HEAD + "## t3 ## t4", '{"t3": "b", "t4": "c"}')))
+        self.assertEqual(json.loads(self.ask(mock, self.HEAD + "## t1 ## t3")),
+                         {"t1": "a", "t3": "b", "t4": "c"})
+
+    def test_the_nearest_call_wins_where_two_judged_the_same_item(self):
+        mock = M.Mock(self.recorded((self.HEAD + "## t1 Alex answered: done", '{"t1": "first"}'),
+                                    (self.HEAD + "## t1 Alex answered: not yet, more to come", '{"t1": "second"}')))
+        self.assertEqual(json.loads(self.ask(mock, self.HEAD + "## t1 Alex answered: not yet, more to come")),
+                         {"t1": "second"})
+
+    def test_an_id_the_run_made_is_followed_into_the_reply(self):
+        old, new = "a1b2c3d4e5f6a7b8", "f9e8d7c6b5a4f3e2"
+        mock = M.Mock(self.recorded((self.HEAD + f"## {old}: a comment", f'{{"{old}": {{"into": null}}}}')))
+        self.assertEqual(json.loads(self.ask(mock, self.HEAD + f"## {new}: a comment")), {new: {"into": None}})
+
+
 class RunMadeIds(unittest.TestCase):
     """A comment posted or a commit made in the run gets an id of its own each time."""
 
@@ -249,6 +311,18 @@ class RunMadeIds(unittest.TestCase):
         got = mock.answer(request(u("go"), a(text("ready")),
                                   u("fixup=b21b636 and fixup=0325159, then push t1 --token 19bd333a")))
         self.assertEqual(got[0]["input"]["command"], "python3 threads.py push t1 --token 19bd333a")
+
+    def test_a_press_s_token_is_followed_where_the_recording_s_hash_was_all_digits(self):
+        """The other way round: the recording's hand-off named a commit whose hash was all
+        digits, this run's has letters, and the token was not followed."""
+        lines = [user("go"), said("m1", text("ready")),
+                 user("fixup=423637e and fixup=8464471, then push t1 --token a052219e"),
+                 said("m2", call("tu1", "git commit --fixup=8464471 && threads.py push t1 --token a052219e"))]
+        mock = M.Mock({"streams": [{"name": "main", "first": "go", "replies": M.conversation(lines),
+                                    "ids": M.seen_ids(lines)}]})
+        got = mock.answer(request(u("go"), a(text("ready")),
+                                  u("fixup=5dc8b01 and fixup=9e3b868, then push t1 --token b1ee19e4")))
+        self.assertEqual(got[0]["input"]["command"], "git commit --fixup=9e3b868 && threads.py push t1 --token b1ee19e4")
 
     def test_a_hash_that_came_out_all_digits_is_still_followed(self):
         lines = [user("go"), said("m1", call("tu1", "git log")),

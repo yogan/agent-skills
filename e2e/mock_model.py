@@ -25,10 +25,19 @@ makes come out different every run, and a later call names them. So a recording 
 ids each call's output and each prompt showed, and a replay holds them against this run's:
 where the same output shows a different id, later replies use the new one.
 
+**A mod's own model call** (`$.model.complete`: the review-ui mod judges news with one) has
+no tools and leaves no trace in the transcript, so the mod keeps each call and its reply in a
+file while a real model runs (`REVIEW_UI_CALLS`), and a recording takes them from it
+(`calls`). Played, such a request gets the reply of the recorded call whose prompt opens the
+same, the nearest whole prompt first; a reply that is a JSON object keyed by item is filled
+in from the other calls of that opening for any item the nearest one lacks, since a check
+that runs at another moment than it did when recorded can ask about the same items in other
+batches.
+
 Whatever cannot be placed gets an answer that says so, "off script", and is noted in `misses`
-for the driver to fail the run on. A request with no tools is one of Claude Code's own small
-side requests, never a conversation, and gets a short neutral answer; so does one that reuses
-a conversation for the engine's own ends (`SIDE`).
+for the driver to fail the run on. Any other request with no tools is one of Claude Code's
+own small side requests, never a conversation, and gets a short neutral answer; so does one
+that reuses a conversation for the engine's own ends (`SIDE`).
 """
 import argparse
 import difflib
@@ -48,6 +57,9 @@ HANDBACK = "SubagentHandback"
 SIDE = {
     "[SUGGESTION MODE:": "",        # what the person might type next: none
 }
+# The engine's own nudge after a reply with nothing visible in it (thinking alone): a replay
+# never gives such a reply, so the nudge never comes, and a recording leaves it out.
+NUDGES = ("[Your previous response had no visible output",)
 RECORDINGS = os.path.join(HERE, "recordings")
 OFF = "⚠ mock model: off script"
 SIG = 200        # how much of a prompt identifies it: enough to tell buttons and topics apart
@@ -81,8 +93,18 @@ def places():
 
 # A run's own plugin folder of this repo's skills (drive.py's `skills_plugin`), whose `skills`
 # is a link to the repo's: a command through it names the run, and the run's folder may be
-# gone when the recording is played. Kept as the repo's own skills folder, which it is.
+# gone when the recording is played. Kept as the repo's own skills folder, which it is: beside
+# the run's folder in this checkout, or wherever `--out` put the run (a scratchpad, say).
 RUN_SKILLS = re.compile(r"e2e/\.runs/[^/\s'\"]+/skills-plugin/skills/")
+OUT_SKILLS = re.compile(r"(?:\{\w+\}|~|/)[^\s'\"=:;]*/skills-plugin/skills/")
+
+
+def _repo_skills():
+    """This repo's skills folder as a recording keeps it, its folders as placeholders."""
+    value = os.path.join(os.path.dirname(HERE), "skills") + "/"
+    for path, mark in places():
+        value = value.replace(path, mark)
+    return value
 
 # The scratchpad Claude Code gives a session, under the system's temp folder and named after
 # the session. Kept as a placeholder, and every play of a recording gets a folder of its own:
@@ -103,7 +125,8 @@ def scratch():
 
 def _runless(value):
     if isinstance(value, str):
-        return SCRATCHPAD.sub("{SCRATCHPAD}", RUN_SKILLS.sub("skills/", value))
+        value = OUT_SKILLS.sub(lambda _: _repo_skills(), RUN_SKILLS.sub("skills/", value))
+        return SCRATCHPAD.sub("{SCRATCHPAD}", value)
     if isinstance(value, list):
         return [_runless(v) for v in value]
     if isinstance(value, dict):
@@ -174,14 +197,15 @@ def _keep(block):
 def conversation(lines):
     """One transcript's replies, in order, each with the prompts it answered when it opens a
     turn: [{"prompts": [...], "content": [...]}, {"content": [...]}, ...]."""
-    replies, waiting, ids, last_id = [], [], [], None
+    replies, waiting, ids, hexes, last_id = [], [], [], [], None
     for d in lines:
         kind, msg = d.get("type"), d.get("message") or {}
         if kind == "user":
             c = msg.get("content")
-            if not is_tool_results(c) and human(c):
+            if not is_tool_results(c) and human(c) and not human(c).startswith(NUDGES):
                 waiting.append(human(c)[:SIG])
                 ids += ID.findall(human(c))
+                hexes += HEX.findall(human(c))
         elif kind == "assistant" and msg.get("model") != "<synthetic>":
             blocks = [b for b in map(_keep, msg.get("content") or []) if b]
             if msg.get("id") == last_id and replies:     # one reply, logged block by block
@@ -193,7 +217,9 @@ def conversation(lines):
                 reply["prompts"] = waiting
             if ids:
                 reply["prompt_ids"] = ids       # a token a press made, held against this run's
-            waiting, ids = [], []
+            if hexes:
+                reply["prompt_hexes"] = hexes   # every hex token, as `hexes` are for outputs
+            waiting, ids, hexes = [], [], []
             replies.append(reply)
     return [r for r in replies if r["content"]]
 
@@ -252,8 +278,10 @@ def _numbers(text):
     return re.sub(r"\d+", "#", ID.sub("#", text))
 
 
-def record(session):
-    """A recording of one session: its main conversation and each background agent's."""
+def record(session, calls=None):
+    """A recording of one session: its main conversation, each background agent's, and the
+    mod's own model calls, from the file `calls` the mod kept them in (a list of `{prompt,
+    reply}`)."""
     lines = _jsonl(session)
     main = conversation(lines)
     streams = [{"name": "main", "first": main[0]["prompts"][0] if main else "", "replies": main,
@@ -275,8 +303,17 @@ def record(session):
                             "hexes": seen_ids(agent, HEX)})
     model = next((d["message"].get("model") for d in lines if d.get("type") == "assistant"
                   and d["message"].get("model") != "<synthetic>"), None)
-    return {"recorded_from": {"model": model, "session": os.path.basename(session)},
-            "streams": streams}
+    rec = {"recorded_from": {"model": model, "session": os.path.basename(session)},
+           "streams": streams}
+    if calls and os.path.isfile(calls):
+        rec["calls"] = [{"prompt": _flat(to_placeholders(c["prompt"])), "reply": to_placeholders(c["reply"])}
+                        for c in load(calls)]
+    return rec
+
+
+def _flat(text):
+    """A prompt as `human` reads one in a request: its whitespace collapsed."""
+    return " ".join(text.split())
 
 
 # ── answering ────────────────────────────────────────────────────────────────
@@ -323,6 +360,7 @@ def since_last_reply(messages):
 class Mock:
     def __init__(self, rec, log=None):
         self.streams = rec["streams"]
+        self.calls = rec.get("calls") or []
         self.misses = []
         self.lock = threading.Lock()
         self.log = log            # a path: one line per request, what it was answered with
@@ -349,7 +387,8 @@ class Mock:
 
     def _answer(self, body):
         if not body.get("tools"):
-            return [{"type": "text", "text": "ok"}]
+            reply = self.call_reply(first_prompt(body.get("messages") or []))
+            return [{"type": "text", "text": "ok" if reply is None else reply}]
         messages = body.get("messages") or []
         asked = since_last_reply(messages)
         side = next((k for k in SIDE if asked.startswith(k)), None)
@@ -377,6 +416,39 @@ class Mock:
             content = _swap(content, old, new)
         return self.offered(content, body)
 
+    def call_reply(self, asked):
+        """The reply to a mod's own model call that asks `asked`, or None where no recorded
+        call opens the same. Ids the run made (a comment's discussion id) are followed from
+        the recorded prompt to this one, as they line up in order."""
+        alike = [c for c in self.calls if same(c["prompt"][:SIG], asked)]
+        if not alike:
+            return None
+        whole = _numbers(asked)
+        alike.sort(key=lambda c: -difflib.SequenceMatcher(None, _numbers(c["prompt"]), whole,
+                                                          autojunk=False).ratio())
+        replies = []
+        for c in alike:
+            reply = from_placeholders(c["reply"])
+            then, now = HEX.findall(c["prompt"]), HEX.findall(asked)
+            if len(then) == len(now):
+                for old, new in zip(then, now):
+                    if old != new:
+                        reply = reply.replace(old, new)
+            replies.append(reply)
+        merged = {}
+        for reply in replies:
+            try:
+                got = json.loads(reply)
+            except ValueError:
+                got = None
+            if not isinstance(got, dict):
+                break
+            for k, v in got.items():
+                merged.setdefault(k, v)
+        else:
+            return json.dumps(merged)
+        return replies[0]
+
     def renamed(self, stream, messages):
         """recorded id -> the id this run made in its place. The same call's output, recorded
         and now, shows its ids in the same order; where the two differ, the run made a new
@@ -384,6 +456,14 @@ class Mock:
         recorded, renamed = stream.get("ids") or {}, {}
         hexes = stream.get("hexes")
         for reply, asked in zip(stream["replies"], prompts_before(messages)):
+            if reply.get("prompt_hexes") is not None:
+                # Every hex token on both sides, as for a call's output below: a commit's short
+                # hash that came out all digits on either side does not shift the others.
+                then, now = reply["prompt_hexes"], HEX.findall(asked)
+                if len(then) == len(now):
+                    renamed.update((a, z) for a, z in zip(then, now)
+                                   if a != z and (ID.fullmatch(a) or ID.fullmatch(z)))
+                continue
             then, now = reply.get("prompt_ids"), ID.findall(asked)
             if then and len(now) < len(then):
                 # A short hash this run made can come out all digits, which ID does not take

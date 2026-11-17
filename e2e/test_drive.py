@@ -129,6 +129,12 @@ class StepTest(unittest.TestCase):
         self.assertIn(f"--plugin-dir {os.path.expanduser('~/m')}", cmd)
         self.assertIn("--model haiku", cmd)
 
+    def test_a_real_model_run_has_the_mod_keep_its_own_calls_for_the_recording(self):
+        sc = drive.Scenario("x", "x", cwd=None, steps=[])
+        cmd = drive.claude_command(sc, "sonnet", verify=True, calls="/run/calls.json")
+        self.assertIn("REVIEW_UI_CALLS=/run/calls.json", cmd)
+        self.assertNotIn("REVIEW_UI_CALLS", drive.claude_command(sc, "sonnet", verify=True))
+
     def test_a_showcase_keeps_the_users_settings_and_model(self):
         sc = drive.Scenario("x", "x", cwd=None, steps=[], mods=["~/m"])
         cmd = drive.claude_command(sc, None, verify=False)
