@@ -242,10 +242,11 @@ def main(argv):
     for i, commit in enumerate(commits):
         r = subprocess.run([sys.executable, os.path.join(HERE, "private_terms.py"), "check",
                             commit], cwd=HERE, capture_output=True, text=True)
-        if r.returncode != 0:
+        if r.stdout.strip():
+            # A watch word passes, but its lines are still for a person to look at.
             ok, report, log = results[i]
-            results[i] = (False, report + ["private words:"] + [f"  {ln}" for ln in
-                                                                 r.stdout.splitlines()], log)
+            results[i] = (ok and r.returncode == 0, report + ["private words:"] +
+                          [f"  {ln}" for ln in r.stdout.splitlines()], log)
     failed = 0
     for commit, (ok, report, log) in zip(commits, results):
         print(f"{'ok  ' if ok else 'FAIL'}  {git('log', '-1', '--format=%h %s', commit)}")
