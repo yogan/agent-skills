@@ -4,8 +4,13 @@
 Run: `python3 e2e/test_rig.py` (no docker, no launchctl: nothing is called).
 """
 import os
+import subprocess
 import sys
+import tempfile
+import threading
+import time
 import unittest
+from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
@@ -35,6 +40,37 @@ class TestIdleAction(unittest.TestCase):
 
     def test_never_used_counts_as_long_unused(self):
         self.assertEqual(rig.idle_action(float("inf"), "running", busy=False), "stop")
+
+
+class TestOneStart(unittest.TestCase):
+    def test_two_ups_at_once_start_the_vm_once(self):
+        state = {"vm": False, "inside": 0, "most": 0, "starts": 0}
+
+        def colima_start(*a, **k):
+            state["inside"] += 1
+            state["most"] = max(state["most"], state["inside"])
+            time.sleep(0.2)
+            state["starts"] += 1
+            state["vm"] = True
+            state["inside"] -= 1
+            return subprocess.CompletedProcess(a, 0, "", "")
+
+        with tempfile.TemporaryDirectory() as d, \
+                mock.patch.object(rig, "START_LOCK", os.path.join(d, "start.lock")), \
+                mock.patch.object(rig, "note_use"), \
+                mock.patch.object(rig, "vm_running", lambda: state["vm"]), \
+                mock.patch.object(rig, "state", lambda: "running"), \
+                mock.patch.object(rig.subprocess, "run", colima_start):
+            done = []
+            ts = [threading.Thread(target=lambda: done.append(rig.up(wait=False, log=lambda m: None)))
+                  for _ in range(3)]
+            for t in ts:
+                t.start()
+            for t in ts:
+                t.join()
+        self.assertEqual(done, [True, True, True])
+        self.assertEqual(state["most"], 1)
+        self.assertEqual(state["starts"], 1)
 
 
 class TestIdleCheckJob(unittest.TestCase):

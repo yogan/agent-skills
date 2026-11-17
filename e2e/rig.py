@@ -24,6 +24,8 @@ A use is anything that calls `up` or `used`: `fixture.py`, `drive.py verify` on 
 scenario, `tmux-demo.sh`. A demo or driver session still open in tmux counts as in use, so a
 person trying a kept session is never frozen under their hands.
 """
+import contextlib
+import fcntl
 import os
 import subprocess
 import sys
@@ -49,6 +51,7 @@ os.environ["DOCKER_CONTEXT"] = CONTEXT
 URL = "http://gitlab.test/users/sign_in"   # /-/readiness is allowlisted to 127.0.0.1 only
 STAMP = os.path.join(HERE, ".cache", "rig-last-used")
 LOG = os.path.join(HERE, ".cache", "rig-idle.log")
+START_LOCK = os.path.join(HERE, ".cache", "rig-start.lock")
 
 PAUSE_AFTER = 60 * 60
 STOP_AFTER = 8 * 60 * 60
@@ -128,9 +131,41 @@ def answering():
         return False
 
 
+@contextlib.contextmanager
+def _one_start():
+    """Held while `up` looks at the VM and the container and starts what is down. Scenarios
+    run several at a time, and each calls `up`: two `colima start`s at once leave the VM
+    half started and its Docker context gone, so the second waits for the first and then
+    finds everything running."""
+    os.makedirs(os.path.dirname(START_LOCK), exist_ok=True)
+    with open(START_LOCK, "a") as f:
+        fcntl.flock(f, fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(f, fcntl.LOCK_UN)
+
+
 def up(wait=True, start=True, log=print):
     """Bring the container to running and note the use. False when it could not be."""
     note_use()
+    with _one_start():
+        if not _start(start, log):
+            return False
+    if not wait:
+        return True
+    started = time.time()
+    while not answering():
+        if time.time() - started > BOOT_TIMEOUT:
+            log(f"{URL} still not answering after {BOOT_TIMEOUT}s")
+            return False
+        time.sleep(3)
+    return True
+
+
+def _start(start, log):
+    """The VM and the container running, started or unpaused as needed: False when either
+    is down and `start` is off, or starting it failed."""
     if not vm_running():
         if not start:
             return False
@@ -153,14 +188,6 @@ def up(wait=True, start=True, log=print):
         if r.returncode:
             log(r.stdout + r.stderr)
             return False
-    if not wait:
-        return True
-    started = time.time()
-    while not answering():
-        if time.time() - started > BOOT_TIMEOUT:
-            log(f"{URL} still not answering after {BOOT_TIMEOUT}s")
-            return False
-        time.sleep(3)
     return True
 
 
