@@ -14,7 +14,11 @@ import { homedir } from "node:os";
 import { dirname, isAbsolute, join } from "node:path";
 import type { KeptNote } from "./notebook";
 
-/** Bumped only by a change a reader of the file has to know about. */
+/**
+ * Bumped only by a change a reader of the file has to know about. Mirrored by lib/hunk.py's
+ * `_KEPT_FORMAT`, which skips a file of any other version: a change to either is a change
+ * to both.
+ */
 export const FORMAT_VERSION = 1;
 
 /** Overrides the directory the files go in; must be absolute. */
@@ -27,7 +31,10 @@ export const TAG_ENV = "HUNK_KEEP_NOTES_TAG";
 /** A file whose viewer is gone is removed at the next viewer's start once it is this old. */
 export const PRUNE_AFTER_MS = 14 * 24 * 60 * 60 * 1000;
 
-/** Exactly the names this extension gives its files. Nothing else in the directory is touched. */
+/**
+ * Exactly the names this extension gives its files. Nothing else in the directory is touched.
+ * Mirrored by lib/hunk.py's `_KEPT_NAME`.
+ */
 const KEPT_NAME = /^(\d+)-(\d+)\.json$/;
 
 export interface Viewer {
@@ -75,7 +82,8 @@ type Env = Record<string, string | undefined>;
  * `$XDG_STATE_HOME/hunk-keep-notes`, else `~/.local/state/hunk-keep-notes` (where
  * hunk-mark-read keeps its marks too); `HUNK_KEEP_NOTES_DIR` replaces it. A relative path
  * in either variable is ignored, as the XDG spec says, rather than resolved against
- * whatever directory the viewer happened to start in.
+ * whatever directory the viewer happened to start in. Mirrored by lib/hunk.py's `keep_dir`,
+ * which reads these files: a change to either is a change to both.
  */
 export function keepDir(env: Env, home = homedir()): string | null {
   if ((env[SWITCH_ENV] ?? "").toLowerCase() === "off") {
