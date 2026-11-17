@@ -2965,8 +2965,10 @@ def get_worktree(slug, iid):
 
 
 def set_worktree(slug, iid, path):
+    # Absolute: a later run from another directory (prune runs before the `cd`) must not
+    # read `.` as wherever it happens to be.
     with open(worktree_path(slug, iid), "w") as f:
-        f.write(path.strip() + "\n")
+        f.write(os.path.abspath(path.strip()) + "\n")
 
 
 def move_worktree(state, ctx, iid):
@@ -3363,6 +3365,15 @@ def open_explainer(state, path):
 KEEP_WORKTREE_S = 24 * 3600
 
 
+def _listed_worktree(path):
+    """Whether git, from here, lists `path` as one of the repository's working trees."""
+    out = subprocess.run(["git", "worktree", "list", "--porcelain"],
+                         capture_output=True, text=True).stdout
+    real = os.path.realpath(path)
+    return any(os.path.realpath(line[len("worktree "):]) == real
+               for line in out.splitlines() if line.startswith("worktree "))
+
+
 def prune_worktrees(ctx, skip_iid=None):
     """Remove the git worktree — never the findings/state file — for any MR of
     this repo that has one recorded and that GitLab now reports merged or closed.
@@ -3404,9 +3415,14 @@ def prune_worktrees(ctx, skip_iid=None):
             idle = KEEP_WORKTREE_S
         if idle < KEEP_WORKTREE_S:
             continue
-        subprocess.run(["git", "worktree", "remove", "--force", wt],
-                        capture_output=True, text=True)
-        if os.path.isdir(wt):          # already gone from git's list, still on disk
+        r = subprocess.run(["git", "worktree", "remove", "--force", wt],
+                           capture_output=True, text=True)
+        if r.returncode != 0 and os.path.exists(wt):
+            # Git refused: the main checkout, a locked worktree, or a folder that is no
+            # worktree at all — none of them ours to delete. Only a linked worktree's
+            # leftover (its `.git` file still there, the tree gone from git's list) goes.
+            if not os.path.isfile(os.path.join(wt, ".git")) or _listed_worktree(wt):
+                continue
             shutil.rmtree(wt, ignore_errors=True)
         os.remove(worktree_path(ctx["slug"], iid))
         removed.append(f"MR !{iid} ({state}): removed its review worktree at {wt}")

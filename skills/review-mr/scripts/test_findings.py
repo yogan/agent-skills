@@ -1259,14 +1259,55 @@ class TestPruneWorktrees(Throwaway, unittest.TestCase):
         self.orig_root = F.STATE_ROOT
         F.STATE_ROOT = self._throwaway_dir()
         self.addCleanup(setattr, F, "STATE_ROOT", self.orig_root)
+        # A real repository with real linked worktrees, run from its main checkout as the
+        # skill is: what git refuses to remove is the point of several cases here.
+        self.main = os.path.join(self._throwaway_dir(), "app")
+        self._git("init", "-q", "-b", "main", self.main)
+        self._git("-C", self.main, "commit", "-q", "--allow-empty", "-m", "one")
+        self.addCleanup(os.chdir, os.getcwd())
+        os.chdir(self.main)
+
+    def _git(self, *args):
+        subprocess.run(["git", "-c", "user.email=t@example.com", "-c", "user.name=t", *args],
+                       check=True, capture_output=True)
 
     def _ctx(self, slug="acme-repo"):
         return {"slug": slug, "enc": slug, "path": slug, "web": f"https://x/{slug}"}
 
     def _with_worktree(self, slug, iid):
-        wt = self._throwaway_dir()
+        wt = os.path.join(self._throwaway_dir(), f"mr{iid}")
+        self._git("-C", self.main, "worktree", "add", "-q", "--detach", wt)
         F.set_worktree(slug, iid, wt)
         return wt
+
+    def _prune_merged(self, slug, iid, path):
+        F.set_worktree(slug, iid, path)
+        with patch.object(F, "mr_object", return_value={"state": "merged"}):
+            return F.prune_worktrees(self._ctx(slug))
+
+    def test_what_git_refuses_to_remove_is_left_on_disk(self):
+        """The main checkout (recorded as `.` from it), a locked worktree, a folder that is
+        no worktree: git refuses each, and each was once deleted by hand after it."""
+        locked = self._with_worktree("acme-repo", 2)
+        self._git("-C", self.main, "worktree", "lock", locked)
+        other = self._throwaway_dir()
+        with open(os.path.join(other, "keep.txt"), "w") as f:
+            f.write("x")
+        for iid, path in ((1, "."), (2, locked), (3, other)):
+            with self.subTest(path):
+                self.assertEqual(self._prune_merged("acme-repo", iid, path), [])
+                self.assertTrue(os.path.isdir(path))
+        self.assertTrue(os.path.isdir(os.path.join(self.main, ".git")))
+        self.assertTrue(os.path.exists(os.path.join(other, "keep.txt")))
+
+    def test_a_worktree_git_has_forgotten_is_removed_from_disk(self):
+        wt = self._with_worktree("acme-repo", 5)
+        self._git("-C", self.main, "worktree", "remove", "--force", wt)
+        os.makedirs(wt)
+        with open(os.path.join(wt, ".git"), "w") as f:
+            f.write(f"gitdir: {self.main}/.git/worktrees/mr5\n")
+        self.assertEqual(len(self._prune_merged("acme-repo", 5, wt)), 1)
+        self.assertFalse(os.path.exists(wt))
 
     def test_removes_the_worktree_but_keeps_the_findings_file_for_a_merged_mr(self):
         slug = "acme-repo"
@@ -1276,8 +1317,7 @@ class TestPruneWorktrees(Throwaway, unittest.TestCase):
             f.write("{}")
         old = time.time() - F.KEEP_WORKTREE_S - 60
         os.utime(findings_path, (old, old))
-        with patch.object(F, "mr_object", return_value={"state": "merged"}), \
-             patch("subprocess.run"):
+        with patch.object(F, "mr_object", return_value={"state": "merged"}):
             removed = F.prune_worktrees(self._ctx(slug))
         self.assertEqual(len(removed), 1)
         self.assertIn("!42", removed[0])
@@ -1293,16 +1333,14 @@ class TestPruneWorktrees(Throwaway, unittest.TestCase):
         wt = self._with_worktree(slug, 44)
         with open(F.state_file(F.STATE_ROOT, slug, 44, "findings.json"), "w") as f:
             f.write("{}")
-        with patch.object(F, "mr_object", return_value={"state": "merged"}), \
-             patch("subprocess.run"):
+        with patch.object(F, "mr_object", return_value={"state": "merged"}):
             self.assertEqual(F.prune_worktrees(self._ctx(slug)), [])
         self.assertEqual(F.get_worktree(slug, 44), wt)
 
     def test_closed_mr_is_also_pruned(self):
         slug = "acme-repo"
         self._with_worktree(slug, 43)
-        with patch.object(F, "mr_object", return_value={"state": "closed"}), \
-             patch("subprocess.run"):
+        with patch.object(F, "mr_object", return_value={"state": "closed"}):
             removed = F.prune_worktrees(self._ctx(slug))
         self.assertEqual(len(removed), 1)
         self.assertIsNone(F.get_worktree(slug, 43))
@@ -1310,8 +1348,7 @@ class TestPruneWorktrees(Throwaway, unittest.TestCase):
     def test_a_still_open_mrs_worktree_is_left_alone(self):
         slug = "acme-repo"
         wt = self._with_worktree(slug, 7)
-        with patch.object(F, "mr_object", return_value={"state": "opened"}), \
-             patch("subprocess.run"):
+        with patch.object(F, "mr_object", return_value={"state": "opened"}):
             removed = F.prune_worktrees(self._ctx(slug))
         self.assertEqual(removed, [])
         self.assertTrue(os.path.isdir(wt))
@@ -1330,8 +1367,7 @@ class TestPruneWorktrees(Throwaway, unittest.TestCase):
                 raise SystemExit(1)
             return {"state": "merged"}
 
-        with patch.object(F, "mr_object", side_effect=fake_mr_object), \
-             patch("subprocess.run"):
+        with patch.object(F, "mr_object", side_effect=fake_mr_object):
             removed = F.prune_worktrees(self._ctx(slug))
         self.assertEqual(len(removed), 1)
         self.assertIn("!11", removed[0])
@@ -1342,8 +1378,7 @@ class TestPruneWorktrees(Throwaway, unittest.TestCase):
     def test_skip_iid_is_never_pruned_even_if_merged(self):
         slug = "acme-repo"
         wt = self._with_worktree(slug, 99)
-        with patch.object(F, "mr_object", return_value={"state": "merged"}), \
-             patch("subprocess.run"):
+        with patch.object(F, "mr_object", return_value={"state": "merged"}):
             removed = F.prune_worktrees(self._ctx(slug), skip_iid=99)
         self.assertEqual(removed, [])
         self.assertTrue(os.path.isdir(wt))
@@ -1352,8 +1387,7 @@ class TestPruneWorktrees(Throwaway, unittest.TestCase):
         mine, theirs = "acme-repo", "other-repo"
         self._with_worktree(mine, 1)
         wt_theirs = self._with_worktree(theirs, 1)
-        with patch.object(F, "mr_object", return_value={"state": "merged"}), \
-             patch("subprocess.run"):
+        with patch.object(F, "mr_object", return_value={"state": "merged"}):
             F.prune_worktrees(self._ctx(mine))
         self.assertTrue(os.path.isdir(wt_theirs))
         self.assertEqual(F.get_worktree(theirs, 1), wt_theirs)
