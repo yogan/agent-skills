@@ -300,8 +300,9 @@ visible in the code, which is why they are written down.
   its centre for a good reason then has budget to be dragged a long way back.
 - **Clamping `_targets` into the range the whole row can reach.** It deletes the only useful
   proposals whenever one distant member is in the run.
-- **Pinning the layer spacing across edge spacings.** Saves nothing: the layer ladder never
-  iterates, every figure in both corpora resolves at the first rung.
+- **Pinning the layer spacing across edge spacings.** Saves next to nothing: the layer spacing
+  moves past its first value, 15px, for one reference figure only: the ER diagram, whose
+  cardinality label needs 30px between layers (`d2.ELK_SPACING_LADDER`).
 - **Tightening `edgeNodeBetweenLayers` to 5** — ELK abandons orthogonal routing, and a diagonal
   run is not acceptable at any saving. **`nodeNodeBetweenLayers`** has no effect on the
   architecture figure at any value 8–15.

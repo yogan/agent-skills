@@ -35,9 +35,10 @@ same page, same layout, same corner radii, every coordinate that is not part of 
 untouched.
 
 **What buys it.** Nothing — that is the point. The alternative is `d2.ELK_EDGE_LADDER`, which
-buys the same straight line with 40 to 100px of page, per figure, and which one figure cannot
-afford at any rung: the reference architecture needs rung 24 and its text falls under the
-readability floor at 21.
+buys the same straight line with 40 to 100px of page, per figure, and which one figure can
+barely afford: the reference architecture's arrowheads want 24px of spacing between an edge and
+the box it points at, where its text lands exactly on the 10px floor for primary text, and one
+step more falls under it (`README.md`).
 
 **What stops it going wrong.** `arrows.crosses` — the invariant that no arrow is drawn across a
 box it does not end at. A slid tail is offered to it before it is kept, so a move that would put

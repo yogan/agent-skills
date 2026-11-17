@@ -521,7 +521,7 @@ def _pick_layout(spec, name, binary, theme_vars, edge_rungs=None):
     broken across three lines when the row had horizontal room to spare reads worse than
     slightly smaller text on one. So a layout wraps only to fit, never to gain a point of size.
 
-    All four are rendered rather than stopping at the first that fits. An early exit was
+    Every layout candidate is rendered rather than stopping at the first that fits. An early exit was
     tried and got the case this exists for wrong: a four-box chain fits the column stacked
     downward at 164x643, so the search stopped and never learned that wrapping its labels
     fits the same content landscape at 916x93 — seven times shorter.
@@ -568,10 +568,12 @@ def _afford(svg, name, spill, standalone=False):
 
     Spoilt first, and absolutely. The wider rung buys straight line in front of every arrowhead
     and spends 40 to 100px of the page for it, which most figures can pay — and what a figure
-    that cannot pay runs out of is WIDTH. The reference architecture needs rung 24, where it is
-    1079px wide, the content column scales it to 0.72 and its text lands at 9.4px against a 10px
-    floor; its height is 478px at every rung on the ladder. A drawing nobody can read is not an
-    improvement on an arrowhead sitting on a curve.
+    that cannot pay runs out of is WIDTH. The reference architecture's arrowheads want 24px of
+    spacing between an edge and the box it points at, where it is 1079px wide; the 832px of
+    drawing room inside a card scales that to 0.77 and its smallest text lands at 10.0px, exactly
+    on the 10px floor for primary text, and 25px of spacing is 1091px wide and 9.9px. Its height
+    does not move at any spacing. A drawing nobody can read is not an improvement on an
+    arrowhead sitting on a curve.
 
     Most of those arrowheads no longer reach here at all — `route.py` moves the step instead,
     for nothing — so this now decides one figure's rung rather than five.
@@ -852,8 +854,9 @@ def choose_drawing(spec, name="diagram", theme="dark", standalone=False, binary=
     the drawing the anchors had been chosen against, which is precisely the bug the pinning was
     introduced to prevent, reappearing one step later.
 
-    It is also most of the cost. Deciding once saves a ~4-compile search on the embedded path
-    and a ladder of compiles plus browser launches on the standalone one, per figure.
+    It is also most of the cost. Deciding once saves a search over every layout candidate on the
+    embedded path and a ladder of compiles plus browser launches on the standalone one, per
+    figure.
     """
     if standalone:
         return (None, *choose_standalone_spacing(spec, name, theme, binary, edge_rungs))

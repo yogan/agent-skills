@@ -4,14 +4,15 @@ The recipe in `d2.py` leans on several undocumented d2 behaviours. That is only 
 tolerable risk because of what is in here — pin the d2 version, and let these catch the
 drift when it happens.
 
-Six checks, five of which need no browser:
+Seven checks, six of which need no browser:
 
     size       rendered height fits one viewport
     glyph      no glyph larger than an h2 (26.6px at a 19px root)
     body       the MODAL glyph size — the size most of the diagram is set in — is at
                most body text (19px); a diagram whose ordinary text out-sizes the prose
                reads as a poster dropped into the article
-    legibility no glyph below ~11px
+    legibility no text below its floor: 10px for primary text, 9px for an edge label,
+               7.5px for a subtitle (`size.py`)
     contrast   WCAG AA in BOTH themes
     theming    every colour literal has a CSS-var mapping
     clipping   nothing cut off, shadow spread included -- needs a browser, lives with the

@@ -425,7 +425,7 @@ it is complaining about. Fix the **spec**, not the styling:
 
 | complaint | what it means | fix |
 |---|---|---|
-| `TINY … < 11px` | something renders too small to read | shorten labels; fewer columns |
+| `TINY … < 10px` | something renders too small to read (the floor is 10px for box text, 9px for an arrow's label, 7.5px for a subtitle) | shorten labels; fewer columns |
 | `CLIPPED` | a callout is cut off at the canvas edge | shorten its note text — a narrower callout fits where a wide one cannot |
 | `contrast … FAIL` | a colour is unreadable on the baked background | you should not be able to cause this from a spec; report it rather than working around it |
 | `no palette mapping` | D2 emitted a colour the theme cannot bake | ditto — report it |
@@ -435,7 +435,7 @@ Note what is *not* in that table: nothing about width or height. A standalone im
 to fit, so "too wide" and "too tall" are not failures and splitting to fix them is wrong.
 
 One warning is not a failure and does not affect the exit code: **`the note '…' covers the
-corner where an arrow turns` / `the head of an arrow`** means no position for that note kept it
+corner where an arrow turns` / `the end of an arrow`** means no position for that note kept it
 off one of those, so the drawing shipped with the least bad one. The picture is fine to look at
 and the fix is yours. Do not go looking for a styling problem — there isn't one, and **never
 position the note by hand**: all eight positions were measured and this was the best of them.
