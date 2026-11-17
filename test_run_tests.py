@@ -141,6 +141,15 @@ class TestItDeclinesRatherThanGuess(unittest.TestCase):
         selected, _ = self._changed("mods/review-ui/hooks/register.tsx")
         self.assertIn(rt.REPO_ROOT / "mods/test_mods.py", selected)
 
+    def test_a_hunk_extension_file_selects_the_bridge_beside_it(self):
+        """An extension's TypeScript is tested by Bun, through its own `test_*.py`. A Python
+        comment naming one of its files once selected that module's tests alone, and the
+        extension's were skipped at commit time."""
+        for rel in ("hunk-extensions/keep-notes/src/disk.ts",
+                    "hunk-extensions/keep-notes/src/review.ts"):
+            selected, _ = self._changed(rel)
+            self.assertIn(rt.REPO_ROOT / "hunk-extensions/keep-notes/test_keep_notes.py", selected)
+
     def test_a_declined_run_is_the_whole_run_and_uses_the_days_record(self):
         """The hook's `--changed` after a full pass used to run everything again, on a tree
         that had just passed, because a declined run skipped the record."""

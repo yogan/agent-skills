@@ -442,8 +442,8 @@ def changed_files(base="HEAD"):
 
 def _readers(rel, files):
     """The Python files a changed non-Python file reaches: every one that names it (a skill's
-    SKILL.md, a script's JSON spec, a shell view the tests run), and for a file of a mod, the
-    bridge that runs the mod's own tests. The names are read from the source, so a reader
+    SKILL.md, a script's JSON spec, a shell view the tests run), and for a file of a mod or a
+    Hunk extension, the bridge that runs its own tests. The names are read from the source, so a reader
     added later is found without anyone listing it here; a file nothing names is read by no
     test this selector can see, and declines. A name matches whole, so `SKILL.md` is found and
     over-selects, which costs seconds; no test here reaches a file by a glob of its kind,
@@ -454,6 +454,10 @@ def _readers(rel, files):
         bridge = REPO_ROOT / "mods" / "test_mods.py"
         if bridge in files:
             out.add(bridge)
+    # A Hunk extension's TypeScript is tested by Bun, through the `test_*.py` beside it.
+    if len(parts) > 2 and parts[0] == "hunk-extensions":
+        out |= {p for p in files if p.parent == REPO_ROOT.joinpath(*parts[:2])
+                and p.name.startswith("test_")}
     name = re.compile(r"(?<![\w.-])" + re.escape(Path(rel).name) + r"(?![\w-])")
     # A document is read where the code names it in a string it uses (a test opening a
     # SKILL.md); its name in a comment or a docstring is prose about it, and counted, it made
