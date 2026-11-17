@@ -142,8 +142,10 @@ def check(argv):
                                  "--dst-prefix=b/", "-U0"))]
     elif argv[:1] == ["--message"] and len(argv) == 2:
         with open(argv[1], encoding="utf-8") as fh:
+            # Git's own comment lines ("# Please enter...", "#\tmodified: x") only: with
+            # `commit -F` git keeps every `#` line, and `#ABC-123` is a reference, not one.
             lines = [(f"commit message:{i}", t) for i, t in enumerate(fh.read().splitlines(), 1)
-                     if not t.startswith("#")]
+                     if not re.match(r"#(\s|$)", t)]
     elif len(argv) == 1:
         rev = argv[0]
         lines = [(f"{rev[:8]} {p}:{n}", t) for p, n, t in

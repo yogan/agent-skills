@@ -80,6 +80,14 @@ class TestLists(unittest.TestCase):
             fh.write("Reported by Zorbix.\n")
         self.assertEqual(self.cli("check", "--message", msg)[0], 1)
 
+    def test_a_reference_starting_with_a_hash_is_no_comment(self):
+        """`git commit -F` keeps every `#` line, so `#ZORBIX-12` reached history unchecked."""
+        P.save({"block": ["zorbix-"], "watch": []})
+        msg = os.path.join(self._tmp.name, "MSG")
+        with open(msg, "w") as fh:
+            fh.write("fix: the cache\n\n#ZORBIX-12 follow-up\n")
+        self.assertEqual(self.cli("check", "--message", msg)[0], 1)
+
     def test_line_numbers_follow_the_hunks(self):
         diff = "+++ b/a.txt\n@@ -3,2 +10,2 @@\n context\n+added\n-removed\n"
         self.assertEqual(P.added_lines(diff), [("a.txt", 11, "added")])
