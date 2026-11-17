@@ -17,7 +17,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
-from contextlib import redirect_stdout
+from contextlib import redirect_stderr, redirect_stdout
 from unittest import mock
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -1675,6 +1675,23 @@ class TestWorktreeCleanup(unittest.TestCase):
                              {"main": main, "path": f"{main}.wt/fix-x", "branch": "fix/x"})
 
 
+class TestOnlyAPressEndsTheMR(unittest.TestCase):
+    """Merging and cleaning up are the sidebar box's presses: the model running the command
+    itself is refused before anything reaches GitLab or the disk."""
+
+    def test_merge_and_cleanup_refuse_without_a_press(self):
+        for cmd, act in (("merge-mr", "merge_mr"), ("cleanup", "clean_up_locally")):
+            with self.subTest(cmd), mock.patch.dict(os.environ, {T.PRESS_ENV: ""}), \
+                    mock.patch.object(T, "resolve_state", return_value=({}, 3, "/s", {})), \
+                    mock.patch.object(T, "current_user", return_value="dev"), \
+                    mock.patch.object(T, act) as acted, \
+                    mock.patch.object(sys, "argv", ["threads.py", cmd, "--iid", "3"]), \
+                    redirect_stderr(io.StringIO()) as err, self.assertRaises(SystemExit):
+                T.main()
+            self.assertIn("press", err.getvalue())
+            acted.assert_not_called()
+
+
 class TestCleanUpLocally(unittest.TestCase):
     """Clean up locally, once the MR is merged: what it removes where, and what it refuses."""
 
@@ -1728,7 +1745,8 @@ class TestCleanUpLocally(unittest.TestCase):
             os.chdir(main)
             mr = {"state": "merged", "source_branch": "fix/x", "target_branch": "main", "sha": tip}
             # Through the command, as the mod's press runs it.
-            with mock.patch.object(T, "mr_object", return_value=mr), \
+            with mock.patch.dict(os.environ, {T.PRESS_ENV: "1"}), \
+                    mock.patch.object(T, "mr_object", return_value=mr), \
                     mock.patch.object(T, "resolve_state", return_value=({}, 3, path, {})), \
                     mock.patch.object(T, "current_user", return_value="frank"), \
                     mock.patch.object(T.hunk, "installed", return_value=False), \

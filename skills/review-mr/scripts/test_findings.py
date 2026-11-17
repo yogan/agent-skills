@@ -1854,6 +1854,16 @@ class TestPost(unittest.TestCase):
             self.post()
         self.assertIn("press", err.getvalue())
 
+    def test_only_a_press_approves(self):
+        with patch.dict(os.environ, {F.PRESS_ENV: ""}), \
+                patch.object(F, "resolve_state", return_value=(CTX, 2, "/s", {"iid": 2, "topics": []})), \
+                patch.object(F, "current_user"), patch.object(F, "approve") as approve, \
+                patch.object(sys, "argv", ["findings.py", "approve-mr", "--iid", "2"]), \
+                redirect_stderr(io.StringIO()) as err, self.assertRaises(SystemExit):
+            F.main()
+        self.assertIn("press", err.getvalue())
+        approve.assert_not_called()
+
 
 class TestWhereTheModDraws(unittest.TestCase):
     """lib/ui.py: in a session the review-ui mod draws, the views change for the person;

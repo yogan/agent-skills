@@ -3927,10 +3927,16 @@ def main():
     elif cmd == "cleanup-worktree":
         print(cleanup_worktree(ctx, iid))
     elif cmd == "merge-mr":               # the mod's Merge / Set to auto-merge: a press only
+        if os.environ.get(PRESS_ENV) != "1":
+            die("merging is the user's press, on the Merge button in the sidebar's box; nothing "
+                "else merges or sets auto-merge. Leave it to them.")
         merge_mr(state, ctx, iid)
         save(path, state)
         print(json.dumps(state_json(state)))
     elif cmd == "cleanup":                # the mod's Clean up locally: the state goes too
+        if os.environ.get(PRESS_ENV) != "1":
+            die("cleaning up is the user's press, on Clean up locally in the sidebar's box; "
+                "nothing else removes the branch, the worktree or this review's state.")
         print(clean_up_locally(ctx, iid, path))
         tab.give_back()                   # the session's tab, which `present` took
         return

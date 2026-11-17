@@ -4233,6 +4233,9 @@ def main():
         print(json.dumps(state_json(state)))
     elif cmd == "approve-mr":
         # The Done box's Approve, once every topic is settled: the person's press alone.
+        if os.environ.get(PRESS_ENV) != "1":
+            die("approving is the user's press, on Approve in the sidebar's box; nothing else "
+                "approves. Leave it to them.")
         why = approve(ctx, iid)
         if why:
             die(f"GitLab did not take the approval: {why}")
