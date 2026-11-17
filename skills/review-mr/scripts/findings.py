@@ -3253,7 +3253,10 @@ def wrong_checkout_warning(slug, iid, topics):
 # and from `assess_diff`'s measure of how much of it is code that only moved, and
 # recommends; the user decides, with a press where the mod draws.
 
-TEST_PATH = re.compile(r"(^|/)(tests?|__tests__|spec|e2e)/|[._-](test|spec)\.[^/]+$|_test\.[^/]+$")
+# A test file by where it lives or how it is named: `tests/`, `a.test.ts`, `a_test.go`, and
+# the colocated `test_a.py`, `conftest.py` and `ATest.java` / `ATests.cs`.
+TEST_PATH = re.compile(r"(^|/)(tests?|__tests__|spec|e2e)/|[._-](test|spec)\.[^/]+$|_test\.[^/]+$"
+                       r"|(^|/)(test_[^/]+|conftest\.py|[^/]+Tests?\.[^/]+)$")
 _COLOR = re.compile(r"\x1b\[[0-9;]*m")
 
 

@@ -2882,6 +2882,15 @@ class TestExplainerAssessment(unittest.TestCase):
         self.assertIn("only moved", F.assess_line(a))
         self.assertTrue(F.assess_line(a).startswith("\uf4d2 2 files +"))
 
+    def test_a_test_file_is_told_by_every_common_naming(self):
+        """Colocated Python tests, a pytest conftest and Java's or C#'s test classes counted
+        as code outside the tests."""
+        for path in ("tests/a.py", "src/a.test.ts", "a_test.go", "pkg/test_parser.py",
+                     "conftest.py", "src/FooTest.java", "Foo.Tests/FooTests.cs"):
+            self.assertTrue(F.TEST_PATH.search(path), path)
+        for path in ("src/latest.py", "src/Contest.java", "attest.py", "src/testing.md"):
+            self.assertFalse(F.TEST_PATH.search(path), path)
+
     def test_a_share_that_moved_too_little_to_matter_goes_unsaid(self):
         self.assertNotIn("moved", F.assess_line({"files": 43, "added": 182, "removed": 3, "moved": 0}))
         self.assertNotIn("moved", F.assess_line({"files": 3, "added": 90, "removed": 10, "moved": 19}))
