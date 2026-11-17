@@ -127,6 +127,15 @@ class TestTheRecord(unittest.TestCase):
             self.assertEqual(cp.verify(["abc"]), 0)
             self.assertEqual(cp.scenarios_passed("T-abc"), set())      # the whole pass replaces it
 
+    def test_a_pass_that_ran_no_scenarios_is_no_starting_point_for_the_next(self):
+        """Picked from it, the next run skipped the scenarios of what changed before it."""
+        with mock.patch.object(cp, "git", lambda *a: "tree"):
+            cp.record_pass("T-one", "c1" * 6, {"mode": "auto"})
+            cp.record_pass("T-two", "c2" * 6, {"mode": "none"})
+            self.assertEqual(cp.starting_point("origin/main")[0], "T-one")
+            cp.record_pass("T-three", "c3" * 6, {})       # a record from before modes: a full pass
+            self.assertEqual(cp.starting_point("origin/main")[0], "T-three")
+
     def test_deleting_a_branch_needs_no_pass(self):
         self.assertEqual(cp.verify(["0" * 40]), 0)
 

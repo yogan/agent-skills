@@ -175,6 +175,18 @@ def passed_trees():
     return {p["tree"] for p in load_record()["passed"]}
 
 
+def starting_point(base):
+    """(revision, why) the scenarios are picked from: the newest tree that passed, else `base`.
+    Not a pass told to run no scenarios (`--scenarios none`): it lets its own tree be pushed,
+    but checked none of what changed, and picking from it would skip those scenarios for good."""
+    for p in reversed(load_record()["passed"]):
+        if (p.get("ran") or {}).get("mode") == "none":
+            continue
+        if git("cat-file", "-t", p["tree"]) == "tree":
+            return p["tree"], f"since the last tree that passed ({p['commit'][:12]})"
+    return base, f"since {base}"
+
+
 def tree_of(rev):
     return git("rev-parse", f"{rev}^{{tree}}")
 
@@ -242,11 +254,7 @@ def main(argv):
         print(f"check_push: {head[:12]}'s tree has already passed; nothing to run.")
         return 0
     base = git("rev-parse", "--abbrev-ref", "@{u}") or "origin/main"
-    since, why = base, f"since {base}"
-    for p in reversed(load_record()["passed"]):
-        if git("cat-file", "-t", p["tree"]) == "tree":
-            since, why = p["tree"], f"since the last tree that passed ({p['commit'][:12]})"
-            break
+    since, why = starting_point(base)
     # Both paths of a rename: a module moved out of a skill's reach still changed that skill.
     changed = (git("diff", "--name-only", "--no-renames", since, "HEAD") or "").split()
     scens = scenarios()
@@ -290,7 +298,7 @@ def main(argv):
     if not ok:
         print("\ncheck_push: FAILED — nothing recorded")
         return 1
-    record_pass(tree, head, {"scenarios": picked, "since": why})
+    record_pass(tree, head, {"scenarios": picked, "since": why, "mode": mode})
     print(f"\ncheck_push: {head[:12]} passed; recorded, the pre-push hook will let it through")
     return 0
 
