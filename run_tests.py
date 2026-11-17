@@ -451,7 +451,8 @@ def _readers(rel, files):
     added later is found without anyone listing it here; a file nothing names is read by no
     test this selector can see, and declines. A name matches whole, so `SKILL.md` is found and
     over-selects, which costs seconds; no test here reaches a file by a glob of its kind,
-    which would read it without naming it."""
+    which would read it without naming it, but test_repo_hygiene.py, which reads every test
+    file and `select_changed` adds for any changed one."""
     parts = Path(rel).parts
     out = set()
     if len(parts) > 2 and parts[0] == "mods":
@@ -563,7 +564,13 @@ def select_changed(files, base="HEAD"):
             changed |= readers
     if unknown:
         return None, f"{len(unknown)} changed file(s) it cannot map ({unknown[0]}, ...)"
-    return _dependents(changed, files), f"{len(changed)} changed module(s)"
+    selected = _dependents(changed, files)
+    # test_repo_hygiene.py reads every test file by a glob, naming none and imported by none:
+    # a changed or new test is its input, or a test leaking a temp dir passes every commit.
+    hygiene = REPO_ROOT / "test_repo_hygiene.py"
+    if hygiene in files and any(p.name.startswith("test_") for p in changed):
+        selected.add(hygiene)
+    return selected, f"{len(changed)} changed module(s)"
 
 
 FAILED_RE = re.compile(r"^(FAIL|ERROR): (\S+) \(([^)]*)\)", re.M)

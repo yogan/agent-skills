@@ -176,6 +176,14 @@ class TestItDeclinesRatherThanGuess(unittest.TestCase):
         selected, _ = self._changed("mods/review-ui/hooks/register.tsx")
         self.assertIn(rt.REPO_ROOT / "mods/test_mods.py", selected)
 
+    def test_a_changed_test_file_selects_the_check_that_reads_every_test_file(self):
+        """test_repo_hygiene.py globs for test files, so nothing imports or names them:
+        a new test that leaked a temp dir passed the commit hook."""
+        selected, _ = self._changed("lib/test_parallel.py")
+        self.assertIn(rt.REPO_ROOT / "test_repo_hygiene.py", selected)
+        selected, _ = self._changed("lib/parallel.py")
+        self.assertNotIn(rt.REPO_ROOT / "test_repo_hygiene.py", selected)
+
     def test_a_hunk_extension_file_selects_the_bridge_beside_it(self):
         """An extension's TypeScript is tested by Bun, through its own `test_*.py`. A Python
         comment naming one of its files once selected that module's tests alone, and the
