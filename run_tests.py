@@ -5,7 +5,7 @@
     python3 run_tests.py --changed     # only what your uncommitted edits can affect
     python3 run_tests.py --changed-since=REV   # only what differs from REV can affect
     python3 run_tests.py compact spec  # only files whose path contains one of these
-    python3 run_tests.py --slow        # fast + slow. TWO MINUTES. See below.
+    python3 run_tests.py --slow        # fast + slow: ~45s, set by one file. See below.
     python3 run_tests.py -j1           # serial, for when a parallel failure is confusing
     python3 run_tests.py --host        # every test on the Mac: no test box (the push level)
 
@@ -29,19 +29,21 @@ CLAUDE.md already tells you to run a single file (`python3 <path>`), one subproc
 file, so a file's own sys.path bootstrap is exercised for real too.
 
 **Every run prints seconds per file, slowest first.** That is not a nicety. This suite has
-two files that cost minutes rather than seconds, and for a long time nothing said so — so
+two files that cost far more than the rest, and for a long time nothing said so — so
 `--slow` got run in an edit-test loop where it had no business being, and one session spent
 about forty of its seventy-six minutes waiting for the same six-minute file five times.
 A cost you cannot see is a cost you repeat.
 
-The `*_slow.py` split, and what each one actually costs:
+The `*_slow.py` split, and what each one costs (as measured in CLAUDE.md's table, the copy
+to keep current):
 
-  * `lib/diagram/test_place_slow.py` — ~2 minutes. Every assertion is a real callout-placement
-    search: dozens of d2 compiles, each measured in a real browser. Nothing here can be faked
-    down without testing the fake instead. Run it when you touch `place.py`, the harness
-    geometry, or anything that moves a callout — not otherwise.
-  * `hooks/test_paste_gate_slow.py` — ~36 seconds of real `time.sleep()` in a subprocess that
-    cannot be mocked from the test.
+  * `hooks/test_paste_gate_slow.py` — ~24s alone, and it sets the pace of a whole `--slow`
+    run: real `time.sleep()` in a subprocess that cannot be mocked from the test.
+  * `lib/diagram/test_place_slow.py` — ~13s alone, ~20-30s inside a full `--slow` run, its
+    compiles competing with the rest for the cores. Every assertion is a real note-placement
+    search, measured in a real browser; nothing here can be faked down without testing the
+    fake instead. Run it when you touch `place.py`, the harness geometry, or anything that
+    moves a note — not otherwise.
 
 So: iterate with a filter (`run_tests.py compact` is well under a second), run the plain fast
 suite before you call something done, and run `--slow` once at the end if you touched what it
