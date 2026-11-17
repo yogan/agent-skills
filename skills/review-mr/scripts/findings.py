@@ -3375,6 +3375,13 @@ def _listed_worktree(path):
                for line in out.splitlines() if line.startswith("worktree "))
 
 
+def keep_to_check(t):
+    """A topic's draft the user posted by hand, which they often reword: where cards are
+    drawn, kept to check what they posted against (`posted <t>`), however it gets linked."""
+    if ui.drawn() and t.get("draft"):
+        t["post_check"] = {"draft": t["draft"], "since": t.get("draft_at")}
+
+
 def prune_worktrees(ctx, skip_iid=None):
     """Remove the git worktree — never the findings/state file — for any MR of
     this repo that has one recorded and that GitLab now reports merged or closed.
@@ -4207,6 +4214,7 @@ def main():
             # The comment is the topic's own draft, posted by hand: it becomes the topic's
             # thread, as `link` makes it, and the draft is spent.
             into = topic_for(state, p["into"]) or die(f"no topic {p['into']}")
+            keep_to_check(into)
             attach_thread(state, into, p["thread"], ctx, iid)
             done = f"linked to {tref(p['into'])} as its posted comment"
         elif args.how == "merge":
@@ -4421,9 +4429,7 @@ def main():
                     f"topic — pass the discussion id of the one for {args.topic} "
                     f"(see `candidates`)")
             did = hits[0]
-        if ui.drawn() and t.get("draft"):
-            # Posted by hand, often reworded: what was drafted is kept to check it against.
-            t["post_check"] = {"draft": t["draft"], "since": t.get("draft_at")}
+        keep_to_check(t)
         attach_thread(state, t, did, ctx, iid, args.start_sha)
         save(path, state)
         print(f"{tref(args.topic)} ← {did}")

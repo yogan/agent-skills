@@ -1906,6 +1906,24 @@ class TestPost(unittest.TestCase):
         approve.assert_not_called()
 
 
+class TestSettleLink(unittest.TestCase):
+    def test_a_draft_posted_by_hand_and_linked_by_its_press_is_checked_too(self):
+        """Only `link` kept the draft to check the posted comment against; the Link press
+        on a proposed comment, the way the skill sends that same case, did not."""
+        state = {"iid": 2, "threads": {"d9": {}}, "topics": [
+            {"id": "t1", "thread_ids": [], "draft": "Rename it.", "draft_at": "2026-11-01"}],
+                 "proposals": [{"thread": "d9", "into": "t1"}]}
+        with patch.dict(os.environ, {"REVIEW_UI_DRAWN": "1"}), \
+                patch.object(F, "resolve_state", return_value=(CTX, 2, "/s", state)), \
+                patch.object(F, "current_user"), patch.object(F, "save"), \
+                patch.object(F, "attach_thread"), \
+                patch.object(sys, "argv", ["findings.py", "settle", "d9", "link", "--iid", "2"]), \
+                redirect_stdout(io.StringIO()):
+            F.main()
+        self.assertEqual(state["topics"][0]["post_check"],
+                         {"draft": "Rename it.", "since": "2026-11-01"})
+
+
 class TestMergeTopics(unittest.TestCase):
     def test_a_topic_merged_into_itself_stays(self):
         """It was deleted, and its thread, still known, never came back as a topic."""
