@@ -34,7 +34,8 @@ Threads you did not open are surfaced automatically on sync as topics — a peer
 reviewer's (💬 peer) or the author's own (🖊️ author) — so they show up in your
 lists and can be merged with your findings.
 
-Subcommands (all read-only against GitLab):
+Subcommands (read-only against GitLab, but for post, resolve, approve-mr and posted --apply,
+each only on a person's press):
   sync           fetch discussions + branch tip, reconcile, render overview  (default)
   todo           render only what needs YOU (✎ drafts + ◐ needs-ack)
   present        overview + the current topic (lib/focus.py)
@@ -54,7 +55,7 @@ Subcommands (all read-only against GitLab):
   import <file>  bulk-add findings from a JSON array (review-branch seed)
   add [--thread <id>]  add one finding; --thread links an already-posted thread
   set <t> …      update a topic's fields / state
-  drop <t>       remove a (draft) topic
+  drop <t>       mark a topic dropped: still listed, closed, and `set <t> --state reset` undoes it
   merge <into> <o…>  fold other topics into <into>
   link <t> [<discussion_id>]  attach a posted GitLab thread to a topic (✎→○);
                  omit the id to auto-pick your one unlinked thread on that file
@@ -62,12 +63,12 @@ Subcommands (all read-only against GitLab):
   state          the review as JSON, for the review-ui mod's buttons (offline)
   post <t>       post <t>'s draft: a new thread at its line, or a reply into its
                  thread. Only on a person's press (the review-ui mod's Post button)
-  own-review done|matched|skip   the user's own review before the topics (mod only)
+  own-review done|matched   the user's own review before the topics (mod only)
   propose <discussion_id> --into <t> --summary … --why … [--recommend separate]
                  offer merging their comment into <t>, with the reason the user decides on
   proposal [<discussion_id>]   a proposed match as its card (`own-review matched` shows the first)
   settle <discussion_id> merge|separate|link   on the press that answers a proposal
-  verdict <t> settled|more --text …   the agent's judgment of the author's answer (its card)
+  verdict <t> settled|more|wait --text …   the agent's judgment of the author's answer (its card)
   resolve <t>    resolve <t>'s threads and ack it. Only on a person's press
   head           one-line push check (branch tip vs last-reviewed head)
   base           GitLab's own merge-base SHA for this MR (feed to review-branch)

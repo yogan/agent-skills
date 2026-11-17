@@ -700,5 +700,5 @@ details can be collapsed or hidden.
 repo. `python3`. (`clip.sh` copies to the clipboard via macOS `pbcopy`; where that is
 missing the copy is skipped and nothing else changes.) Build blocks: the `explain-branch` and `review-branch`
 skills installed. `findings.py` subcommands: sync·todo·present·resume·updates·bodies·quote·draft·diff·candidates·
-import·add·set·drop·merge·link·posted·head·base·branch·set-head·worktree·explainer·seed·prune·path·begun·lang
+import·add·set·drop·merge·link·posted·own-review·propose·verdict·peer·head·base·branch·set-head·worktree·explainer·seed·prune·path·begun·lang
 (run any with `-h`).

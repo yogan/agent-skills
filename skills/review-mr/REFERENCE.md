@@ -211,8 +211,8 @@ one reopened later is adopted then:
 Adopted topics start at severity ⚪ (unknown) — reclassify with `set <t> --severity …` if you
 want. Whose-turn is derived around the **author**: the author speaking last ⇒ `◐ needs-ack`
 (reviewers' court); a reviewer (you or a peer) last ⇒ `○ open` (awaiting the author). **`drop`
-an adopted topic to dismiss a thread you don't want to track** — its discussion id is remembered
-in `ignored`, so `sync` won't re-adopt it.
+an adopted topic to dismiss a thread you don't want to track** — the topic is kept, marked
+dropped, with its thread still linked to it, so `sync` won't re-adopt it.
 
 Notes on a couple of edges:
 - **Location on a *posted* topic is the thread's** — `set <t> --file/--line` only affects an

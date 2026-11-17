@@ -43,8 +43,8 @@ For each commit, look at its subject and its actual diff (`git show <hash>`) and
   together, fixes a real bug, meaningfully reshapes a schema/contract. Deserves its own chapter.
 - **Trivial** — pure rename/move with no logic change, formatting/lint-only, a typo fix, a
   docs-only edit, a generated-file regen with no accompanying hand-written change. Does not get
-  its own chapter or quiz question. This repo uses Conventional Commits (see the project's
-  `/commit` skill) — a `chore`/`docs`/`style` type is a hint worth checking, not a verdict; a
+  its own chapter or quiz question. Where the repo uses Conventional Commits, a
+  `chore`/`docs`/`style` type is a hint worth checking, not a verdict; a
   `chore` can still be substantial (e.g. deleting a real feature), and a `refactor` can still be
   trivial (e.g. a rename). Judge from the diff, not the prefix.
 
