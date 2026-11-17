@@ -322,6 +322,32 @@ class TestSkills(Rig):
         self.later.assert_not_called()
 
 
+class TestCache(unittest.TestCase):
+    def test_two_titles_remembered_at_once_are_both_kept(self):
+        """Each run wrote the file as it had read it: the one that read first and wrote last
+        dropped the other's title."""
+        import threading
+        import time
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        real, read = tab._load, threading.Event()
+
+        def slow_load():
+            got = real()
+            if not read.is_set():            # the first run: holds on to what it read a while
+                read.set()
+                time.sleep(0.3)
+            return got
+        with mock.patch.object(tab, "CACHE", os.path.join(tmp.name, "c.json")), \
+                mock.patch.object(tab, "_load", slow_load):
+            first = threading.Thread(target=tab.remember, args=("one title", "one"))
+            first.start()
+            read.wait(5)
+            tab.remember("two title", "two")
+            first.join(5)
+            self.assertEqual(real(), {"one title": "one", "two title": "two"})
+
+
 class TestModel(unittest.TestCase):
     def run_model(self, *outs, rc=0):
         """The model answering each of `outs` in turn; what came back and every prompt sent."""

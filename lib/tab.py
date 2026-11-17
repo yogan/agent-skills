@@ -363,13 +363,21 @@ def cached(title):
 
 
 def remember(title, short):
-    got = _load()
-    got[title] = short
     os.makedirs(os.path.dirname(CACHE), exist_ok=True)
-    tmp = f"{CACHE}.{os.getpid()}"
-    with open(tmp, "w") as fh:
-        json.dump(got, fh, ensure_ascii=False, indent=0)
-    os.replace(tmp, CACHE)
+    # Read, add and write back under a lock: two shortenings finishing together (a status
+    # line's and a viewer's) each wrote the file as they had read it, and one title was lost.
+    with open(f"{CACHE}.lock", "a") as lock:
+        try:
+            import fcntl
+            fcntl.flock(lock, fcntl.LOCK_EX)
+        except (ImportError, OSError):
+            pass                          # no locking here: as before, the last write wins
+        got = _load()
+        got[title] = short
+        tmp = f"{CACHE}.{os.getpid()}"
+        with open(tmp, "w") as fh:
+            json.dump(got, fh, ensure_ascii=False, indent=0)
+        os.replace(tmp, CACHE)
 
 
 PROMPT = ("Shorten a coding session's title into a terminal tab label. Rules: {max} characters "
