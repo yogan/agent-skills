@@ -118,8 +118,9 @@ export const checkPrompt = (t: string): string => `I posted the comment for ${t}
 // The language drafts are written in, said with every prompt that asks for one.
 const inLang = (review: ReviewState | null): string => `, written in ${review?.lang ?? 'en'}`
 
-// The first button wherever a finding is decided on: the agent explains it in depth, with
-// an example, before the person chooses. The card's analysis is the short form.
+// Offered wherever a finding is decided on, after the answers (`ordered`): the agent explains
+// it in depth, with an example, before the person chooses. The card's analysis is the short
+// form.
 //
 // Once the agent explained it, the button asks for more of the same: what is still unclear,
 // from another angle, without repeating the explanation already given.
@@ -245,7 +246,8 @@ const stepButtons = (review: ReviewState | null): BandButton[] | null => {
       press: { kind: 'settle', thread: proposal.thread, how: 'link', into: proposal.into } }
     const [first, second] = proposal.recommend === 'separate' ? [separate, merge]
       : proposal.recommend === 'link' ? [link, separate] : [merge, separate]
-    // Explain first, as on every step where the person decides; then the agent's answer.
+    // Explain, as on every step where the person decides (`ordered` puts it after the
+    // answers); then the agent's answer, first of those.
     const isExplained = (review?.explained ?? []).includes(proposal.thread)
     return [
       { key: 'explain', label: isExplained ? 'Explain further' : 'Explain',
@@ -408,7 +410,7 @@ const differsButtons = (t: string, check: string): BandButton[] => [
 
 // rework-mr's steps (threads.py's `step_of`): a plan to agree, a fix to make, a fix to push,
 // a reply to post. The agent's answer first; the way on to the next topic on every card.
-// The usual answer is marked; Explain, where there is one, comes before it, as in review-mr.
+// The usual answer is marked, never Explain, which `ordered` puts after the answers.
 const primary = (bs: BandButton[]): BandButton[] => {
   if (bs.some(b => b.isPrimary)) return bs
   const at = bs[0]?.key === 'explain' ? 1 : 0

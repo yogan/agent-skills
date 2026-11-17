@@ -18,7 +18,8 @@ How it fits together:
   Ack and push, Review in hunk for a fix made; Post, Post + resolve for a reply; Show fix
   in hunk once the fix is pushed, from the commits the push kept in git, which review-mr
   offers too for the author's push that changed a topic's lines; a card leaves the diff
-  viewer's key out where the sidebar beside it carries it over the fix's files),
+  viewer's key out where the sidebar beside it carries it over the fix's files, but for
+  Read hunk notes while notes wait there, which the card keeps and the sidebar gives up),
   rounds through a plan pass and then a fix pass, the inbox, and a background agent that
   prepares a plan for each reviewer's new thread or reply. Labels are short in both skills:
   the icon says the kind of press, and the pencil marks every one that has a text written
