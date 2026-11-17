@@ -138,6 +138,11 @@ def resolve_mr(value: str) -> dict:
         die(f"Could not parse source/target branch for MR !{num}.")
 
     subprocess.run(["git", "fetch", "origin", src, tgt, "--quiet"], capture_output=True)
+    # A merged MR whose source branch was deleted, or one from a fork, has no branch here.
+    for branch in (src, tgt):
+        if not run_ok(["git", "show-ref", "--verify", "--quiet", f"refs/remotes/origin/{branch}"]):
+            die(f"MR !{num}'s branch '{branch}' is not on origin (deleted after the merge, or "
+                "in a fork), so its commits cannot be read here.")
     head_ref = f"origin/{src}"
     base = merge_base(head_ref, f"origin/{tgt}")
     label = f"mr-{num}-{title or src}"
@@ -175,8 +180,13 @@ def resolve_commit(value: str) -> dict:
     }
 
 
+# The slug names the explainer's file, and an MR's title may run to 255 characters: past
+# the 255-byte limit on a file name, the page is written only to fail.
+SLUG_MAX = 60
+
+
 def slugify(label: str) -> str:
-    return re.sub(r"[^A-Za-z0-9]+", "-", label).strip("-")
+    return re.sub(r"[^A-Za-z0-9]+", "-", label).strip("-")[:SLUG_MAX].rstrip("-")
 
 
 def main() -> None:

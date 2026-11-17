@@ -15,7 +15,7 @@ import os
 import shlex
 import sys
 import unittest
-from contextlib import redirect_stdout
+from contextlib import redirect_stderr, redirect_stdout
 from unittest.mock import patch
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -196,6 +196,19 @@ class TestResolveMr(unittest.TestCase):
         self.assertEqual(out["HEAD_REF"], "origin/feat/thing")
         self.assertEqual(out["LABEL"], "mr-123-Fix the retry loop")
 
+    def test_a_source_branch_gone_from_origin_says_so_rather_than_crashing(self):
+        """Deleted after the merge, GitLab's default: `merge-base` failed with a traceback."""
+        mr_json = '{"source_branch": "feat/gone", "target_branch": "main", "title": "x"}'
+        with patch("shutil.which", return_value="/usr/bin/glab"), \
+             patch("subprocess.run", side_effect=dispatch([
+                ("glab mr view", fake_result(stdout=mr_json)),
+                ("show-ref --verify --quiet refs/remotes/origin/feat/gone", fake_result(returncode=1)),
+                ("merge-base", fake_result(returncode=128)),
+             ])), redirect_stderr(io.StringIO()) as err:
+            with self.assertRaises(SystemExit):
+                RT.resolve_mr("123")
+        self.assertIn("'feat/gone' is not on origin", err.getvalue())
+
     def test_dies_when_source_or_target_branch_missing(self):
         with patch("shutil.which", return_value="/usr/bin/glab"), \
              patch("subprocess.run", side_effect=dispatch([
@@ -241,6 +254,9 @@ class TestSlugify(unittest.TestCase):
 
     def test_strips_leading_and_trailing_hyphens(self):
         self.assertEqual(RT.slugify("--detached@abc1234"), "detached-abc1234")
+        long = RT.slugify("mr-123-" + "word " * 60)
+        self.assertLessEqual(len(long), RT.SLUG_MAX)
+        self.assertFalse(long.endswith("-"))
 
 
 class TestMainOutputQuoting(unittest.TestCase):
