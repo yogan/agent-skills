@@ -87,6 +87,35 @@ class TestSelectionCoversTheObviousCase(unittest.TestCase):
 UNNAMED = "docs/no-" + "reader" + ".json"
 
 
+class TestWhatChanged(unittest.TestCase):
+    """changed_files against a real repository: what git lists is the whole input."""
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.repo = tmp.name
+        for args in (("init", "-q"), ("commit", "-q", "--allow-empty", "-m", "one")):
+            self._git(*args)
+        with open(os.path.join(self.repo, "old.py"), "w") as f:
+            f.write("x = 1\n")
+        self._git("add", "old.py")
+        self._git("commit", "-q", "-m", "two")
+
+    def _git(self, *args):
+        subprocess.run(["git", "-c", "user.email=t@example.com", "-c", "user.name=t", *args],
+                       cwd=self.repo, check=True, capture_output=True)
+
+    def test_a_staged_rename_counts_as_both_its_paths(self):
+        """At commit time every change is staged, where git reports a rename by its new
+        name alone: the tests importing the old one were never selected."""
+        self._git("mv", "old.py", "new.py")
+        self.assertEqual(rt.changed_files(root=self.repo), {"old.py", "new.py"})
+
+    def test_an_unknown_revision_is_no_answer_rather_than_no_change(self):
+        """It used to read as a clean tree, and `--changed-since` passed having run nothing."""
+        self.assertIsNone(rt.changed_files("no-such-rev", root=self.repo))
+
+
 class TestItDeclinesRatherThanGuess(unittest.TestCase):
     """Anything the selector cannot reason about must fall back to the whole suite."""
 
@@ -105,6 +134,12 @@ class TestItDeclinesRatherThanGuess(unittest.TestCase):
         selected, note = self._changed(UNNAMED)
         self.assertIsNone(selected)
         self.assertIn("cannot map", note)
+
+    def test_a_diff_git_cannot_make_runs_everything(self):
+        rt.changed_files = lambda base="HEAD": None
+        selected, note = rt.select_changed(EVERY, "no-such-rev")
+        self.assertIsNone(selected)
+        self.assertIn("cannot tell", note)
 
     def test_one_unmappable_file_poisons_an_otherwise_clean_set(self):
         """It must not run "the tests for the .py part" and call that a pass."""

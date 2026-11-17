@@ -247,7 +247,8 @@ def main(argv):
         if git("cat-file", "-t", p["tree"]) == "tree":
             since, why = p["tree"], f"since the last tree that passed ({p['commit'][:12]})"
             break
-    changed = (git("diff", "--name-only", since, "HEAD") or "").split()
+    # Both paths of a rename: a module moved out of a skill's reach still changed that skill.
+    changed = (git("diff", "--name-only", "--no-renames", since, "HEAD") or "").split()
     scens = scenarios()
     if mode == "all":
         picked = [n for n, _, _, _ in scens]

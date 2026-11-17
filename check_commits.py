@@ -212,7 +212,13 @@ def record_passes(commits, path=None):
 
 def main(argv):
     base = argv[0] if argv else (git("rev-parse", "--abbrev-ref", "@{u}") or "origin/main")
-    commits = (git("rev-list", "--reverse", f"{base}..HEAD") or "").split()
+    listed = git("rev-list", "--reverse", f"{base}..HEAD")
+    if listed is None:
+        # A base git does not know is no answer, not "nothing to check": check_push records
+        # a pass on this exit.
+        print(f"check_commits: git cannot list the commits above {base}", file=sys.stderr)
+        return 2
+    commits = listed.split()
     if not commits:
         print(f"no commits above {base}")
         return 0

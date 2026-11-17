@@ -429,14 +429,18 @@ def _dependents(changed, files, graph=None):
         reached = grown
 
 
-def changed_files(base="HEAD"):
-    """Everything this working tree has touched relative to `base`, tracked or not."""
+def changed_files(base="HEAD", root=None):
+    """Everything this working tree has touched relative to `base`, tracked or not; None when
+    git cannot tell (an unknown revision), which is no answer rather than "nothing changed".
+    A rename counts as both its paths: under git's rename detection only the new one is
+    listed, and the tests reaching the old one would go unselected."""
     out = set()
-    for cmd in (["git", "diff", "--name-only", base],
+    for cmd in (["git", "diff", "--name-only", "--no-renames", base],
                 ["git", "ls-files", "--others", "--exclude-standard"]):
-        proc = subprocess.run(cmd, capture_output=True, text=True, cwd=REPO_ROOT)
-        if proc.returncode == 0:
-            out.update(line for line in proc.stdout.split("\n") if line.strip())
+        proc = subprocess.run(cmd, capture_output=True, text=True, cwd=root or REPO_ROOT)
+        if proc.returncode != 0:
+            return None
+        out.update(line for line in proc.stdout.split("\n") if line.strip())
     return out
 
 
@@ -533,6 +537,8 @@ def select_changed(files, base="HEAD"):
     selector that quietly skips the test that would have failed is worse than a slow one.
     """
     raw = changed_files(base)
+    if raw is None:
+        return None, f"git cannot tell what changed against {base}"
     if not raw:
         # An EMPTY selection, not a refusal. "There are no edits" and "I cannot map an edit"
         # are different answers and only the second one deserves the whole suite: this used to

@@ -4,12 +4,15 @@ checked on its own, the broken one is named with what failed, and nothing is lef
 
 Run: `python3 test_check_commits.py`
 """
+import io
 import os
 import shutil
 import subprocess
 import sys
 import tempfile
 import unittest
+from contextlib import redirect_stdout
+from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
@@ -121,6 +124,11 @@ class TestEachCommitAlone(unittest.TestCase):
         p.stdout.close()
         self.assertNotIn(tree, sh(self.repo, "git", "worktree", "list"))
         self.assertFalse(os.path.exists(root))
+
+    def test_a_base_git_does_not_know_fails_rather_than_passing_nothing(self):
+        """"No commits above it" exited 0, and check_push recorded a pass on it."""
+        with mock.patch("sys.stderr", io.StringIO()), redirect_stdout(io.StringIO()):
+            self.assertNotEqual(C.main(["no-such-rev-for-this-test"]), 0)
 
     def test_the_ruff_it_runs_is_the_one_the_hook_pins(self):
         with open(os.path.join(C.HERE, ".githooks", "pre-commit")) as fh:
