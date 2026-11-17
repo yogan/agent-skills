@@ -83,8 +83,10 @@ def commit_stat(sha, cwd=None):
 def work_stat(cwd=None):
     """What `hunk diff HEAD` shows: staged and unstaged changes, plus untracked files."""
     stat = hunk.diff_stat(git(*DIFF, "diff", "--no-ext-diff", "HEAD", cwd=cwd) or "")
-    untracked = git("ls-files", "--others", "--exclude-standard", cwd=cwd) or ""
-    for path in untracked.splitlines():
+    # NUL-separated: a listed name is otherwise C-quoted wherever git would quote it, and
+    # names no file the diff below can read.
+    untracked = git("ls-files", "-z", "--others", "--exclude-standard", cwd=cwd) or ""
+    for path in filter(None, untracked.split("\0")):
         # --no-index exits 1 when the files differ, which for a new file they always do.
         p = subprocess.run(["git", *DIFF, "diff", "--no-ext-diff", "--no-index", "--",
                             os.devnull, path], cwd=cwd, capture_output=True, text=True)

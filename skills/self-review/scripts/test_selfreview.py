@@ -408,6 +408,17 @@ class TestFromASubfolder(Repo):
         self.assertEqual(sorted(p for p, _, _ in seen[0]), ["f.txt", "sub/new.txt"])
 
 
+class TestNamesGitQuotes(Repo):
+    def test_a_changed_and_an_untracked_file_with_non_ascii_names_are_both_listed(self):
+        """Quoted by git, the tracked one carried its quotes and escapes into the list and
+        the untracked one vanished from it: `show work` could never match the viewer."""
+        write(self.path("f.txt"), "ü\n")
+        sh("git", "mv", "f.txt", "fü.txt", cwd=self.clone)
+        write(self.path("néu.txt"), "n\n")
+        self.assertEqual(sorted(p for p, _, _ in S.work_stat(self.clone)),
+                         ["f.txt", "fü.txt", "néu.txt"])
+
+
 class TestChanges(Repo):
     def test_hunks_come_from_the_two_versions_of_the_file(self):
         one, three = S.commits(self.clone)[0][0], S.commits(self.clone)[2][0]

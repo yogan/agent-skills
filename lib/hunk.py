@@ -1028,6 +1028,30 @@ def _header_path(rest):
     return rest.rsplit(" ", 1)[-1]
 
 
+_C_ESCAPES = {"a": 7, "b": 8, "t": 9, "n": 10, "v": 11, "f": 12, "r": 13, '"': 34, "\\": 92}
+
+
+def _unquoted(path):
+    """A diff header's path as the file is named. git quotes one holding a special or (under
+    its default `core.quotePath`) a non-ASCII character — `"b/caf\\303\\251.txt"` — with C
+    escapes, octal for each byte of UTF-8; anything unquoted is returned as it is."""
+    if len(path) < 2 or path[0] != '"' or path[-1] != '"':
+        return path
+    body, out, i = path[1:-1], bytearray(), 0
+    while i < len(body):
+        c = body[i]
+        if c != "\\" or i + 1 == len(body):
+            out += c.encode("utf-8")
+            i += 1
+        elif body[i + 1] in "01234567":
+            out.append(int(body[i + 1:i + 4], 8) & 0xFF)
+            i += 4
+        else:
+            out.append(_C_ESCAPES.get(body[i + 1], ord(body[i + 1])))
+            i += 2
+    return out.decode("utf-8", errors="replace")
+
+
 # Mirrors skills/review-mr/scripts/findings.py's `_gl_compare` churn count, and stays
 # separate on purpose: that one walks GitLab's already-per-file diff payloads, so it never
 # has to find a file boundary and treats every `+++`/`---` as noise. This one parses one raw
@@ -1072,7 +1096,7 @@ def diff_stat(diff):
             # and would otherwise rename the file to whatever that line said.
             in_body = True
         elif not in_body and (line.startswith("+++ ") or line.startswith("--- ")):
-            path = line[4:].strip()
+            path = _unquoted(line[4:].strip())
             # `---` arrives first and sets the name; `+++` then overrides it, so a rename
             # is reported under its new path. A deletion's `+++` is /dev/null, skipped,
             # which is what leaves the `---` name standing.

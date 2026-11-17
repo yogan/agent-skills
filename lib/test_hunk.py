@@ -91,6 +91,16 @@ class TestDiffStat(unittest.TestCase):
     def test_a_rename_is_reported_under_its_new_path(self):
         self.assertEqual(hunk.diff_stat(SAMPLE_DIFF)[1], ("new/n.ts", 1, 1))
 
+    def test_a_name_git_quotes_is_reported_as_the_file_is_named(self):
+        """git C-quotes a non-ASCII or special name in the headers, and the quoted text
+        was taken for the name, which then matched no file the viewer lists."""
+        diff = ('diff --git "a/caf\\303\\251 \\"x\\".txt" "b/caf\\303\\251 \\"x\\".txt"\n'
+                'index 1..2 100644\n'
+                '--- "a/caf\\303\\251 \\"x\\".txt"\n'
+                '+++ "b/caf\\303\\251 \\"x\\".txt"\n'
+                '@@ -1 +1 @@\n-a\n+b\n')
+        self.assertEqual(hunk.diff_stat(diff), [('café "x".txt', 1, 1)])
+
     def test_a_conflicted_path_is_still_counted_as_a_file(self):
         """`git diff` emits `diff --cc` for an unmerged path, which this skill produces
         itself the moment a `rebase --autosquash` fixup conflicts. Unrecognised, the stanza
