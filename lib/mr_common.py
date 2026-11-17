@@ -282,12 +282,14 @@ def loc_md(loc):
     return f"`{loc}`" if loc else f"_{MR_LEVEL}_"
 
 
-def state_file(root, slug, iid, filename):
+def state_file(root, slug, iid, filename, make=True):
     """`root/<slug>--mr<iid>/<filename>`, creating the directory if needed. `root` and
     `filename` are per-skill (different state roots, different file names); the shape
-    is what's shared."""
+    is what's shared. `make=False` for a path only read: asking whether an MR has a file
+    must not leave an empty folder for it behind."""
     d = os.path.join(root, f"{slug}--mr{iid}")
-    os.makedirs(d, exist_ok=True)
+    if make:
+        os.makedirs(d, exist_ok=True)
     return os.path.join(d, filename)
 
 

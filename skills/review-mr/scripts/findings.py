@@ -2924,7 +2924,8 @@ def viewer_label(ctx, iid):
     """This review's diff viewer window's name (lib/tab.py): the MR's short title, from its
     saved state, else its number."""
     try:
-        title = (load(state_file(STATE_ROOT, ctx["slug"], iid, "findings.json")) or {}).get("title")
+        title = (load(state_file(STATE_ROOT, ctx["slug"], iid, "findings.json", make=False))
+                 or {}).get("title")
     except (OSError, ValueError):
         title = None                      # a state being written, or none yet: its number
     return tab.viewer_label(title or f"!{iid}", fallback=f"!{iid}")
@@ -2952,12 +2953,12 @@ def _show_in_viewer(ctx, iid, tid, picked):
 # ---------------------------------------------------------------- worktree
 
 
-def worktree_path(slug, iid):
-    return state_file(STATE_ROOT, slug, iid, "worktree")
+def worktree_path(slug, iid, make=True):
+    return state_file(STATE_ROOT, slug, iid, "worktree", make)
 
 
 def get_worktree(slug, iid):
-    p = worktree_path(slug, iid)
+    p = worktree_path(slug, iid, make=False)
     if os.path.exists(p):
         with open(p) as f:
             return f.read().strip()
@@ -3188,8 +3189,8 @@ def shared_with(state, t, f):
 # quietly show an explainer for code that has since been pushed over. That check is the
 # reason this is a recorded path and not just a naming convention on disk.
 
-def prepared_path(slug, iid, what):
-    return state_file(STATE_ROOT, slug, iid, f"{what}.json")
+def prepared_path(slug, iid, what, make=True):
+    return state_file(STATE_ROOT, slug, iid, f"{what}.json", make)
 
 
 def set_prepared(slug, iid, what, path, head):
@@ -3205,7 +3206,7 @@ def get_prepared(slug, iid, what, head):
     common case, and not worth a word. A recorded input that has stopped applying is
     the interesting one, because it is about to be regenerated at real cost, so that
     always says why."""
-    rec = load(prepared_path(slug, iid, what))
+    rec = load(prepared_path(slug, iid, what, make=False))
     if not rec:
         return None, None
     path, sha = rec.get("path"), rec.get("sha")

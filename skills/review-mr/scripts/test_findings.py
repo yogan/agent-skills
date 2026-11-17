@@ -916,7 +916,7 @@ class TestTopicDiff(unittest.TestCase):
              patch.object(F, "get_worktree", return_value=None):
             return F.render_topic_diff(state, {"enc": "x", "slug": "s"}, 1, "t1", show)
 
-    def scratch(self, *_parts):
+    def scratch(self, *_parts, **_kw):
         fd, path = tempfile.mkstemp(suffix=".patch")
         os.close(fd)
         self.addCleanup(os.unlink, path)
@@ -1325,6 +1325,13 @@ class TestPruneWorktrees(Throwaway, unittest.TestCase):
         self.assertFalse(os.path.isdir(wt))
         self.assertIsNone(F.get_worktree(slug, 42))
         self.assertTrue(os.path.exists(findings_path))
+
+    def test_asking_for_what_was_recorded_leaves_no_folder_behind(self):
+        """Every read made the MR's state folder: the suite left `--mr1` and `--mr2` in the
+        real state root on each run."""
+        self.assertIsNone(F.get_worktree("", 1))
+        self.assertEqual(F.get_prepared("", 1, "explainer", "abc"), (None, None))
+        self.assertEqual(os.listdir(F.STATE_ROOT), [])
 
     def test_a_merged_mr_reviewed_lately_keeps_its_worktree(self):
         """Its review may still be open in another session, whose sidebar reads its code
