@@ -418,7 +418,8 @@ def _invocation_text(cmd):
     them cannot hand a quoted separator the power to start a new segment.
     """
     kept = []
-    for seg in _SEGMENTS_RE.split(_without_heredocs(cmd)):
+    # A backslash-newline continues the command, so it is no segment break.
+    for seg in _SEGMENTS_RE.split(_without_heredocs(cmd).replace("\\\n", " ")):
         lead = _LEAD_WORD_RE.match(seg)
         if not lead or lead.group(1).strip("'\"").rsplit("/", 1)[-1] in _READERS:
             continue

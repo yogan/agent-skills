@@ -341,7 +341,9 @@ class TestGates(HookCase):
     def test_a_script_run_through_an_interpreter_or_its_flags_still_gates(self):
         for command in ("python3 -u $SD/findings.py resume --iid 4",
                         'bash -c "python3 \"$SD/findings.py\" resume --iid 4"',
-                        "cd /wt && SD=x time python3 $SD/findings.py resume"):
+                        "cd /wt && SD=x time python3 $SD/findings.py resume",
+                        # A line continued: one command, though the split is on newlines.
+                        'python3 "$SD/findings.py" \\\n  resume --iid 4'):
             with self.subTest(command=command):
                 self.assertBlocked([
                     user_prompt(),
