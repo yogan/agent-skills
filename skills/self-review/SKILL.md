@@ -22,7 +22,9 @@ A diff note here is the author's note together with everything written under it.
 
 Every step runs through one script. Below, `sr` stands for
 `python3 ~/.claude/skills/self-review/scripts/selfreview.py`; run bare, it lists its
-commands. It needs `tmux` and `hunk`; without either, say so and stop.
+commands. It needs `tmux` and `hunk`; without either, say so and stop. Every text goes in
+single quotes, an apostrophe in it written `'\''`: inside double quotes the shell runs
+whatever is in backticks.
 
 ## 1. Plan
 
@@ -53,7 +55,7 @@ State the plan in one line, then start.
      is their **ACK** — go to 5.
 3. **Answer, every diff note.** Discuss in chat, one at a time where they need it: answer
    the question, or recommend the fix. Then put the gist in the window under the note, so
-   it reads as answered where they wrote it: `sr reply <number> "<one or two sentences>"`,
+   it reads as answered where they wrote it: `sr reply <number> '<one or two sentences>'`,
    with the number `sr notes` printed. Make no edit until the author has agreed to that
    fix. A diff note is done when it is answered and any fix in it is agreed or declined.
 4. **Fix.** Make the agreed changes and run the project's checks. Then:
@@ -77,7 +79,7 @@ project's own MR skill.
 
 The one time you start a diff note: when the author asks you to point at something ("point
 out…", "show me where…"), and only at the places they asked about — never as a review of
-your own. `sr point <file> <line> "<text>"` (`--old` for a removed line) puts your note on
+your own. `sr point <file> <line> '<text>'` (`--old` for a removed line) puts your note on
 that line of the piece in the window; the author toggles your notes with `a`, and `}` jumps
 to the next one. Only lines the piece's diff shows can carry a note: a place outside it is
 refused, so name that one in the chat instead. Say in chat which notes you left. A reply the

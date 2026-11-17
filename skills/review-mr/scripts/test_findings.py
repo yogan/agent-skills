@@ -383,7 +383,7 @@ class TestBodylessQuote(Throwaway, unittest.TestCase):
         note = buf.getvalue()
         self.assertIn("t1 has no draft yet", note)
         self.assertIn("ask how they want to handle it", note)
-        self.assertIn('`set t1 --draft "…"`', note)
+        self.assertIn("`set t1 --draft '…'`", note)
         self.assertIn("written in de", note)       # no language marker is on screen yet
 
     def test_a_stored_draft_suppresses_the_note(self):
@@ -724,7 +724,7 @@ class TestNeedsTitle(unittest.TestCase):
             F.render_table(state)
         msg = buf.getvalue()
         self.assertIn("needs summary: t1", msg)
-        self.assertIn('`set t1 --summary "..."`', msg)
+        self.assertIn("`set t1 --summary '...'`", msg)
         self.assertIn("bodies", msg)
 
     def test_render_table_leaves_an_authored_summary_alone(self):

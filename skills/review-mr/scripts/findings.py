@@ -629,7 +629,7 @@ def render_table(state, scope="all"):
         # made unreachable rather than merely discouraged, on every agent. The message
         # itself carries the fix; e2e's title_peer_topic parses the handle from it.
         die(f"needs summary: {', '.join(untitled)} — read the threads (`bodies`), "
-            + " / ".join(f'`set {x} --summary "..."`' for x in untitled)
+            + " / ".join(f"`set {x} --summary '...'`" for x in untitled)
             + ", then re-run")
     head = f"**MR !{state['iid']}** — {state.get('title') or ''}"
     if state.get("author"):
@@ -942,8 +942,8 @@ def needs_title_warning(state, t):
         return None
     return (f"⚠️ **needs an English summary** — `{t['id']}` has no authored "
             f"`summary` yet; the title above is the raw thread quote (as posted, "
-            f"not translated/summarized). Run `set {t['id']} --summary \"<short "
-            f"English title>\"` before presenting this topic further.")
+            f"not translated/summarized). Run `set {t['id']} --summary '<short "
+            f"English title>'` before presenting this topic further.")
 
 
 def in_draft_language(state, t):
@@ -975,7 +975,7 @@ def summary_language_warning(state, topics):
     return (f"⚠️ **summaries must be English** — {', '.join(tref(x) for x in ids)} "
             f"read as {lang}. Only a draft comment body uses {lang}; every summary, "
             f"topic heading and table cell is English. Reword each with "
-            f"`set <t> --summary \"<short English line>\"`, then re-render.")
+            f"`set <t> --summary '<short English line>'`, then re-render.")
 
 
 def draft_language_warning(state, body):
@@ -1250,7 +1250,7 @@ def _render_quote(state, tid, refine=False):
             else:
                 print(f"note: {t['id']} has no draft yet — your reply is the block above "
                       f"+ your analysis of the topic, then ask how they want to handle "
-                      f'it; store the agreed draft with `set {t["id"]} --draft "…"`, '
+                      f"it; store the agreed draft with `set {t['id']} --draft '…'`, "
                       f"written in {state.get('lang') or DEFAULT_LANG}",
                       file=sys.stderr)
         return "\n".join(out).strip()
@@ -1488,7 +1488,7 @@ def draft_body(state, tid):
     body = t.get("draft") or t.get("note")
     if not body:
         die(f"topic {tid} has no draft yet — set one with "
-            f"`set {tid} --draft \"…\"`")
+            f"`set {tid} --draft '…'`")
     return body
 
 

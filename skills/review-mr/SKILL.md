@@ -8,7 +8,9 @@ description: >-
 
 Reviewing **someone else's** GitLab MR. glab-only; nothing reaches GitLab but what the user posts.
 `SD=~/.claude/skills/review-mr/scripts`. Every call spells out `python3 $SD/findings.py <command>`:
-zsh, the shell here, runs no command kept in a variable.
+zsh, the shell here, runs no command kept in a variable. Every text goes in single quotes, an
+apostrophe in it written `'\''`: inside double quotes the shell runs whatever is in backticks,
+and card text is full of them.
 
 ## ⛔ Read this first — it is the whole skill
 
@@ -210,7 +212,7 @@ If the user said in the invocation (or since) that they want one, generate it; i
 
 ```bash
 python3 $SD/findings.py explainer --iid <n> --assess    # files, lines outside tests, and the share that only moved where it is 20% or more
-python3 $SD/findings.py explainer --iid <n> --recommend skip|generate --why "<one English sentence: what the change is>"
+python3 $SD/findings.py explainer --iid <n> --recommend skip|generate --why '<one English sentence: what the change is>'
 ```
 
 Read the diff's shape before you recommend (`git diff --stat`, the commit messages, a look at
@@ -287,7 +289,7 @@ writes, and the findings stay out of sight until the user's own review is in):
 yours beside it, so what the user decides Comment or Drop on is what you stored here. Write it
 from the code review-branch read, concrete (`file:line`, the input that breaks it; card text
 is markdown, above), and end it on a
-`**Recommendation:**` paragraph. `set <t> --why "…"` rewrites it, and so does a stored view of
+`**Recommendation:**` paragraph. `set <t> --why '…'` rewrites it, and so does a stored view of
 another reviewer's thread (below).
 ```bash
 python3 $SD/findings.py import - --seed --iid <n> <<'SEED_EOF'   # --seed: a re-run is instant
@@ -332,10 +334,10 @@ left:
 
 ```bash
 # the same point as a topic: the user confirms or declines it with a press
-python3 $SD/findings.py propose <discussion_id> --into <t> --summary "<English one-liner>" \
-  --why "<what both say, and where they differ>" [--recommend separate|link] --iid <n>
+python3 $SD/findings.py propose <discussion_id> --into <t> --summary '<English one-liner>' \
+  --why '<what both say, and where they differ>' [--recommend separate|link] --iid <n>
 # a point of its own: a topic at once, no question
-python3 $SD/findings.py add --thread <discussion_id> --source human --file … --line … --summary "…" --iid <n>
+python3 $SD/findings.py add --thread <discussion_id> --source human --file … --line … --summary '…' --iid <n>
 ```
 
 `--why` is one or two English sentences the user decides on, and `--recommend` your answer
@@ -367,7 +369,7 @@ the topic comes up again with `I merged my comment into <t>. What does your own 
 to it?`. Answer in at most 2 lines: what you have beyond their comment (a concrete fix, a
 working alternative, a case they did not name), or that you have nothing to add. Their buttons
 are `Follow up` and `Nothing to add`. A follow-up is a reply below their comment, drafted
-like any other (`set <t> --draft "…"`, which shows it as a follow-up), short, and never a
+like any other (`set <t> --draft '…'`, which shows it as a follow-up), short, and never a
 restatement of what their comment already says.
 
 ## The current topic
@@ -406,9 +408,9 @@ flags a summary that reads as the draft language, and the paste gate blocks the 
 A topic still marked `✍️ needs summary` has no authored summary — its table row would be the
 raw thread quote. The table commands (`sync`/`todo`/`present`/`resume`) **refuse to render
 while any topic they would show is in that state**: they exit with
-`needs summary: t5 — read the threads (`bodies`), `set t5 --summary "..."`, then re-run`
+`needs summary: t5 — read the threads (`bodies`), `set t5 --summary '...'`, then re-run`
 instead of output. Author those first (`bodies` for the thread
-text, then `set <t> --summary "…"`), or `drop`/`merge` the topic, and re-run. On Claude Code
+text, then `set <t> --summary '…'`), or `drop`/`merge` the topic, and re-run. On Claude Code
 the `Stop` hook additionally blocks a hand-built table carrying the marker; **OpenCode has no
 hook — the refusal is what enforces the rule there**, and either way it is not optional: a
 Summary cell that is somebody else's truncated sentence tells the user nothing.
@@ -449,7 +451,7 @@ moves on, since they often reword it: `posted <t>` prints the draft and what the
 two or three lines whether the posted text still says what it should, correctly and in a fitting
 tone. Where it holds, run `posted <t> --ok`, which shows the next topic. Where it does not, store
 your verdict (a line or two) with a corrected version of what they posted, as close to their
-wording as it can be: `posted <t> --differs "<verdict>" --fix -` with the text in a quoted
+wording as it can be: `posted <t> --differs '<verdict>' --fix -` with the text in a quoted
 heredoc. That shows its card, the changes marked word by word; editing the comment on GitLab
 is the user's press there, never yours.
 
@@ -490,8 +492,8 @@ which also gives **where to open the thread** — `file:line` — and the surrou
 the line marked), and offer the clipboard:
 
 ```bash
-python3 $SD/findings.py set <t> --draft "…" --iid <n>           # store the accepted draft (echoes the view)
-python3 $SD/findings.py set <t> --draft "…" --refine --iid <n>  # a REWORDING of a draft already on screen
+python3 $SD/findings.py set <t> --draft '…' --iid <n>           # store the accepted draft (echoes the view)
+python3 $SD/findings.py set <t> --draft '…' --refine --iid <n>  # a REWORDING of a draft already on screen
 $SD/clip.sh <(python3 $SD/findings.py draft <t> --iid <n>)      # copy the comment BODY only, for pasting
 ```
 
@@ -647,9 +649,9 @@ A topic whose news could not be judged that way reaches you as the user's `Judge
 judgment, then show the topic (`show_topic`):
 
 ```bash
-python3 $SD/findings.py verdict <t> settled --asked "<what the comment asked for>" --did "<what the author did>" --text "<why it holds>" --iid <n>
-python3 $SD/findings.py verdict <t> more --case <case> --asked "<what the comment asked for>" --did "<what the author did>" --text "<what is still open, and the next step>" --iid <n>
-python3 $SD/findings.py verdict <t> wait --asked "<what the comment asked for>" --did "<what the author did>" --text "<what they agreed to do>" --iid <n>
+python3 $SD/findings.py verdict <t> settled --asked '<what the comment asked for>' --did '<what the author did>' --text '<why it holds>' --iid <n>
+python3 $SD/findings.py verdict <t> more --case <case> --asked '<what the comment asked for>' --did '<what the author did>' --text '<what is still open, and the next step>' --iid <n>
+python3 $SD/findings.py verdict <t> wait --asked '<what the comment asked for>' --did '<what the author did>' --text '<what they agreed to do>' --iid <n>
 ```
 
 `wait` is for an author who agreed and has the change still to make: the topic goes back to
@@ -668,7 +670,7 @@ topic's where it changed the file the comment is on, on its lines or beside them
 rebase; one beside them is listed as "a change to its file" until judged. Where it has nothing to
 do with the comment, say so with `--unrelated-push` (with `wait`, where nothing else answers the
 comment): it is then no longer the topic's. Another reviewer's thread is theirs to settle, and the user watches it: the judgment is
-`peer <t> fyi|needs --why "…"` (with `--summary "…"` for a new one). `fyi` is the usual answer;
+`peer <t> fyi|needs --why '…'` (with `--summary '…'` for a new one). `fyi` is the usual answer;
 `needs` only when the user has something to add (a question to them: `--advice reply`; a point
 that repeats one of their topics: `--advice merge --into <t>`), its `--why` ending on a
 `**Recommendation:**` sentence. Nothing the user does there resolves it. The user's buttons follow the verdict, its own answer first: settled → `Accept &

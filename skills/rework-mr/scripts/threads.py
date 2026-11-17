@@ -463,8 +463,8 @@ def needs_summary_warning(state, t):
         return None
     return (
         f"⚠️ **needs an English summary** — `{t['id']}` has no authored `summary` "
-        f'yet. Read the thread and run `set {t["id"]} --summary "<short English '
-        f'line>"` before working this topic.'
+        f"yet. Read the thread and run `set {t['id']} --summary '<short English "
+        f"line>'` before working this topic."
     )
 
 
@@ -492,7 +492,7 @@ def summary_language_warning(state, topics):
         f"⚠️ **summaries must be English** — {', '.join(tref(x) for x in ids)} "
         f"read as {DEFAULT_LANG}. The thread's own language governs one thing, the "
         f"body of a reply you post into it; the table and every topic heading are "
-        f'English. Reword each with `set <t> --summary "<short English line>"`, '
+        f"English. Reword each with `set <t> --summary '<short English line>'`, "
         f"then re-render."
     )
 
@@ -2480,8 +2480,8 @@ def proposal_note(state, tid):
     if not (t and ui.drawn() and step_of(state, t) == "plan" and not proposal_of(state, t)):
         return None
     return (f"note: {tid} has no proposal yet, so its card has nothing to agree to. Store "
-            f"yours now, then show it again: `propose {tid} --says needs --why \"…\" "
-            f"--outcome fix|reply|push-back|question --plan \"…\"` (for a small fix, the "
+            f"yours now, then show it again: `propose {tid} --says needs --why '…' "
+            f"--outcome fix|reply|push-back|question --plan '…'` (for a small fix, the "
             f"exact diff with `--change -`), then `quote {tid} --focus`. The proposal's change "
             f"takes the place of `change-view`.")
 
@@ -3524,8 +3524,8 @@ def main():
             # parameter's adapted call sites from a change nobody agreed.
             if drawn and t.get("decision") and not (args.as_agreed or args.differs):
                 die(f"say whether the fix carries out the plan agreed for {tref(args.topic)} "
-                    "(`plans`): `--as-agreed`, or `--differs \"<what differs: a surprise, a "
-                    "change of direction, significantly more or less>\"`")
+                    "(`plans`): `--as-agreed`, or `--differs '<what differs: a surprise, a "
+                    "change of direction, significantly more or less>'`")
             t.pop("push_token", None)
             t.pop("handed_from", None)
             # Code changed on a plan that was to reply only: it is a fix now, which is pushed
@@ -4018,7 +4018,7 @@ def main():
         if args.outcome and not is_fix({"outcome": args.outcome}) and step_of(state, t) == "fixed":
             die(f"{tref(args.topic)}'s fix is in the working tree: a plan that only replies "
                 f"would leave it there, to be pushed with the next topic's. Drop it first "
-                f"(`drop-fix {args.topic} --why \"…\" --plan \"…\"`).")
+                f"(`drop-fix {args.topic} --why '…' --plan '…'`).")
         if args.decision is not None:
             # A plan agreed in the chat: on what the reviewers said last, and on the change
             # shown for it, if one was (`change-view`).

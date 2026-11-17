@@ -72,11 +72,13 @@ A reply that has no pasted table, touches more than one topic, or edits code is 
 
 Do the prep silently (it prints nothing the user needs). Every call, here and later, spells out
 `python3 $SD/threads.py <command>`: zsh, the shell here, runs no command kept in a variable.
+Every text goes in single quotes, an apostrophe in it written `'\''`: inside double quotes
+the shell runs whatever is in backticks, and card text is full of them.
 
 ```bash
 python3 $SD/threads.py sync                        # fetch + reconcile
 python3 $SD/threads.py bodies                      # first + last note of each open thread
-python3 $SD/threads.py set <t> --summary "…"       # one short ENGLISH line per unfinished topic
+python3 $SD/threads.py set <t> --summary '…'       # one short ENGLISH line per unfinished topic
 python3 $SD/threads.py merge <into> <other...>     # only if two threads raise the SAME point
 ```
 
@@ -212,8 +214,8 @@ lands in the sidebar's News box (say "News", as the sidebar heads it, never "the
 - **A topic you researched gets a proposal before it is shown.** Store your analysis and plan,
   then show the topic: the card carries both, and the user agrees with a press.
   ```bash
-  python3 $SD/threads.py propose <t> --says needs --why "<what is asked, what the code does, the trade-off; ends on a **Recommendation:** sentence>" \
-    --outcome fix|reply|push-back|question --plan "<one sentence: what to do>" [--answer-now] [--change - <<'CHANGE_EOF'
+  python3 $SD/threads.py propose <t> --says needs --why '<what is asked, what the code does, the trade-off; ends on a **Recommendation:** sentence>' \
+    --outcome fix|reply|push-back|question --plan '<one sentence: what to do>' [--answer-now] [--change - <<'CHANGE_EOF'
   @@ <path>:<first>-<last>
   <for a small fix: the new lines that replace those lines; one such block per range>
   CHANGE_EOF]
@@ -230,13 +232,13 @@ lands in the sidebar's News box (say "News", as the sidebar heads it, never "the
   adapts to the fix: the card draws it whole, so it stays a glance. Never write a diff by
   hand: the script builds it from the file, from the lines you name (paths from the
   repository's root, line numbers as the file has them now). A plan agreed in the chat instead is stored with `set <t> --decision
-  "…" --plan "…" --outcome <outcome>`.
+  '…' --plan '…' --outcome <outcome>`.
 - **A reply in place of a plan.** "Reply to <t> instead: <gist>" is the user's answer to the
   topic: a question back, a push-back, a different suggestion, in their words. Draft the reply
   from that gist in the thread's language (*Reply draft rules*), store it as the topic's plan
   and draft in one call, then show it:
   ```bash
-  python3 $SD/threads.py set <t> --decision "<the user's gist, in English>" --plan "<one sentence: what the reply says>" \
+  python3 $SD/threads.py set <t> --decision '<the gist of what the user said, in English>' --plan '<one sentence: what the reply says>' \
     --outcome question|push-back|reply --reply - <<'REPLY_EOF'
   <the reply body>
   REPLY_EOF
@@ -245,7 +247,7 @@ lands in the sidebar's News box (say "News", as the sidebar heads it, never "the
   The topic is then at its reply: the user posts it from the card.
 - **"Fix <t> instead: <gist>"** answers a proposal of replying (declining, pushing back):
   the user wants what was asked done after all. Research the fix and store it as the new
-  proposal (`propose <t> --says needs --outcome fix --plan "…"`, with its `--change`), then
+  proposal (`propose <t> --says needs --outcome fix --plan '…'`, with its `--change`), then
   show the topic.
 - **A reply ahead of the fix.** Asked for one on an agreed plan, draft it from that plan in
   the thread's language: what you will do (the option taken, where the reviewer offered
@@ -257,15 +259,15 @@ lands in the sidebar's News box (say "News", as the sidebar heads it, never "the
   fix: its reply is drafted without `--early`.
 - **A reviewer wrote again on an agreed plan.** Where their comment only acknowledges it
   ("sounds good", a thank-you) and changes nothing, the plan stands:
-  `keep-plan <t> --why "<what they said>"`. Anything else is a new proposal.
+  `keep-plan <t> --why '<what they said>'`. Anything else is a new proposal.
 - **A reply the user posted by hand** (often reworded) is checked against your draft:
   `posted <t>` shows both. Where it still says what it should, say so and run
   `posted <t> --ok`. Where not, store your verdict (a line or two) with a corrected version
   of what they posted, as close to their wording as it can be: `posted <t> --differs
-  "<verdict>" --fix -` with the text in a quoted heredoc. It shows its card; editing the reply
+  '<verdict>' --fix -` with the text in a quoted heredoc. It shows its card; editing the reply
   on GitLab is the user's press there, never yours.
 - **"Change the plan for <t>: <what>"** is the user's word on an agreed plan: rework it
-  with them and store the new one (`set <t> --decision "…" --plan "…" --outcome <outcome>`).
+  with them and store the new one (`set <t> --decision '…' --plan '…' --outcome <outcome>`).
 - **A draft belongs to the plan it was written under.** Store the plan first, or the plan
   and its reply in one call: a reply stored before its plan is not that plan's draft. A
   reviewer's new comment, a new plan, a plan of another kind and a posted reply each put the
@@ -287,8 +289,8 @@ lands in the sidebar's News box (say "News", as the sidebar heads it, never "the
 - **A fix not wanted after all.** Where making it shows it would make things worse, cannot
   be done, or is too much for this MR, stop and tell the user what you found; never drop it
   on your own. On their word (in the chat, or a note in the diff viewer: "this whole idea is
-  wrong, stop"), run `drop-fix <t> --why "<what was found>" --plan "<one sentence: what the
-  reply says>" [--outcome reply|push-back|question] [--new <file the fix added>]…`: the fix is
+  wrong, stop"), run `drop-fix <t> --why '<what was found>' --plan '<one sentence: what the
+  reply says>' [--outcome reply|push-back|question] [--new <file the fix added>]…`: the fix is
   kept in git, the working tree goes back to HEAD and the plan becomes that reply. Then draft
   it (`set <t> --reply -`) and show it (`reply-view <t>`). A later fix of the topic may start
   from the kept one: `plans` names it.
@@ -296,19 +298,19 @@ lands in the sidebar's News box (say "News", as the sidebar heads it, never "the
   user was on a different topic) is shown like any fix, as its own topic's
   (`diff-view.sh <t>`), so its state stays right: the card switches to it, says which topic
   the user was on, and offers Put aside beside Ack and push. Say in a line that you went
-  ahead. On the user's word to put it aside, `drop-fix <t> --why "<why not now>" --aside`
+  ahead. On the user's word to put it aside, `drop-fix <t> --why '<why not now>' --aside`
   does what the button does: kept in git, the working tree as before, the plan unchanged,
   back to the topic they were on; it returns by itself when its topic is next.
 - **Making the fix** (Phase 3 steps 1–2): run its checks (step 2, `verify`) until
   they pass, then show it with
-  `diff-view.sh <t> --did "<one short sentence: the change in summary>" --fixup "<sha> <subject>" --as-agreed`,
-  one `--fixup` per commit it rewrites, one `--new-commit "<subject>"` per commit it adds.
+  `diff-view.sh <t> --did '<one short sentence: the change in summary>' --fixup '<sha> <subject>' --as-agreed`,
+  one `--fixup` per commit it rewrites, one `--new-commit '<subject>'` per commit it adds.
   The card shows the plan above the summary and the thread in the sidebar, so `--did` is the
   change alone ("Changes applied as planned.", or what it does beyond that). `--as-agreed` is your judgment of the fix against the plan and
   change agreed (`plans`): it carries out the idea, with no surprise in it, no change of
   direction, and not significantly more or less. The call sites a new parameter adapts are part
   of the idea. Whatever you changed from the plan while making the fix (a wall you hit,
-  something the plan missed) is a difference: pass `--differs "<one sentence: what, and why>"`
+  something the plan missed) is a difference: pass `--differs '<one sentence: what, and why>'`
   instead. The card says it, and the user reviews the fix before pushing. The card is the whole step: the
   diff is in the sidebar, and the diff viewer opens only when the user asks for it.
 - **Pushing is the user's press** on the fix's card: the script commits, squashes and pushes,
@@ -337,7 +339,7 @@ next one. Same rule as the opener: research the next topic silently first, then 
 --focus` **last**, and lead your reply with its verbatim output before any prose.
 
 ```bash
-python3 $SD/threads.py set <t> --decision "…" --plan "…"
+python3 $SD/threads.py set <t> --decision '…' --plan '…'
 python3 $SD/threads.py quote <next-t> --focus   # run LAST — paste its output verbatim, first thing in your reply
 ```
 
@@ -382,7 +384,7 @@ intentionally-unshown call. Prefer `todo` for a status-only reply when either wo
 
 A table is also where a missing summary shows up. If rows come back marked
 `✍️ needs summary` — a thread that arrived since your last sync, or a session that never
-wrote them — author those first (`bodies`, then `set <t> --summary "…"`), re-run, and paste
+wrote them — author those first (`bodies`, then `set <t> --summary '…'`), re-run, and paste
 that. The hook blocks the table otherwise, and rightly: a status answer whose Summary column
 is somebody else's truncated sentence tells the user nothing.
 
@@ -444,8 +446,8 @@ Per topic:
    change spans commits). **Fixup is the default; a new commit is the rare exception** — only
    for a fix/refactor to code the branch did *not* add (blame older than the branch point), as
    a separate real commit *before* the fixups; call that out explicitly. Only THEN, as your
-   **final** action before replying, run `diff-view.sh <t> --fixup "<sha> <subject>"`, one
-   `--fixup` per target and one `--new-commit "<subject>"` per new commit (the push makes the
+   **final** action before replying, run `diff-view.sh <t> --fixup '<sha> <subject>'`, one
+   `--fixup` per target and one `--new-commit '<subject>'` per new commit (the push makes the
    commits these name), and **paste its ENTIRE output
    verbatim as the rest of your message, then STOP**: first a short summary — **what the
    reviewer asked for, by name, and what you did about it** ("Robin asked for X; rewrote

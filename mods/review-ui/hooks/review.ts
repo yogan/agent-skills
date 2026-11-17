@@ -113,7 +113,7 @@ const SAY_FIRST = 'Say your answer first, then show the card as the last thing i
 
 // review-mr: what the agent is asked once the person posted a draft by their own hand, where
 // they often reword it: its check of the posted text, and the next topic only once it holds.
-export const checkPrompt = (t: string): string => `I posted the comment for ${t} myself and may have reworded it: check it. Run \`posted ${t}\` and compare what I posted with your draft. In two or three lines: does it still say what it should, correctly and in a fitting tone? Where it does, say so and run \`posted ${t} --ok\`, which opens the next topic. Where it does not, store your verdict (a line or two) with a corrected version of what I posted, as close to my wording as it can be: \`posted ${t} --differs "<verdict>" --fix -\` with the text on stdin (a quoted heredoc). It shows its card; editing the comment on GitLab is my press there. ${SAY_FIRST}`
+export const checkPrompt = (t: string): string => `I posted the comment for ${t} myself and may have reworded it: check it. Run \`posted ${t}\` and compare what I posted with your draft. In two or three lines: does it still say what it should, correctly and in a fitting tone? Where it does, say so and run \`posted ${t} --ok\`, which opens the next topic. Where it does not, store your verdict (a line or two) with a corrected version of what I posted, as close to my wording as it can be: \`posted ${t} --differs '<verdict>' --fix -\` with the text on stdin (a quoted heredoc). It shows its card; editing the comment on GitLab is my press there. ${SAY_FIRST}`
 
 // The language drafts are written in, said with every prompt that asks for one.
 const inLang = (review: ReviewState | null): string => `, written in ${review?.lang ?? 'en'}`
@@ -302,8 +302,8 @@ const stepButtons = (review: ReviewState | null): BandButton[] | null => {
         return (review.unjudged ?? []).includes(t)
           ? [{ key: 'judge', label: 'Judge', isPrimary: true,
             press: ask(topic?.peer
-              ? `Judge ${t}, another reviewer's thread the user watches: read it whole (\`bodies ${t}\`, every comment in order) and store your view (\`peer ${t} fyi|needs --why "…"\`, with \`--summary\` where it has none, and for \`needs\` its \`--advice reply|merge|seen\`); then show ${t}.`
-              : `Judge the news on ${t}: read the whole thread (\`bodies ${t}\`, every comment in order) and the change since the comment (\`diff ${t}\`), store your verdict (\`verdict ${t} settled|more|wait --asked "…" --did "…" --text "…"\`, with \`--case\` for \`more\`, \`--asked\` only where the topic has none); then show ${t}.`) }]
+              ? `Judge ${t}, another reviewer's thread the user watches: read it whole (\`bodies ${t}\`, every comment in order) and store your view (\`peer ${t} fyi|needs --why '…'\`, with \`--summary\` where it has none, and for \`needs\` its \`--advice reply|merge|seen\`); then show ${t}.`
+              : `Judge the news on ${t}: read the whole thread (\`bodies ${t}\`, every comment in order) and the change since the comment (\`diff ${t}\`), store your verdict (\`verdict ${t} settled|more|wait --asked '…' --did '…' --text '…'\`, with \`--case\` for \`more\`, \`--asked\` only where the topic has none); then show ${t}.`) }]
           : []
       }
       // The agent's verdict on the author's answer is on the card; the buttons follow it.
@@ -420,7 +420,7 @@ const primary = (bs: BandButton[]): BandButton[] => {
 // rework-mr: what the agent is asked for a reply ahead of the fix, from the plan agreed.
 // rework-mr: what the agent is asked once the person posted a reply by their own hand, where
 // they often reword it. Mirrors review-mr's `checkPrompt`.
-export const reworkCheckPrompt = (t: string): string => `I posted the reply for ${t} myself and may have reworded it: check it. Run \`posted ${t}\` and compare what I posted with your draft. In two or three lines: does it still say what it should, correctly and in a fitting tone? Where it does, say so and run \`posted ${t} --ok\`. Where it does not, store your verdict (a line or two) with a corrected version of what I posted, as close to my wording as it can be: \`posted ${t} --differs "<verdict>" --fix -\` with the text on stdin (a quoted heredoc). It shows its card; editing the reply on GitLab is my press there. ${SAY_FIRST}`
+export const reworkCheckPrompt = (t: string): string => `I posted the reply for ${t} myself and may have reworded it: check it. Run \`posted ${t}\` and compare what I posted with your draft. In two or three lines: does it still say what it should, correctly and in a fitting tone? Where it does, say so and run \`posted ${t} --ok\`. Where it does not, store your verdict (a line or two) with a corrected version of what I posted, as close to my wording as it can be: \`posted ${t} --differs '<verdict>' --fix -\` with the text on stdin (a quoted heredoc). It shows its card; editing the reply on GitLab is my press there. ${SAY_FIRST}`
 
 // rework-mr: what the agent is asked once a plan that is a reply was agreed.
 export const replyPrompt = (t: string): string => `Draft the reply for ${t} from its agreed plan, in the language of its thread. Store it (\`set ${t} --reply -\`) and show it (\`reply-view ${t}\`).`

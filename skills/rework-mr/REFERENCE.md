@@ -26,13 +26,13 @@ the reply (step 7).
    branch point), that's a separate real commit made *before* the fixups — never fold
    pre-existing-code changes into MR commits; flag such splits to the user. Do this *before*
    showing the diff — blaming *after* is the bug (see below).
-5. Only THEN, as your **final** action before replying, run `diff-view.sh <t> --fixup "<sha>
-   <subject>"` (one `--fixup` per target, one `--new-commit "<subject>"` per new commit: the
+5. Only THEN, as your **final** action before replying, run `diff-view.sh <t> --fixup '<sha>
+   <subject>'` (one `--fixup` per target, one `--new-commit '<subject>'` per new commit: the
    push makes the commits these name) and **paste its
    ENTIRE output verbatim as the rest of your message, then STOP**: first a short summary —
    what the reviewer asked for, by name, and what you did about it ("Robin asked for X; rewrote
    `Foo.bar()` to … and added two tests") — then the fixup target(s), one per commit,
-   `→ fixup into <sha> ("<subject>")`, in 1–2 lines, followed by the diff-view
+   `→ fixup into <sha> ('<subject>')`, in 1–2 lines, followed by the diff-view
    block (what changed + the script's own closing ACK question, whose exact wording names the
    answers other than an ACK — paste it, never retype it). The summary is prose about
    the reasoning, not a retelling of the diffstat the block already prints, and it scales with
