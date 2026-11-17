@@ -69,6 +69,12 @@ class TestApi(unittest.TestCase):
         G.run = lambda cmd: fake_result(stdout="[1,2][3,4]")
         self.assertEqual(G.api("whatever", paginate=True), [1, 2, 3, 4])
 
+    def test_a_bracket_pair_inside_a_comment_is_no_page_break(self):
+        """Pages were joined by replacing every `][` in the text, a comment's own included."""
+        G.run = lambda cmd: fake_result(stdout='[{"body": "use a[i][j]"}]\n[{"body": "x"}]')
+        self.assertEqual(G.api("whatever", paginate=True),
+                         [{"body": "use a[i][j]"}, {"body": "x"}])
+
     def test_failure_dies(self):
         G.run = lambda cmd: fake_result(returncode=1, stderr="boom")
         with self.assertRaises(SystemExit):

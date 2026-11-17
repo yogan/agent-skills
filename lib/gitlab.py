@@ -108,8 +108,19 @@ def api(endpoint, paginate=False):
     try:
         return json.loads(out)
     except json.JSONDecodeError:
-        # --paginate concatenates one JSON array per page: "][" -> ","
-        return json.loads(out.replace("][", ","))
+        return _pages(out)
+
+
+def _pages(out):
+    """--paginate prints one JSON array per page, back to back: decoded one after another,
+    never by editing the text, where a comment's own `][` (`a[i][j]`) is a page break too."""
+    decoder, items, at = json.JSONDecoder(), [], 0
+    while at < len(out):
+        page, at = decoder.raw_decode(out, at)
+        items.extend(page)
+        while at < len(out) and out[at].isspace():
+            at += 1
+    return items
 
 
 def api_post(endpoint, body, method="POST"):
