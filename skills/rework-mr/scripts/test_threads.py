@@ -1408,6 +1408,20 @@ class TestCodeContext(unittest.TestCase):
             T.fix_refs.drop(self.repo, "rework-mr", 3)
             self._git("reset", "-q", "--hard", self.sha)
 
+    def test_a_push_linked_later_makes_its_topic_a_pushed_fix(self):
+        """GitLab had not made the push's version within the wait: the push was recorded
+        without a link, and the topic read as a fix still to make even once it had one."""
+        state = self.pushed_state()
+        t = state["topics"][0]
+        t.pop("diff_url", None)
+        t["pushes"] = [{"before": self.sha, "start": self.sha, "after": "f" * 40, "url": None}]
+        self.assertFalse(T.is_pushed_fix(t))
+        with mock.patch.object(T, "versions", return_value=[{"id": 9, "head_commit_sha": "f" * 40}]):
+            T.keep_pushed_fixes(state, {"web": "http://gl/g/p"}, 3)
+        link = f"http://gl/g/p/-/merge_requests/3/diffs?diff_id=9&start_sha={self.sha}"
+        self.assertEqual((t["pushes"][0]["url"], t.get("diff_url")), (link, link))
+        self.assertTrue(T.is_pushed_fix(t))
+
     def test_the_plan_is_one_paragraph_of_about_five_lines_cut_at_a_word(self):
         self.assertEqual(T._gist("Rename the hook to useQueryKeys.\nKeep the old name."),
                          "Rename the hook to useQueryKeys. Keep the old name.")
