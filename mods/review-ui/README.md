@@ -20,8 +20,10 @@ How it fits together:
   offers too for the author's push that changed a topic's lines; a card leaves the diff
   viewer's key out where the sidebar beside it carries it over the fix's files, but for
   Read hunk notes while notes wait there, which the card keeps and the sidebar gives up),
-  rounds through a plan pass and then a fix pass, the inbox, and a background agent that
-  prepares a plan for each reviewer's new thread or reply. Labels are short in both skills:
+  rounds through a plan pass and then a fix pass, the inbox, and a model call of the mod's
+  that sorts each reviewer's new thread or reply: one that asks nothing is noted on its card,
+  one that only acknowledges an agreed plan keeps it, and one that needs the person gets its
+  plan from the chat as its card comes up. Labels are short in both skills:
   the icon says the kind of press, and the pencil marks every one that has a text written
   without posting it. A fix shows in the sidebar; the
   diff viewer opens on its button alone, and comes first where the agent that made the fix
@@ -45,8 +47,8 @@ How it fits together:
 - What arrives while the review waits (an author's answer, a push that changed the lines a
   comment is on, another reviewer's thread, a comment of your own) never enters the chat by
   itself: the update check marks its topic in the sidebar and lists it in the sidebar's inbox,
-  and an agent of the mod's own judges it in the background, so the topic's card carries the
-  judgment by the time you get to it. Opening the inbox (`o`) or a topic starts a round
+  and one model call of the mod's own judges it, so the topic's card carries the judgment by
+  the time you get to it. Opening the inbox (`o`) or a topic starts a round
   through everything that needs you; Next moves on to the next of them. Away from the session (another app in front, another tmux window), a notification
   says what arrived.
 - In a review, the review scripts' calls that print no view are left out of the chat, as the
@@ -127,15 +129,14 @@ says none of them.
 - A pane is reachable from the keyboard only when opened with `focus: true`. Consecutive shell
   calls fold into one `ToolGroup`, drawn through its own `ui.render` hook. The engine's
   "Prompt dropped by a hook" line cannot be changed by a mod.
-- A background agent's report reaches the main loop as a prompt of `origin.kind` `peer`,
-  marked as a hand-back, with `isMeta` set by the engine. Measured in real sessions, none of
-  these keeps it from becoming a prompt, so dropping it (and the engine's line that goes
-  with a drop) is what a mod can do: it never passes `session.receive`; an agent told to end
-  in plain text without a hand-back has its last text handed back all the same; a mod's
-  `tool.call` hook hears none of a subagent's tool calls; and a mod's own hooks are not run
-  for an agent it spawned itself (`agent.spawn`, the agent's `turn.start`). Answering the
-  prompt without `next` only swaps the line for "Prompt not submitted". The way left is an
-  agent outside the session (a `claude -p` process that reports through the state file).
+- A background agent's report always reaches the main loop as a prompt, which a mod can
+  only drop, with the engine's "Prompt dropped by a hook" line in the chat. So the news is
+  judged by `$.model.complete` instead: one call, no tools, the session's own model, with
+  the script's prompt carrying everything to judge (`judge-prompt`) and the script storing
+  the answers (`judge-store`). It leaves no trace in the transcript and nothing to hand
+  back; its cost is counted in the session's own. Anything needing the repository (a rework
+  plan) stays in the chat. A reload of the mod cuts a running call off, so the call is
+  recorded under the mod's load and one from an earlier load counts as gone.
 - A running session keeps the SKILL.md it loaded: a script's arguments must stay usable by
   the older text, and a prompt the mod sends carries the whole contract it relies on.
 

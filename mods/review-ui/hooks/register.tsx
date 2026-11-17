@@ -3,7 +3,7 @@ import type { EngineInterface, Register } from 'claude-code'
 
 import type { ReviewCard, ReviewHost, ReviewOutcome, ReviewJudging, ReviewNote, ReviewNotice, ReviewPlaced, ReviewSession, ReviewState } from '../types'
 import {
-  argsFor, buttonsFor, checkPrompt, endOf, hasNext, iconOf, isHeldTopic, isMergeWatched, outcomeOf, earlyPrompt, replyPrompt, clockOf, currentTopic, didText, inboxOf, noteForModel, stepOf, untilOf, waitingLine, waitingOf,
+  argsFor, buttonsFor, checkPrompt, judgingOf, endOf, hasNext, iconOf, isHeldTopic, isMergeWatched, outcomeOf, earlyPrompt, proposePrompt, replyPrompt, clockOf, currentTopic, didText, inboxOf, noteForModel, stepOf, untilOf, waitingLine, waitingOf,
   type BandButton, type InboxLine,
 } from './review.ts'
 import {
@@ -71,9 +71,12 @@ const ticks = atom({ plugin: 'review-ui', key: 'ticks' } as const, 0, { shape: '
 // When the update check last asked GitLab, and when it asks next (ms since the epoch), for
 // the sidebar's waiting box.
 const checks = atom({ plugin: 'review-ui', key: 'checks' } as const, { last: null, next: null, failed: null } as { last: number | null; next: number | null; failed?: number | null; running?: boolean }, { shape: 'checks-2' })
-// The background agent that judges what the update check found (one at a time), and what
-// it could not judge. Its answers are stored with the topics; nothing of it reaches the chat.
-const judging = atom({ plugin: 'review-ui', key: 'judging' } as const, { agentId: null, topics: [], own: [], failed: [] } as ReviewJudging, { shape: 'judging-1' })
+// The model call that judges what the update check found (one at a time), and what it could
+// not judge (`startJudging`). Its answers are stored with the topics; nothing of it reaches
+// the chat.
+const judging = atom({ plugin: 'review-ui', key: 'judging' } as const, { run: null, topics: [], own: [], failed: [] } as ReviewJudging, { shape: 'judging-2' })
+// rework-mr: the plans the chat was asked to make as their topic came up (`planOnOpen`).
+const planAsked = atom({ plugin: 'review-ui', key: 'plan-asked' } as const, [] as string[], { shape: 'plan-asked-1' })
 // What the person was told of already, by the notification, so each piece of news is told once.
 const notified = atom({ plugin: 'review-ui', key: 'notified' } as const, [] as string[], { shape: 'notified-1' })
 const working = atom({ plugin: 'review-ui', key: 'working' } as const, false, { shape: 'working-1' })
@@ -278,11 +281,12 @@ const stdoutOf = (output: unknown): unknown => {
 // runs from the session's folder, the same repository, the MR named by `--iid`. A run that
 // cannot start at all answers as a failed one, so every press says why in the band rather
 // than ending without a word.
-const runScript = async ($: EngineInterface, s: ReviewSession, args: string[], env?: Record<string, string>, timeoutMs = 120_000) => {
+const runScript = async ($: EngineInterface, s: ReviewSession, args: string[], env?: Record<string, string>, timeoutMs = 120_000, stdin?: string) => {
   const cwd = (await $.fs.exists(s.cwd).catch(() => false)) ? s.cwd : await $.session.cwd()
   try {
     return await $.process.run(['python3', s.script, ...args, '--iid', String(s.iid)], {
       cwd, env: { CLAUDE_CODE_SESSION_ID: await $.session.id(), REVIEW_UI_MOD: '1', ...env }, timeoutMs,
+      ...(stdin === undefined ? {} : { stdin }),
     })
   } catch (err) {
     return { exitCode: -1, stdout: '', stderr: `the review script did not run: ${err instanceof Error ? err.message : String(err)}`, isStdoutTruncated: false, isStderrTruncated: false }
@@ -333,7 +337,7 @@ const check = async ($: EngineInterface) => {
     const isClose = r.own_review === 'pending' || isMergeWatched(r)
     const isDue = isClose || isFirst || n % CHECK_TICKS === 0
     if (isDue) await checkNow($, s)
-    else await startJudging($, s, r)   // one the last check could not start, a turn ran
+    else void startJudging($, s, r)   // one the last check could not start, a turn ran
     await cardForNews($)
     const now = await $.clock.now()
     const left = isClose || (isFirst && !(await read($, checks)).last) ? 1 : CHECK_TICKS - (n % CHECK_TICKS)
@@ -376,7 +380,7 @@ const pressEnd = async ($: EngineInterface, s: ReviewSession, b: BandButton) => 
 }
 
 // Asks GitLab now, and notes when; or that it failed, which the inbox says in yellow. What it
-// found is judged in the background, and told to a person who is away.
+// found is judged by the mod's model call, and told to a person who is away.
 const checkNow = async ($: EngineInterface, s: ReviewSession) => {
   let got: ReviewState | null = null
   // Said at the sidebar's foot while it runs, however it was started.
@@ -389,80 +393,96 @@ const checkNow = async ($: EngineInterface, s: ReviewSession) => {
   const now = await $.clock.now()
   await update($, checks, c => (got ? { ...c, last: now, failed: null, running: false } : { ...c, failed: now, running: false }))
   if (got) {
-    await startJudging($, s, got)
+    // Not waited for: the call takes seconds to minutes, and the check is done.
+    void startJudging($, s, got)
     await tell($, got)
   }
   return got
 }
 
-// The background agent's task, and the ids of those started. The engine hands a finished
-// agent's report back to the main loop as a prompt of its own (a peer's, marked as a
-// hand-back from the plugin that started it), and the model would answer it in the chat: the
-// mod drops it, since the judgments are in the state and the person meets them on the cards.
-const JUDGE_TASK = 'Judge news on MR'
-const judges = new Set<string>()
-// At `prompt.submit` the origin says only `peer`; the sender's id is in the envelope's text.
-type HandBack = { kind?: string; handback?: boolean; plugin?: string; from?: string; senderTaskId?: string }
-const isJudgeReport = async ($: EngineInterface, origin: unknown, text = ''): Promise<boolean> => {
-  const o = (origin ?? {}) as HandBack
-  if (o.kind !== 'peer' && o.kind !== 'task-notification') return false
-  if (o.handback === true && o.plugin === P) return true
-  const from = o.senderTaskId ?? o.from ?? /<agent-message from="([^"]+)"/.exec(text)?.[1] ?? ''
-  // The ids are kept in the session's state too: a reload while an agent runs forgets the set.
-  return judges.has(from) || ((await read($, judging)).ids ?? []).includes(from)
-}
+// What the update check found is judged by one plain model call of the mod's own, with the
+// session's model and no tools: in review-mr each answer's verdict, another reviewer's
+// thread's title and view, a match for each comment the person posted themselves; in
+// rework-mr whether a reviewer's new comment asks anything of the person, or only keeps a
+// plan agreed. The script writes the prompt, with everything to judge in it, and stores the
+// answers (lib/judge.py), so nothing of it reaches the chat, and the topic's card carries the
+// judgment by the time the person opens it. What it could not judge is the chat's, when the
+// person opens it; a rework topic that needs the person gets its plan there too (`planOnOpen`).
+// One call at a time; what arrives meanwhile waits for the next.
+//
+// The mod's load, which a running call is recorded under: one recorded under an earlier load
+// was cut off by a reload, so it is no longer running and its items are asked about again.
+const RUN = Math.random().toString(36).slice(2)
+let isCalling = false
+// How long the call may take: past it, what it was asked about is the chat's.
+const JUDGE_MS = 180_000
+type JudgeAsk = { prompt?: string; items?: Record<string, string>; topics?: string[]; own?: string[]; max_tokens?: number }
 
-// A background agent that has said nothing for this long is taken for gone (a restart, a
-// crash): what it had is judged again.
-const JUDGE_TIMEOUT_MS = 15 * 60_000
+// The topics a call of this load is judging now, as the sidebar and the cards say it.
+const judgingNow = (j: ReviewJudging): string[] => judgingOf(j, RUN)
 
-// What the update check found is judged by an agent of its own, in the background: each
-// answer's verdict, another reviewer's thread's title and view, a match for each comment the
-// person posted themselves. By the time the person opens the topic its card carries it.
-// One agent at a time; what arrives meanwhile waits for the next.
 const startJudging = async ($: EngineInterface, s: ReviewSession, r: ReviewState) => {
   const j = r.judge
-  if (!j) return
+  if (!j || isCalling) return
   const was = await read($, judging)
-  const now = await $.clock.now()
-  if (was.agentId && now - (was.at ?? 0) < JUDGE_TIMEOUT_MS) return
   // What it could not judge before goes to the chat, when the person opens it; not again here.
   const failed = was.failed.filter(x => j.topics.includes(x) || j.own.includes(x))
-  const topics = j.topics.filter(x => !failed.includes(x))
-  const own = j.own.filter(x => !failed.includes(x))
-  await update($, judging, v => ({ agentId: null, topics: [], own: [], failed, ids: v.ids }))
-  if (topics.length === 0 && own.length === 0) return
-  try {
-    // The brief is of what this agent is tracked as judging: nothing it failed on before.
-    const brief = await runScript($, s, ['judge-brief', ...failed.flatMap(x => ['--skip', x])])
-    if (brief.exitCode !== 0 || !brief.stdout.trim()) return
-    // In the review's worktree, while it is there (see `runScript`).
-    const cwd = (await $.fs.exists(s.cwd).catch(() => false)) ? s.cwd : await $.session.cwd()
-    const got = await $.agent.spawn({ prompt: brief.stdout, description: `${JUDGE_TASK} !${s.iid}`, cwd })
-    if (got.agentId) {
-      judges.add(got.agentId)
-      await update($, judging, v => ({ ...v, agentId: got.agentId as string, topics, own, at: now, ids: [...(v.ids ?? []), got.agentId as string].slice(-20) }))
-    }
-  } catch {
-    // no agent: the next check tries again
+  if ([...j.topics, ...j.own].every(x => failed.includes(x))) {
+    if (was.run || failed.length !== was.failed.length) await update($, judging, () => ({ run: null, topics: [], own: [], failed }))
+    return
   }
-}
-
-// The background agent ended: its judgments are read back, and what it left is the chat's
-// to judge, when the person opens it. A card already up for a topic it judged comes up
-// again, now with the judgment.
-const endJudging = async ($: EngineInterface, agentId: string) => {
-  const was = await read($, judging)
-  if (was.agentId !== agentId) return
-  const s = await read($, session)
-  const r = s ? await refresh($, s) : null
-  const left = r?.judge ?? { topics: [], own: [] }
-  const failed = [...new Set([...was.failed, ...was.topics.filter(x => left.topics.includes(x)), ...was.own.filter(x => left.own.includes(x))])]
-  await update($, judging, v => ({ agentId: null, topics: [], own: [], failed, ids: v.ids }))
-  if (!s || !r) return
+  isCalling = true
+  let judged: string[] = []
+  try {
+    const asked = await runScript($, s, ['judge-prompt', ...failed.flatMap(x => ['--skip', x])])
+    let ask: JudgeAsk = {}
+    try { ask = JSON.parse(asked.stdout) as JudgeAsk } catch { /* nothing asked */ }
+    if (asked.exitCode !== 0 || !ask.prompt || !ask.items) {
+      await update($, judging, () => ({ run: null, topics: [], own: [], failed }))
+      return
+    }
+    judged = Object.keys(ask.items)
+    await update($, judging, () => ({ run: RUN, topics: ask.topics ?? [], own: ask.own ?? [], failed }))
+    let reply = ''
+    try {
+      const got = await $.model.complete({ model: await $.session.model(), prompt: ask.prompt, maxTokens: ask.max_tokens, timeoutMs: JUDGE_MS })
+      reply = got.isAnswered ? got.text : ''
+      await keepCall($, ask.prompt, reply)
+    } catch {
+      // the engine refused to send it: nothing is judged
+    }
+    // Stored by the script, which leaves alone what moved on meanwhile and says what it
+    // could not store: a reply missing an item, malformed, or none at all.
+    const stored = await runScript($, s, ['judge-store'], undefined, 60_000, JSON.stringify({ items: ask.items, reply }))
+    let left = Object.keys(ask.items)
+    try {
+      if (stored.exitCode === 0) left = (JSON.parse(stored.stdout) as { unjudged?: string[] }).unjudged ?? []
+    } catch { /* stored nothing that can be told: all of it is the chat's */ }
+    await update($, judging, () => ({ run: null, topics: [], own: [], failed: [...new Set([...failed, ...left])] }))
+  } finally {
+    isCalling = false
+  }
+  // Its judgments read back: a card already up for a topic it judged comes up again, now
+  // with the judgment.
+  const now = await refresh($, s)
+  if (!now) return
   await fillPending($, s)
   await cardForNews($)
-  await startJudging($, s, r)
+  // The current topic, opened before the call was made, and found to need the person: its
+  // card is up already, with nothing new to show, and its plan is still to be asked for.
+  if (now.current && judged.includes(now.current)) planWanted = now.current
+  await askPlan($)
+}
+
+// A run on the local GitLab rig with a real model keeps each call and its reply, so the
+// recording made from that run can play them back (e2e/mock_model.py): a session's transcript
+// has no trace of a call of the mod's.
+const keepCall = async ($: EngineInterface, prompt: string, reply: string) => {
+  const file = await $.env.get('REVIEW_UI_CALLS')
+  if (!file) return
+  let calls: { prompt: string; reply: string }[] = []
+  try { calls = JSON.parse(await $.fs.read(file)) as typeof calls } catch { /* the first */ }
+  await $.fs.write(file, JSON.stringify([...calls, { prompt, reply }], null, 1))
 }
 
 // Each card that waited for the judgment gets the topic's card, in its place: the judged one,
@@ -475,6 +495,7 @@ const fillPending = async ($: EngineInterface, s: ReviewSession) => {
     if (q.exitCode === 0 && view) {
       await update($, placed, m => ({ ...m, [id]: view.text }))
       await update($, placedOf, m => ({ ...m, [id]: { topic: view.topic, draft: view.draft } }))
+      planWanted = view.topic ?? null
     }
   }
 }
@@ -599,7 +620,7 @@ const placeOutput = async ($: EngineInterface, stdout: string) => {
 
 // A topic's card as a row of its own at the transcript's end, for a view a press brought up.
 // `focus` makes it the current topic, as a click on its row in the sidebar does.
-// A topic whose news the background agent is still judging has no card worth showing yet: its
+// A topic whose news the mod's model call is still judging has no card worth showing yet: its
 // thread is the sidebar's already. It gets one that says so, filled in where it stands once
 // the judgment is in (`fillPending`), so the chat never shows the topic twice.
 const PENDING = '\u0000pending:'
@@ -621,8 +642,7 @@ const clearSaid = ($: EngineInterface) => update($, notice, n => (n && !n.isErro
 
 const placeTopic = async ($: EngineInterface, s: ReviewSession, tid: string, focus = false) => {
   await clearError($)
-  const j = await read($, judging)
-  if (j.agentId && j.topics.includes(tid)) {
+  if (judgingNow(await read($, judging)).includes(tid)) {
     if (focus) await runScript($, s, ['quote', tid, '--focus'])     // current all the same
     const id = `card-${Object.keys(await read($, placed)).length + 1}`
     await update($, placed, m => ({ ...m, [id]: `${PENDING}${tid}` }))
@@ -630,7 +650,7 @@ const placeTopic = async ($: EngineInterface, s: ReviewSession, tid: string, foc
     await noteCard($, id, tid)
     await update($, card, () => ({ topic: tid, draft: null }))
     await $.ui.place({ id })
-    if (!(await read($, judging)).agentId) await fillPending($, s)   // it finished meanwhile
+    if (!judgingNow(await read($, judging)).includes(tid)) await fillPending($, s)   // it finished meanwhile
     return true
   }
   const q = await runScript($, s, ['quote', tid, ...(focus ? ['--focus'] : [])])
@@ -644,7 +664,28 @@ const placeTopic = async ($: EngineInterface, s: ReviewSession, tid: string, foc
   await noteCard($, id, tid)
   await update($, card, () => ({ topic: tid, draft: manifestOf(q.stdout)?.draft ?? null }))
   await $.ui.place({ id })
+  planWanted = tid
   return true
+}
+
+// rework-mr: a topic whose plan is still to be made (the model call found that it needs the
+// person, or could not tell) gets it from the chat once its card is up, with the whole
+// repository at hand: the mod asks as a press of Propose a plan would. Once per topic and
+// what the reviewers said, and only once the press or move that brought the card up is
+// through (`askPlan`, at the end of each), never while a turn runs: that turn has it in hand.
+let planWanted: string | null = null
+const askPlan = async ($: EngineInterface) => {
+  const tid = planWanted
+  planWanted = null
+  const r = await read($, review)
+  const t = tid && r?.skill === 'rework-mr' && r.current === tid ? r.topics.find(x => x.id === tid) : undefined
+  if (!t?.plan_due || (await read($, working)) || (await read($, busy))) return
+  // Still being judged: whether it needs the person is not known yet.
+  if ((r?.judge?.topics ?? []).includes(t.id) && !(await read($, judging)).failed.includes(t.id)) return
+  const key = `${t.id}@${t.plan_due}`
+  if ((await read($, planAsked)).includes(key)) return
+  await update($, planAsked, v => [...v, key].slice(-50))
+  await $.prompt.submit({ text: proposePrompt(t.id) })
 }
 
 // A click on a topic's row: it becomes the current topic, its card comes up, and the model
@@ -659,7 +700,10 @@ const once = async (move: () => Promise<void>) => {
   try { await move() } finally { isMoving = false }
 }
 
-const showTopic = ($: EngineInterface, s: ReviewSession, tid: string) => once(() => moveTo($, s, tid))
+const showTopic = async ($: EngineInterface, s: ReviewSession, tid: string) => {
+  await once(() => moveTo($, s, tid))
+  await askPlan($)
+}
 
 // rework-mr: a fix made and not pushed holds its topic. Its files are in the working tree, so
 // no other topic opens until it is pushed, or undone on the person's word. True where the
@@ -693,7 +737,10 @@ const moveTo = async ($: EngineInterface, s: ReviewSession, tid: string) => {
 // Opens a round, at `tid` or where the inbox says: the review worktree moves to the MR's
 // newest push first (so the sidebar's file is the code the news is about), then the topic's
 // card comes up, or the card of a comment of the person's own whose match waits.
-const openRound = ($: EngineInterface, s: ReviewSession, tid?: string) => once(() => startRound($, s, tid))
+const openRound = async ($: EngineInterface, s: ReviewSession, tid?: string) => {
+  await once(() => startRound($, s, tid))
+  await askPlan($)
+}
 
 const startRound = async ($: EngineInterface, s: ReviewSession, tid?: string) => {
   await update($, busy, () => 'opening')
@@ -746,7 +793,7 @@ const syncCode = async ($: EngineInterface, s: ReviewSession, r: ReviewState,
 // News that arrived for the topic whose card is up (a reply, a push, a verdict come in): the
 // card went on showing the topic as it was, the new comment in the sidebar alone and the
 // topic still marked new. A fresh card takes the news in, once it is judged (while the
-// background agent is on it, the card says so, `drawCard`). Never beside a turn or a press.
+// mod's model call is on it, the card says so, `drawCard`). Never beside a turn or a press.
 const cardForNews = async ($: EngineInterface) => {
   const s = await read($, session)
   const r = await read($, review)
@@ -756,6 +803,7 @@ const cardForNews = async ($: EngineInterface) => {
   const j = await read($, judging)
   if ((r.judge?.topics ?? []).includes(r.current) && !j.failed.includes(r.current)) return
   await placeTopic($, s, r.current)
+  await askPlan($)
 }
 
 // A turn that moved the review on without showing where it went (the model finishing a
@@ -779,6 +827,7 @@ const cardForCurrent = async ($: EngineInterface) => {
     if (done) await update($, outcomes, m => ({ ...m, [host.id]: done }))
   }
   await showStep($, s, r)
+  await askPlan($)
 }
 
 // Closes the topic the person opened to look at; the next that needs them comes up with its
@@ -1368,7 +1417,7 @@ const cardButtons = async ($: EngineInterface, e: Parameters<EngineInterface['ui
   // But notes the person left there: reading them is what the card is about now, so the
   // key is the card's own (and the sidebar's line gives it up, below).
   const buttons = isInSidebar ? all.filter(b => !HUNK_KEYS.includes(b.key) || isNotesKey(b, r)) : all
-  // Its news still with the background agent: the card says so itself, where its buttons
+  // Its news still with the mod's model call: the card says so itself, where its buttons
   // will be, not only the band's line under the chat. A card with no verdict and no
   // buttons otherwise looked finished, and there was nothing on it to act on.
   const isJudging = isHosted && !!r.current && (r.judge?.topics ?? []).includes(r.current)
@@ -1559,11 +1608,11 @@ const drawPending = async ($: EngineInterface, e: Parameters<EngineInterface['ui
   const { r } = await known($)
   const topic = r?.topics.find(t => t.id === tid)
   const label: LabelOf = { state: STATE_ICON[topic?.state ?? ''] ?? ' ', id: tid, kind: topic ? kindSlot(topic) : undefined }
-  const what = r?.skill === 'rework-mr' ? 'this thread and propose a plan' : topic?.peer ? 'this thread' : `${r?.author ?? 'the author'}'s answer`
+  const what = r?.skill === 'rework-mr' ? 'what the reviewer wrote' : topic?.peer ? 'this thread' : `${r?.author ?? 'the author'}'s answer`
   return (
     <Box borderStyle="round" borderDimColor paddingX={1} flexDirection="column" width="100%">
       <Text bold>{drawLabel(Text, label, { bold: true })}{topic?.summary ? ` ${plainTitle(topic.summary)}` : ''}</Text>
-      <Text dimColor>{`Waiting for the background agent to judge ${what}…`}</Text>
+      <Text dimColor>{`Judging ${what}…`}</Text>
     </Box>
   )
 }
@@ -1639,6 +1688,7 @@ const stepControls = async ($: EngineInterface, s: ReviewSession, r: ReviewState
     const after = await read($, review)
     const now = currentTopic(after)
     await update($, hostCard, h => (h?.step && now && h.topic === now.id ? { ...h, step: now.step ?? null, face: after?.face ?? null } : h))
+    await askPlan($)
   }
 
   const pressOn = async (b: BandButton, ev: { surface?: string }) => {
@@ -1799,10 +1849,11 @@ const stepControls = async ($: EngineInterface, s: ReviewSession, r: ReviewState
 }
 
 export const register: Register = on => {
-  // The main loop's turns only: the background agent's run beside them changes nothing the
-  // person works on, and its end is read back by itself.
+  // The main loop's turns only: a subagent's run beside them (an explainer made in the
+  // background) changes nothing the person works on.
   on('turn.start', async ($, e, next) => {
     if ((e as { agentId?: string }).agentId) return next(e)
+    planWanted = null          // the turn has the topic in hand
     await update($, working, () => true)
     await clearSaid($)
     await dropStray($)
@@ -1810,32 +1861,19 @@ export const register: Register = on => {
     return next(e)
   })
   on('turn.complete', async ($, e, next) => {
-    const agentId = (e as { agentId?: string }).agentId
-    if (agentId) {
-      const out = await next(e)
-      await endJudging($, agentId)
-      return out
-    }
+    if ((e as { agentId?: string }).agentId) return next(e)
     await update($, working, () => false)
     const out = await next(e)
     await cardForCurrent($)
     return out
   })
   on('turn.abort', async ($, e, next) => {
-    const agentId = (e as { agentId?: string }).agentId
-    if (agentId) {
-      const out = await next(e)
-      await endJudging($, agentId)
-      return out
-    }
+    if ((e as { agentId?: string }).agentId) return next(e)
     await update($, working, () => false)
     return next(e)
   })
 
-  // The background agent's report, handed back to the main loop: dropped, so the model does
-  // not answer it in the chat.
   on('prompt.submit', async ($, e, next) => {
-    if (await isJudgeReport($, e.origin, e.text)) return { drop: 'review-ui: the news was judged in the background; the sidebar has it' }
     await useSkill($, e.command?.name)
     return next(e)
   })
@@ -1893,8 +1931,7 @@ export const register: Register = on => {
       return { deny: 'Posting and resolving are the user\'s press: the Post or Resolve thread button on the card. Leave it to them.' }
     }
     if (REVIEW_SCRIPT.test(e.command)) await markSession($)
-    // Only the main loop's calls arrive here: the engine runs no mod hook for a background
-    // agent's (README), whose end reads the state back instead.
+    // Only the main loop's calls arrive here: the engine runs no mod hook for a subagent's.
     const ran = await next(e)
     if (ran.deny !== undefined || ran.isError) return ran
     const result = ran.result as { stdout?: unknown } | undefined
@@ -2255,7 +2292,7 @@ export const register: Register = on => {
         // Where the topic stands in the inbox (news, being judged, put off), in a slot of
         // its own after the bar: minimal, but in colour where it needs the person.
         const topic = r.topics.find(t => t.id === x.id)
-        const mark = topic ? inboxMark(topic, judged.failed, judged.agentId ? judged.topics : []) : undefined
+        const mark = topic ? inboxMark(topic, judged.failed, judgingNow(judged)) : undefined
         if (mark) shownMarks.add(mark.key)
         // The current row: a bar in the accent colour in its first slot, and bold; every
         // other row dimmed a little. Set on every part, so no part's own colour resets it.
@@ -2953,7 +2990,7 @@ export const register: Register = on => {
     // to ask now, for when the person knows the other side just answered.
     const waiting = !code ? waitingOf(r) : undefined
     const judgedBox = await read($, judging)
-    const box = waiting ? inboxOf(r, { topics: judgedBox.agentId ? r.judge?.topics ?? [] : [], failed: judgedBox.failed }) : undefined
+    const box = waiting ? inboxOf(r, { topics: judgingNow(judgedBox), failed: judgedBox.failed }) : undefined
     const when = await read($, checks)
     const busyCheck = (await read($, busy)) === CHECKING || (await read($, checks)).running === true
     const clock = (ms: number | null | undefined) => (ms ? new Date(ms).toTimeString().slice(0, 5) : '–')
@@ -3189,17 +3226,20 @@ export const register: Register = on => {
     const box = waiting ? inboxOf(r) : undefined
     const failed = said?.isError || said?.isWarning ? said : null
     if (waiting && !failed && isShown) return next(e)
-    // The current topic's news still being judged in the background, or not judged at all.
+    // The current topic's news still being judged by the mod's model call, or not judged at
+    // all: review-mr then offers Judge; rework-mr's chat makes the topic's plan as it comes
+    // up, as it does for any topic that needs the person, so there is nothing to say.
     const judgedNow = await read($, judging)
     const isJudging = !!topic && (r.judge?.topics ?? []).includes(topic.id)
     const isUnjudged = isJudging && judgedNow.failed.includes(topic?.id ?? '')
+    const isSaid = isJudging && !(isUnjudged && r.skill === 'rework-mr')
     // One column off each edge, as the sidebar's foot keeps its chips and a card its content:
     // a chip against the screen's edge reads as cut off.
     return (
       <Box flexDirection="column" paddingX={1}>
         {/* On the topic's card where one is up (`cardButtons`): said once. */}
-        {isJudging && !e.props.isWorking && (isUnjudged || !isHosted) && (
-          <Text dimColor>{isUnjudged ? `${topic?.id}: the news could not be judged in the background` : `${topic?.id}: judging the news…`}</Text>
+        {isSaid && !e.props.isWorking && (isUnjudged || !isHosted) && (
+          <Text dimColor>{isUnjudged ? `${topic?.id}: the news is not judged yet; Judge asks for it` : `${topic?.id}: judging the news…`}</Text>
         )}
         {/* Wraps onto a second line where the band is narrower than its buttons. */}
         <Box flexDirection="row" width="100%">

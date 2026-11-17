@@ -2,7 +2,7 @@ import type { On } from 'claude-code'
 import type { Engine } from 'claude-code/testing'
 import { expect, mock, test } from 'claude-code/testing'
 import { inboxMark } from '../hooks/panel.ts'
-import { buttonsFor, CI_PROMPT, endOf, iconOf, inboxOf, isMergeWatched, untilOf } from '../hooks/review.ts'
+import { buttonsFor, CI_PROMPT, endOf, iconOf, inboxOf, isMergeWatched, judgingOf, proposePrompt, untilOf } from '../hooks/review.ts'
 
 // The test runtime's timer, which the engine's types leave out (a mod has no timers of its own).
 declare const setTimeout: (run: () => void, ms: number) => unknown
@@ -40,7 +40,7 @@ type Out = { stdout: string; exitCode?: number; stderr?: string }
 // something moves to the next one), the engine's own drawing, and the model's tool calls.
 // `ran` is every argument vector the mod ran, in order.
 const world = (on: On, states: string[], extra: Record<string, Out> = {}, store: Record<string, unknown> = {}) => {
-  const ran: { argv: readonly string[]; env?: Record<string, string>; cwd?: string }[] = []
+  const ran: { argv: readonly string[]; env?: Record<string, string>; cwd?: string; stdin?: string }[] = []
   const placed: string[] = []
   const prompts: string[] = []
   const tool = { stdout: '' }
@@ -49,12 +49,12 @@ const world = (on: On, states: string[], extra: Record<string, Out> = {}, store:
     value: { exitCode: o.exitCode ?? 0, stdout: o.stdout, stderr: o.stderr ?? '', isStdoutTruncated: false, isStderrTruncated: false },
   })
   on('process.run', ($, e) => {
-    ran.push({ argv: e.argv, env: e.init?.env, cwd: e.init?.cwd })
+    ran.push({ argv: e.argv, env: e.init?.env, cwd: e.init?.cwd, stdin: e.init?.stdin })
     const cmd = e.argv[2] ?? ''
     if (cmd === 'state') return answer({ stdout: states[Math.min(at, states.length - 1)] ?? '' })
     // `quote moves`: a view that moves its topic on as it is shown, to the next state.
     if (cmd === 'quote' && extra['quote moves']) { at += 1; return answer(extra['quote moves']) }
-    if (cmd === 'quote') return answer({ stdout: view(e.argv[3] ?? '') })
+    if (cmd === 'quote') return answer(extra.quote ?? { stdout: view(e.argv[3] ?? '') })
     // A file or a push picked in the sidebar is answered apart where the test gives it
     // (`code --file <f>`, `code --push <n>`).
     const picked = (flag: string) => {
@@ -106,7 +106,7 @@ const world = (on: On, states: string[], extra: Record<string, Out> = {}, store:
   return w
 }
 
-type World = { clock: { now: number }; ran: { argv: readonly string[]; env?: Record<string, string>; cwd?: string }[]; placed: string[]; prompts: string[]; filled: string[]; turns: { n: number }; tool: { stdout: string }; rows: ReturnType<typeof mock.session>; written: string[]; files: Record<string, string>; panes: string[]; opened: string[] }
+type World = { clock: { now: number }; ran: { argv: readonly string[]; env?: Record<string, string>; cwd?: string; stdin?: string }[]; placed: string[]; prompts: string[]; filled: string[]; turns: { n: number }; tool: { stdout: string }; rows: ReturnType<typeof mock.session>; written: string[]; files: Record<string, string>; panes: string[]; opened: string[] }
 let lastWorld: World | undefined
 
 // The step's buttons as the person meets them: on the newest card in the chat (the view the
@@ -1031,45 +1031,81 @@ test("news for the topic whose card is up brings a fresh card of it, once it is 
   expect(w.placed.length).toBe(1)                      // once
 })
 
-// The agent's failures are the mod's own record, which no test reaches (see below): the
-// buttons are asked for directly, with the topic among them.
-test('an answer the background agent could not judge is judged in the chat, from the whole thread', () => {
-  for (const extra of [{}, { peer: true }]) {
-    const review = JSON.parse(stateOf('t1', [{ ...topic('t1', 'needs_ack'), inbox: 'yours', ...extra }], { in_round: true, judge: { topics: ['t1'], own: [] } }))
-    const judge = buttonsFor({ ...review, unjudged: ['t1'] }).find(x => x.key === 'judge')
-    // What was agreed halfway through a thread counts: never its first and last comment alone.
-    expect(judge?.press).toMatchObject({ kind: 'ask', prompt: expect.stringContaining('`bodies t1`, every comment in order') })
-  }
-})
+// The engine's own model call, answered here: what the mod asked is kept in `calls`.
+const modelCall = (on: On, answer: { isAnswered: true; text: string } | { isAnswered: false; reason: string }) => {
+  const calls: { model: string; prompt: string; maxTokens?: number; timeoutMs?: number }[] = []
+  on('session.model' as never, (() => ({ value: 'claude-test' })) as never)
+  on('model.complete' as never, ((_: unknown, e: { model: string; prompt: string; maxTokens?: number; timeoutMs?: number }) => {
+    calls.push({ model: e.model, prompt: e.prompt, maxTokens: e.maxTokens, timeoutMs: e.timeoutMs })
+    return { value: { ...answer, usage: { input_tokens: 1, output_tokens: 1, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 } } }
+  }) as never)
+  return calls
+}
+const settle = () => new Promise<void>(done => setTimeout(() => done(), 30))
 
-// Only the engine sets a started agent's id, so its end (the judgments read back, what it
-// left marked for the chat) is not reachable from a test: this covers what it is handed.
-test('what the check found is handed to a background agent to judge, once', async ($, on) => {
+test('what the check found is judged by one model call, with no turn: the script writes the prompt and stores the answers', async ($, on) => {
   const news = { ...topic('t2', 'needs_ack'), inbox: 'new', news: ['reply'] }
   const idle = stateOf(null, [topic('t1', 'open'), news], { in_round: false, judge: { topics: ['t2'], own: [] }, inbox: inbox({ replies: ['t2'], first: 't2' }) })
-  const w = world(on, [idle], { refresh: { stdout: idle }, 'judge-brief': { stdout: 'Judge t2.' } })
-  const spawned: { prompt: string; cwd?: string }[] = []
-  on('agent.spawn', ($, e) => { spawned.push({ prompt: e.prompt, cwd: e.cwd }); return { model: 'm' } })
+  const ask = { prompt: 'Judge t2.', items: { t2: 'm1' }, topics: ['t2'], own: [], max_tokens: 1700 }
+  const w = world(on, [idle], {
+    refresh: { stdout: idle }, 'judge-prompt': { stdout: JSON.stringify(ask) },
+    'judge-store': { stdout: JSON.stringify({ stored: ['t2'], stale: [], unjudged: [] }) },
+  })
+  const calls = modelCall(on, { isAnswered: true, text: '{"t2": {"verdict": "settled"}}' })
   w.clock.now = new Date(2026, 10, 5, 12, 27).getTime()
   await openReview($, w, view('t1'))
   const panel = await $.ui.mount({ ...PANEL, surface: 'terminal' })
   await panel.press({ key: 'check-now' })
+  await settle()
   await panel.unmount()
-  expect(spawned).toEqual([{ prompt: 'Judge t2.', cwd: '/wt' }])
-  // Nothing failed before, so nothing is left out of the brief (`--skip`, one per failure).
-  expect(w.ran.map(r => r.argv.slice(2).join(' '))).toContain('judge-brief --iid 42')
+  // The session's own model, the reply's cap the script's, and a time limit.
+  expect(calls).toEqual([{ model: 'claude-test', prompt: 'Judge t2.', maxTokens: 1700, timeoutMs: 180_000 }])
+  // Nothing failed before, so nothing is left out of the prompt (`--skip`, one per failure).
+  expect(w.ran.map(r => r.argv.slice(2).join(' '))).toContain('judge-prompt --iid 42')
+  const stored = w.ran.find(r => r.argv[2] === 'judge-store')
+  expect(JSON.parse(stored?.stdin ?? '{}')).toEqual({ items: { t2: 'm1' }, reply: '{"t2": {"verdict": "settled"}}' })
+  // Nothing of it reaches the chat.
   expect(w.placed.length).toBe(0)
   expect(w.prompts).toEqual([])
 })
 
-test("the background agent's report is kept out of the chat; anyone else's goes through", async ($, on) => {
-  world(on, [stateOf(null, [topic('t1', 'open')])])
-  const dropped = await $.prompt.submit({ text: 'I stored a verdict for t3.', origin: { kind: 'peer', handback: true, plugin: 'review-ui', from: 'a1' } } as never)
-  expect((dropped as { drop?: string }).drop).toBeDefined()
-  const kept = await $.prompt.submit({ text: 'hello', origin: { kind: 'peer', handback: true, plugin: 'other', from: 'a2' } } as never)
-  expect((kept as { drop?: string }).drop).toBeUndefined()
-  const bare = await $.prompt.submit({ text: '<agent-message from="a1">\n[Subagent hand-back] …', origin: { kind: 'peer' } } as never)
-  expect((bare as { drop?: string }).drop).toBeUndefined()      // an agent the mod did not start
+test('an answer the call could not judge is the chat\'s: Judge, from the whole thread', async ($, on) => {
+  const tick = heldClock(on)
+  on('tool.register' as never, (() => ({ value: undefined })) as never)
+  on('session.start' as never, ((_: unknown, e: object) => e) as never)
+  const answered = stateOf('t2', [topic('t1', 'open'), { ...topic('t2', 'needs_ack'), inbox: 'yours' }], { in_round: true, judge: { topics: ['t2'], own: [] } })
+  const ask = { prompt: 'Judge t2.', items: { t2: 'm1' }, topics: ['t2'], own: [], max_tokens: 1700 }
+  const w = world(on, [answered], {
+    refresh: { stdout: answered }, 'judge-prompt': { stdout: JSON.stringify(ask) },
+    // No reply at all (the call ran out of time): the script stores nothing, and says so.
+    'judge-store': { stdout: JSON.stringify({ stored: [], stale: [], unjudged: ['t2'] }) },
+  })
+  modelCall(on, { isAnswered: false, reason: 'aborted' })
+  await (($ as unknown as { session: { start: (e: object) => Promise<unknown> } }).session.start({ source: 'startup', cwd: '/wt' }))
+  await openReview($, w, view('t2'))
+  let ui = await mountStep($, 'terminal')
+  expect(await labels(ui)).toEqual(['Next', 'Show sidebar'])         // being judged: nothing to decide yet
+  await ui.unmount()
+  await tick()
+  await settle()
+  expect(JSON.parse(w.ran.find(r => r.argv[2] === 'judge-store')?.stdin ?? '{}').reply).toBe('')
+  ui = await mountStep($, 'terminal')
+  expect(await labels(ui)).toContain('Judge')
+  await ui.unmount()
+  // What was agreed halfway through a thread counts: never its first and last comment alone.
+  for (const extra of [{}, { peer: true }]) {
+    const review = JSON.parse(stateOf('t1', [{ ...topic('t1', 'needs_ack'), inbox: 'yours', ...extra }], { in_round: true, judge: { topics: ['t1'], own: [] } }))
+    const judge = buttonsFor({ ...review, unjudged: ['t1'] }).find(x => x.key === 'judge')
+    expect(judge?.press).toMatchObject({ kind: 'ask', prompt: expect.stringContaining('`bodies t1`, every comment in order') })
+  }
+})
+
+// A reload of the mod cuts a call off: what it recorded of it is no call of this load, so
+// nothing stays marked as being judged, and the next check asks again.
+test('a call cut off by a reload of the mod leaves nothing marked as being judged', () => {
+  expect(judgingOf({ run: 'load-1', topics: ['t1'] }, 'load-1')).toEqual(['t1'])
+  expect(judgingOf({ run: 'load-1', topics: ['t1'] }, 'load-2')).toEqual([])
+  expect(judgingOf({ run: null, topics: [] }, 'load-2')).toEqual([])
 })
 
 test("another reviewer's thread that needs you offers the agent's advice first; Seen closes it for you", async ($, on) => {
@@ -1902,6 +1938,65 @@ test('rework-mr: a proposed plan is agreed with one press, no model turn', async
   expect(w.ran.map(r => r.argv.slice(2).join(' '))).toContain('agree t1 --iid 42')
   expect(w.prompts).toEqual([])
   expect(JSON.stringify(w.rows.appended())).toContain('t1: agreed the proposed plan')
+})
+
+// The model call found that the reviewer's comment needs the person, so no plan was made
+// ahead: the chat makes it as the topic comes up, with the whole repository at hand.
+test('rework-mr: a topic that needs you gets its plan from the chat as its card comes up, once', async ($, on) => {
+  const tick = heldClock(on)
+  on('tool.register' as never, (() => ({ value: undefined })) as never)
+  on('session.start' as never, ((_: unknown, e: object) => e) as never)
+  const t1 = reworkTopic('t1', 'plan', { proposal: { says: 'needs', outcome: 'fix', plan: 'Rename it.' } })
+  const t2 = reworkTopic('t2', 'plan', { plan_due: 'm1' })
+  // `hunk`: the one state every update check reads again by itself.
+  const on2 = (face: string) => reworkState('t2', [{ ...t1, step: 'fix' }, t2], { face, hunk: { open: false, notes: 0 } })
+  const states = [reworkState('t1', [t1, t2]), on2('f1')]
+  const w = world(on, states, { quote: { stdout: reworkView('t2', undefined, 'plan', 'f1') } })
+  await (($ as unknown as { session: { start: (e: object) => Promise<unknown> } }).session.start({ source: 'startup', cwd: '/wt' }))
+  await openRework($, w, reworkView('t1'))
+  const ui = await mountStep($, 'terminal')
+  await ui.press({ key: 'agree' })
+  await ui.unmount()
+  expect(w.prompts).toEqual([proposePrompt('t2')])
+  // Its card comes up again (a comment on it edited meanwhile): the plan is asked for once.
+  states[1] = on2('f2')
+  await tick()
+  expect(w.placed.length).toBe(2)
+  expect(w.prompts).toEqual([proposePrompt('t2')])
+})
+
+// Opened before the update check made its call (a quick press after the opener): the card
+// came up with the topic still to be judged, and stays up as it is once the call found it
+// needs the person.
+test('rework-mr: a topic opened before the call judged it gets its plan from the chat once judged', async ($, on) => {
+  const tick = heldClock(on)
+  on('tool.register' as never, (() => ({ value: undefined })) as never)
+  on('session.start' as never, ((_: unknown, e: object) => e) as never)
+  const t2 = reworkTopic('t2', 'plan', { plan_due: 'm1' })
+  const judgedNot = reworkState('t2', [t2], { judge: { topics: ['t2'], own: [] } })
+  const ask = { prompt: 'Sort t2.', items: { t2: 'm1' }, topics: ['t2'], own: [], max_tokens: 1700 }
+  const w = world(on, [reworkState('t2', [t2])], {
+    refresh: { stdout: judgedNot }, 'judge-prompt': { stdout: JSON.stringify(ask) },
+    'judge-store': { stdout: JSON.stringify({ stored: ['t2'], stale: [], unjudged: [] }) },
+  })
+  modelCall(on, { isAnswered: true, text: '{"t2": {"says": "needs"}}' })
+  await (($ as unknown as { session: { start: (e: object) => Promise<unknown> } }).session.start({ source: 'startup', cwd: '/wt' }))
+  await openRework($, w, reworkView('t2'))
+  expect(w.prompts).toEqual([])
+  await tick()
+  await settle()
+  expect(w.prompts).toEqual([proposePrompt('t2')])
+})
+
+test('rework-mr: a topic still being judged as it comes up waits for the judgment, with nothing asked', async ($, on) => {
+  const t1 = reworkTopic('t1', 'plan', { proposal: { says: 'needs', outcome: 'fix', plan: 'Rename it.' } })
+  const t2 = reworkTopic('t2', 'plan', { plan_due: 'm1' })
+  const w = world(on, [reworkState('t1', [t1, t2]), reworkState('t2', [{ ...t1, step: 'fix' }, t2], { judge: { topics: ['t2'], own: [] } })])
+  await openRework($, w, reworkView('t1'))
+  const ui = await mountStep($, 'terminal')
+  await ui.press({ key: 'agree' })
+  await ui.unmount()
+  expect(w.prompts).toEqual([])
 })
 
 test('rework-mr: a plan that answers the reviewer now recommends agreeing with that reply; the rest keep their places', async ($, on) => {

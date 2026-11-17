@@ -198,6 +198,11 @@ const ICON: Record<string, string> = {
   'Analyze CI failure': '\u{F0EAF}', 'Analyze failed merge': '\u{F0EAF}', // md-text_box_search_outline
 }
 
+// The topics a model call is judging now, from what the mod recorded of it: none where the
+// call was made by an earlier load of the mod (`run`), which a reload cut off, so nothing
+// stays marked as being judged by a call that is gone.
+export const judgingOf = (j: { run: string | null; topics: string[] }, run: string): string[] => (j.run === run ? j.topics : [])
+
 export const iconOf = (label: string): string | undefined =>
   ICON[label] ?? (/^(?:Check t\d+|Check \d+ answers|Decide \d+)$/.test(label) ? '\u{F040A}' // md-play: the box's way into the topics
     : label.startsWith('Merge into ') ? '\u{F0F5C}' // md-merge
@@ -288,7 +293,7 @@ const stepButtons = (review: ReviewState | null): BandButton[] | null => {
     case 'reack': {
       // The author resolved it with nothing pushed for it yet: authors tick a thread off as
       // they work and push later, so waiting comes first, the ack a press away. Nothing for
-      // the background agent to judge in that.
+      // the mod's model call to judge in that.
       if (topic?.author_resolved === 'unpushed' && !topic.peer) {
         return [
           { key: 'wait', label: 'Wait for author', press: { kind: 'wait' }, isPrimary: true },
@@ -296,7 +301,7 @@ const stepButtons = (review: ReviewState | null): BandButton[] | null => {
           { key: 'follow', label: 'Follow up', press: ask(`Draft a follow-up reply for ${t}${inLang(review)}.`) },
         ]
       }
-      // An answer with no verdict yet is the background agent's to judge: nothing to decide
+      // An answer with no verdict yet is the mod's model call's to judge: nothing to decide
       // until its judgment is on the card. One it could not judge is the chat's.
       if (review?.judge?.topics.includes(t)) {
         return (review.unjudged ?? []).includes(t)
@@ -423,6 +428,10 @@ const primary = (bs: BandButton[]): BandButton[] => {
 export const reworkCheckPrompt = (t: string): string => `I posted the reply for ${t} myself and may have reworded it: check it. Run \`posted ${t}\` and compare what I posted with your draft. In two or three lines: does it still say what it should, correctly and in a fitting tone? Where it does, say so and run \`posted ${t} --ok\`. Where it does not, store your verdict (a line or two) with a corrected version of what I posted, as close to my wording as it can be: \`posted ${t} --differs '<verdict>' --fix -\` with the text on stdin (a quoted heredoc). It shows its card; editing the reply on GitLab is my press there. ${SAY_FIRST}`
 
 // rework-mr: what the agent is asked once a plan that is a reply was agreed.
+// rework-mr: what the agent is asked for a topic with no plan proposed: by the Propose a plan
+// press, and by the mod itself as such a topic comes up.
+export const proposePrompt = (t: string): string => `Research ${t} and propose a plan: store it (\`propose\`), then show ${t}.`
+
 export const replyPrompt = (t: string): string => `Draft the reply for ${t} from its agreed plan, in the language of its thread. Store it (\`set ${t} --reply -\`) and show it (\`reply-view ${t}\`).`
 
 export const earlyPrompt = (t: string): string => `Draft a reply for ${t}'s thread to post ahead of its fix, in the language of its thread: from the agreed plan, tell the reviewer what we will do (the option chosen, where they offered several) and that the fix follows. Store it as a reply ahead of the fix (\`set ${t} --reply - --early\`) and show it (\`reply-view ${t}\`).`
@@ -458,6 +467,7 @@ const reworkButtons = (review: ReviewState): BandButton[] => {
   switch (topic.step) {
     case 'plan': {
       const p = topic.proposal
+      // Still being judged: whether it asks anything of the person is not known yet.
       if (!p && review.judge?.topics.includes(t) && !(review.unjudged ?? []).includes(t)) return []
       if (p?.says === 'fyi') {
         bs = [handled('Seen', 'saw it; it asks nothing of them'), { key: 'reply', label: 'Reply…', press: { kind: 'fill', text: `Draft my reply for ${t}${lang}: ` } }]
@@ -473,7 +483,7 @@ const reworkButtons = (review: ReviewState): BandButton[] => {
         bs = [explain, { key: 'agree', label: 'Agree plan', press: { kind: 'agree' }, ...(isAnswer ? {} : { isPrimary: true as const }) },
           { key: 'agree-reply', label: 'Agree and reply', press: { kind: 'agree', reply: true }, ...(isAnswer ? { isPrimary: true as const } : {}) }, replyInstead]
       } else {
-        bs = [{ key: 'propose', label: 'Propose a plan', press: ask(`Research ${t} and propose a plan: store it (\`propose\`), then show ${t}.`) },
+        bs = [{ key: 'propose', label: 'Propose a plan', press: ask(proposePrompt(t)) },
           replyInstead]
       }
       break

@@ -20,8 +20,9 @@ which turns the chat into a review tool:
   commented code with its thread under the lines it is on, and the fix's files with their
   sizes.
 - **Rounds and an inbox.** What arrives while you wait (a reply, a push, a new thread) is
-  marked in the sidebar and judged by a background agent, so the topic's card already carries
-  the verdict when you get to it.
+  marked in the sidebar and judged by one model call of the mod's, so the topic's card already
+  carries the verdict when you get to it; a reviewer's comment that needs you gets its plan from
+  the session's agent, with the whole repository at hand, as you open it.
 - **Fixes you can follow.** In `rework-mr` a fix is made, checked with the repository's own
   hooks and tests, folded into the commit it belongs to and force-pushed on one press. After
   the push, the card lists the steps the topic went through, and **Show fix in hunk** opens

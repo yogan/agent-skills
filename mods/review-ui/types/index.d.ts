@@ -53,6 +53,9 @@ export type ReviewTopic = {
   // viewer's to look at first (it differs from the change agreed, or is complex).
   step?: 'plan' | 'fix' | 'fixed' | 'reply' | 'none'
   proposal?: { says: 'needs' | 'fyi'; outcome?: string | null; plan?: string | null; answer_now?: boolean | null } | null
+  // rework-mr: a topic whose plan is still to be made, the chat's once the person opens it:
+  // the mark of what the reviewers said, so it is asked for once per comment.
+  plan_due?: string | null
   outcome?: string | null
   pushed?: boolean
   diff_url?: string | null
@@ -176,7 +179,7 @@ export type ReviewState = {
   proposals?: ReviewProposal[]
   own_threads?: ReviewOwnThread[]
   // review-mr: whether a round runs (the user opened the inbox, and something is left), the
-  // inbox, and what the mod's background agent has to judge.
+  // inbox, and what the mod has to judge by its model call.
   in_round?: boolean
   // rework-mr: the pass that runs, a plan for every open topic first, then the fixes.
   pass?: 'plan' | 'fix'
@@ -184,7 +187,7 @@ export type ReviewState = {
   judge?: { topics: string[]; own: string[] }
   // The topics the agent was asked to explain, kept by the mod (not the scripts).
   explained?: string[]
-  // The topics the mod's background agent could not judge, kept by the mod.
+  // The topics the mod's model call could not judge, kept by the mod.
   unjudged?: string[]
 }
 
@@ -194,9 +197,11 @@ export type ReviewProposal = {
   why?: string; recommend?: 'merge' | 'separate' | 'link'
 }
 
-// The mod's background agent judging news, and what it was given; `failed`: what it was
-// given and did not store, which the user's opening of it hands to the chat instead.
-export type ReviewJudging = { agentId: string | null; topics: string[]; own: string[]; failed: string[]; at?: number | null; ids?: string[] }
+// The mod's model call judging news, and what it was asked about; `run`: the mod's load that
+// made it, null while none runs (a call made before the mod was loaded again is gone);
+// `failed`: what it was asked about and did not store, which the user's opening of it hands
+// to the chat instead.
+export type ReviewJudging = { run: string | null; topics: string[]; own: string[]; failed: string[] }
 
 // The draft the newest card showed: what a Post press posts, and refuses past.
 export type ReviewCard = { topic: string; draft: string | null }
@@ -280,6 +285,8 @@ declare module 'claude-code' {
       // `running`: a check is asking GitLab now, its time come or the person's sync.
       checks: Shaped<{ last: number | null; next: number | null; failed?: number | null; running?: boolean }>
       judging: Shaped<ReviewJudging>
+      // rework-mr: the plans asked of the chat as their topic came up, `t3@<mark>` each.
+      'plan-asked': Shaped<string[]>
       notified: Shaped<string[]>
       host: Shaped<ReviewHost | null>
       // The topic and draft version of each card a press placed, by its id, as a model's

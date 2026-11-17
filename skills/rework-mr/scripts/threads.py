@@ -58,7 +58,6 @@ import json
 import os
 import re
 import secrets
-import shlex
 import sys
 import time
 
@@ -71,7 +70,7 @@ _REPO_ROOT = os.path.dirname(
 if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
 
-from lib import change as change_of, checks, code_view, critical_manifest, diffsize, fix_refs, focus, hunk, posted, tab, ui  # noqa: E402
+from lib import change as change_of, checks, code_view, critical_manifest, diffsize, fix_refs, focus, hunk, judge, posted, tab, ui  # noqa: E402
 from lib.ui import analysis_heading  # noqa: E402
 from lib.hunk import diff_stat  # noqa: E402
 from lib.cli import iid_option  # noqa: E402
@@ -94,7 +93,6 @@ from lib.gitlab import (
     web_base,
 )
 from lib.mr_common import (
-    SHELL_FORM,
     instant,
     mr_json,
     mr_news,
@@ -1835,6 +1833,9 @@ def state_json(state):
             "step": step_of(state, t),
             # The plan proposed for it, which Agree plan stores without a model turn.
             "proposal": ({k: p.get(k) for k in ("says", "outcome", "plan", "answer_now")} if p else None),
+            # A plan still to be made: the chat makes it once the topic comes up, asked once
+            # for what the reviewers said last (the mod keeps this mark of it).
+            "plan_due": reviewer_mark(state, t) if step_of(state, t) == "plan" and not p else None,
             "outcome": t.get("outcome") or ("fix" if t.get("decision") else None),
             "pushed": bool(t.get("diff_url")),
             "diff_url": t.get("diff_url"),
@@ -2148,7 +2149,7 @@ def render_bodies(state):
 
 # The commands that only read the state: they run alongside any other, since a write is
 # whole or nothing (lib/mr_common.py's `save`). Mirrors findings.py's READ_ONLY.
-READ_ONLY = ("state", "code", "path", "bodies", "plans", "judge-brief")
+READ_ONLY = ("state", "code", "path", "bodies", "plans", "judge-prompt")
 # Runs that take minutes (checks, a push with its hooks) hold the state only to store
 # their result, so a press or an update check is not kept waiting behind them.
 UNHELD = ("push",)
@@ -2161,8 +2162,8 @@ OUTCOMES = ("fix", "reply", "push-back", "question")
 # keeps this skill's two passes inside them: first a plan for every open topic (the PLAN
 # pass), then one topic at a time fixed, pushed and replied to (the FIX pass). Between
 # rounds the update check only takes notes: a reviewer's new thread or reply marks its topic
-# in the sidebar and waits in its inbox, and the mod's background agent prepares a plan for
-# it. Opening any topic starts a round; each decision moves on to the next topic of the pass
+# in the sidebar and waits in its inbox, and the mod's model call sorts it (`judge_prompt`):
+# what needs the user gets its plan from the chat once it comes up. Opening any topic starts a round; each decision moves on to the next topic of the pass
 # that runs, in list order from the one just left, round to the top again, the ones put off
 # for later last. A pass runs until nothing is left in it: a thread arriving during the fix
 # pass waits until that pass is through, and its plan comes up after.
@@ -2465,8 +2466,8 @@ def focus_status(state, t):
 
 
 def proposal_of(state, t):
-    """The plan proposed for `t` on what the reviewers said last (the background agent's or
-    the chat's), or None."""
+    """The plan proposed for `t` on what the reviewers said last (the chat's, or the mod's
+    model call's note of a comment that asks nothing), or None."""
     p = t.get("proposal") or {}
     return p if p and p.get("on") == reviewer_mark(state, t) else None
 
@@ -2622,79 +2623,131 @@ MOD_ENV = "REVIEW_UI_MOD"     # set on the mod's own runs of this script
 
 
 def chat_opens(state, tid):
-    """Note that the model opened `tid` (the opener, or `quote --focus`), so the background
-    agent leaves it to the chat. The mod opens topics too, after a press: those stay the
-    background agent's, since no turn of the model's follows."""
+    """Note that the model opened `tid` (the opener, or `quote --focus`), so the mod's model
+    call leaves it to the chat. The mod opens topics too, after a press: those stay the
+    model call's to sort, since no turn of the model's follows unless the topic needs one."""
     if os.environ.get(MOD_ENV) != "1":
         state["chat_on"] = tid
 
 
+def triaged(state, t):
+    """Whether the model call found that the reviewers' latest words on `t` need the user,
+    so its plan is made in the chat, when the user opens it (`judge_store`)."""
+    return (t.get("triage") or {}).get("on") == reviewer_mark(state, t)
+
+
 def judge_list(state):
-    """What the mod's background agent has to prepare: each topic whose plan is still to be
-    agreed and has no proposal on what the reviewers said last. Not the topic the chat is
-    on: the current one, where the model opened it."""
+    """What the mod has judged by one model call (`judge_prompt`): each topic whose plan is
+    still to be agreed and that nobody has looked at since the reviewers wrote last: no
+    proposal, and not found to need the user. Not the topic the chat is on: the current
+    one, where the model opened it."""
     cur = state.get("focus")
     chat = cur if cur and cur == state.get("chat_on") else None
     return {"topics": [t["id"] for t in state["topics"]
                        if t["id"] != chat and step_of(state, t) == "plan"
-                       and not proposal_of(state, t)], "own": []}
+                       and not proposal_of(state, t) and not triaged(state, t)], "own": []}
 
 
+def _whole_threads(state, t):
+    """`t`'s threads whole, every comment in order with who wrote it. Mirrors findings.py's
+    `_whole_threads`, whose people are the other way round: there the user reviews."""
+    out = []
+    for th in t["thread_ids"]:
+        x = state["threads"].get(th) or {}
+        out.append(f"Thread on {_loc_of(x)}" + (" (resolved)" if x.get("resolved") else "") + ":")
+        out += [f"{'The user (the MR author)' if n.get('mine') else first_name(n.get('author')) or 'A reviewer'}: "
+                f"{(n.get('body') or '').strip()}" for n in x.get("notes") or []]
+        out.append("")
+    return "\n".join(out).strip()
 
-def judge_brief(state, iid, skip=()):
-    """The task the mod hands its background agent: each topic with what to read and what to
-    store, but those in `skip` (what an agent failed on before, which the chat takes
-    instead). The agent stores and shows nothing; the user finds its proposal on the topic's
-    card when they get to it."""
+
+def _loc_of(x):
+    return f"{x['file']}:{x.get('line') or ''}" if x.get("file") else MR_LEVEL
+
+
+def judge_prompt(state, iid, skip=()):
+    """The prompt the mod sends to the session's model when reviewers wrote, with the
+    material for every topic in it, and what each was asked on (lib/judge.py): None where
+    nothing is to judge. `skip`: the topics a call failed on before. The call only sorts:
+    what asks nothing of the user, what keeps an agreed plan, and what needs the user, whose
+    plan the chat makes with the whole repository at hand once the user opens it."""
     todo = [x for x in judge_list(state)["topics"] if x not in skip]
     if not todo:
-        return ""
-    run_as = (f"cd {shlex.quote(os.getcwd())} && python3 {shlex.quote(os.path.abspath(__file__))}"
-              f" <command> --iid {iid}")
-    out = [f"Reviewers wrote on GitLab MR !{iid}, which the user authored and is reworking. "
-           "Prepare each topic below in the background, so its card carries your proposal by "
-           "the time the user opens it. Nobody reads your replies: only what you store counts.",
-           "", f"Run every command as `{run_as}`. {SHELL_FORM} Store with `propose` (or "
-           "`keep-plan`, below) and nothing else: never "
-           "edit code, commit, push, post, resolve, or show anything (no `set`, `agree`, "
-           "`post`, `open`, `later`, `quote --focus`, `show_topic`).", "",
-           "Read first: `bodies` (every open thread, first and last comment), then `quote <t>` "
-           "for each topic (the code the comment is on and the whole thread), then the code "
-           "itself where the point needs it.", "",
-           "For each, store one proposal:",
-           "`propose <t> --says needs|fyi --why '<1–3 English sentences: what the reviewer "
-           "asks, what the code does, and the trade-off; end on a **Recommendation:** "
-           "sentence>' [--outcome fix|reply|push-back|"
-           "question --plan '<one sentence: what to do>'] [--answer-now] [--change - <<'CHANGE_EOF' … "
-           "CHANGE_EOF]`.",
-           "`fyi` where the comment asks nothing of the user (a thank-you, an OK on what they "
-           "did): no outcome then. `needs` takes `--outcome` and `--plan`; `fix` for every "
-           "plan that changes code, a push-back that also adds a comment included, the others "
-           "for a plan that only replies. For a small fix "
-           "add `--change -` with the change on stdin as `@@ <path>:<first>-<last>` blocks, "
-           "each followed by the new lines that replace those lines (the diff is built from the "
-           "file; never write one by hand): the idea and its main change at its origin (the "
-           "rename where the name is defined, the new parameter in the signature), never the "
-           "call sites it adapts. `--answer-now` on a fix whose plan answers the reviewer ahead "
-           "of it: they asked a question, or offered options and the plan picks one. In `--why` and `--plan` alike, every identifier, path and value "
-           "in backticks: the card draws them as code.", ""]
-    if any((topic_for(state, tid) or {}).get("decision") for tid in todo):
-        out += ["A topic marked *plan agreed* had its plan agreed before the reviewer wrote "
-                "again (`plans` shows it). Where the new comment only acknowledges it (a "
-                "thank-you, \"sounds good\") and changes nothing about that plan, keep it: "
-                "`keep-plan <t> --why '<one English sentence: what they said>'`. Where it "
-                "asks for anything else, propose anew as above.", ""]
+        return None
+    out = [f"Reviewers wrote on GitLab merge request !{iid}, which the user wrote and is now "
+           "reworking. Sort each topic below by what the reviewers' latest words ask of the "
+           "user.", "", judge.RULES, ""]
+    items, agreed = {}, []
     for tid in todo:
         t = topic_for(state, tid)
+        items[tid] = reviewer_mark(state, t)
         kinds, _ = news_of(state, t)
-        # A topic keeps its name: what the reviewer wrote last is news, told in its story.
-        title = "" if t.get("summary") else (" (it has no name yet: add `--summary '<English "
-                                             "one-liner: the point the reviewer first made>'`)")
-        what = "wrote again in its thread" if kinds == ["reply"] else "opened it"
-        agreed = " (plan agreed)" if t.get("decision") else ""
-        out.append(f"- {tid}{title}{agreed}: {first_name(_thread_by(state, tid)) or 'a reviewer'} {what}.")
-    out += ["", "End with one line saying what you stored."]
-    return "\n".join(out)
+        who = first_name(_thread_by(state, tid)) or "a reviewer"
+        out.append(f"## {tid}: {t.get('summary') or 'no name yet (*give summary*)'}")
+        out += ["", f"What happened: {who} " + ("wrote again in its thread." if kinds == ["reply"]
+                                                 else "opened it.")]
+        if t.get("decision"):
+            agreed.append(tid)
+            out += ["Its plan was agreed before the reviewer wrote again:",
+                    judge.fenced("plan", "\n".join(x for x in (t.get("decision"), t.get("plan")) if x))]
+        x = state["threads"].get((t["thread_ids"] or [None])[0]) or {}
+        code = render_code_context(x, drift=False)
+        if code:
+            out += ["", judge.fenced("code", code)]
+        out += ["", judge.fenced("thread", _whole_threads(state, t)), ""]
+    out += ["## How to answer", "",
+            'For each topic: {"says": "fyi" | "needs", "why": "<one or two English sentences: '
+            "what the reviewer said>\"}. `fyi` where the latest words ask nothing of the user (a "
+            "thank-you, an OK on what they did); `needs` for anything they have to answer, "
+            "decide or change: the user then works out the plan with the code at hand, so say "
+            "no more than what is asked."
+            + (" A topic whose plan was agreed before (" + ", ".join(agreed) + ") takes "
+               "`\"says\": \"keep\"` where the new comment only acknowledges that plan (\"sounds "
+               "good\", a thank-you) and changes nothing about it; anything else asked there is "
+               "`needs`." if agreed else "")
+            + " A topic marked *give summary* also takes \"summary\": \"<an English one-liner: "
+            "the point the reviewer first made>\". Every identifier, path and value in "
+            "backticks: the card draws them as code.", "", judge.ANSWER]
+    return judge.request("\n".join(out), items, todo)
+
+
+def judge_fresh(state, item, mark):
+    """Whether a topic `judge_prompt` asked about still waits for that judgment: no reviewer
+    wrote since, and the chat has not taken it up meanwhile."""
+    t = topic_for(state, item)
+    return bool(t) and item in judge_list(state)["topics"] and reviewer_mark(state, t) == mark
+
+
+def judge_store(state, item, a):
+    """Store the model's answer `a` for topic `item`: a proposal that asks nothing of the
+    user, the agreed plan kept, or the mark that it needs the user; judge.Malformed where it
+    is not the answer asked for."""
+    t = topic_for(state, item)
+    says = judge.choice(a, "says", ("fyi", "needs", "keep") if t.get("decision") else ("fyi", "needs"))
+    why = judge.text(a, "why", required=says != "needs")
+    summary = judge.text(a, "summary", required=not t.get("summary"))
+    if summary and not t.get("summary"):
+        t["summary"] = summary          # named once, as `propose` names a topic
+    mark = reviewer_mark(state, t)
+    if says == "keep":
+        keep_plan(state, t, why)
+    elif says == "fyi":
+        t["proposal"] = {"says": "fyi", "why": why, "outcome": None, "plan": None,
+                         "change": None, "on": mark}
+    else:
+        t["triage"] = {"says": "needs", "on": mark}
+
+
+def keep_plan(state, t, why):
+    """`t`'s agreed plan holds after the reviewer's new comment, which only acknowledged it."""
+    # What the reviewers said is the plan's again: it holds until they write once more.
+    # The card names who wrote since the plan (or its last keep), never the agent's reason.
+    who, at = wrote_since_plan(state, t)
+    t["plan_on"] = reviewer_mark(state, t)
+    t["kept"] = {"why": why, "on": t["plan_on"], "who": who, "at": at}
+    if (t.get("reply_for") or {}).get("plan") == draft_round(state, t)["plan"]:
+        # The reviewer only acknowledged the plan: the reply drafted under it holds too.
+        t["reply_for"] = draft_round(state, t)
 
 
 def _fenced_diff(text):
@@ -3384,9 +3437,13 @@ def main():
             pp.add_argument("--push", type=int, help="with --pushed: which of its pushes "
                             "(1-based, as the card counts them), not the latest")
     sub.add_parser("refresh").add_argument("--iid", type=int)
-    pjb = sub.add_parser("judge-brief")
+    pjb = sub.add_parser("judge-prompt", help="the mod's: the prompt that sorts the reviewers' "
+                         "new comments in one model call, as JSON; nothing where nothing waits")
     pjb.add_argument("--iid", type=int)
-    pjb.add_argument("--skip", action="append", default=[], help="a topic an agent failed on")
+    pjb.add_argument("--skip", action="append", default=[], help="a topic a call failed on")
+    sub.add_parser("judge-store", help="the mod's: store that call's answers, the request on "
+                   "stdin; prints what was stored and what was left unjudged").add_argument(
+        "--iid", type=int)
     ppd = sub.add_parser("posted", help="the user posted <t>'s reply by hand: the draft and "
                          "what went up, to compare; `--ok` once it holds")
     ppd.add_argument("topic")
@@ -3399,13 +3456,13 @@ def main():
     ppd.add_argument("--apply", action="store_true",
                      help="on the user's press only: edit the posted reply on GitLab to the "
                      "corrected version, and record it")
-    pkp = sub.add_parser("keep-plan", help="the background agent's: <t>'s agreed plan holds "
-                         "after the reviewer's new comment, which only acknowledged it")
+    pkp = sub.add_parser("keep-plan", help="<t>'s agreed plan holds after the reviewer's new "
+                         "comment, which only acknowledged it")
     pkp.add_argument("topic")
     pkp.add_argument("--iid", type=int)
     pkp.add_argument("--why", required=True, help="one sentence: what the reviewer said")
-    pq2 = sub.add_parser("propose", help="store a proposed plan for <t> (the background "
-                         "agent's, or yours before showing the topic)")
+    pq2 = sub.add_parser("propose", help="store a proposed plan for <t>, before showing the "
+                         "topic")
     pq2.add_argument("topic")
     pq2.add_argument("--iid", type=int)
     pq2.add_argument("--says", choices=("needs", "fyi"), required=True)
@@ -3419,8 +3476,6 @@ def main():
     pq2.add_argument("--answer-now", action="store_true",
                      help="with a fix: the plan answers the reviewer now, ahead of the fix "
                      "(they asked a question or offered options)")
-    pq2.add_argument("--unless-judged", action="store_true",
-                     help="keep a proposal stored since on the same comments")
     ppo = sub.add_parser("post", help="on a person's press only: post <t>'s reply")
     ppo.add_argument("topic")
     ppo.add_argument("--iid", type=int)
@@ -3736,21 +3791,11 @@ def main():
     elif cmd == "keep-plan":
         t = topic_for(state, args.topic) or die(f"no topic {args.topic}")
         t.get("decision") or die(f"{tref(args.topic)} has no agreed plan to keep: `propose` one")
-        # What the reviewers said is the plan's again: it holds until they write once more.
-        # The card names who wrote since the plan (or its last keep), never the agent's reason.
-        who, at = wrote_since_plan(state, t)
-        t["plan_on"] = reviewer_mark(state, t)
-        t["kept"] = {"why": args.why, "on": t["plan_on"], "who": who, "at": at}
-        if (t.get("reply_for") or {}).get("plan") == draft_round(state, t)["plan"]:
-            # The reviewer only acknowledged the plan: the reply drafted under it holds too.
-            t["reply_for"] = draft_round(state, t)
+        keep_plan(state, t, args.why)
         save(path, state)
         print(f"kept the plan for {tref(args.topic)}")
     elif cmd == "propose":
         t = topic_for(state, args.topic) or die(f"no topic {args.topic}")
-        if args.unless_judged and proposal_of(state, t):
-            print(f"{tref(args.topic)} has a proposal on these comments already; kept it")
-            return
         if args.says == "needs" and not (args.outcome and args.plan):
             die("a proposal that needs the user takes --outcome and --plan")
         change = sys.stdin.read() if args.change == "-" else args.change
@@ -3773,8 +3818,13 @@ def main():
             t["proposal"]["answer_now"] = True
         save(path, state)
         print(f"stored the proposal for {tref(args.topic)}")
-    elif cmd == "judge-brief":
-        print(judge_brief(state, iid, args.skip))
+    elif cmd == "judge-prompt":
+        print(json.dumps(judge_prompt(state, iid, args.skip) or {}))
+    elif cmd == "judge-store":
+        done = judge.store_request(sys.stdin.read(), lambda i, m: judge_fresh(state, i, m),
+                                   lambda i, a: judge_store(state, i, a))
+        save(path, state)
+        print(json.dumps(done))
     elif cmd == "post":
         early = early_reply(topic_for(state, args.topic) or {}) and not args.fixed
         url = post_reply(state, ctx, iid, args.topic, args.expect, args.fixed, args.resolve)

@@ -94,7 +94,6 @@ import io
 import json
 import os
 import re
-import shlex
 import shutil
 import subprocess
 import sys
@@ -109,14 +108,14 @@ _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(
 if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
 
-from lib import code_view, critical_manifest, diffsize, fix_refs, focus, hunk, posted, tab, ui  # noqa: E402
+from lib import code_view, critical_manifest, diffsize, fix_refs, focus, hunk, judge, posted, tab, ui  # noqa: E402
 from lib.fences import (LINK_ICON, SUGGESTION_INFO, YOU, block_lang, fence, suggestion_reach,  # noqa: E402
                         diff_info, lang_for, note_md, quoted_fence, segments,
                         suggestion_diff, when_of)
 from lib.cli import iid_option  # noqa: E402
 from lib.gitlab import (api, api_post, approve, context, current_user, die, file_at, mr_base, remember_user,  # noqa: E402
                         mr_head, mr_object, mr_status, mr_view, versions, web_base)
-from lib.mr_common import (DEFAULT_LANG, LANG_GIVEAWAYS, MR_LEVEL, SHELL_FORM, first_name, instant, people,  # noqa: E402
+from lib.mr_common import (DEFAULT_LANG, LANG_GIVEAWAYS, MR_LEVEL, first_name, instant, people,  # noqa: E402
                            hold, load, mr_json, mr_news, topic_handles, loc_md, num, plain_text, reads_as,
                            short_summary, state_file, topic_for, tref)
 from lib.mr_common import save as _save                          # noqa: E402
@@ -2015,14 +2014,8 @@ def verdict_word(state, t, v):
     return word if mine else word.replace("Your comment", "The comment")
 
 
-def store_verdict(state, t, says, text, did=None, asked=None, unless_judged=False, case=None,
-                  unrelated=False):
-    """Store the agent's judgment of the answer standing on `t`. With `unless_judged` (the
-    background agent's way), nothing is stored where that answer already has a verdict: the
-    agent judges what was unjudged when it started, and one stored since, by the user's
-    Analyse more in the chat, is the newer word. Returns whether it stored."""
-    if unless_judged and verdict_of(state, t):
-        return False
+def store_verdict(state, t, says, text, did=None, asked=None, case=None, unrelated=False):
+    """Store the agent's judgment of the answer standing on `t`."""
     if asked:
         t["asked"] = asked              # about the comment, so it outlasts every answer
     t["verdict"] = {"says": says, "text": text, "did": did, "on": answer_mark(state, t)}
@@ -2032,7 +2025,6 @@ def store_verdict(state, t, says, text, did=None, asked=None, unless_judged=Fals
     if says == "wait":
         t["draft"] = None               # waiting is choosing not to send it
         t.pop("draft_on", None)
-    return True
 
 
 def verdict_of(state, t):
@@ -2202,96 +2194,198 @@ def inbox_json(state, topics):
 
 
 def judge_list(state):
-    """What the mod's background agent has to judge: the topics whose answer has no verdict
-    yet, and the user's own comments not matched to a topic yet."""
+    """What the mod has judged by one model call (`judge_prompt`): the topics whose answer has
+    no verdict yet, and the user's own comments not matched to a topic yet."""
     return {"topics": needs_verdict(state),
             "own": unsettled_own(state) if state.get("own_review") in ("done", "skipped") else []}
 
 
+def _said_by(state, n):
+    """Who wrote a comment, as the judging prompt names them: the user, the MR's author, or
+    another reviewer by name."""
+    if n.get("mine"):
+        return "The user (reviewer)"
+    name = first_name(n.get("author")) or "Someone"
+    return f"{name} (the MR's author)" if name == first_name(state.get("author")) else name
 
-def judge_brief(state, iid, skip=()):
-    """The task the mod hands its background agent when the update check found news: each
-    item with what to read and what to store, but those in `skip` (what an agent failed on
-    before, which the chat takes instead). The agent stores and shows nothing; the user
-    finds its judgment on the topic's card when they get to it."""
+
+def _whole_threads(state, t):
+    """`t`'s threads whole, every comment in order with who wrote it: what was agreed halfway
+    through a thread counts as much as its last word."""
+    out = []
+    for th in t["thread_ids"]:
+        x = state["threads"].get(th) or {}
+        notes = x.get("notes") or [{"author": x.get("author"), "body": x.get("body"),
+                                    "mine": x.get("mine")}]
+        out.append(f"Thread on {_thread_loc(x) or MR_LEVEL}"
+                   + (" (resolved)" if x.get("resolved") else "") + ":")
+        out += [f"{_said_by(state, n)}: {(n.get('body') or '').strip()}" for n in notes]
+        out.append("")
+    return "\n".join(out).strip()
+
+
+# What each kind of item is answered with, as the prompt says it once for all of its kind.
+_ANSWER_FORMS = {
+    "answer": (
+        'An author\'s answer: {"verdict": "settled" | "more" | "wait", "did": "<one sentence: '
+        'what the author did, e.g. Pushed the `await` on the commented line; no reply.>", "text": '
+        '"<1-3 sentences: whether it holds and why>"}. `settled` when the comment is answered. '
+        '`more` adds "case": "not-fixed" | "partly-fixed" | "fix-wrong" | "comment-wrong" (the '
+        "last when the author did as asked and the comment itself was mistaken), and its text "
+        "ends on one next step (a reply asking for X, accepting a follow-up MR, ...). `wait` when "
+        "the author agreed and the change is still to come: the topic goes back to waiting on "
+        "them. An item marked *give asked* also takes \"asked\": \"<one sentence: the problem the "
+        "comment raised and what it asked for, e.g. `save()` drops its promise, so a failed write "
+        "goes unnoticed; asked for an `await`.>\". An item marked *push beside its lines* may add "
+        "\"unrelated_push\": true where the pushed change has nothing to do with the comment (with "
+        "`wait` where nothing else answers it)."),
+    "peer": (
+        'Another reviewer\'s thread, theirs to settle, which the user watches: {"view": "fyi" | '
+        '"needs", "why": "<1-2 sentences: what it says>"}. `needs` only when it is the user\'s '
+        "to answer: a question to them (\"advice\": \"reply\"), a point that repeats or "
+        "contradicts one of their topics (\"advice\": \"merge\", \"into\": \"<that topic's id>\"), "
+        "or one they would want to clarify (\"advice\": \"reply\"); its why then ends on a "
+        "`**Recommendation:**` sentence saying why. Anything else is `fyi`. An item marked *give "
+        "summary* also takes \"summary\": \"<an English one-liner naming its point>\"."),
+    "own": (
+        "A comment the user posted on GitLab themselves since the topics started: compare it with "
+        "the topics by what it says (file and line are a hint, never the test). The same point "
+        'as a topic: {"into": "<topic id>", "summary": "<English one-liner>", "why": "<what both '
+        'say, and where they differ>", "recommend": "merge" | "separate" | "link"} (merge is the '
+        "usual answer; link when it is that topic's own draft, posted by hand). A point of its "
+        'own: {"into": null, "summary": "<English one-liner>"}.'),
+}
+
+
+def judge_prompt(state, ctx, iid, skip=()):
+    """The prompt the mod sends to the session's model when the update check found news,
+    with the material for every item in it, and what each item was asked on (lib/judge.py):
+    None where nothing is to judge. `skip`: the items a call failed on before, which the chat
+    takes instead."""
     j = {k: [x for x in v if x not in skip] for k, v in judge_list(state).items()}
     if not (j["topics"] or j["own"]):
-        return ""
-    run = (f"cd {shlex.quote(os.getcwd())} && python3 {shlex.quote(os.path.abspath(__file__))}"
-           f" <command> --iid {iid}")
-    out = [f"New activity arrived on GitLab MR !{iid} while the user reviews it. Judge it in "
-           "the background, so that each topic's card carries your judgment by the time the "
-           "user opens it. Nobody reads your replies: only what you store counts.",
-           "", f"Run every command as `{run}`. {SHELL_FORM} Store with the commands below "
-           "and nothing else: never post, resolve, open or show anything (no `post`, `resolve`, `open`, "
-           "`later`, `quote --focus`, `show_topic`).", ""]
-    if j["topics"]:
-        out += [f"Read first, once for all of them: `bodies {' '.join(j['topics'])}` (their "
-                "threads whole, every comment in order: what was agreed in the middle of a "
-                "thread counts as much as its last word), then `diff <t>` for each topic below "
-                "that says so: what the author changed since the comment is what a verdict is "
-                "about.", ""]
+        return None
+    author = first_name(state.get("author")) or "the author"
+    out = [f"News arrived on GitLab merge request !{iid}, which the user is reviewing: {author} "
+           "wrote the merge request, the user is its reviewer. Judge each item below, so that "
+           "its card carries your judgment when the user opens it.", "", judge.RULES, ""]
+    items, kinds = {}, {"answer": [], "peer": [], "own": []}
     for tid in j["topics"]:
         t = topic_for(state, tid)
+        items[tid] = answer_mark(state, t)
+        name = t.get("summary") if t.get("summary") and not needs_title(state, t) else None
         if peer_waiting(state, t):
-            who = t.get("by") or "someone else"
-            title = "" if t.get("summary") and not t.get("needs_title") else \
-                " --summary '<English one-liner>'"
-            out += [f"- {tid}: a thread by {who}, new or with new comments. It is {who}'s to "
-                    f"settle; the user watches it and steps in only when they have something "
-                    f"to add. Read it (in `bodies`) and store your view: `peer {tid} fyi|needs "
-                    f"--unless-judged{title} --why '<1–2 English sentences: what it says>'`. "
-                    f"`needs` only when it is the user's to answer: a question to them, a point "
-                    f"that repeats or contradicts one of their topics (`--advice merge --into "
-                    f"<t>`), or one they would want to clarify (`--advice reply`); its --why then "
-                    f"ends on a `**Recommendation:**` sentence saying why. Anything else is `fyi`."]
+            kinds["peer"].append(tid)
+            who = t.get("by") or "another reviewer"
+            out += [f"## {tid}: a thread by {who}, new or with new comments"
+                    + ("" if name else " (*give summary*)"), "",
+                    judge.fenced("thread", _whole_threads(state, t)), ""]
             continue
-        kinds, _ = news_of(state, t)
-        # The recap is about the comment, so a topic keeps the one it was first given.
-        asked = "" if t.get("asked") else (
-            " --asked '<one sentence: the problem the comment raised and what it asked for, "
-            "e.g. `save()` drops its promise, so a failed write goes unnoticed; asked for an "
-            "`await`.>'")
+        kinds["answer"].append(tid)
+        kinds_now, _ = news_of(state, t)
         near = bool((pushed_of(state, t) or {}).get("near"))
         what = (("the author pushed a change to the file the comment is on, though not to its "
                  "lines, and said nothing: it may answer the comment from beside it, or be "
                  "about something else" if near else
                  "the author pushed a change to the lines the comment is on, and said nothing")
-                if kinds == ["push"] else
+                if kinds_now == ["push"] else
                 "the author answered, and pushed a change to the comment's file (not its lines)"
                 if near else "the author answered")
-        out += [f"- {tid} ({t.get('summary') or 'no summary'}): {what}. Read the thread "
-                f"(in `bodies`) and the change since the comment (`diff {tid}`), then store "
-                f"one verdict: `verdict {tid} settled|more|wait --unless-judged{asked} --did '<one sentence: what "
-                f"the author did, e.g. Pushed the `await` on the commented line; no reply.>' "
-                f"--text '<1–3 sentences: whether it holds and why>'`. Code in backticks (`persistDb`, "
-                f"`await persistDb(comment)`), as a card shows it as code. `settled` when the "
-                f"comment is answered; `more` takes `--case not-fixed|partly-fixed|fix-wrong|"
-                f"comment-wrong` (the last when the author did as asked and the comment itself "
-                f"was mistaken) and ends its text on one next step (a reply asking for X, "
-                f"accepting a follow-up MR, …). `wait` when the author agreed and the change is still to "
-                f"come: the topic goes back to waiting on them, until they push or write."
-                + (" Where the pushed change has nothing to do with the comment, add "
-                   "`--unrelated-push` (and `wait`, where nothing else answers it): the push is "
-                   "then no longer listed as the topic's." if near else "")]
-    if j["own"]:
-        out += ["", "Comments the user posted on GitLab themselves since the topics started. "
-                "Compare each with the topics by what it says (file and line are a hint, never "
-                "the test), and settle every one:",
-                "`propose <discussion_id> --into <t> --summary '<English one-liner>' --why "
-                "'<what both say, and where they differ>' [--recommend separate|link]` for the "
-                "same point as a topic (merge is the default; `link` when it is that topic's own "
-                "draft, posted by hand), or `add --thread <discussion_id> --source human --file "
-                "<f> --line <n> --summary '<English one-liner>'` for a point of its own.", ""]
-        for tid in j["own"]:
-            x = state["threads"].get(tid) or {}
-            out.append(f"- {tid} at {_thread_loc(x) or MR_LEVEL}: "
-                       f"{(plain_text(x.get('body')) or '').strip()[:400]}")
-        out += ["", "The topics:"] + [f"- {t['id']} {topic_status(state, t)}: "
-                                      f"{t.get('summary') or ''}" for t in state["topics"]
-                                      if topic_status(state, t) != "dropped"]
-    out += ["", "End with one line saying what you stored."]
-    return "\n".join(out)
+        marks = [m for m, on in (("give asked", not t.get("asked")),
+                                 ("push beside its lines", near)) if on]
+        out += [f"## {tid}: {name or 'an answered comment'}"
+                + (f" (*{'*, *'.join(marks)}*)" if marks else ""), "",
+                f"What happened: {what}."]
+        if t.get("asked"):
+            out.append(f"What the comment asked, as recapped before: {t['asked']}")
+        out += ["", judge.fenced("thread", _whole_threads(state, t)), "",
+                "What the author changed in the comment's file since the comment:",
+                judge.fenced("diff", render_topic_diff(state, ctx, iid, tid)), ""]
+    for th in j["own"]:
+        kinds["own"].append(th)
+        items[th] = "own"
+        x = state["threads"].get(th) or {}
+        out += [f"## {th}: a comment of the user's own at {_thread_loc(x) or MR_LEVEL}", "",
+                judge.fenced("comment", plain_text(x.get("body")) or ""), ""]
+    if kinds["peer"] or kinds["own"]:
+        out += ["## The user's topics, for comparison", ""] + [
+            f"- {t['id']} ({topic_status(state, t)}): {t.get('summary') or ''}"
+            for t in state["topics"] if topic_status(state, t) != "dropped"] + [""]
+    out += ["## How to answer", "",
+            "Every text in English, every identifier, path and value in it in backticks: the "
+            "card draws them as code.", ""]
+    out += [f"- {', '.join(ids)}: {_ANSWER_FORMS[k]}" for k, ids in kinds.items() if ids]
+    out += ["", judge.ANSWER]
+    return judge.request("\n".join(out), items, j["topics"], j["own"])
+
+
+def judge_fresh(state, item, mark):
+    """Whether an item `judge_prompt` asked about still waits for that judgment: nothing new
+    in its thread since, and nothing stored in the chat meanwhile."""
+    j = judge_list(state)
+    if item in j["own"]:
+        return mark == "own"
+    t = topic_for(state, item) if item in j["topics"] else None
+    return bool(t) and answer_mark(state, t) == mark
+
+
+def judge_store(state, ctx, iid, item, a):
+    """Store the model's answer `a` for `item`, as the chat's own commands store it (`verdict`,
+    `peer`, `propose`, `add --thread`); judge.Malformed where it is not the answer asked for."""
+    if item in unsettled_own(state):
+        x = state["threads"][item]
+        summary = judge.text(a, "summary")
+        if a.get("into") is None:
+            t = add_topic(state, source="human", summary=summary, file=x.get("file"),
+                          line=x.get("line"))
+            attach_thread(state, t, item, ctx, iid)
+            return
+        into = a.get("into")
+        if not (isinstance(into, str) and topic_for(state, into)):
+            raise judge.Malformed(f"no topic {into!r}")
+        propose_match(state, item, into, summary, judge.text(a, "why"),
+                      judge.choice(a, "recommend", ("merge", "separate", "link"), required=False)
+                      or "merge")
+        return
+    t = topic_for(state, item)
+    if peer_waiting(state, t):
+        says = judge.choice(a, "view", ("fyi", "needs"))
+        named = bool(t.get("summary")) and not needs_title(state, t)
+        summary = judge.text(a, "summary", required=not named)
+        advice = "seen" if says == "fyi" else judge.choice(a, "advice", ("reply", "merge", "seen"))
+        into = a.get("into") if advice == "merge" else None
+        if advice == "merge" and not (isinstance(into, str) and into != item and topic_for(state, into)):
+            raise judge.Malformed(f"no topic {into!r} to merge into")
+        store_peer_view(state, t, says, judge.text(a, "why"), summary, advice, into)
+        return
+    says = judge.choice(a, "verdict", ("settled", "more", "wait"))
+    did, text = judge.text(a, "did"), judge.text(a, "text")
+    asked = judge.text(a, "asked", required=not t.get("asked"))
+    case = judge.choice(a, "case", tuple(VERDICT_CASES)) if says == "more" else None
+    near = bool((pushed_of(state, t) or {}).get("near"))
+    store_verdict(state, t, says, text, did=did, asked=None if t.get("asked") else asked,
+                  case=case, unrelated=near and a.get("unrelated_push") is True)
+
+
+def propose_match(state, thread, into, summary, why, recommend):
+    """Offer the user to merge their own comment `thread` into topic `into`: the band asks."""
+    props = [p for p in state.get("proposals") or [] if p["thread"] != thread]
+    state["proposals"] = props + [{"thread": thread, "into": into, "summary": summary,
+                                   "why": why, "recommend": recommend}]
+
+
+def store_peer_view(state, t, says, why, summary, advice, into):
+    """The agent's view of another reviewer's thread `t`: for the user's information, or
+    needs them, with what to do."""
+    if summary and (needs_title(state, t) or not t.get("summary")):
+        # Named once: a thread that has a name keeps it, whatever was written in it since
+        # (mirrors threads.py's `propose`).
+        t["summary"], t["needs_title"] = summary, False
+    if why:
+        t["why"] = why
+    t["peer_view"] = {"says": says, "advice": advice,
+                      "into": into if advice == "merge" else None,
+                      "on": answer_mark(state, t)}
 
 
 def state_json(state):
@@ -3477,7 +3571,7 @@ def set_lang(slug, lang):
 
 # The commands that only read the state: they run alongside any other, since a write is
 # whole or nothing (`save`). The mod asks for these after every view and on every move.
-READ_ONLY = ("state", "code", "draft", "path", "begun", "proposal", "bodies", "judge-brief", "hunk-show")
+READ_ONLY = ("state", "code", "draft", "path", "begun", "proposal", "bodies", "judge-prompt", "hunk-show")
 
 
 def resolve_state(args):
@@ -3657,10 +3751,14 @@ def main():
                         "push and start a round, at <t> or the first topic that needs you")
     pn.add_argument("topic", nargs="?")
     pn.add_argument("--iid", type=int)
-    pjb = sub.add_parser("judge-brief", help="the mod's background agent's task: the answers "
-                         "to judge and the comments to match")
+    pjb = sub.add_parser("judge-prompt", help="the mod's: the prompt that judges the news (the "
+                         "answers, other reviewers' threads, the user's own comments) in one "
+                         "model call, as JSON; nothing where nothing waits")
     pjb.add_argument("--iid", type=int)
-    pjb.add_argument("--skip", action="append", default=[], help="an item an agent failed on")
+    pjb.add_argument("--skip", action="append", default=[], help="an item a call failed on")
+    sub.add_parser("judge-store", help="the mod's: store that call's answers, the request on "
+                   "stdin; prints what was stored and what was left unjudged").add_argument(
+        "--iid", type=int)
     ph = sub.add_parser("hunk-show", help="on a person's press: the author's push that changed "
                         "<t>'s lines, kept in git, in the diff viewer")
     ph.add_argument("topic")
@@ -3727,8 +3825,6 @@ def main():
     pp.add_argument("--advice", choices=("reply", "merge", "seen"),
                     help="with `needs`: what the user should do (the band's first button)")
     pp.add_argument("--into", help="with --advice merge: the topic the thread repeats")
-    pp.add_argument("--unless-judged", action="store_true",
-                    help="store nothing where the thread already has a view")
     pp.add_argument("--iid", type=int)
 
     pv = sub.add_parser("verdict", help="the agent's judgment of the author's answer on <t>, "
@@ -3740,8 +3836,6 @@ def main():
                     "kept with the topic, so given once")
     pv.add_argument("--case", choices=tuple(VERDICT_CASES),
                     help="with `more`: what is wrong, the verdict's heading on the card")
-    pv.add_argument("--unless-judged", action="store_true",
-                    help="store nothing where the answer already has a verdict")
     pv.add_argument("--unrelated-push", action="store_true",
                     help="the push noted for changing the comment's file has nothing to do "
                     "with the comment: it is no longer listed as the topic's")
@@ -4197,10 +4291,7 @@ def main():
     elif cmd == "propose":
         topic_for(state, args.into) or die(f"no topic {args.into}")
         args.thread in state["threads"] or die(f"no thread {args.thread} (see `candidates`)")
-        props = [p for p in state.get("proposals") or [] if p["thread"] != args.thread]
-        state["proposals"] = props + [{"thread": args.thread, "into": args.into,
-                                       "summary": args.summary, "why": args.why,
-                                       "recommend": args.recommend}]
+        propose_match(state, args.thread, args.into, args.summary, args.why, args.recommend)
         save(path, state)
         print(f"proposed: {args.thread} → {tref(args.into)}")
     elif cmd == "follow-up":
@@ -4292,8 +4383,13 @@ def main():
             start_round(state)
         save(path, state)
         print(json.dumps(state_json(state)))
-    elif cmd == "judge-brief":
-        print(judge_brief(state, iid, args.skip))
+    elif cmd == "judge-prompt":
+        print(json.dumps(judge_prompt(state, ctx, iid, args.skip) or {}))
+    elif cmd == "judge-store":
+        done = judge.store_request(sys.stdin.read(), lambda i, m: judge_fresh(state, i, m),
+                                   lambda i, a: judge_store(state, ctx, iid, i, a))
+        save(path, state)
+        print(json.dumps(done))
     elif cmd == "verdict":
         t = topic_for(state, args.topic) or die(f"no topic {args.topic}")
         if not (t["thread_ids"] and topic_status(state, t) == "needs_ack"):
@@ -4301,11 +4397,9 @@ def main():
         if args.case and args.says != "more":
             die("--case names what is wrong with an answer, so it goes with `more` only")
         before = verdict_of(state, t)
-        if not store_verdict(state, t, args.says, args.text, did=args.did, asked=args.asked,
-                             unless_judged=args.unless_judged, case=args.case,
-                             unrelated=args.unrelated_push):
-            die(f"{tref(args.topic)}: already judged since you started; nothing stored")
-        if before and ui.drawn() and not args.unless_judged and args.says != "wait":
+        store_verdict(state, t, args.says, args.text, did=args.did, asked=args.asked,
+                      case=args.case, unrelated=args.unrelated_push)
+        if before and ui.drawn() and args.says != "wait":
             # A verdict the chat changed (Analyse more): the topic's card is up already, so
             # this shows what changed and nothing else.
             save(path, state)
@@ -4319,20 +4413,10 @@ def main():
         t = topic_for(state, args.topic) or die(f"no topic {args.topic}")
         peer_waiting(state, t) or die(f"{tref(args.topic)} is no other reviewer's thread that "
                                       "waits on the user")
-        if args.unless_judged and peer_view_of(state, t):
-            die(f"{tref(args.topic)}: already judged since you started; nothing stored")
         advice = "seen" if args.says == "fyi" else (args.advice or "reply")
         if advice == "merge" and not topic_for(state, args.into or ""):
             die("--advice merge needs --into <topic>, the topic it repeats")
-        if args.summary and (needs_title(state, t) or not t.get("summary")):
-            # Named once: a thread that has a name keeps it, whatever was written in it since
-            # (mirrors threads.py's `propose`).
-            t["summary"], t["needs_title"] = args.summary, False
-        if args.why:
-            t["why"] = args.why
-        t["peer_view"] = {"says": args.says, "advice": advice,
-                          "into": args.into if advice == "merge" else None,
-                          "on": answer_mark(state, t)}
+        store_peer_view(state, t, args.says, args.why, args.summary, advice, args.into)
         save(path, state)
         print(f"{tref(args.topic)}: {args.says}")
     elif cmd == "resolve":

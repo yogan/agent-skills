@@ -211,8 +211,11 @@ The two passes stay: a plan for every open topic, then the fixes one topic at a 
 runs them as **rounds** from the sidebar: agreeing a plan moves on to the next topic without
 one; once every open topic has a plan, the fix pass runs; a thread that arrives during the fix
 pass waits until that pass is through, then its plan comes up. A reviewer's new thread or reply
-lands in the sidebar's News box (say "News", as the sidebar heads it, never "the inbox"), and a background agent of the mod's prepares a plan for it
-(`judge-brief`), so its card carries one by the time the user opens it.
+lands in the sidebar's News box (say "News", as the sidebar heads it, never "the inbox"), and one model call of the mod's sorts it
+(`judge-prompt`, `judge-store`): a comment that asks nothing of the user gets its card's note, one
+that only acknowledges an agreed plan keeps that plan, and one that needs the user comes up
+with no proposal. As such a topic comes up, the mod asks you for its plan (`Research <t> and
+propose a plan…`): research it with the code at hand, store the proposal and show the topic.
 
 - **A topic you researched gets a proposal before it is shown.** Store your analysis and plan,
   then show the topic: the card carries both, and the user agrees with a press.
@@ -585,7 +588,7 @@ Per topic:
 `glab` authenticated; run on (or pass `--iid N` for) the MR branch. `python3`. (`clip.sh` copies to the clipboard via macOS `pbcopy`; where that is missing the
 copy is skipped — the draft is in the chat message and `p` posts through `glab` regardless.)
 `threads.py` subcommands: sync·todo·present·bodies·plans·quote·url·reply·reply-view [--refine]·set·merge·path·hunk-notes·hunk-close·checks·verify·push
-(where cards are drawn also propose·judge-brief, and the mod's own refresh·state·code·open·leave·agree·wait·post·hunk-show, and push on the person's press)
+(where cards are drawn also propose·keep-plan, and the mod's own judge-prompt·judge-store·refresh·state·code·open·leave·agree·wait·post·hunk-show, and push on the person's press)
 (plus `change-view`/`diff-view`, the bodies of the two .sh views below).
 **Optional: `hunk` (a terminal diff viewer) inside `tmux`.** With both, a topic's working
 diff opens in a tmux window of its own — placed directly right of the one you are talking

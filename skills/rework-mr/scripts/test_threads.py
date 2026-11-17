@@ -2080,10 +2080,15 @@ class TestRounds(unittest.TestCase):
         T.start_round(state)
         topics = T.state_json(state)["topics"]
         self.assertEqual([x["news"] for x in topics], [["thread"], ["thread"]])
-        # The current topic is the chat's, once the model opened it; the rest the
-        # background agent's.
+        # The current topic is the chat's, once the model opened it; the rest the mod's
+        # model call's.
         T.chat_opens(state, "t1")
         self.assertEqual(T.judge_list(state)["topics"], ["t2"])
+        # Found to need the user: its plan is the chat's, once the user opens it.
+        state["topics"][1]["triage"] = {"says": "needs", "on": T.reviewer_mark(state, state["topics"][1])}
+        self.assertEqual(T.judge_list(state)["topics"], [])
+        self.assertIsNotNone(T.state_json(state)["topics"][1]["plan_due"])
+        state["topics"][1].pop("triage")
         t2 = state["topics"][1]
         t2["proposal"] = {"says": "needs", "outcome": "fix", "plan": "p", "why": "w",
                           "on": T.reviewer_mark(state, t2)}
@@ -2139,8 +2144,8 @@ class TestRounds(unittest.TestCase):
         with mock.patch.dict(os.environ, {"REVIEW_UI_DRAWN": "0"}):
             self.assertIsNone(T.proposal_note(self.state(1), "t1"))
 
-    def test_a_topic_a_press_brought_up_is_the_background_agents(self):
-        # A press moved on before the background agent started: nobody else prepares it.
+    def test_a_topic_a_press_brought_up_is_the_model_call_s(self):
+        # A press moved on before the model call was made: nobody else sorts it.
         state = self.state(3)
         T.start_round(state)
         T.chat_opens(state, "t1")
@@ -2700,8 +2705,8 @@ class TestReplyAheadOfTheFix(unittest.TestCase):
 
 
 class TestKeepPlan(unittest.TestCase):
-    """A reviewer's answer to an agreed plan ("sounds good") is judged in the background:
-    one that only acknowledges it keeps the plan, so the topic is not planned again."""
+    """A reviewer's answer to an agreed plan ("sounds good") is judged by the mod's model
+    call: one that only acknowledges it keeps the plan, so the topic is not planned again."""
 
     def setUp(self):
         mock.patch.dict(os.environ, {"REVIEW_UI_DRAWN": "1"}).start()
@@ -2724,35 +2729,72 @@ class TestKeepPlan(unittest.TestCase):
                 mock.patch("sys.stdout", new_callable=io.StringIO):
             T.main()
 
+    def judge(self, reply, skip=()):
+        """The mod's model call on what waits: its prompt, and what `reply` stored."""
+        with mock.patch.object(T, "render_code_context", return_value="(the code)"):
+            ask = T.judge_prompt(self.state, 1, skip) or {}
+        text = reply if isinstance(reply, str) else json.dumps(reply)
+        done = T.judge.store_all(ask.get("items") or {}, text, lambda i, m: T.judge_fresh(self.state, i, m),
+                                 lambda i, a: T.judge_store(self.state, i, a))
+        return ask.get("prompt", ""), done
+
     def test_a_proposal_names_a_topic_once_and_never_renames_it(self):
         """The background check rewrote every title to the latest news ("Miriam now asks to
         revert the rename"): the topic no longer said which thread it was."""
         self.assertEqual(self.t1["summary"], "point 1")
-        self.assertNotIn("--summary", T.judge_brief(self.state, 1))      # named: not asked for one
+        self.assertNotIn("(*give summary*)", self.judge("")[0])             # named: not asked for one
         self.run_cli("propose", "t1", "--says", "fyi", "--why", "w", "--summary", "Robin now agrees")
         self.assertEqual(self.t1["summary"], "point 1")
         self.t1["summary"] = None
         self.t1.pop("proposal")
-        self.assertIn("it has no name yet", T.judge_brief(self.state, 1))
-        self.run_cli("propose", "t1", "--says", "fyi", "--why", "w", "--summary", "Cache key ignores locale")
+        self.assertIn("(*give summary*)", self.judge("")[0])
+        self.judge({"t1": {"says": "fyi", "why": "Thanks.", "summary": "Cache key ignores locale"}})
         self.assertEqual(self.t1["summary"], "Cache key ignores locale")
 
-    def test_the_brief_gives_commands_that_run_in_zsh_as_written(self):
-        """Recorded agents kept `python3 <script>` in a variable (zsh runs no command from one)
-        and passed texts full of backticks in double quotes, where the shell runs them."""
-        self.t1["summary"] = None
-        brief = T.judge_brief(self.state, 1)
-        self.assertIn(T.SHELL_FORM, brief)
-        self.assertNotIn('"<', brief)                     # every text template single-quoted
-        self.assertIn("--why '<", brief)
+    def test_a_comment_that_asks_nothing_is_a_proposal_to_take_note_of(self):
+        _, done = self.judge({"t1": {"says": "fyi", "why": "Robin thanks you."}})
+        self.assertEqual(done["stored"], ["t1"])
+        self.assertEqual(T.proposal_of(self.state, self.t1)["says"], "fyi")
+        self.assertEqual(T.judge_list(self.state)["topics"], [])
+
+    def test_a_comment_that_needs_you_leaves_its_plan_to_the_chat(self):
+        """The call has no tools and reads no code beyond the comment's: a plan is made in
+        the chat, with the whole repository at hand, once the user opens the topic."""
+        _, done = self.judge({"t1": {"says": "needs"}})
+        self.assertEqual(done["stored"], ["t1"])
+        self.assertIsNone(T.proposal_of(self.state, self.t1))
+        self.assertEqual(T.judge_list(self.state)["topics"], [])            # not asked again
+        self.assertEqual(T.state_json(self.state)["topics"][0]["plan_due"], T.reviewer_mark(self.state, self.t1))
+        self.assertIn("propose t1", T.proposal_note(self.state, "t1"))     # the chat's, on showing it
+        self.state["threads"]["d1"]["notes"].append(
+            {"author": "Robin", "body": "Also the list key.", "at": "2026-02-02T00:00:00Z", "mine": False})
+        self.assertEqual(T.judge_list(self.state)["topics"], ["t1"])        # a new comment: asked anew
+
+    def test_anything_short_of_a_whole_answer_leaves_the_topic_unjudged(self):
+        for reply in ("", "Robin agrees.", {"t2": {"says": "fyi", "why": "w"}}, {"t1": {"says": "fyi"}},
+                      {"t1": {"says": "maybe", "why": "w"}}, {"t1": ["fyi"]}):
+            with self.subTest(reply=reply):
+                self.assertEqual(self.judge(reply)[1]["unjudged"], ["t1"])
+                self.assertEqual(T.step_of(self.state, self.t1), "plan")
+                self.assertNotIn("triage", self.t1)
+
+    def test_only_an_agreed_plan_can_be_kept(self):
+        del self.t1["decision"]
+        prompt, done = self.judge({"t1": {"says": "keep", "why": "Thanks."}})
+        self.assertEqual(done["unjudged"], ["t1"])
+        self.assertNotIn("\"says\": \"keep\"", prompt)
 
     def test_an_acknowledgement_keeps_the_plan_and_the_card_says_so(self):
         self.assertEqual(T.step_of(self.state, self.t1), "plan")            # the reviewer wrote
         self.assertEqual(T.judge_list(self.state)["topics"], ["t1"])
-        self.assertIn("t1 (plan agreed)", T.judge_brief(self.state, 1))
-        self.assertIn("keep-plan <t>", T.judge_brief(self.state, 1))
-        self.assertEqual(T.judge_brief(self.state, 1, skip=["t1"]), "")   # an agent failed on it
-        self.run_cli("keep-plan", "t1", "--why", "Robin agreed with the plan.")
+        prompt, _ = self.judge("", skip=["t1"])
+        self.assertEqual(prompt, "")                                       # a call failed on it
+        prompt, done = self.judge({"t1": {"says": "keep", "why": "Robin agreed with the plan."}})
+        self.assertIn("Its plan was agreed before the reviewer wrote again:", prompt)
+        self.assertIn("<plan>", prompt)
+        self.assertIn("Robin: Sounds good!", prompt)
+        self.assertIn("<code>\n(the code)\n</code>", prompt)
+        self.assertEqual(done["stored"], ["t1"])
         self.assertEqual(T.step_of(self.state, self.t1), "fix")
         self.assertEqual(T.judge_list(self.state)["topics"], [])
         card = T.render_quote(self.state, "t1")

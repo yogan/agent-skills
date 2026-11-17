@@ -356,11 +356,11 @@ first topic's card itself, headed by a line that says there was nothing to match
 your whole reply: end the turn on it, with no text of your own; the user reads the topic on it.
 
 **Comments the user posts later**, once the topics run, are the mod's to handle: its update
-check notes them, a background agent of its own matches them (`propose` / `add --thread`), and
+check notes them, a model call of its own matches them (as `propose` / `add --thread` would), and
 the user answers each match with a press when their round reaches it.
 
 **Another reviewer's thread, or the MR author's own,** becomes a topic by itself on a sync;
-the mod's background agent gives it a title and a view (see *Rounds and verdicts*). The user
+the mod's model call gives it a title and a view (see *Rounds and verdicts*). The user
 watches it: `Seen` marks it read, `Reply…` is theirs to write, and `Merge into tN` is there
 where you advised it.
 
@@ -649,9 +649,9 @@ The mod's update check only takes notes: news (an author's answer, a push that c
 a comment is on, another reviewer's thread, a comment of the user's own) marks its topic in the
 sidebar's News box and never becomes the current topic by itself. The user opens a **round** from
 that box or a row; each decision moves to the next topic that needs them, and `Later` puts one off.
-The news is judged before the user gets to it, by a background agent the mod starts with
-`findings.py judge-brief`: its judgments are stored with each topic, so a card a press brings
-up carries one.
+The news is judged before the user gets to it, by one model call the mod makes itself
+(`findings.py judge-prompt`, then `judge-store`): its judgments are stored with each topic, so a
+card a press brings up carries one.
 
 A topic whose news could not be judged that way reaches you as the user's `Judge the news on
 <t>` prompt. Read the whole thread (`bodies <t>`) and the change since the comment (`diff <t>`), store the
