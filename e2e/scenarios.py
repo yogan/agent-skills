@@ -83,14 +83,15 @@ WORK = "~/src/agent-skills-demo"
 SCROLL = "~/src/agent-skills-demo-scroll"     # MR !4's checkout (fixture.py's MR4_DIR)
 # A scrollbar's thumb as the sidebar draws it: a full cell, or one filled from the bottom.
 THUMB = Expect(r"[█▁▂▃▄▅▆▇]", region="panel", wait=30)
-# How many of MR !4's topics carry a proposal, asked until all do or 14 minutes have passed.
-EVERY_PROPOSAL = ("python3 -c \"import json,os,time\n"
-                  "p=os.path.expanduser('~/.claude/rework-mr/$SLUG--mr4/topics.json')\n"
-                  "for _ in range(168):\n"
-                  " ts=json.load(open(p))['topics']; n=sum(1 for t in ts if t.get('proposal'))\n"
-                  " if n==len(ts): break\n"
-                  " time.sleep(5)\n"
-                  "print(n,'of',len(ts))\"")
+# How many of MR !4's topics are judged (a proposal, or found to need the person), asked until
+# all are or 14 minutes have passed.
+EVERY_JUDGED = ("python3 -c \"import json,os,time\n"
+                "p=os.path.expanduser('~/.claude/rework-mr/$SLUG--mr4/topics.json')\n"
+                "for _ in range(168):\n"
+                " ts=json.load(open(p))['topics']; n=sum(1 for t in ts if t.get('proposal') or t.get('triage'))\n"
+                " if n==len(ts): break\n"
+                " time.sleep(5)\n"
+                "print(n,'of',len(ts))\"")
 
 # MR !3 worked through to the merge; a part of it is a scenario of its own (`try-pushed-fix`).
 REWORK_FIX = [
@@ -456,7 +457,7 @@ SCENARIOS = [
             Panel(True),
             Expect(APPROVED, region="panel", wait=60),
             press('Agree plan'),
-            # t2's proposal is the background agent's: its card needs no turn of the model's.
+            # t2 needs the person: its plan is the chat's, asked for as its card comes up.
             Expect(current("t2"), region="panel", wait=180),
             Expect(button('Agree plan'), region="screen", wait=180),
             press('Agree plan'),
@@ -507,12 +508,9 @@ SCENARIOS = [
             Expect(current("t1"), region="panel", wait=60),
             # Thirteen topics in a quarter of the sidebar: the list has its scrollbar.
             THUMB,
-            # The background agent proposes a plan for each other topic: waited for, so the
-            # session left to try has every card's proposal, and the recording all of them.
-            Check(EVERY_PROPOSAL, r"^13 of 13$", timeout=900),
-            # Its last reply after the last proposal: a recording cut before it has the agent
-            # ask a replay for one more reply than it holds.
-            Expect(r"general-purpose", region="screen", absent=True, wait=180),
+            # The mod's model call sorts every other topic: waited for, so the session left
+            # to try has its sidebar settled, and the recording the call.
+            Check(EVERY_JUDGED, r"^13 of 13$", timeout=900),
         ]),
 
     Scenario(
