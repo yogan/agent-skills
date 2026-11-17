@@ -193,9 +193,12 @@ apply; `run_tests.py` has always run its files this way.
 
 The two rules that keep it honest:
 
-- **Fan out at the innermost place that has independent work**, not at every level. Nesting
-  pools puts more subprocesses on the machine than it has cores and spends the win on
-  contention.
+- **Fan out wherever there is independent work, and cap the subprocesses, not the levels.**
+  Nesting is safe because every subprocess takes one of `lib/parallel.py`'s places
+  (`parallel.slot()`) just around the call, which holds the machine to one subprocess per
+  core however many levels fan out. Never hold a place around anything that itself fans out:
+  the places then fill with work waiting for places. (Drawing the ten sample diagrams at once,
+  each running its own layout search, took a full check from about 42s to about 26s.)
 - **Order is not optional.** Results are zipped back against the inputs that produced them
   almost everywhere here, so `parallel.each` preserves it — and a batch split across workers
   reassembles in the order it was given.
