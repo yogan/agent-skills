@@ -250,18 +250,30 @@ class TestQuit(Rig):
             self.run_hook("start", data={"source": "startup", "session_title": "kept plan"})
         self.assertEqual(self.t.name, f"{R} kept plan")
 
-    def test_the_hook_at_quit_leaves_the_tmux_work_to_a_detached_restore(self):
-        # Claude Code cancels a SessionEnd hook that is slow while it quits.
+    def test_the_hook_at_quit_returns_before_any_tmux_call_or_process(self):
+        # Claude Code cancels a SessionEnd hook still running 1.5s into its quit, and on a
+        # loaded Mac one process started (a tmux call, another Python) costs a large part
+        # of that: the hook forks before any, and its copy gives the window back.
         self.run_hook("start", data={"source": "startup", "cwd": ROOT})
+        calls = []
+        tmux = mock.Mock(side_effect=lambda argv: calls.append(argv) or self.t(argv))
         env = {"TMUX_PANE": "%999999", **self.OUTER}
-        with mock.patch.object(tab, "spawn") as spawn:
-            hook.main(["end"], env, io.StringIO(json.dumps({"reason": "prompt_input_exit"})),
-                      detach=True)
+        end = json.dumps({"reason": "prompt_input_exit"})
+        # The test's own stdout and stderr are not given up: os's calls are recorded instead.
+        setsid = mock.patch.object(hook.os, "setsid").start()
+        mock.patch.object(hook.os, "open", return_value=99).start()
+        dup2 = mock.patch.object(hook.os, "dup2").start()
+        with mock.patch.object(tab, "_run", tmux), mock.patch.object(hook.os, "fork", return_value=4242):
+            self.assertEqual(hook.main(["end"], env, io.StringIO(end), detach=True), 0)
+        self.assertEqual(calls, [])
+        self.later.assert_not_called()
         self.assertEqual(self.t.name, f"{R} {os.path.basename(ROOT)}")
-        argv, = spawn.call_args.args
-        self.assertEqual(argv[-1], "restore")
-        hook.main(["restore"], spawn.call_args.kwargs["env"], io.StringIO(""))
+        self.assertEqual(sorted(c.args[1] for c in dup2.call_args_list), [0, 1, 2])
+        with mock.patch.object(hook.os, "fork", return_value=0):
+            hook.main(["end"], env, io.StringIO(end), detach=True)
+        setsid.assert_called_once()
         self.assertEqual(self.t.opts["automatic-rename"], "1")
+        self.assertNotIn(tab.OWNER_OPT, self.t.opts)
 
     def test_a_window_the_user_named_is_untouched_from_start_to_end(self):
         self.t.opts.update(window_name="srv", **{"automatic-rename": "0"})
