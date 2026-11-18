@@ -13,7 +13,8 @@
                   (`tab.take`), in its output; settings.json starts it only where a name
                   waits for this pane
     end           the SessionEnd hook: a skill's hold on the tab ends, and a window this
-                  named gets back what it had before Claude Code started in it
+                  named gets back what it had before Claude Code started in it, from a
+                  detached `restore`, since a slow SessionEnd hook is cancelled at quit
 
 `start` and `end` act only for the Claude Code process the window belongs to: a `claude`
 run inside a session's pane fires them too, with its own session and pid.
@@ -42,7 +43,7 @@ def repo_name(cwd):
     return os.path.basename(top or os.path.abspath(cwd or "."))
 
 
-def main(argv, env=None, stdin=None):
+def main(argv, env=None, stdin=None, detach=False):
     env = os.environ if env is None else env
     pane = env.get("TMUX_PANE")
     if env.get(tab.SHORTENER_ENV) or env.get(tab.OFF_ENV) or not argv:
@@ -71,8 +72,17 @@ def main(argv, env=None, stdin=None):
         tab.show(pane, tab.AGENT_ICON, argv[1])
     elif cmd == "end":
         # A /clear ends one session and starts the next in the same process: nothing to undo.
-        if data.get("reason") != "clear":
+        if data.get("reason") == "clear":
+            return 0
+        if detach:
+            # Claude Code gives a SessionEnd hook little time while it quits, and cancels a
+            # slower one: the tmux calls that give the window back run on after it.
+            tab.spawn([sys.executable, os.path.realpath(__file__), "restore"],
+                      env={**env, "TMUX_PANE": pane})
+        else:
             tab.restore(pane)
+    elif cmd == "restore":
+        tab.restore(pane)
     elif cmd == "prompt":
         # The name a skill asked for: only a hook's output can name the session.
         name = tab.take_session_name(pane)
@@ -97,4 +107,4 @@ def main(argv, env=None, stdin=None):
 
 
 if __name__ == "__main__":
-    sys.exit(main(sys.argv[1:]))
+    sys.exit(main(sys.argv[1:], detach=True))

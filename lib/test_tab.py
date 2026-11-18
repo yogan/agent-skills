@@ -250,6 +250,19 @@ class TestQuit(Rig):
             self.run_hook("start", data={"source": "startup", "session_title": "kept plan"})
         self.assertEqual(self.t.name, f"{R} kept plan")
 
+    def test_the_hook_at_quit_leaves_the_tmux_work_to_a_detached_restore(self):
+        # Claude Code cancels a SessionEnd hook that is slow while it quits.
+        self.run_hook("start", data={"source": "startup", "cwd": ROOT})
+        env = {"TMUX_PANE": "%999999", **self.OUTER}
+        with mock.patch.object(tab, "spawn") as spawn:
+            hook.main(["end"], env, io.StringIO(json.dumps({"reason": "prompt_input_exit"})),
+                      detach=True)
+        self.assertEqual(self.t.name, f"{R} {os.path.basename(ROOT)}")
+        argv, = spawn.call_args.args
+        self.assertEqual(argv[-1], "restore")
+        hook.main(["restore"], spawn.call_args.kwargs["env"], io.StringIO(""))
+        self.assertEqual(self.t.opts["automatic-rename"], "1")
+
     def test_a_window_the_user_named_is_untouched_from_start_to_end(self):
         self.t.opts.update(window_name="srv", **{"automatic-rename": "0"})
         self.run_hook("start", data={"source": "startup", "cwd": ROOT})
