@@ -1937,8 +1937,12 @@ def check_pushes(state, ctx, iid, base):
                 w.update(sha=p["to"], first=a, last=b)
             t.pop("pushed", None)
             p = None
-        if w["sha"] == head or (p and p.get("to") == head) or (not p and topic_status(state, t) != "open"):
-            continue                      # nothing since, or this push is noted already
+        # Nothing since, this push noted already, or a topic closed here. One the author
+        # answered in the thread since counts: a reply and the push it speaks of often
+        # arrive between two checks, and the push is the topic's all the same.
+        if (w["sha"] == head or (p and p.get("to") == head)
+                or (not p and topic_status(state, t) not in ("open", "needs_ack"))):
+            continue
         diffs = compare(w["sha"], head)
         if diffs is None:
             continue

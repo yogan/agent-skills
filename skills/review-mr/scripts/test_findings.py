@@ -2726,6 +2726,20 @@ class TestAnswersInCode(unittest.TestCase):
             self.push(TouchedDiff.REWRITE)
         self.assertEqual(self.t["pushed"]["at"], at)
 
+    def test_a_push_and_a_reply_between_two_checks_name_the_topic_both(self):
+        """The author pushed the fix and answered in the thread, both before the next check:
+        the push is the topic's all the same, and its line in the News box names it."""
+        self.state["threads"]["d1"].update(awaiting="you", last_at="2026-11-05T10:00:00Z")
+        self.assertEqual(F.topic_status(self.state, self.t), "needs_ack")
+        self.push(TouchedDiff.REWRITE)
+        self.assertEqual(self.state["pushes"][0]["topics"], ["t1"])
+        self.assertIn("pushed", self.t)
+
+    def test_a_push_to_a_closed_topic_s_lines_is_no_news_of_it(self):
+        self.t["state"] = "acked"
+        self.push(TouchedDiff.REWRITE)
+        self.assertEqual(self.state["pushes"][0]["topics"], [])
+
     def test_a_review_the_check_never_saw_compares_from_the_last_review(self):
         del self.state["seen_head"]
         self.state["last_reviewed_head"] = "c0"
