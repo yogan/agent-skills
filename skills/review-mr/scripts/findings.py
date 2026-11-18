@@ -109,7 +109,7 @@ if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
 
 from lib import code_view, critical_manifest, diffsize, fix_refs, focus, hunk, judge, posted, tab, ui  # noqa: E402
-from lib.fences import (LINK_ICON, SUGGESTION_INFO, YOU, block_lang, fence, suggestion_reach,  # noqa: E402
+from lib.fences import (LINK_ICON, SUGGESTION_INFO, YOU, block_lang, fence, suggestion_reach, suggestion_repeat,  # noqa: E402
                         diff_info, lang_for, note_md, quoted_fence, segments,
                         suggestion_diff, when_of)
 from lib.cli import iid_option  # noqa: E402
@@ -1021,6 +1021,29 @@ def suggestion_warning(state, t, body):
                 "what it replaces (a paragraph, a section), set the range to cover all of "
                 "it, and store the draft again:\n"
                 + "\n".join(f"{i:>5} | {source[i - 1]}" for i in shown))
+    return None
+
+
+def suggestion_repeat_refusal(state, t, body):
+    """Why a draft is not stored, where a ```suggestion's replacement ends on the very line
+    just past its range: applied, that line would stand twice. Said where the draft is
+    stored, on stderr, so it reaches the agent even through a `| tail` that cuts a warning,
+    and the draft is fixed before anyone reads it. The lines around it go with it."""
+    path, anchor = _draft_target(state, t, bool(t["thread_ids"]))
+    source = _suggestion_source(state, body, path)
+    for kind, info, seg in segments((body or "").splitlines()):
+        if kind == "text":
+            continue
+        line = suggestion_repeat("\n".join(seg), info, anchor, source)
+        if not line:
+            continue
+        shown = range(max(1, int(anchor) - 2), min(len(source), line + 2) + 1)
+        return (f"draft not stored: the ```{info} block ends on line {line} as it stands, "
+                f"which its range (counted from line {anchor}) leaves in place, so it would "
+                f"stand twice once applied. Widen the range to take line {line} in "
+                f"(```suggestion:-{SUGGESTION_INFO.match(info).group(1) or 0}+{line - int(anchor)}), "
+                "or end the replacement before it, and store the "
+                "draft again:\n" + "\n".join(f"{i:>5} | {source[i - 1]}" for i in shown))
     return None
 
 
@@ -4272,6 +4295,9 @@ def main():
             t["state"] = args.state
             # Stamped so a later author note can be recognised as newer than the ack.
             t["acked_at"] = now_iso() if args.state == "acked" else None
+        refused = suggestion_repeat_refusal(state, t, args.draft) if args.draft is not None else None
+        if refused:
+            die(refused)
         fld = {"start-sha": "start_sha"}
         for f in ("kind", "severity", "source", "summary", "file", "line",
                   "draft", "note", "ticket", "start-sha", "why"):

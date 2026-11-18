@@ -265,6 +265,31 @@ def suggestion_reach(content, info, anchor, source):
     return lo, hi, f"suggestion:-{n - lo}+{hi - n}"
 
 
+def suggestion_repeat(content, info, anchor, source):
+    """The line just past a GitLab ```suggestion's range, as its number in the file, where
+    the replacement ends on that very line; None otherwise, or where it cannot be told.
+
+    Applied, such a suggestion leaves that line twice: once as its replacement's last line,
+    once where it stood. Unlike `suggestion_reach`, which weighs likeness, this is exact, so
+    it can refuse a draft rather than warn: a line of code repeated is almost never meant.
+    A line too short to say anything (a brace, `);`) is never taken for one."""
+    m = SUGGESTION_INFO.match(info or "")
+    if not m or source is None or anchor is None:
+        return None
+    try:
+        n, below = int(anchor), int(m.group(2) or 0)
+    except (TypeError, ValueError):
+        return None
+    after = n + below + 1
+    new = [ln for ln in content.splitlines() if ln.strip()]
+    if not new or not 1 <= after <= len(source):
+        return None
+    last, there = new[-1].rstrip(), source[after - 1].rstrip()
+    if last != there or len(there.strip()) < 4 or not re.search(r"\w", there):
+        return None
+    return after
+
+
 def _indented_runs(seg):
     """Split a prose run into [(kind, lines)] where kind is "text" or "code".
 

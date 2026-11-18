@@ -3140,6 +3140,50 @@ class TestSuggestionWarning(unittest.TestCase):
         self.assertIsNone(self.warn("```suggestion:-1+1\n### Auth on the socket\n\nThe socket needs a token.\n```"))
 
 
+class TestSuggestionRepeat(unittest.TestCase):
+    """A suggestion whose replacement ends on the line right after its range leaves that line
+    twice once applied: the draft is not stored, and the agent is told why and where."""
+
+    SRC = ["  try {", "    const { user } = requireAuth(cookies);", "    return HttpResponse.json(user);",
+           "  } catch (error) {"]
+    BODY = ("Could this answer 401?\n\n```suggestion\n    const { user, error } = requireAuth(cookies);\n"
+            "    if (error) return HttpResponse.json({ message: error }, { status: 401 });\n"
+            "    return HttpResponse.json(user);\n```")
+
+    def set_draft(self, body):
+        state = {"iid": 1, "threads": {}, "topics": [{"id": "t4", "thread_ids": [], "file": "auth.ts", "line": 2}]}
+        with patch.dict(os.environ, {"REVIEW_UI_DRAWN": "1"}), \
+                patch.object(F, "resolve_state", return_value=(CTX, 1, "/s", state)), \
+                patch.object(F, "_suggestion_source", return_value=self.SRC), \
+                patch.object(F, "current_user"), patch.object(F, "sync"), patch.object(F, "fetch_threads"), \
+                patch.object(F, "save") as save, patch.object(F.ui, "record"), \
+                patch.object(sys, "argv", ["findings.py", "set", "t4", "--draft", body, "--iid", "1"]), \
+                redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()) as err:
+            try:
+                F.main()
+                code = 0
+            except SystemExit as e:
+                code = e.code
+        return code, err.getvalue(), state["topics"][0].get("draft"), save
+
+    def test_a_replacement_ending_on_the_line_after_its_range_is_refused(self):
+        code, err, draft, save = self.set_draft(self.BODY)
+        self.assertNotEqual(code, 0)
+        self.assertIsNone(draft)
+        save.assert_not_called()
+        self.assertIn("ends on line 3", err)
+        self.assertIn("suggestion:-0+1", err)
+        self.assertIn("    3 |     return HttpResponse.json(user);", err)
+
+    def test_a_range_that_takes_the_line_in_is_stored(self):
+        code, _, draft, _ = self.set_draft(self.BODY.replace("```suggestion", "```suggestion:-0+1"))
+        self.assertEqual(code, 0)
+        self.assertIn("suggestion:-0+1", draft)
+
+    def test_a_brace_repeated_is_no_reason(self):
+        self.assertIsNone(F.suggestion_repeat("x = 1\n  }", "suggestion", 1, ["y = 1", "  }"]))
+
+
 class TestFollowUpPostedByHand(unittest.TestCase):
     """A follow-up the user posted by hand is checked against its draft like a comment: the
     note it compares and corrects is the user's newest in the thread, not the first."""
