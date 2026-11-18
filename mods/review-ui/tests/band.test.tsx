@@ -2,7 +2,7 @@ import type { On } from 'claude-code'
 import type { Engine } from 'claude-code/testing'
 import { expect, mock, test } from 'claude-code/testing'
 import { inboxMark } from '../hooks/panel.ts'
-import { buttonsFor, CI_PROMPT, endOf, iconOf, inboxOf, isMergeWatched, judgingOf, proposePrompt, untilOf } from '../hooks/review.ts'
+import { buttonsFor, CI_PROMPT, endOf, iconOf, inboxOf, isMergeWatched, judgingOf, proposePrompt, sentenceOf, untilOf } from '../hooks/review.ts'
 
 // The test runtime's timer, which the engine's types leave out (a mod has no timers of its own).
 declare const setTimeout: (run: () => void, ms: number) => unknown
@@ -1649,12 +1649,17 @@ test('with every topic handled, the band says the review waits and the sidebar s
   const panel = await $.ui.mount({ ...PANEL, surface: 'terminal' })
   expect(await panel.find({ type: 'Text', text: '2 topics wait on the author' })).toBeDefined()
   // Before the first tick no check is scheduled: nothing says one.
-  expect(await panel.find({ type: 'Text', text: /next check|–/ })).toBeUndefined()
+  expect(await panel.find({ type: 'Text', text: /next check|–/i })).toBeUndefined()
   await panel.press({ key: 'check-now' })
   expect(w.ran.map(r => r.argv[2])).toContain('refresh')
   // When GitLab is asked next is said from now, the news lines keep their clock times.
   expect(await panel.find({ type: 'Text', text: /checked/ })).toBeUndefined()
   await panel.unmount()
+})
+
+test('a status line starts with a capital, but for a topic handle', () => {
+  expect([sentenceOf('merged t2 into t3'), sentenceOf('t4: opened the fix'), sentenceOf('Checking GitLab')])
+    .toEqual(['Merged t2 into t3', 't4: opened the fix', 'Checking GitLab'])
 })
 
 test('the next check is said from now: whole minutes, then seconds, then now', () => {
@@ -2867,13 +2872,13 @@ test('an error in the band goes once another card comes up', async ($, on) => {
   await openReview($, w, view('t1'))
   const band = await mountStep($, 'terminal')
   await band.press({ key: 'keep-waiting' })                 // fails: the band says why
-  expect(await band.find({ type: 'Text', text: /nope/ })).toBeDefined()
+  expect(await band.find({ type: 'Text', text: /nope/i })).toBeDefined()
   await band.unmount()
   const pane = await $.ui.mount({ ...PANEL, surface: 'terminal' })
   await pane.press({ key: 'row-t2' })                      // another card comes up
   await pane.unmount()
   const again = await $.ui.mount({ ...BAND, surface: 'terminal' })
-  expect(await again.find({ type: 'Text', text: /nope/ })).toBeUndefined()
+  expect(await again.find({ type: 'Text', text: /nope/i })).toBeUndefined()
   await again.unmount()
 })
 
@@ -3140,7 +3145,7 @@ test('a merged MR says so at the top and in its box, with what still matters and
   expect(texts).toContain('its draft was never posted')
   // GitLab is not asked again: no word of checks, no key for one.
   expect(await panel.find({ type: 'Button', key: 'check-now' })).toBeUndefined()
-  expect(texts.some(t => /^(checked|next check) /.test(t))).toBe(false)
+  expect(texts.some(t => /^(checked|next check) /i.test(t))).toBe(false)
   await panel.unmount()
 })
 

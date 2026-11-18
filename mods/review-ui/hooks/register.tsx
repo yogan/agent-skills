@@ -3,7 +3,7 @@ import type { EngineInterface, Register } from 'claude-code'
 
 import type { ReviewCard, ReviewHost, ReviewOutcome, ReviewJudging, ReviewNote, ReviewNotice, ReviewPlaced, ReviewSession, ReviewState } from '../types'
 import {
-  argsFor, buttonsFor, checkPrompt, judgingOf, endOf, hasNext, iconOf, isHeldTopic, isMergeWatched, isSettledHere, outcomeOf, earlyPrompt, proposePrompt, replyPrompt, clockOf, currentTopic, didText, inboxOf, noteForModel, stepOf, untilOf, waitingLine, waitingOf,
+  argsFor, buttonsFor, checkPrompt, judgingOf, endOf, hasNext, iconOf, isHeldTopic, isMergeWatched, isSettledHere, outcomeOf, earlyPrompt, proposePrompt, replyPrompt, clockOf, currentTopic, didText, inboxOf, sentenceOf, noteForModel, stepOf, untilOf, waitingLine, waitingOf,
   type BandButton, type InboxLine,
 } from './review.ts'
 import {
@@ -122,7 +122,7 @@ const CHECK_TICKS = 6
 // out the minutes a person's session waits.
 let tickMs = TICK_MS
 // What the band says while the person's `check now` runs.
-const CHECKING = 'checking GitLab'
+const CHECKING = 'Checking GitLab'
 // The background of the lines a comment is about: a muted blue, under which every syntax
 // colour still reads on a dark theme.
 const DISCUSSED_BG = '#2b3a55'
@@ -743,7 +743,7 @@ const openRound = async ($: EngineInterface, s: ReviewSession, tid?: string) => 
 }
 
 const startRound = async ($: EngineInterface, s: ReviewSession, tid?: string) => {
-  await update($, busy, () => 'opening')
+  await update($, busy, () => 'Opening')
   try {
     const ran = await runScript($, s, ['open', ...(tid ? [tid] : [])])
     if (ran.exitCode !== 0) {
@@ -3061,10 +3061,10 @@ export const register: Register = on => {
     // runs says so, whether the person asked for it or its time came.
     const due = when.next ? untilOf(when.next, now) : null
     const next = due === 'now' ? null : due
-    const checkText = busyCheck ? ['checking GitLab…']
+    const checkText = busyCheck ? [`${CHECKING}…`]
       : when.failed
-        ? [`check failed ${clock(when.failed)}`, next && `retry ${next}`]
-        : [next && `next check ${next}`]
+        ? [`Check failed ${clock(when.failed)}`, next && `retry ${next}`]
+        : [next && `Next check ${next}`]
     const checkWords = checkText.filter(Boolean).join(' · ')
     const checkLine = checkWords && (when.failed
       ? <Text color="yellow">{checkWords}</Text>
@@ -3322,8 +3322,8 @@ export const register: Register = on => {
           </Box>
         </Box>
         {said && !doing && (!waiting || failed) && (said.url
-          ? outcomeLine($, e, { text: said.text, url: said.url, label: said.label })
-          : <Text color={said.isWarning ? 'yellow' : said.isError ? 'red' : undefined} dimColor={!said.isError && !said.isWarning}>{said.text}</Text>
+          ? outcomeLine($, e, { text: sentenceOf(said.text), url: said.url, label: said.label })
+          : <Text color={said.isWarning ? 'yellow' : said.isError ? 'red' : undefined} dimColor={!said.isError && !said.isWarning}>{sentenceOf(said.text)}</Text>
         )}
       </Box>
     )

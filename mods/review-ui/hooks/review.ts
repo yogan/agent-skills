@@ -853,6 +853,11 @@ export const isMergeWatched = (review: ReviewState | null): boolean => {
     && (mr.merge?.how === 'merge' || (!!mr.merge && !!mr.auto_merge))
 }
 
+// A status line as the band shows it: a sentence, so its first letter is a capital, except
+// where it starts with a topic's handle (`t4: …`), which is lower case wherever it is shown.
+export const sentenceOf = (text: string): string =>
+  /^t\d+\b/.test(text) ? text : `${text.charAt(0).toUpperCase()}${text.slice(1)}`
+
 // What the band says while the review waits and the sidebar, which says more, is closed.
 export const waitingLine = (w: { count: number; who: string }): string =>
   w.count > 0
