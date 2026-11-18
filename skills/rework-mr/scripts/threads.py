@@ -2187,16 +2187,23 @@ def reviewer_mark(state, t):
     return hashlib.sha1(json.dumps(marks).encode()).hexdigest()[:12]
 
 
-def start_fix_round(t):
+def start_fix_round(t, keep_checks=False):
     """A fix agreed on a topic whose earlier fix is pushed: the reviewers asked for more, so
     the topic goes back to making a fix, and what described the earlier one (its link, its
-    checks, the reply about it) is dropped. Its pushes stay (`t["pushes"]`): the next push
-    is recorded beside them, and the card lists them all."""
+    checks, what was posted about it) is dropped. Its pushes stay (`t["pushes"]`): the next
+    push is recorded beside them, and the card lists them all. A reply drafted and not posted
+    stays stored: the new plan puts it out of use (`draft_round`), and where its words still
+    hold it is taken up again rather than written anew. `keep_checks`: the checks just ran
+    on the new fix itself (a fix shown on a plan that was to reply only)."""
     if (t.get("outcome") or "fix") == "fix" and t.get("diff_url"):
-        for k in ("diff_url", "fix", "checked", "push_token", "push_from", "handed_from",
-                  "reply", "reply_at", "reply_for", "reply_early", "post_differs", "early_posted",
+        for k in ("diff_url", "fix", *(() if keep_checks else ("checked",)), "push_token",
+                  "push_from", "handed_from", "reply_early", "post_differs", "early_posted",
                   "reply_posted", "fix_lost"):
             t.pop(k, None)
+        if not t.get("reply_for"):
+            # Stored before drafts carried their round, it would count under any plan.
+            for k in ("reply", "reply_at"):
+                t.pop(k, None)
 
 
 _instant = instant
@@ -3584,12 +3591,17 @@ def main():
                     "change of direction, significantly more or less>'`")
             t.pop("push_token", None)
             t.pop("handed_from", None)
-            # Code changed on a plan that was to reply only: it is a fix now, which is pushed
-            # and answered as one. Left a reply, its card had no push and `push` refused it.
-            held = draft_holds(state, t)
+            # Code changed on a plan that was to reply only (a push-back that also adds a
+            # comment): it is a fix now, held until pushed as the topic's own, never left for
+            # another topic's push to take along. On a topic whose earlier fix is pushed it is
+            # a new fix round, with its own push and link. The reply agreed is kept: it goes
+            # up after the push, on the new link.
+            was_reply, held = not is_fix(t), draft_holds(state, t)
             t["outcome"] = "fix"
-            if note := stale_draft_note(state, t, held):
-                print(note, file=sys.stderr)
+            if was_reply:
+                start_fix_round(t, keep_checks=True)
+                if held:
+                    t["reply_for"] = draft_round(state, t)
             t["fix"] = {"did": args.did, "fixup": args.fixup, "new": args.new_commit, "stat": diff_stat(diff),
                         "notes": notes,
                         "compare": {"as_agreed": bool(args.as_agreed), "differs": args.differs}}

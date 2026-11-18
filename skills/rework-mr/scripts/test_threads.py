@@ -2491,11 +2491,16 @@ class TestADraftBelongsToItsRound(unittest.TestCase):
         with mock.patch("sys.stderr", new_callable=io.StringIO), self.assertRaises(SystemExit):
             self.run_cmd("set", "t1", "--keep-reply")
 
-    def test_a_fix_made_on_a_plan_to_reply_puts_its_draft_out_of_use(self):
-        self.plan("reply", "--reply", "-", stdin="Lieber nicht.\n")
-        held = T.draft_holds(self.state, self.t1)
-        self.t1["outcome"] = "fix"                    # what `diff-view` does on such a plan
-        self.assertIn("out of use", T.stale_draft_note(self.state, self.t1, held))
+    def test_a_pushed_fix_sent_back_to_fixing_keeps_the_draft_to_take_up(self):
+        """A push-back on a pushed fix, then "fix it after all, and post what we agreed":
+        the new round threw the reply away, and `--keep-reply` found nothing to take up."""
+        self.plan("push-back", "--reply", "-", stdin="Bewusst so, siehe oben.\n")
+        self.t1["diff_url"] = "https://gl/g/p/-/merge_requests/1/diffs?diff_id=2"
+        self.run_cmd("set", "t1", "--outcome", "fix")
+        self.assertIsNone(self.draft())
+        self.run_cmd("set", "t1", "--keep-reply")
+        self.assertEqual(T.step_of(self.state, self.t1), "fix")
+        self.assertEqual(T.draft_of(self.state, self.t1), "Bewusst so, siehe oben.\n")
 
     def test_an_acknowledged_plan_keeps_its_draft(self):
         self.plan("push-back", "--reply", "-", stdin="Bewusst so.\n")
@@ -2882,6 +2887,63 @@ class TestFixAgainstThePlan(unittest.TestCase):
         self.assertEqual(T.step_of(self.state, t1), "reply")
         self.show("--as-agreed")
         self.assertEqual((t1["outcome"], T.step_of(self.state, t1)), ("fix", "fixed"))
+
+    def push_back_on_a_pushed_fix(self):
+        """t1 fixed and pushed, its `Fixed:` posted; the reviewer still disagrees, and a
+        push-back with its reply is agreed. t2 is planned, its fix still to make."""
+        two = TestRounds.state(2)
+        self.state["threads"]["d2"] = two["threads"]["d2"]
+        self.state["topics"].append(two["topics"][1])
+        TestRounds.agree(self.state, "t2")
+        t1 = T.topic_for(self.state, "t1")
+        old = "https://gl/g/p/-/merge_requests/1/diffs?diff_id=7&start_sha=a1"
+        t1.update(diff_url=old, pushes=[{"before": "a0", "start": "a1", "after": "a2", "url": old,
+                                         "clean": True, "at": "2026-01-02T00:00:00Z"}],
+                  checked={"ok": True, "tree": "old"}, reply_posted="https://gl/n2")
+        self.state["threads"]["d1"]["notes"] += [
+            {"author": "Me", "body": f"Fixed: {old}", "at": "2026-01-02T00:00:00Z", "mine": True},
+            {"author": "Robin", "body": "I'd still rather you used a lookup table.",
+             "at": "2026-01-03T00:00:00Z", "mine": False}]
+        TestRounds.agree(self.state, "t1", outcome="push-back")
+        t1.update(plan_at="2026-01-04T00:00:00Z", reply="Bewusst so: die Tabelle wäre langsamer.\n")
+        t1["reply_for"] = T.draft_round(self.state, t1)
+        self.state["focus"] = self.state["shown"] = "t1"
+        self.assertEqual(T.step_of(self.state, t1), "reply")
+        return t1, old
+
+    def test_code_changed_on_a_push_back_is_a_new_fix_round_held_until_pushed(self):
+        """Pushed earlier, the topic stayed "to reply": no Ack and push for the edit, and
+        nothing kept another topic's checks and push from taking it along."""
+        t1, _old = self.push_back_on_a_pushed_fix()
+        t1["checked"] = {"ok": True, "tree": "new"}        # `verify t1` ran on the edit
+        self.show("--differs", "Adds a comment saying why it stays.")
+        self.assertEqual((t1["outcome"], T.step_of(self.state, t1)), ("fix", "fixed"))
+        self.assertFalse(T.state_json(self.state)["topics"][0]["pushed"])
+        self.assertEqual(t1["checked"]["tree"], "new")
+        self.assertEqual(len(t1["pushes"]), 1)
+        with mock.patch("sys.stderr", new_callable=io.StringIO) as err, self.assertRaises(SystemExit):
+            T.refuse_leaving_fix(self.state, "t2")
+        self.assertIn("t1", err.getvalue())
+
+    def test_the_reply_agreed_is_kept_through_the_fix_and_hidden_until_pushed(self):
+        t1, _old = self.push_back_on_a_pushed_fix()
+        self.show("--differs", "Adds a comment saying why it stays.")
+        self.assertTrue(T.draft_holds(self.state, t1))
+        self.assertNotIn("Draft reply", "\n".join(T._step_parts(self.state, t1)))
+
+    def test_after_the_push_the_reply_ends_on_the_new_push_s_link_alone(self):
+        """It carried the earlier push's link, already posted in the thread."""
+        t1, old = self.push_back_on_a_pushed_fix()
+        self.show("--differs", "Adds a comment saying why it stays.")
+        self.assertNotIn(old, T.draft_of(self.state, t1) or "")
+        new = "https://gl/g/p/-/merge_requests/1/diffs?diff_id=9&start_sha=b1"
+        t1["pushes"].append({"before": "b0", "start": "b1", "after": "b2", "url": new, "clean": True,
+                             "at": "2026-01-05T00:00:00Z"})
+        t1["diff_url"] = new                                 # what the push stores
+        self.assertEqual(T.step_of(self.state, t1), "reply")
+        self.assertEqual(T.draft_of(self.state, t1),
+                         f"Bewusst so: die Tabelle wäre langsamer.\n\nFixed: {new}\n")
+        self.assertIn(f"> Fixed: [diff {LINK_ICON}]({new})", "\n".join(T._step_parts(self.state, t1)))
 
     def test_a_fix_as_agreed_says_so(self):
         out = self.show("--as-agreed")

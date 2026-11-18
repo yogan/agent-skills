@@ -9,7 +9,10 @@ one push and one `Fixed: <url>` per topic by default. Two ACK stops per topic: a
 (before any commit/push) and after the reply draft (before posting).
 
 A topic whose plan is reply-only / push-back / question skips steps 1–6 — just draft and send
-the reply (step 7).
+the reply (step 7). Where code changes on it after all (a clarifying comment beside a
+push-back), that change is a fix: steps 3–6 for it, shown with `diff-view.sh`, which makes the
+topic a fix again and keeps the reply agreed for after the push, where it ends on the new
+push's `Fixed:` link.
 
 1. **Bug/problem pointed out → write a failing test first** (use the `tdd` skill), then fix.
    For non-bug changes, make the change directly.

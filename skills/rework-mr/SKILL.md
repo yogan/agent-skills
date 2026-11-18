@@ -294,6 +294,13 @@ propose a plan…`): research it with the code at hand, store the proposal and s
 - **A pushed fix the reviewer disagrees with** is planned like any comment: defend it (a
   reply, `--outcome push-back`, which links no `Fixed`) or redo it (`--outcome fix`: a new
   fix round, and its `Fixed` links the new push).
+- **Code changed on a plan that only replies** (a push-back that also adds a clarifying
+  comment): never leave the edit in the working tree, where the next topic's push would take
+  it. Make it as a fix: `verify <t>`, then `diff-view.sh <t>` with its `--fixup`. Shown, the
+  topic is a fix again, a new fix round where its earlier fix is pushed: Ack and push commits
+  it into the topic's own commit, and no other topic's fix starts before it is pushed. The
+  reply already agreed is kept, and after the push it comes up with Post, ending on the new
+  push's `Fixed` link.
 - **A fix not wanted after all.** Where making it shows it would make things worse, cannot
   be done, or is too much for this MR, stop and tell the user what you found; never drop it
   on your own. On their word (in the chat, or a note in the diff viewer: "this whole idea is
