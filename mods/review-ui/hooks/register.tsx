@@ -2188,24 +2188,40 @@ export const register: Register = on => {
       return (
         <Box key={`${tag}-bar`} flexDirection="column" flexShrink={0} width={1}>
           {barCells(count, shown, from, rows).map((c, i) => {
+            // The thumb over the mark's cell takes the mark's colour, its shape kept: the
+            // thumb says where the window is, the colour that the topic's lines are there.
             if (c.at === 'thumb') {
-              return <Box key={`${tag}-bar-${i}`}><Text color={BAR_THUMB} backgroundColor={BAR_TRACK}>{c.glyph}</Text></Box>
+              return <Box key={`${tag}-bar-${i}`}><Text color={ticks.has(i) && mark ? ACCENT : BAR_THUMB} backgroundColor={BAR_TRACK}>{c.glyph}</Text></Box>
             }
+            // Under the pointer a button inverts, which turns a glyph in a colour of its own
+            // into an odd one (a half block's other half, in the track's colour). Hovered, a
+            // cell with one is painted the thumb's colour whole, as an empty cell inverts to.
+            const hovered = { color: BAR_THUMB, backgroundColor: BAR_THUMB }
             if (ticks.has(i) && mark) {
               return (
-                <Button key={`${tag}-mark-${i}`} plain onPress={mark.press}>
-                  <Text color={ACCENT} backgroundColor={BAR_TRACK}>━</Text>
-                </Button>
+                <Box key={`${tag}-cell-${i}`}>
+                  <Button key={`${tag}-mark-${i}`} plain onPress={mark.press}>
+                    <Text color={ACCENT} backgroundColor={BAR_TRACK} hover={hovered}>━</Text>
+                  </Button>
+                </Box>
               )
             }
             const change = changes.get(i)
+            if (!change) {
+              return (
+                <Button key={`${tag}-${c.at}-${i}`} plain onPress={() => jump(jumpOf(count, shown, rows, i))}>
+                  <Text color={BAR_THUMB} backgroundColor={BAR_TRACK}> </Text>
+                </Button>
+              )
+            }
             return (
-              <Button key={`${tag}-${change ? 'change' : c.at}-${i}`} plain onPress={() => jump(jumpOf(count, shown, rows, i))}>
-                {!change ? <Text color={BAR_THUMB} backgroundColor={BAR_TRACK}> </Text>
-                  : change.isRemoved
-                    ? <Text color="red" backgroundColor={change.isAdded ? 'green' : BAR_TRACK}>▌</Text>
-                    : <Text color="green" backgroundColor={BAR_TRACK}>▐</Text>}
-              </Button>
+              <Box key={`${tag}-cell-${i}`}>
+                <Button key={`${tag}-change-${i}`} plain onPress={() => jump(jumpOf(count, shown, rows, i))}>
+                  {change.isRemoved
+                    ? <Text color="red" backgroundColor={change.isAdded ? 'green' : BAR_TRACK} hover={hovered}>▌</Text>
+                    : <Text color="green" backgroundColor={BAR_TRACK} hover={hovered}>▐</Text>}
+                </Button>
+              </Box>
             )
           })}
         </Box>
@@ -2710,10 +2726,12 @@ export const register: Register = on => {
       // The file's scrollbar, where it does not fit: the area's whole height, the thread box
       // among its lines included, its thumb the share of the file's lines shown.
       const jump = (to: number) => move(to + 1)
-      // Where the thread is, one tick on the bar at the middle of its lines, while none of them
-      // is in the window: one place, one mark, however many rows its lines and box take.
-      const linesOut = hasBox && v.at !== null && (anchor < start || v.at[0] > start + H - 1)
-      const markRows = linesOut && v.at ? [Math.floor((v.at[0] + anchor) / 2) - 1] : []
+      // Where the topic's lines are (and its thread, under them), one tick on the bar at the
+      // middle of the lines, while none of them is in the window: one place, one mark,
+      // however many rows its lines and box take. A topic with no thread yet has its lines
+      // marked too: they are what the area is about.
+      const linesOut = !isOtherFile && v.at !== null && (v.at[1] < start || v.at[0] > start + H - 1)
+      const markRows = linesOut && v.at ? [Math.floor((v.at[0] + v.at[1]) / 2) - 1] : []
       // Each row's diff sign at its place on the bar, the thread box's rows after the lines it
       // is on. None for a file the MR adds or removes whole: one colour from top to bottom
       // marks nothing, as in the file itself.

@@ -1373,6 +1373,60 @@ test("the file's scrollbar ticks where the file has changes, in their colours, a
   await ui.unmount()
 })
 
+test("under the pointer, a change tick looks as any cell of the track does: the thumb's colour, no half block", async ($, on) => {
+  // The pointer inverts a button: a half block in red or green turned into its other half in
+  // the track's colour. The tick's hover paints the whole cell in the thumb's colour instead,
+  // which the inversion leaves as it is, as it does an empty cell.
+  const rows: unknown[][] = [...codeOf(200, [10, 10]).rows]
+  rows.splice(149, 1, ['-', 150, null, 'old'], ['+', null, 150, 'new'])
+  const w = world(on, [stateOf('t1', [topic('t1', 'open')])], { code: { stdout: JSON.stringify(codeOf(200, [10, 10], { rows })) } })
+  await openReview($, w, view('t1'))
+  const ui = await $.ui.mount({ ...PANEL, surface: 'terminal' })
+  const ticks = (await ui.findAll({ type: 'Button' })).filter(b => String(b.key ?? '').startsWith('code-change-'))
+  expect(ticks.length).toBe(1)
+  expect(JSON.stringify(ticks[0]?.children)).toContain('"hover":{"color":"#4f5679","backgroundColor":"#4f5679"}')
+  await ui.unmount()
+})
+
+test("the topic's lines out of the window are marked on the file's scrollbar, with no thread yet too", async ($, on) => {
+  const w = world(on, [stateOf('t1', [topic('t1', 'draft')])], { code: { stdout: JSON.stringify(codeOf(200, [100, 100])) } })
+  await openReview($, w, view('t1'))
+  const ui = await $.ui.mount({ ...PANEL, surface: 'terminal' })
+  const mark = async () => (await ui.findAll({ type: 'Button' })).map(b => String(b.key ?? '')).find(k => k.startsWith('code-mark-'))
+  expect(await mark()).toBeUndefined()                                      // in view: no mark
+  await page(ui, 'code', 'up')                                              // to the top
+  const key = await mark()
+  expect(key).toBeDefined()
+  await ui.press({ key: key as string })
+  expect(firstLine((await ui.findAll({ type: 'Code' }))[0]?.props.source)).toBeGreaterThan(50)
+  await ui.unmount()
+})
+
+test("where the thumb covers the topic's mark, its cell is drawn in the mark's colour, its shape kept", async ($, on) => {
+  // 200 lines, the topic's on line 100: on a track of a cell per ten lines, a window that ends
+  // a few lines above it puts the thumb on the mark's cell.
+  const w = world(on, [stateOf('t1', [topic('t1', 'draft')])], { code: { stdout: JSON.stringify(codeOf(200, [100, 100])) } })
+  await openReview($, w, view('t1'))
+  const ui = await $.ui.mount({ ...PANEL, surface: 'terminal' })
+  const thumbs = async () => (await ui.findAll({ type: 'Box' })).filter(b => /^code-bar-\d+$/.test(String(b.key ?? '')))
+  // Each cell of the track below the thumb pressed in turn, from the top, until the thumb
+  // stands on the mark's cell.
+  let found = false
+  for (let k = 0; k < 30 && !found; k += 1) {
+    await page(ui, 'code', 'up')
+    const below = (await ui.findAll({ type: 'Button' })).map(b => String(b.key ?? '')).filter(x => x.startsWith('code-below-'))
+    if (k >= below.length) break
+    await ui.press({ key: below[k] as string })
+    found = JSON.stringify(await thumbs()).includes('"color":"cyan"')
+  }
+  expect(found).toBe(true)
+  // Never a tick and a thumb on one cell: the tick gives the cell up to the thumb.
+  const cells = (await thumbs()).map(b => Number(String(b.key).split('-').pop()))
+  const marks = (await ui.findAll({ type: 'Button' })).map(b => String(b.key ?? '')).filter(k => k.startsWith('code-mark-'))
+  for (const m of marks) expect(cells).not.toContain(Number(m.split('-').pop()))
+  await ui.unmount()
+})
+
 test("a file the MR adds whole has no change ticks: one colour from top to bottom marks nothing", async ($, on) => {
   const code = codeOf(200, [10, 10], { whole: 'added', rows: codeOf(200, [10, 10]).rows.map(r => ['+', null, r[2], r[3]]) })
   const w = world(on, [stateOf('t1', [topic('t1', 'open')])], { code: { stdout: JSON.stringify(code) } })
