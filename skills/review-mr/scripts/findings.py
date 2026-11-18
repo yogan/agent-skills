@@ -1989,6 +1989,12 @@ def link_pushes(state, ctx, iid):
         if i is None:
             continue
         start = p.get("from") or (vs[i + 1]["head_commit_sha"] if i + 1 < len(vs) else None)
+        # When it was pushed, not when the check saw it: the box lists its lines by time,
+        # and a topic it changed dates its news by it.
+        p["at"] = push_time(ctx, vs[i]) or p.get("at")
+        for t in state["topics"]:
+            if (t.get("pushed") or {}).get("to") == p["head"]:
+                t["pushed"]["at"] = p["at"]
         p["url"] = (f"{ctx['web']}/-/merge_requests/{iid}/diffs?diff_id={vs[i]['id']}"
                     + (f"&start_sha={start}" if start else ""))
 
@@ -2711,6 +2717,32 @@ def _compare(ctx, frm, to):
     return (r or {}).get("diffs")
 
 
+# How long a push may lie before GitLab records the version it made (`push_time`).
+PUSH_LAG = 120
+
+
+def push_time(ctx, version):
+    """When the push that made the MR's `version` happened, as near as GitLab tells it.
+
+    The version is recorded some time after the push, by a job of GitLab's own, so its time
+    can come after a reply the author wrote right after pushing: a story or the News box
+    ordered by it put the reply first. The push's head commit was made before the push, so
+    where it was made only a little before the version (`PUSH_LAG`), its time is the
+    push's; a commit older than that was pushed later than it was made, and the version's
+    time stands. None where GitLab says neither."""
+    at = version.get("created_at")
+    sha = version.get("head_commit_sha")
+    if not (at and sha):
+        return at
+    try:
+        c = api(f"projects/{ctx['enc']}/repository/commits/{sha}")
+    except SystemExit:
+        return at
+    made = (c or {}).get("committed_date") if isinstance(c, dict) else None
+    lag = (instant(at) - instant(made)).total_seconds() if instant(at) and instant(made) else None
+    return made if lag is not None and 0 <= lag <= PUSH_LAG else at
+
+
 def _gl_compare(ctx, frm, to):
     """Server-side diffstat for frm→to via GitLab's compare API. Robust across
     force-push (GitLab keeps every SHA; the local repo prunes old version heads).
@@ -3155,7 +3187,7 @@ def walk_fixes(state, ctx, iid, vs=None):
                     near = False                  # GitLab could not say whose change it is
             if hit or near:
                 fix = {"before": prev.get("head_commit_sha"), "after": cur.get("head_commit_sha"),
-                       "at": cur.get("created_at") or now_iso(), "mixed": rebase, "rebase": rebase,
+                       "at": push_time(ctx, cur) or now_iso(), "mixed": rebase, "rebase": rebase,
                        "url": f"{web}/diffs?diff_id={cur.get('id')}&start_sha={prev.get('head_commit_sha')}"}
                 if near:
                     fix["near"] = True

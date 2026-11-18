@@ -2245,9 +2245,24 @@ class TestMergedBeforeTheReviewIsThrough(unittest.TestCase):
         vs = [{"id": 30, "head_commit_sha": "H3"}, {"id": 20, "head_commit_sha": "H2"}, {"id": 10, "head_commit_sha": "H1"}]
         with patch.object(F, "versions", return_value=vs):
             F.link_pushes(state, {"web": "https://gl/g/r"}, 5)
+        self.assertEqual([p["at"] for p in state["pushes"]], ["t", "t"])   # no time known: as seen
         self.assertEqual([p["url"] for p in state["pushes"]], [
             "https://gl/g/r/-/merge_requests/5/diffs?diff_id=20&start_sha=H0",
             "https://gl/g/r/-/merge_requests/5/diffs?diff_id=30&start_sha=H2"])
+
+
+    def test_a_push_in_the_news_carries_the_time_it_was_pushed_not_seen(self):
+        """The check that saw the push ran minutes later; listed by that time, it stood above
+        news that came before it."""
+        state = new_state(pushes=[{"at": "2026-11-09T12:52:00Z", "head": "H2", "from": "H1"}])
+        add_linked_topic(state, "d1")
+        state["topics"][0]["pushed"] = {"from": "H1", "to": "H2", "at": "2026-11-09T12:52:00Z"}
+        vs = [{"id": 20, "head_commit_sha": "H2", "created_at": "2026-11-09T12:49:25Z"}]
+        with patch.object(F, "versions", return_value=vs), \
+                patch.object(F, "api", return_value={"committed_date": "2026-11-09T12:49:24.000Z"}):
+            F.link_pushes(state, {"web": "https://gl/g/r", "enc": "g%2Fr"}, 5)
+        self.assertEqual(state["pushes"][0]["at"], "2026-11-09T12:49:24.000Z")
+        self.assertEqual(state["topics"][0]["pushed"]["at"], "2026-11-09T12:49:24.000Z")
 
 
 class TestVerdict(unittest.TestCase):
@@ -3343,10 +3358,31 @@ class TestAuthorFixes(unittest.TestCase):
                                  "created_at": f"2026-11-05T1{vid}:00:00Z"})
         self.diffs[(prev, sha)] = diffs
 
-    def walk(self):
+    def walk(self, commits=None):
+        """`commits`: each push's head commit as GitLab answers it, by sha (none: unknown)."""
+        def api(endpoint):
+            return (commits or {}).get(endpoint.rsplit("/", 1)[-1]) or {}
         with patch.object(F, "_compare", side_effect=lambda ctx, a, b: self.diffs.get((a, b))), \
+                patch.object(F, "api", side_effect=api), \
                 patch.object(F, "get_worktree", return_value=None):
             F.walk_fixes(self.state, self.CTX, 7, vs=list(self.versions))
+
+    def test_a_fix_is_dated_by_its_push_where_gitlab_recorded_it_later(self):
+        """The author pushed, then replied: GitLab recorded the push's version only after the
+        reply, so dated by the version the story told the reply first. The head commit made
+        just before the version dates it; one made long before was pushed later than that."""
+        self.push("B", 2, [{"new_path": "a.ts", "old_path": "a.ts", "diff": self.FIX}])
+        self.walk({"B": {"committed_date": "2026-11-05T11:59:58.000+00:00"}})
+        self.assertEqual(self.t["fixes"][-1]["at"], "2026-11-05T11:59:58.000+00:00")
+        self.state["threads"]["d1"]["notes"].append(
+            {"body": "Fixed.", "mine": False, "author": "Lang, Robin", "at": "2026-11-05T11:59:59Z"})
+        story = "\n".join(F.story_steps(self.state, self.t))
+        self.assertLess(story.index("pushed a fix"), story.index("replied"))
+
+    def test_a_commit_made_long_before_its_push_leaves_the_version_s_time(self):
+        self.push("B", 2, [{"new_path": "a.ts", "old_path": "a.ts", "diff": self.FIX}])
+        self.walk({"B": {"committed_date": "2026-11-05T09:30:00.000+00:00"}})
+        self.assertEqual(self.t["fixes"][-1]["at"], "2026-11-05T12:00:00Z")
 
     def test_a_fix_pushed_then_resolved_before_any_check_is_a_pushed_fix(self):
         """The usual order: the author pushes the fix, then ticks the thread off, and the
