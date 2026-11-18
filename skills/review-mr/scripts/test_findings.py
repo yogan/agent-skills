@@ -4,6 +4,7 @@ table, topic status derivation, and thread reconciliation.
 
 Run: `python3 skills/review-mr/scripts/test_findings.py` (stdlib only).
 """
+import hashlib
 import io
 import json
 import os
@@ -3138,6 +3139,29 @@ class TestSuggestionWarning(unittest.TestCase):
 
     def test_a_range_that_covers_it_says_nothing(self):
         self.assertIsNone(self.warn("```suggestion:-1+1\n### Auth on the socket\n\nThe socket needs a token.\n```"))
+
+
+class TestLocationLink(unittest.TestCase):
+    """A card's `file:line` is the link to that line on the MR's Changes page, where the user
+    posts by hand."""
+    STATE = {"iid": 1, "slug": "g-p", "diff_base": "b0", "mr_web_url": "https://gl/g/p/-/merge_requests/1"}
+
+    def link(self, rows, drawn="1"):
+        with patch.dict(os.environ, {"REVIEW_UI_DRAWN": drawn}), \
+                patch.object(F, "get_worktree", return_value="/wt"), patch.object(F.os.path, "isdir", return_value=True), \
+                patch.object(F.code_view, "rows_of", return_value=rows):
+            return F.loc_link_md(self.STATE, "src/a.ts:12")
+
+    def test_the_location_links_to_its_line_on_the_changes_page(self):
+        md = self.link([[" ", 10, 11, "x"], ["+", None, 12, "y"]])
+        self.assertEqual(md, "[`src/a.ts:12`](https://gl/g/p/-/merge_requests/1/diffs#"
+                             + hashlib.sha1(b"src/a.ts").hexdigest() + "_11_12)")
+
+    def test_a_line_not_found_opens_the_changes_page(self):
+        self.assertEqual(self.link(None), "[`src/a.ts:12`](https://gl/g/p/-/merge_requests/1/diffs)")
+
+    def test_no_link_where_no_mod_draws(self):
+        self.assertEqual(self.link([], drawn=""), "`src/a.ts:12`")
 
 
 class TestSuggestionRepeat(unittest.TestCase):

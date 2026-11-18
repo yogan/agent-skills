@@ -1,3 +1,4 @@
+import hashlib
 import os
 import subprocess
 import sys
@@ -48,6 +49,21 @@ class TestTouched(unittest.TestCase):
 
     def test_a_file_the_push_left_alone_keeps_its_lines(self):
         self.assertEqual(code_view.touched(None, 4, 6), (False, 4, 6))
+
+
+class TestLineAnchor(unittest.TestCase):
+    """A line's anchor on an MR's Changes page, as GitLab's own link to a line names it."""
+    ROWS = [[" ", 90, 99, "a"], ["-", 91, None, "b"], ["+", None, 100, "c"], [" ", 92, 101, "d"]]
+
+    def test_a_kept_line_has_both_its_numbers(self):
+        self.assertEqual(code_view.line_anchor(self.ROWS, "src/x.ts", 101),
+                         hashlib.sha1(b"src/x.ts").hexdigest() + "_92_101")
+
+    def test_an_added_line_counts_as_the_old_line_that_comes_next(self):
+        self.assertTrue(code_view.line_anchor(self.ROWS, "src/x.ts", 100).endswith("_92_100"))
+
+    def test_a_line_not_in_the_file_has_none(self):
+        self.assertIsNone(code_view.line_anchor(self.ROWS, "src/x.ts", 7))
 
 
 class TestView(unittest.TestCase):

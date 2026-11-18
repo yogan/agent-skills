@@ -16,6 +16,7 @@ Neither is fatal: a commit the checkout no longer has (a force-push dropped it) 
 as posted and marks nothing.
 """
 import functools
+import hashlib
 import os
 import re
 import subprocess
@@ -273,6 +274,20 @@ def _read(full):
 def row_of(rows, new):
     """The 1-based row holding line `new` of the file as it is now, or None."""
     return next((i for i, r in enumerate(rows, 1) if r[2] == new), None)
+
+
+def line_anchor(rows, path, line):
+    """The anchor GitLab gives line `line` (new side) of `path` on an MR's Changes page, as
+    its "copy link to line" does: `<sha1 of the path>_<old>_<new>`, from the file's `rows`
+    (`rows_of`). An added line has no old number; GitLab counts it as the old line that
+    comes next. None where the line is not in the rows."""
+    old = 0
+    for kind, o, n, _text in rows or []:
+        if o is not None:
+            old = o
+        if n == line:
+            return f"{hashlib.sha1(path.encode()).hexdigest()}_{o if o is not None else old + 1}_{n}"
+    return None
 
 
 def view(repo, path, line, since=None, start=None, side="new", base=None, commit=None):

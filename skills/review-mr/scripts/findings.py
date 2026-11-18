@@ -582,6 +582,22 @@ def _loc(state, t, full=False):
     return f"{f if full else os.path.basename(f)}:{line or ''}"
 
 
+def loc_link_md(state, loc):
+    """A card's `file:line`, as the link to that line on the MR's Changes page in GitLab,
+    where the user opens it to comment there by hand. The line's anchor needs both of its
+    numbers (`code_view.line_anchor`), from the MR's diff in the review worktree; where it
+    cannot be told, the link opens the Changes page. No link where the mod does not draw:
+    a pasted heading keeps its plain location, nor for a topic on the MR itself."""
+    if not (loc and ui.drawn() and state.get("mr_web_url")):
+        return loc_md(loc)
+    path, _, line = loc.rpartition(":")
+    wt = get_worktree(state.get("slug") or "", state.get("iid"))
+    rows = (code_view.rows_of(wt, path, state.get("diff_base"))
+            if wt and os.path.isdir(wt) and line.isdigit() else None)
+    anchor = code_view.line_anchor(rows, path, int(line)) if rows else None
+    return f"[{loc_md(loc)}]({state['mr_web_url']}/diffs{f'#{anchor}' if anchor else ''})"
+
+
 def _place(state, x):
     """`path:line` of a thread for a card's heading: where the mod draws, under the file's
     name now in the review worktree (`code_view.place_now`), as the sidebar beside the card
@@ -1247,7 +1263,7 @@ def _render_quote(state, tid, refine=False):
         # Where the mod draws, the state icon in the title already says it is unposted, and
         # the location follows it, as a posted topic's does.
         loc = _loc(state, t, full=True)
-        out.append((f"{title} · {loc_md(loc)}" if loc else title) if ui.drawn()
+        out.append((f"{title} · {loc_link_md(state, loc)}" if loc else title) if ui.drawn()
                    else f"{title}  ({WORD['draft']} — not yet on GitLab)")
         warn = summary_language_warning(state, [t])
         if warn:
@@ -1319,7 +1335,7 @@ def _render_quote(state, tid, refine=False):
         if i == 0:
             title = title_md(state, t, summ)
             # Where the mod draws, the draft's own label carries the language.
-            out.append(f"{title} · {loc_md(path)}" if ui.drawn()
+            out.append(f"{title} · {loc_link_md(state, path)}" if ui.drawn()
                        else f"{title} · {loc_md(path)} · {lang_hint(state)}")
             for warn in (needs_title_warning(state, t),
                          summary_language_warning(state, [t])):
@@ -1477,7 +1493,7 @@ def render_answered(state, t, summ, v):
     x = state["threads"].get(t["thread_ids"][0], {})
     path = _place(state, x)
     title = title_md(state, t, summ)
-    out = [f"{title} · {loc_md(path)}" if path else title]
+    out = [f"{title} · {loc_link_md(state, path)}" if path else title]
     asked = (t.get("asked") or v.get("asked") or "").strip()
     if asked:
         whose = "What you asked" if x.get("mine") else f"What {first_name(x.get('author'))} asked"
@@ -1510,7 +1526,7 @@ def render_verdict_change(state, t, before):
     path = _place(state, x)
     title = title_md(state, t, t.get("summary") or short_summary(state, t))
     was = verdict_word(state, t, before)
-    out = [f"{title} · {loc_md(path)}" if path else title, "",
+    out = [f"{title} · {loc_link_md(state, path)}" if path else title, "",
            ui.heading_md(ui.VERDICT_ICON, f"Verdict: {verdict_word(state, t, v)}"),
            *([f"_was: {was}_"] if was != verdict_word(state, t, v) else []), "", v["text"].strip()]
     return "\n".join(out)
