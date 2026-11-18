@@ -3505,7 +3505,7 @@ test('every step button has its icon, one per action in both skills', () => {
     'Redo…', 'Run the checks', 'Fix the checks', 'Push', 'Push and resolve', 'Drop', 'Summarize', 'Merge into t3',
     'Keep separate', 'Link as t3\'s comment', 'Judge', 'Ack', 'Accept', 'Accept + resolve', 'Resolve',
     'Not enough…', 'Wait for author', 'Nothing to add', 'Seen', 'Generate explainer', 'Skip explainer',
-    'My review is done', 'Next', 'Apply edit']
+    'My review is done', 'Next', 'Apply edit', 'Approve MR']
   expect(labels.filter(l => !iconOf(l))).toEqual([])
   // The same action, the same icon.
   expect(iconOf('Reply now')).toBe(iconOf('Reply…'))
@@ -3563,10 +3563,48 @@ test('the update check follows a merge pressed, and stops once GitLab merged it 
 })
 
 test("review-mr: the end of someone else's MR is Approve, never a merge, and says once you approved", () => {
-  expect(endText('review-mr', { approved_by: [] })).toEqual(['', 'Approve'])
+  expect(endText('review-mr', { approved_by: [] })).toEqual(['', 'Approve MR'])
+  expect(endOf(ended('review-mr', { approved_by: [] }), true)?.button?.isGood).toBe(true)   // drawn green
   expect(endText('review-mr', { approved_by: ['You'] })).toEqual(['Approved by you', null])
   expect(endText('review-mr', { approved_by: [] }, false)).toBeUndefined()
   expect(endText('review-mr', { state: 'merged' })).toBeUndefined()
+})
+
+test('review-mr: Approve MR waits for every topic to be settled here, whatever GitLab would allow', () => {
+  // Nothing waits on the author, but t2 is still to do: its thread is open on GitLab, which a
+  // project may allow approving with. The reviewer is not through.
+  const mr = { state: 'opened', approved_by: [], approvals_left: 0, merge_status: 'mergeable', can_merge: true }
+  const of = (t2: string) => ({ skill: 'review-mr', iid: 3, title: 'x', current: null, mr,
+    topics: [{ ...topic('t1', 'acked'), state: 'done' }, { ...topic('t2', 'needs_ack'), state: t2 }] }) as never
+  expect(endOf(of('answered'), true)).toBeUndefined()
+  expect(endOf(of('new'), true)).toBeUndefined()
+  expect(endOf(of('dropped'), true)?.button?.label).toBe('Approve MR')
+  expect(endOf(of('wontfix'), true)?.button?.label).toBe('Approve MR')
+})
+
+test('every topic settled and the MR not approved yet: a dark green border, green only once approved', async ($, on) => {
+  const mr = { state: 'opened', approved_by: [], approvals_left: 0 }
+  const settled = (more: object) => stateOf(null, [{ ...topic('t1', 'acked'), state: 'done' }], { in_round: false, inbox: inbox(), mr: { ...mr, ...more } })
+  const w = world(on, [settled({}), settled({ approved_by: ['You'] })], { 'approve-mr': { stdout: settled({ approved_by: ['You'] }) } })
+  await openReview($, w, view('t1'))
+  let panel = await $.ui.mount({ ...PANEL, surface: 'terminal' })
+  let drawn = JSON.stringify(await panel.findAll({ type: 'Box' }))
+  expect(drawn).toContain('"borderColor":"#3b6b45"')
+  expect(drawn).not.toContain('"borderColor":"green"')
+  expect((await panel.find({ type: 'Text', text: 'Done' }))?.props.color).toBeUndefined()
+  const chip = JSON.stringify(await panel.find({ type: 'Button', key: 'approve-mr' }))
+  // The button in the border's dark green, its light green text the fill under the pointer.
+  expect(chip).toContain('"backgroundColor":"#3b6b45"')
+  expect(chip).toContain('"color":"#c3e88d"')
+  expect(chip).toContain('Approve MR')
+  await panel.press({ key: 'approve-mr' })
+  await panel.unmount()
+  panel = await $.ui.mount({ ...PANEL, surface: 'terminal' })
+  drawn = JSON.stringify(await panel.findAll({ type: 'Box' }))
+  expect(drawn).toContain('"borderColor":"green"')
+  expect((await panel.find({ type: 'Text', text: 'Done' }))?.props.color).toBe('green')
+  expect(JSON.stringify(await panel.findAll({ type: 'Text' }))).toContain('Approved by you')
+  await panel.unmount()
 })
 
 test('rework-mr: Merge in the box runs the script with no model turn; Clean up locally ends the review', async ($, on) => {

@@ -3,7 +3,7 @@ import type { EngineInterface, Register } from 'claude-code'
 
 import type { ReviewCard, ReviewHost, ReviewOutcome, ReviewJudging, ReviewNote, ReviewNotice, ReviewPlaced, ReviewSession, ReviewState } from '../types'
 import {
-  argsFor, buttonsFor, checkPrompt, judgingOf, endOf, hasNext, iconOf, isHeldTopic, isMergeWatched, outcomeOf, earlyPrompt, proposePrompt, replyPrompt, clockOf, currentTopic, didText, inboxOf, noteForModel, stepOf, untilOf, waitingLine, waitingOf,
+  argsFor, buttonsFor, checkPrompt, judgingOf, endOf, hasNext, iconOf, isHeldTopic, isMergeWatched, isSettledHere, outcomeOf, earlyPrompt, proposePrompt, replyPrompt, clockOf, currentTopic, didText, inboxOf, noteForModel, stepOf, untilOf, waitingLine, waitingOf,
   type BandButton, type InboxLine,
 } from './review.ts'
 import {
@@ -1333,14 +1333,19 @@ const drawBlocks = ($: EngineInterface, e: Parameters<EngineInterface['ui']['res
 // and a cap inverted is a block with the cap's shape cut out of it. Outside, they take the
 // inverted label's colour while the pointer is over the chip, so it inverts whole.
 const CHIP_CAPS = ['\u{E0B6}', '\u{E0B4}']
-const CHIP_FILL = { primary: '#7aa2f7', muted: '#3b4261' }
-const CHIP_TEXT = { primary: '#1a1b26', muted: '#c0caf5' }
+// The Done box's border where every topic is settled and the MR is not approved or merged
+// yet: a dark green, a step short of the green of a good end.
+const NEAR_END = '#3b6b45'
+// `good`: the press that completes the review, in the Done box border's dark green, its text
+// a light green that the pointer turns into the fill (a chip inverts under it).
+const CHIP_FILL = { primary: '#7aa2f7', muted: '#3b4261', good: NEAR_END }
+const CHIP_TEXT = { primary: '#1a1b26', muted: '#c0caf5', good: '#c3e88d' }
 const drawChip = (
   ui: { Box: ReturnType<EngineInterface['ui']['resolve']>['Box']; Button: ReturnType<EngineInterface['ui']['resolve']>['Button']; Text: ReturnType<EngineInterface['ui']['resolve']>['Text'] },
   b: BandButton, onPress: (ev: { surface?: string }) => void,
 ) => {
   const { Box, Button, Text } = ui
-  const tone = b.isPrimary ? 'primary' : 'muted'
+  const tone = b.isGood ? 'good' : b.isPrimary ? 'primary' : 'muted'
   const icon = iconOf(b.label)
   const cap = (glyph: string, key: string) => (
     <Text key={key} color={CHIP_FILL[tone]} hover={{ color: CHIP_TEXT[tone] }}>{glyph}</Text>
@@ -3109,13 +3114,16 @@ export const register: Register = on => {
         {l.size && sizeOf(l.size) && <Text>{drawSize(Text, (sizeOf(l.size) as { size: DiffSize }).size, true)}</Text>}
       </Box>
     )
-    // A good end looks like one: merged, approved by you with every topic settled, or every
-    // topic settled with nothing new. The box's border and its heading are green then.
-    const isGoodEnd = !!waiting && (r.mr?.state === 'merged' || end?.tone === 'good'
-      || (r.mr?.state !== 'closed' && waiting.count === 0 && !box?.hasNews))
+    // A good end looks like one: merged, or approved by you with every topic settled. The
+    // box's border and its heading are green then. Every topic settled with nothing new and
+    // the MR not approved or merged yet is nearly there: the border a dark green, so the
+    // step still to take does not read as done.
+    const isGoodEnd = !!waiting && (r.mr?.state === 'merged' || end?.tone === 'good')
+    const isNearEnd = !!waiting && !isGoodEnd && r.mr?.state !== 'closed' && waiting.count === 0
+      && !box?.hasNews && r.topics.every(isSettledHere)
     const waitPart = waiting && (
       <Box key="waiting" flexGrow={1} flexDirection="column" justifyContent="center" alignItems="center">
-        <Box key="waiting-box" borderStyle="round" borderDimColor={!isGoodEnd || undefined} borderColor={isGoodEnd ? 'green' : undefined} paddingX={2} flexDirection="column" alignItems="center">
+        <Box key="waiting-box" borderStyle="round" borderDimColor={!(isGoodEnd || isNearEnd) || undefined} borderColor={isGoodEnd ? 'green' : isNearEnd ? NEAR_END : undefined} paddingX={2} flexDirection="column" alignItems="center">
           {/* One word for where the MR stands, as a card's heading names its part: who did
               what, and when, is in the step lines under it. The line under it says what
               waits, and on whom: the heading does not say it again. */}

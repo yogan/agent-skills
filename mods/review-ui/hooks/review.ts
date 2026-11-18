@@ -66,7 +66,8 @@ export type Press =
   | { kind: 'cleanup' }
   | { kind: 'approve-mr' }
 
-export type BandButton = { key: string; label: string; press: Press; isPrimary?: true }
+// `isGood`: the press that completes the review (approving the MR), drawn green.
+export type BandButton = { key: string; label: string; press: Press; isPrimary?: true; isGood?: true }
 
 // The step the current topic is at, read off its status and whether it holds a draft.
 export type Step = 'topic' | 'draft' | 'check' | 'left' | 'reack' | 'reply' | 'merged' | 'watch' | 'waiting' | 'none'
@@ -194,7 +195,7 @@ const ICON: Record<string, string> = {
   'Merge': '\u{F062D}', // md-source_merge
   'Set to auto-merge': '\u{F051F}', // md-timer_sand, the auto-merge mark's
   'Clean up locally': '\u{F00E2}', // md-broom
-  'Approve': '\u{F0514}', // md-thumb_up_outline, the approval mark's
+  'Approve MR': '\u{F0514}', // md-thumb_up_outline, the approval mark's
   'Analyze CI failure': '\u{F0EAF}', 'Analyze failed merge': '\u{F0EAF}', // md-text_box_search_outline
 }
 
@@ -803,13 +804,19 @@ const isApproved = (mr: NonNullable<ReviewState['mr']>): boolean =>
 // `settled`: every topic is settled (nothing waits on the other side). A failed pipeline, or
 // a merge that failed, is said whether or not anything still waits; the merge itself only
 // once nothing does.
+// A topic settled in the session: done, won't fix, or dropped.
+export const isSettledHere = (t: ReviewTopic): boolean => ['done', 'wontfix', 'dropped'].includes(t.state ?? '')
+
 export const endOf = (review: ReviewState | null, settled: boolean): EndLine | undefined => {
   const mr = review?.mr
   if (!review || !mr || mr.state === 'closed') return undefined
   if (review.skill === 'review-mr') {
-    if (mr.state !== 'opened' || !settled) return undefined
+    // Approving is offered once every topic is settled here, whatever GitLab would allow:
+    // a project may let an MR be approved with threads open, and a topic still to do is
+    // the reviewer's own unfinished business.
+    if (mr.state !== 'opened' || !settled || !review.topics.every(isSettledHere)) return undefined
     if (mr.approved_by?.includes('You')) return { text: 'Approved by you', tone: 'good' }
-    return { text: '', tone: 'info', button: { key: 'approve-mr', label: 'Approve', press: { kind: 'approve-mr' }, isPrimary: true } }
+    return { text: '', tone: 'info', button: { key: 'approve-mr', label: 'Approve MR', press: { kind: 'approve-mr' }, isPrimary: true, isGood: true } }
   }
   // Who merged it, and when, is the box's last step line: the press alone here.
   if (mr.state === 'merged') {

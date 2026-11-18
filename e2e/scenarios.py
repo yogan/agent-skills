@@ -544,8 +544,8 @@ SCENARIOS = [
                 Expect(button('Drop'), region="screen", wait=30),
                 press('Drop'))],
             # Nothing waits on the author: the box's last line is the reviewer's approval.
-            Expect(button('Approve'), region="panel", wait=60),
-            press('Approve', region="panel"),
+            Expect(button('Approve MR'), region="panel", wait=60),
+            press('Approve MR', region="panel"),
             Expect(r"Approved by you", region="panel", wait=60),
             Check('glab api "projects/$P/merge_requests/1/approvals"'
                   " | python3 -c 'import json,sys; print([a[\"user\"][\"username\"] for a in json.load(sys.stdin)[\"approved_by\"]])'",
