@@ -802,7 +802,10 @@ const cardForNews = async ($: EngineInterface) => {
   if ((await read($, working)) || (await read($, busy))) return
   const j = await read($, judging)
   if ((r.judge?.topics ?? []).includes(r.current) && !j.failed.includes(r.current)) return
-  await placeTopic($, s, r.current)
+  // Read again once it is up, as a move to a topic does: the card took the news in (it is
+  // seen now), so the sidebar shows what the news was, the author's push as the fix's own
+  // diff, and no longer the worktree's code from before the push as "changed since".
+  if (await placeTopic($, s, r.current)) await refresh($, s)
   await askPlan($)
 }
 

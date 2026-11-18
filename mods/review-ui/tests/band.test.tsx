@@ -1028,6 +1028,11 @@ test("news for the topic whose card is up brings a fresh card of it, once it is 
   states[0] = at('f3')                                 // judged: the card takes it in
   await tick()
   expect(w.placed.length).toBe(1)
+  // Then the state read again, as a move to a topic does: the card marked the news seen, so
+  // the sidebar's file is the news's own (a push as the fix's diff) at once, not at the
+  // next check minutes later.
+  const cmds = w.ran.map(r => r.argv[2])
+  expect(cmds.slice(cmds.lastIndexOf('quote'))).toContain('state')
   await tick()
   expect(w.placed.length).toBe(1)                      // once
 })
