@@ -287,6 +287,15 @@ class WaitTest(unittest.TestCase):
         self.assertEqual(at, (1, 2))
         self.assertEqual(len(clock.clicks), 2)
 
+    def test_a_press_whose_prompt_moves_the_transcript_is_not_pressed_again(self):
+        # Its button stays while the prompt it sent is written under the card, which moves
+        # the card up two rows as a background agent's lines would.
+        card = ["╭─ t1", "│ rename it", "│ in 3 files", f"│ {self.BUTTON}", "╰─", "", "", "❯"]
+        moved = card[2:5] + ["", drive.PLUGIN_PROMPT, "❯ Draft the reply for t1.", "", "❯"]
+        clock = Clock(self, [(0, "\n".join(card)), (0.05, "\n".join(moved))])
+        drive.Pane("t").press((3, 2), self.BUTTON, "screen")
+        self.assertEqual(len(clock.clicks), 1)
+
     def test_a_press_that_landed_is_not_pressed_again(self):
         clock = Clock(self, [(0, self.card(2)), (0.05, "╭─ t1")])
         drive.Pane("t").press((3, 2), self.BUTTON, "screen")

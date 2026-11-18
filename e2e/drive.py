@@ -287,6 +287,17 @@ def find_text(screen, text, region="screen"):
     return None
 
 
+PLUGIN_PROMPT = "› Prompt from the review-ui plugin"
+
+
+def plugin_prompts(screen):
+    """The prompts the mod has sent that the screen shows, in order: a press that sends one
+    is written into the transcript under its card."""
+    lines = screen.split("\n")
+    return [lines[i + 1].strip() if i + 1 < len(lines) else ""
+            for i, line in enumerate(lines) if PLUGIN_PROMPT in line]
+
+
 def missed(before, after, at, text, region="screen"):
     """Where a button just clicked at `at` is now, when the screen moved under the click;
     None when the press may have landed.
@@ -297,9 +308,14 @@ def missed(before, after, at, text, region="screen"):
     check, so it is judged afterwards: the same button some rows away, with the rows above
     it moved along on its side of the panel's divider, is one the screen moved away from.
     A pressed button is taken off the screen while its press runs, and the next card's
-    buttons have other rows above them."""
+    buttons have other rows above them. A press that sends the session a prompt leaves its
+    button standing, and the prompt written under the card moves the transcript up: a new
+    prompt from the mod is the press landing, never a miss."""
     now = find_text(after, text, region)
     if now is None or now == at:
+        return None
+    sent, had = plugin_prompts(after), plugin_prompts(before)
+    if sent and (len(sent) > len(had) or sent[-1] != had[-1]):
         return None
     div = divider_column(before)
     side = "panel" if div is not None and at[1] > div else "transcript"
