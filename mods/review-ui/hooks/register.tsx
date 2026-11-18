@@ -1277,6 +1277,12 @@ const drawParts = ($: EngineInterface, e: Parameters<EngineInterface['ui']['reso
 // as a block of markdown beside dim text set the dim parts flickering as the pointer moved.
 const LINK_MD = /^\[[^\]]*\]\(([^)]*)\)$/
 const hrefOf = (md: string | undefined): string | undefined => (md ? LINK_MD.exec(md)?.[1] : undefined)
+// The head of a draft's box in the sidebar, where a comment's names who wrote it and when:
+// the draft is not on GitLab yet. Its words are DRAFT_HEAD's, which the box's width counts.
+const DRAFT_HEAD = 'Draft · not posted'
+const draftHead = (Text: ReturnType<EngineInterface['ui']['resolve']>['Text']) => (
+  <Text><Text bold>Draft</Text><Text dimColor> · not posted</Text></Text>
+)
 const noteHeadLine = (
   $: EngineInterface, e: Parameters<EngineInterface['ui']['resolve']>[0],
   head: { url?: string | null; author?: string | null; when?: string | null; isDim?: boolean; hasBar?: boolean; people?: readonly string[] },
@@ -2369,9 +2375,13 @@ export const register: Register = on => {
     // one thing a box there is for before the thread exists (as GitLab shows a pending
     // comment). A topic with neither has no box: its title and analysis are in the list and
     // on its card, and the bar beside its lines says where it is.
+    // It is not on GitLab, which a box there otherwise always is: its border is dashed and
+    // its head says so (DRAFT_HEAD) where a comment's names who wrote it and when. Its text
+    // is the stored draft, the card's own, so the two change together.
     const draftOf = phase === 'topics' && posted.length === 0 && !isOtherFile && isReview && r.draft_text
-      ? [{ author: YOU, body: r.draft_text, at: null, url: null } as ReviewNote] : []
+      ? [{ author: DRAFT_HEAD, body: r.draft_text, at: null, url: null } as ReviewNote] : []
     const notes = posted.length ? posted : draftOf
+    const isDraftBox = posted.length === 0 && draftOf.length > 0
     // Per item, not per file picked from a fix: a pick keeps what was folded and scrolled.
     const openKey = code?.base ?? (phase === 'own' ? `thread:${own?.id}` : `topic:${r.current}`)
     // How the person left the box (folded or not, scrolled where) holds for the thread as
@@ -2386,7 +2396,7 @@ export const register: Register = on => {
     // name.
     const link = (n: ReviewNote) => (n.url ? `[${LINK_ICON}](${n.url}) ` : '')
     // A comment's own line, wherever it is shown in full: its link, who wrote it, and when.
-    const noteHead = (n: ReviewNote) => noteHeadLine($, e, { url: n.url, author: n.author, when: whenOf(n.at), people: r.people })
+    const noteHead = (n: ReviewNote) => (isDraftBox ? draftHead(Text) : noteHeadLine($, e, { url: n.url, author: n.author, when: whenOf(n.at), people: r.people }))
 
     // The thread under the code, in full (its code blocks and every word) until its fold key
     // folds it to one line per comment, with no blank line between them, and opens it again.
@@ -2468,7 +2478,7 @@ export const register: Register = on => {
     const closedRowsOf = () => notes.map((n, i) => (
         <Box key={`note-${i}`} flexDirection="row" gap={1}>
           {n.url && <Markdown text={link(n).trim()} />}
-          {author(Text, n.author, r.people)}
+          {isDraftBox ? draftHead(Text) : author(Text, n.author, r.people)}
           <Markdown text={short[i]?.text ?? ''} />
         </Box>
       ))
@@ -2620,12 +2630,35 @@ export const register: Register = on => {
     // the file's place for a thread with no file. The fold key stands on its top border near
     // its right corner, a space either side of it, drawn over the border's cells there:
     // `─ key ─╮`.
+    // A draft's box is drawn dashed, by hand (no border style dashes): its rule above and
+    // below as wide as a border's, `inner` and its padding and corners, and a column of
+    // dashes down each side as tall as its rows.
+    const dashedRule = (left: string, right: string) => <Text dimColor>{`${left}${'╌'.repeat(Math.max(1, inner + 2))}${right}`}</Text>
+    const dashedSide = (tag: string, text: string) => (
+      <Box flexDirection="column" flexShrink={0}>
+        {Array.from({ length: Math.max(0, boxRows - 2) }, (_, k) => <Text key={`draft-${tag}-${k}`} dimColor>{text}</Text>)}
+      </Box>
+    )
     const threadBox = boxRows > 0 && (
       <Box key="box" flexDirection="column" position="relative" marginLeft={2}>
-        <Box paddingLeft={1} paddingRight={isBoxScrolled ? 0 : 1} borderStyle="round" borderDimColor flexDirection="column">
-          {code?.view.mode === 'since' && <Text dimColor>written on the code before the push; above, what changed since</Text>}
-          {noteRows}
-        </Box>
+        {isDraftBox
+          ? (
+            <Box flexDirection="column">
+              {dashedRule('╭', '╮')}
+              <Box flexDirection="row">
+                {dashedSide('left', '┆ ')}
+                <Box flexDirection="column" flexGrow={1} flexShrink={1}>{noteRows}</Box>
+                {dashedSide('right', isBoxScrolled ? '┆' : ' ┆')}
+              </Box>
+              {dashedRule('╰', '╯')}
+            </Box>
+          )
+          : (
+            <Box paddingLeft={1} paddingRight={isBoxScrolled ? 0 : 1} borderStyle="round" borderDimColor flexDirection="column">
+              {code?.view.mode === 'since' && <Text dimColor>written on the code before the push; above, what changed since</Text>}
+              {noteRows}
+            </Box>
+          )}
         {foldKey && (
           <Box key="box-key" position="absolute" top={0} right={2} flexDirection="row">
             <Text> </Text>

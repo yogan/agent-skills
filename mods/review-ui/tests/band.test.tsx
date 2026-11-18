@@ -101,12 +101,13 @@ const world = (on: On, states: string[], extra: Record<string, Out> = {}, store:
   on('ui.open', ($, e) => { opened.push(e.id); if (!panes.includes(e.id)) panes.push(e.id); return { value: { isPlaced: true as const } } })
   on('ui.close', ($, e) => { panes.splice(panes.indexOf(e.id), 1); return undefined as never })
   on('ui.panes', () => ({ value: panes.map(id => ({ id, title: 'x', isShown: true, isFocused: false, isPlaced: true })) }))
-  const w = { ran, placed, prompts, filled, turns, tool, rows, written, files, panes, opened, clock }
+  // `move`: the script's state moves on by something the mod did not run (the model's call).
+  const w = { ran, placed, prompts, filled, turns, tool, rows, written, files, panes, opened, clock, move: () => { at += 1 } }
   lastWorld = w
   return w
 }
 
-type World = { clock: { now: number }; ran: { argv: readonly string[]; env?: Record<string, string>; cwd?: string; stdin?: string }[]; placed: string[]; prompts: string[]; filled: string[]; turns: { n: number }; tool: { stdout: string }; rows: ReturnType<typeof mock.session>; written: string[]; files: Record<string, string>; panes: string[]; opened: string[] }
+type World = { move: () => void; clock: { now: number }; ran: { argv: readonly string[]; env?: Record<string, string>; cwd?: string; stdin?: string }[]; placed: string[]; prompts: string[]; filled: string[]; turns: { n: number }; tool: { stdout: string }; rows: ReturnType<typeof mock.session>; written: string[]; files: Record<string, string>; panes: string[]; opened: string[] }
 let lastWorld: World | undefined
 
 // The step's buttons as the person meets them: on the newest card in the chat (the view the
@@ -1579,6 +1580,35 @@ test('a draft not posted yet stands under its lines, as the comment it will be',
   await openReview($, w, view('t1', 'v1'))
   const ui = await $.ui.mount({ ...PANEL, surface: 'terminal' })
   expect((await ui.findAll({ type: 'Markdown' })).some(m => String(m.props.text).includes('this map is rebuilt on every call'))).toBe(true)
+  // Not on GitLab yet, which every other box in the sidebar is: dashed, and headed so in
+  // place of who wrote it and when.
+  const texts = (await ui.findAll({ type: 'Text' })).map(t => t.text)
+  expect(texts.some(t => /^╭╌+╮$/.test(t))).toBe(true)
+  expect(texts.some(t => /^╰╌+╯$/.test(t))).toBe(true)
+  expect(texts.some(t => t.startsWith('┆'))).toBe(true)
+  expect(texts.join('\n')).toContain('Draft · not posted')
+  expect(texts).not.toContain('You')
+  await ui.unmount()
+})
+
+test("a draft's box in the sidebar follows the stored draft, as its card does", async ($, on) => {
+  const w = world(on, [
+    stateOf('t1', [topic('t1', 'draft', 'v1')], { draft_text: 'Nit: this map is rebuilt on every call.' }),
+    stateOf('t1', [topic('t1', 'draft', 'v2')], { draft_text: 'Could this map be built once?' }),
+  ], { code: { stdout: JSON.stringify(codeOf(50, [17, 17])) } })
+  await openReview($, w, view('t1', 'v1'))
+  const md = async (ui: { findAll: (q: { type: string }) => Promise<{ props: Record<string, unknown> }[]> }) =>
+    (await ui.findAll({ type: 'Markdown' })).map(m => String(m.props.text)).join('\n')
+  let ui = await $.ui.mount({ ...PANEL, surface: 'terminal' })
+  expect(await md(ui)).toContain('this map is rebuilt')
+  await ui.unmount()
+  // The draft reworded: the script's echo of it is a view, which reads the state again.
+  w.move()
+  w.tool.stdout = view('t1', 'v2')
+  await $.tool.call({ tool: 'Bash', command: "python3 $SD/findings.py set t1 --draft 'Could this map be built once?' --iid 42", tool_use_id: 'tu-2' } as never)
+  ui = await $.ui.mount({ ...PANEL, surface: 'terminal' })
+  expect(await md(ui)).toContain('Could this map be built once?')
+  expect(await md(ui)).not.toContain('this map is rebuilt')
   await ui.unmount()
 })
 
