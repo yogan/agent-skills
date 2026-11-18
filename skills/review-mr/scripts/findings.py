@@ -1160,13 +1160,27 @@ def context_digest(state, tid):
                         for ln in _thread_context(state, state["threads"].get(th, {}))])
 
 
+def posted_code(state, t):
+    """How a corrected comment's code blocks are shown on its card: a suggestion as the diff
+    it makes of the lines it replaces, as its draft showed it, highlighted; other code in its
+    language."""
+    path, anchor = _draft_target(state, t, bool(t["thread_ids"]))
+
+    def draw(content, info):
+        if SUGGESTION_INFO.match(info or ""):
+            diff = suggestion_diff(content, info, anchor, _suggestion_source(state, "```suggestion", path))
+            return fence(diff, diff_info(path)) if diff else fence(content, lang_for(path))
+        return fence(content, block_lang(content, info, path))
+    return draw
+
+
 def render_quote(state, tid, refine=False):
     """A topic as the user reads it (`_render_quote`), and where the user's own posting of its
     draft no longer holds, the correction under it: its card is the correction's then."""
     body = _render_quote(state, tid, refine)
     t = topic_for(state, tid)
     if t and t.get("post_check") and t.get("post_differs"):
-        body += "\n\n" + posted.card_md(t, "comment")
+        body += "\n\n" + posted.card_md(t, "comment", posted_code(state, t))
     return body
 
 
@@ -4507,7 +4521,7 @@ def main():
                 die(str(e))
             save(path, state)
             emit(state, f"{title_md(state, t, t.get('summary') or '')}\n\n"
-                 + posted.card_md(t, "comment"), args.topic)
+                 + posted.card_md(t, "comment", posted_code(state, t)), args.topic)
         elif args.ok:
             t.pop("post_differs", None)
             if (t.pop("post_check", None) or {}).get("follow_up"):

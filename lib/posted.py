@@ -60,12 +60,13 @@ def store_differs(state, t, verdict, fix, last, since=None):
                          "posted": (note.get("body") or "").strip()}
 
 
-def card_md(t, word):
-    """The card's body under the topic's title: the verdict, then the proposed edit."""
+def card_md(t, word, code=None):
+    """The card's body under the topic's title: the verdict, then the proposed edit, its code
+    blocks drawn by `code` (`worddiff.blocks`)."""
     d = t["post_differs"]
     return "\n".join([
         ui.heading_md(ui.VERDICT_ICON, f"Your posted {word} differs"), "", d["verdict"], "",
-        ui.heading_md(EDIT_ICON, "Proposed edit"), "", worddiff.block(d["posted"], d["fix"]),
+        ui.heading_md(EDIT_ICON, "Proposed edit"), "", worddiff.blocks(d["posted"], d["fix"], code),
     ])
 
 

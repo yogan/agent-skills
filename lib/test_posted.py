@@ -54,6 +54,18 @@ class TestPosted(unittest.TestCase):
         self.assertIn("Your posted reply differs**\n\nIt drops which option.", md)
         self.assertIn("```worddiff\nOption [-A-]{+B+}, the fix follows.\n```", md)
 
+    def test_a_line_after_the_edit_stays_out_of_its_code(self):
+        """The card ends on what a press did, after the edit: a fence left open by a code
+        block inside the word diff swallowed it, drawn as raw markdown."""
+        s, t = state()
+        was = "Same?\n\n```suggestion\nreturn x\n```"
+        s["threads"]["d1"]["notes"][1]["body"] = was
+        posted.store_differs(s, t, "Needs the range.", was.replace("suggestion", "suggestion:-0+1"), last=False)
+        md = posted.card_md(t, "reply") + "\n\n13:28 You edited it · [comment](https://gl/n)"
+        self.assertEqual(sum(1 for ln in md.splitlines() if ln.startswith("```")) % 2, 0)
+        self.assertNotIn("{+", md)
+        self.assertTrue(md.splitlines()[-2] == "" and md.splitlines()[-3] == "```")
+
     def test_apply_edits_that_note_on_gitlab(self):
         s, t = state()
         posted.store_differs(s, t, "v", "Option B.", last=False)

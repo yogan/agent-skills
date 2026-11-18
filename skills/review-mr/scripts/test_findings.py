@@ -3173,6 +3173,20 @@ class TestFollowUpPostedByHand(unittest.TestCase):
         self.run_posted("--differs", "It drops the case.", "--fix", "-", stdin="Still null on a read error?\n")
         self.assertEqual(self.t1["post_differs"]["note"], "3")
 
+    def test_a_corrected_suggestion_is_shown_as_a_suggestion_its_code_highlighted(self):
+        """The correction changed the suggestion's range alone: shown as the diff the
+        suggestion makes, in the file's language, as its draft was; never its fence marked
+        word by word."""
+        was = "Same?\n\n```suggestion\n  return y;\n```"
+        self.state["threads"]["d1"]["notes"][2]["body"] = was
+        self.state["threads"]["d1"].update(file="a.ts", line=2)
+        self.run_posted()
+        with patch.object(F, "_suggestion_source", return_value=["a()", "  return x;", "  b();"]):
+            out = self.run_posted("--differs", "Needs the next line too.", "--fix", "-",
+                                  stdin=was.replace("suggestion", "suggestion:-0+1"))
+        self.assertIn("```diff path=a.ts\n@@ -2,2 +2,1 @@\n-  return x;\n-  b();\n+  return y;\n```", out)
+        self.assertNotIn("{+", out)
+
     def test_kept_as_posted_leaves_no_draft(self):
         self.run_posted()
         with patch.object(F, "CURRENT") as cur:
