@@ -1211,8 +1211,9 @@ def _step_parts(state, t):
     draft = draft_of(state, t)
     if draft and (st == "reply" or (st == "fix" and not early_reply(t))):
         x = state["threads"].get((t["thread_ids"] or [None])[0]) or {}
-        # Kept through a plan that became a fix: on its card until it can go up, so the
-        # words agreed are not lost from sight while the fix is made.
+        # Kept through a plan that became a fix: on its card while the fix is still to make,
+        # so the words agreed are not lost from sight; not while the fix waits for its push,
+        # which is decided on the change alone; with Post after it, whole, as it is posted.
         out += [ui.heading_md(ui.DRAFT_ICON, "Draft reply" if st == "reply"
                               else "Draft reply, to post after the fix"), "",
                 _quote_draft(draft, x.get("file")), ""]
