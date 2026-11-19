@@ -494,6 +494,19 @@ def autosquash(root, target, tree):
         raise Stop("after squashing, the branch's files are not the ones checked; nothing is pushed")
 
 
+def only_rebased_copies(root, theirs, before):
+    """Whether every commit `theirs` holds that `before` lacks has its change in `before`
+    too, by patch id: the copies a rebase replaced, of the branch's own commits or of one
+    taken in before it. A rebase leaves the remote holding exactly those, and pushing over
+    them loses nothing. A commit whose change `before` does not have (an applied suggestion
+    nobody took in) or a merge, which has no patch to compare, is foreign."""
+    r = git(root, "rev-list", "--right-only", "--cherry-pick", f"{before}...{theirs}")
+    if r.returncode != 0 or r.stdout.strip():
+        return False
+    merges = git(root, "rev-list", "--merges", f"{before}..{theirs}")
+    return merges.returncode == 0 and not merges.stdout.strip()
+
+
 def push(root, record, before):
     """Force-push the branch to its upstream, `before` the commit it was rewritten from. The
     pre-push hook runs here only where the record is not trusted yet or has no early run for
@@ -509,7 +522,8 @@ def push(root, record, before):
     # What --force-if-includes stands for, without the reflogs it reads: what the branch on
     # the remote holds (a reviewer's applied suggestion, say) is in the branch rewritten, and
     # the push replaces exactly that.
-    if theirs and git(root, "merge-base", "--is-ancestor", theirs, before).returncode != 0:
+    if theirs and git(root, "merge-base", "--is-ancestor", theirs, before).returncode != 0 \
+            and not only_rebased_copies(root, theirs, before):
         raise Stop(f"{up} has commits your branch does not (an applied suggestion?): fetch "
                    "and take them in first; nothing is pushed")
     pre = hook_of(record, "pre-push")

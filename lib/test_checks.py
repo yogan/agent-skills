@@ -311,6 +311,51 @@ class TestPush(Case):
         self.assertEqual(sh(other, "git", "rev-parse", "HEAD"),
                          sh(self.r.root, "git", "rev-parse", "origin/main"))
 
+    def rebase_onto_a_moved_target(self):
+        """The target branch moved by one commit and the branch is rebased onto it: the
+        remote still holds the copies of the branch's own commit the rebase replaced."""
+        root = self.r.root
+        sh(root, "git", "checkout", "-q", "-b", "target", "HEAD^")
+        self.r.write("d.txt", "docs\n")
+        sh(root, "git", "add", "d.txt")
+        sh(root, "git", "commit", "-q", "--no-verify", "-m", "docs: d")
+        sh(root, "git", "checkout", "-q", "main")
+        sh(root, "git", "rebase", "-q", "--no-verify", "target")
+
+    def push_a_fix_of_c(self, rec):
+        self.r.write("c.txt", "three fixed\n")
+        stamp = checks.run(self.r.root, rec)
+        self.assertTrue(stamp["ok"], stamp)
+        before = sh(self.r.root, "git", "rev-parse", "HEAD")
+        checks.commit_fixup(self.r.root, rec, stamp, before)
+        checks.autosquash(self.r.root, before, stamp["tree"])
+        checks.push(self.r.root, rec, before)
+        return stamp
+
+    def test_the_copies_a_rebase_replaced_are_pushed_over(self):
+        rec = self.r.record()
+        self.rebase_onto_a_moved_target()
+        stamp = self.push_a_fix_of_c(rec)
+        self.assertEqual(sh(self.r.root, "git", "log", "--format=%s", "origin/main"),
+                         "feat: c\ndocs: d\nfeat: a and b")
+        self.assertEqual(sh(self.r.root, "git", "rev-parse", "origin/main^{tree}"), stamp["tree"])
+
+    def test_a_foreign_commit_beside_the_rebased_copies_still_stops_the_push(self):
+        rec = self.r.record()
+        other = os.path.join(self.r.d, "other")
+        sh(self.r.d, "git", "clone", "-q", os.path.join(self.r.d, "remote.git"), other)
+        with open(os.path.join(other, "b.txt"), "a") as fh:
+            fh.write("suggested\n")
+        sh(other, "git", "-c", "user.name=R", "-c", "user.email=r@example.invalid", "commit",
+           "-qam", "Apply suggestion")
+        sh(other, "git", "push", "-q")
+        sh(self.r.root, "git", "fetch", "-q")
+        self.rebase_onto_a_moved_target()
+        with self.assertRaisesRegex(checks.Stop, "has commits your branch does not"):
+            self.push_a_fix_of_c(rec)
+        self.assertEqual(sh(other, "git", "rev-parse", "HEAD"),
+                         sh(self.r.root, "git", "rev-parse", "origin/main"))
+
     def test_files_changed_since_the_checks_are_not_committed(self):
         rec = self.r.record()
         stamp = self.fix(rec)
