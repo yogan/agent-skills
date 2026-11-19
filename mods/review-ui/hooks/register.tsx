@@ -152,15 +152,16 @@ const LINK_ICON = '\u{f03cc}'
 
 // What marks the MR's own title at the head of the sidebar: md-source_pull.
 const MR_ICON = '\u{f04c2}'
-// Where the MR stands as a whole, as marks at the right of its title: closed, auto-merge set,
-// approved. Merged is the title's own icon; once over, neither of the others is news.
+// Where the MR stands as a whole, as marks right after its title, in one order, the
+// legend's too: the approval first, as what the MR waits for most, then closed, auto-merge
+// set, and the head pipeline (nothing where the MR has none). Merged is the title's own
+// icon; once over, none of the others is news.
 const mrMarksOf = (mr: ReviewState['mr']): string[] => {
   const isOver = mr?.state === 'merged' || mr?.state === 'closed'
   return [
+    ...(!isOver && (mr?.approved_by?.length ?? 0) > 0 ? ['approved'] : []),
     ...(mr?.state === 'closed' ? ['closed'] : []),
     ...(!isOver && mr?.auto_merge ? ['auto-merge'] : []),
-    ...(!isOver && (mr?.approved_by?.length ?? 0) > 0 ? ['approved'] : []),
-    // The head pipeline, beside the approval: nothing where the MR has none.
     ...(!isOver && mr?.pipeline?.status ? [`pipeline-${mr.pipeline.status}`] : []),
   ]
 }
@@ -3036,29 +3037,23 @@ export const register: Register = on => {
     // phase, so it always says which MR this is.
     // During a round, what arrived meanwhile is counted after it, in the colour of news.
     const fresh = r.current ? r.topics.filter(t => t.inbox === 'new' && t.id !== r.current).length : 0
-    // Where the MR stands as a whole, at the right of its title, which gives way first:
-    // merged or closed, auto-merge set (a warning while topics are open), who approved it.
+    // Where the MR stands as a whole (`mrMarksOf`): icons only, each in its kind's colour,
+    // right after the title, which gives way first; the legend says what they stand for. A
+    // merged MR's icon is the heading's first.
     const mr = r.mr
     const isOver = mr?.state === 'merged' || mr?.state === 'closed'
-    // Icons only, each in its kind's colour, right after the title; the legend says what they
-    // stand for. A merged MR's icon is the heading's first. The whole line is centred over the
-    // areas under it.
     const marks = mrMarks
-    // Centred by a margin of whole cells worked out here: centred by the layout, an odd
-    // leftover puts the line on half a cell, each part is rounded on its own, and the gap
-    // after the icon comes out two cells wide. A line too long for the pane is not centred;
-    // its title gives way.
     // The sidebar's top line, which heads the topic list: the MR's icon (a merged one's is
-    // the merge icon), its number as a link to it, its title, cut to the room; after a short
-    // stretch of line the MR's marks (approved, auto-merge) and what arrived meanwhile; the
-    // legend's key at its end. A space after each icon: Ghostty draws a Nerd Font icon two
-    // cells wide where a space follows it, one where nothing does.
+    // the merge icon), its number as a link to it, its title, cut to the room; a space, then
+    // the MR's marks and what arrived meanwhile; a stretch of line to the legend's key at its
+    // end. A space after each icon: Ghostty draws a Nerd Font icon two cells wide where a
+    // space follows it, one where nothing does.
     const titleText = plainTitle(r.title ?? '')
     const ownWords = phase === 'own' ? ' · your comments' : ''
     const after = (marks.length > 0 ? 2 * marks.length : 0) + (fresh > 0 ? (marks.length > 0 ? 2 : 0) + cells(`${fresh} new`) : 0)
-    // `── `, the icon and its space, the number, the words of the own-comments phase, ` ── ` and
-    // the marks and news, the space before the dashes, and the end: ` ⓘ ─` or `─`.
-    const fixedWidth = 3 + 2 + cells(`!${r.iid}`) + cells(ownWords) + (after > 0 ? 4 + after : 0) + 1 + (allGroups.length > 0 ? 4 : 1)
+    // `── `, the icon and its space, the number, the words of the own-comments phase, a space
+    // and the marks and news, the space before the dashes, and the end: ` ⓘ ─` or `─`.
+    const fixedWidth = 3 + 2 + cells(`!${r.iid}`) + cells(ownWords) + (after > 0 ? 1 + after : 0) + 1 + (allGroups.length > 0 ? 4 : 1)
     // The title's room: the line less its fixed parts, the space before the title and the one
     // dash the stretch after it always keeps.
     const titleRoom = Math.max(0, cols - fixedWidth - 1 - 1)
@@ -3077,7 +3072,7 @@ export const register: Register = on => {
         {shownTitle && <Box key="list-line-title" flexShrink={1}><Text bold wrap="truncate-end">{` ${shownTitle}`}</Text></Box>}
         <Box key="list-line-tail" flexDirection="row" flexShrink={0}>
           {ownWords && <Text dimColor>{ownWords}</Text>}
-          {after > 0 && <Text dimColor>{' ── '}</Text>}
+          {after > 0 && <Text>{' '}</Text>}
           {marks.map(k => (
             <Box key={`mark-${k}`} flexDirection="row"><Text color={MR_COLOR[k]}>{INBOX_ICON[k]}</Text><Text> </Text></Box>
           ))}

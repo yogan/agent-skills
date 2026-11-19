@@ -2558,17 +2558,30 @@ test("review-mr: the author's pushed fix is the sidebar's files area, led by its
   await panel.unmount()
 })
 
-test("the list's line is the MR's: its number and title, its marks and the news after a stretch of line, the legend's key at the end", async ($, on) => {
-  const mr = { state: 'opened', auto_merge: false, approved_by: [{ name: 'Jan', me: false }] }
+test("the list's line is the MR's: its number and title, its marks and the news right after it, a stretch of line to the legend's key", async ($, on) => {
+  const mr = { state: 'opened', auto_merge: true, approved_by: [{ name: 'Jan', me: false }], pipeline: { status: 'running' } }
   const w = world(on, [reworkState('t1', [reworkTopic('t1', 'plan'), reworkTopic('t2', 'plan', { inbox: 'new' })], { mr, url: 'http://gl/g/p/-/merge_requests/42' })])
   await openRework($, w, reworkView('t1'))
   const panel = await $.ui.mount({ ...PANEL, surface: 'terminal' })
   const texts = (await panel.findAll({ type: 'Text' })).map(t => String(t.text ?? ''))
   expect(texts).not.toContain('Topics')
   const line = JSON.stringify((await panel.find({ type: 'Box', key: 'list-line' }))?.children ?? [])
-  for (const part of ['!42', ' Add a widget cache', ' ── ', '\u{f0514}', '· ', '1 new', 'legend']) expect(line).toContain(part)
-  expect(line.indexOf('1 new')).toBeGreaterThan(line.indexOf(' ── '))
-  expect(line.indexOf('legend')).toBeGreaterThan(line.indexOf('1 new'))
+  for (const part of ['!42', ' Add a widget cache', '\u{f0514}', '· ', '1 new', 'legend']) expect(line).toContain(part)
+  // The marks right after the title, no stretch of line between; the approval first.
+  expect(line).not.toContain(' ── ')
+  const at = (x: string) => line.indexOf(x)
+  expect(at('\u{f0514}')).toBeGreaterThan(at(' Add a widget cache'))
+  expect(at('\u{f051f}')).toBeGreaterThan(at('\u{f0514}'))
+  expect(at('\u{f0996}')).toBeGreaterThan(at('\u{f051f}'))
+  expect(at('1 new')).toBeGreaterThan(at('\u{f0996}'))
+  expect(at('legend')).toBeGreaterThan(at('1 new'))
+  // The legend lists them in the same order.
+  await panel.press({ key: 'legend' })
+  const legend = JSON.stringify(await panel.find({ type: 'Box', key: 'legend-box' }))
+  const place = (word: string) => legend.indexOf(word)
+  expect(place(' approved')).toBeGreaterThanOrEqual(0)
+  expect(place(' auto-merge set')).toBeGreaterThan(place(' approved'))
+  expect(place(' pipeline running')).toBeGreaterThan(place(' auto-merge set'))
   await panel.unmount()
 })
 
