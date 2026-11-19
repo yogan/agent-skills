@@ -1025,17 +1025,23 @@ test('an answer still being judged in the background offers nothing to decide, o
 
 // The topic was open when its news came: the new comment was in the sidebar alone, the card
 // as before, and the topic still marked new.
-test("news for the topic whose card is up brings a fresh card of it, once it is judged", async ($, on) => {
+const newsAfter = async ($: Engine, on: On, isTurnBetween: boolean) => {
   const tick = heldClock(on)
   on('tool.register' as never, (() => ({ value: undefined })) as never)
   on('session.start' as never, ((_: unknown, e: object) => e) as never)
+  on('turn.start', ($, e) => ({ turnId: e.turnId }))
   // A fix waiting for its push: the one state every update check reads again by itself.
   const at = (face: string, judge: string[] = []) => reworkState('t1', [reworkTopic('t1', 'fixed', { checks: 'passed' })],
     { face, judge: { topics: judge, own: [] }, hunk: { open: false, notes: 0 } })
   const states = [at('f1')]
-  const w = world(on, states)
+  const fresh = reworkView('t1', undefined, 'fixed', 'f3').replace('some view', 'the news taken in')
+  const w = world(on, states, { quote: { stdout: fresh } })
   await (($ as unknown as { session: { start: (e: object) => Promise<unknown> } }).session.start({ source: 'startup', cwd: '/wt' }))
   await openRework($, w, reworkView('t1', undefined, 'fixed', 'f1'))
+  if (isTurnBetween) {
+    await $.turn.start({ text: 'what does the fix do?', turnId: 'turn-1' })
+    await (($ as unknown as { turn: { complete: (e: object) => Promise<unknown> } }).turn.complete({ turnId: 'turn-1', answer: 'It renames it.' }))
+  }
   await tick()
   expect(w.placed).toEqual([])                         // nothing new: the card stands
   states[0] = at('f2', ['t1'])                         // a reviewer wrote: being judged
@@ -1043,12 +1049,28 @@ test("news for the topic whose card is up brings a fresh card of it, once it is 
   expect(w.placed).toEqual([])
   states[0] = at('f3')                                 // judged: the card takes it in
   await tick()
-  expect(w.placed.length).toBe(1)
   // Then the state read again, as a move to a topic does: the card marked the news seen, so
   // the sidebar's file is the news's own (a push as the fix's diff) at once, not at the
   // next check minutes later.
   const cmds = w.ran.map(r => r.argv[2])
   expect(cmds.slice(cmds.lastIndexOf('quote'))).toContain('state')
+  return { w, tick, fresh }
+}
+
+test("news for the topic whose card ends the chat is drawn into that card, once it is judged", async ($, on) => {
+  const { w, tick, fresh } = await newsAfter($, on, false)
+  expect(w.placed).toEqual([])                         // in place: no second card of t1
+  const ui = await $.ui.mount(cardRow('tu-open', fresh))
+  expect(JSON.stringify(await ui.findAll({ type: 'Markdown' }))).toContain('the news taken in')
+  await ui.unmount()
+  const quotes = w.ran.filter(r => r.argv[2] === 'quote').length
+  await tick()
+  expect(w.ran.filter(r => r.argv[2] === 'quote').length).toBe(quotes)    // once
+})
+
+test("news for the topic whose card a turn has followed brings a fresh card of it at the end", async ($, on) => {
+  const { w, tick } = await newsAfter($, on, true)
+  expect(w.placed.length).toBe(1)
   await tick()
   expect(w.placed.length).toBe(1)                      // once
 })
@@ -2124,10 +2146,12 @@ test('rework-mr: a topic that needs you gets its plan from the chat as its card 
   await ui.press({ key: 'agree' })
   await ui.unmount()
   expect(w.prompts).toEqual([proposePrompt('t2')])
-  // Its card comes up again (a comment on it edited meanwhile): the plan is asked for once.
+  // Its card is drawn again in its place (a comment on it edited meanwhile): the plan is
+  // asked for once.
   states[1] = on2('f2')
   await tick()
-  expect(w.placed.length).toBe(2)
+  expect(w.placed.length).toBe(1)
+  expect(w.ran.filter(r => r.argv[2] === 'quote').length).toBe(2)
   expect(w.prompts).toEqual([proposePrompt('t2')])
 })
 

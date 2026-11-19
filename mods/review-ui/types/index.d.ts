@@ -295,8 +295,13 @@ declare module 'claude-code' {
       // What a press did to each card it finished, by the card's id.
       outcomes: Shaped<Record<string, ReviewOutcome>>
       // The cards of the review in the order they came up (`at`, by card id), and for each
-      // topic opened again to look at, the card that tells its story now (`retold`).
+      // topic, its newest card, which holds it whole (`retold`).
       cards: Shaped<{ n: number; at: Record<string, number>; retold: Record<string, string> }>
+      // The main loop's turns, counted, and the count each card came up at, by its id.
+      turns: Shaped<number>
+      'card-turn': Shaped<Record<string, number>>
+      // A model's card drawn again in its place with its topic as it is now, by its id.
+      redrawn: Shaped<Record<string, { text: string; topic?: string; draft?: string }>>
       // A draft's Copy reading "Copied!", by its topic; the topics told where to paste one.
       copied: Shaped<string | null>
       'copy-told': Shaped<string[]>

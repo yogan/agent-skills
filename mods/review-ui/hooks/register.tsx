@@ -43,9 +43,18 @@ const copiedDraft = atom({ plugin: 'review-ui', key: 'copied' } as const, null a
 const copyTold = atom({ plugin: 'review-ui', key: 'copy-told' } as const, [] as string[], { shape: 'copy-told-1' })
 // What a press did to the card it was pressed on, by the card's id: its last line.
 const outcomes = atom({ plugin: 'review-ui', key: 'outcomes' } as const, {} as Record<string, ReviewOutcome>, { shape: 'outcomes-1' })
-// The cards in the order they came up, and the one that tells a topic's story once it was
-// opened again (`noteCard`): one card per topic, the older ones shrink to their title.
+// The cards in the order they came up, and each topic's newest, which holds it whole
+// (`noteCard`): one card per topic, the older ones shrink to their title line.
 const cards = atom({ plugin: 'review-ui', key: 'cards' } as const, { n: 0, at: {}, retold: {} } as { n: number; at: Record<string, number>; retold: Record<string, string> }, { shape: 'cards-1' })
+// The main loop's turns, counted, and the count each card came up at: a card no turn has
+// followed since is still where the chat ends, and news about its topic is drawn into it.
+const turns = atom({ plugin: 'review-ui', key: 'turns' } as const, 0, { shape: 'turns-1' })
+const cardTurn = atom({ plugin: 'review-ui', key: 'card-turn' } as const, {} as Record<string, number>, { shape: 'card-turn-1' })
+// A model's card drawn again in its place (`redrawCard`): the view it shows now, by the id of
+// the tool call it hangs under. A card a press placed is redrawn in `placed` itself.
+const redrawn = atom({ plugin: 'review-ui', key: 'redrawn' } as const, {} as Record<string, { text: string; topic?: string; draft?: string }>, { shape: 'redrawn-1' })
+// How many cards both keep, the newest: an older card is folded to its title line by then.
+const CARDS_KEPT = 30
 const busy = atom({ plugin: 'review-ui', key: 'busy' } as const, null as string | null, { shape: 'busy-1' })
 const panel = atom({ plugin: 'review-ui', key: 'panel' } as const, false, { shape: 'panel-1' })
 // The sidebar's groups the person folded (true) or unfolded (false); one not in it is as
@@ -595,6 +604,31 @@ const noteCard = async ($: EngineInterface, id: string, topic: string | undefine
     n: c.n + 1, at: { ...c.at, [id]: c.n + 1 },
     retold: isCard && topic ? { ...c.retold, [topic]: id } : c.retold,
   }))
+  const n = await read($, turns)
+  await update($, cardTurn, m => Object.fromEntries([...Object.entries(m), [id, n]].slice(-CARDS_KEPT)))
+}
+
+// The current topic's card, drawn again where it stands, from the topic as it is now: news
+// that only adds to what the card says (a push recorded for a second topic, a judgment come
+// in) changes the card in front of the person instead of drawing the topic once more below.
+const redrawCard = async ($: EngineInterface, s: ReviewSession, id: string, tid: string) => {
+  const q = await runScript($, s, ['quote', tid])
+  const view = viewOf(q.stdout)
+  if (q.exitCode !== 0 || !view || view.topic !== tid) return false
+  const of = { topic: view.topic, draft: view.draft }
+  if (id in (await read($, placed))) {
+    await update($, placed, m => ({ ...m, [id]: view.text }))
+    await update($, placedOf, m => ({ ...m, [id]: of }))
+  } else {
+    await update($, redrawn, m => Object.fromEntries([...Object.entries(m), [id, { text: view.text, ...of }]].slice(-CARDS_KEPT)))
+  }
+  // What a press on it did is part of the topic as it is now, its story: drawn as a fresh
+  // card is, with no line of its own under it.
+  await update($, outcomes, m => { const { [id]: _done, ...rest } = m; return rest })
+  await update($, hostCard, () => ({ id, topic: tid, step: view.step ?? null, face: view.face ?? null }))
+  await update($, card, () => ({ topic: tid, draft: manifestOf(q.stdout)?.draft ?? null }))
+  planWanted = tid             // as a card come up anew: its plan, where still to be made
+  return true
 }
 
 // Showing a topic can move it on (rework-mr brings a fix put aside back when its topic comes
@@ -810,10 +844,15 @@ const cardForNews = async ($: EngineInterface) => {
   if ((await read($, working)) || (await read($, busy))) return
   const j = await read($, judging)
   if ((r.judge?.topics ?? []).includes(r.current) && !j.failed.includes(r.current)) return
+  // The card no turn has followed since is where the chat ends: the news goes into it, in its
+  // place. One a turn has followed is above the turn's words, and a fresh card at the end
+  // takes the news in, the older one folding to its title line.
+  const isAtEnd = (await read($, cardTurn))[host.id] === (await read($, turns))
+  const isDrawn = isAtEnd ? await redrawCard($, s, host.id, r.current) : await placeTopic($, s, r.current)
   // Read again once it is up, as a move to a topic does: the card took the news in (it is
   // seen now), so the sidebar shows what the news was, the author's push as the fix's own
   // diff, and no longer the worktree's code from before the push as "changed since".
-  if (await placeTopic($, s, r.current)) await refresh($, s)
+  if (isDrawn) await refresh($, s)
   await askPlan($)
 }
 
@@ -1888,6 +1927,7 @@ export const register: Register = on => {
   on('turn.start', async ($, e, next) => {
     if ((e as { agentId?: string }).agentId) return next(e)
     planWanted = null          // the turn has the topic in hand
+    await update($, turns, n => n + 1)
     await update($, working, () => true)
     await clearSaid($)
     await dropStray($)
@@ -2029,7 +2069,8 @@ export const register: Register = on => {
       return next(e)
     }
     if (isRunning || isErrored || !isViewCall(tool, input)) return next(e)
-    const view = viewOf(stdoutOf(output))
+    // Drawn again since with the topic as it is now (`redrawCard`), else as the call printed it.
+    const view = (await read($, redrawn))[e.props.tool_use_id] ?? viewOf(stdoutOf(output))
     if (!view || !(await read($, inUse))) {
       // A view command whose row stays a row: why, in the debug log, as the screen cannot say.
       $.ui.log(`review-ui: ${e.props.tool_use_id} not drawn as a card: ${!view ? `no view in its output (${typeof output}${typeof stdoutOf(output) === 'string' ? `, ${String(stdoutOf(output)).length} chars` : ''})` : 'no review in use'}`, { to: 'debug' })
