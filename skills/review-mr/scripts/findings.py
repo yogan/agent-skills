@@ -1456,9 +1456,7 @@ def story_steps(state, t):
         # count of the same change.
         also = shared_with(state, t, f)
         return ((f" · {ui.link_md('diff', f['url'])}" if f.get("url") else "")
-                + (f" · also {', '.join(also)}" if also else "")
-                + (" · with a rebase" if f.get("rebase")
-                   else " · may include other changes" if f.get("mixed") else ""))
+                + ui.push_aside_md(also, rebase=bool(f.get("rebase")), mixed=bool(f.get("mixed"))))
 
     for k, f in enumerate(fixes, 1):
         # A push that changed the comment's file elsewhere is a fix once the agent judged it

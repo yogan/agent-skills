@@ -1176,6 +1176,7 @@ const stepText = (els: Pick<ReturnType<EngineInterface['ui']['resolve']>, 'Text'
         : r.kind === 'bold' ? <Text key={`b${n}`} bold>{r.text}</Text>
         : r.kind === 'name' ? <Text key={`n${n}`} bold color={isDim ? undefined : personColor(r.text, people)}>{r.text}</Text>
         : r.kind === 'link' ? <Link key={`l${n}`} href={r.url} label={r.text} />
+        : r.kind === 'aside' ? <Text key={`a${n}`} dimColor italic>{r.text}</Text>
         : <Text key={`s${n}`}>{drawSize(Text, (sizeOf(r.text) as { size: DiffSize }).size, isDim)}</Text>))}
     </Text>
   )

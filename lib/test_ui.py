@@ -142,6 +142,13 @@ class TestStory(unittest.TestCase):
         self.assertEqual(ui.said_md("replied", "http://gl/n9"), f"[replied {LINK_ICON}](http://gl/n9)")
         self.assertEqual(ui.said_md("replied", None), "replied")
 
+    def test_what_else_a_push_carried_is_said_short_and_apart(self):
+        self.assertEqual(ui.push_aside_md(["t2"], rebase=True, mixed=True), " _(includes t2 + rebase)_")
+        self.assertEqual(ui.push_aside_md([], rebase=True), " _(includes a rebase)_")
+        self.assertEqual(ui.push_aside_md(["t2", "t5"]), " _(includes t2, t5)_")
+        self.assertEqual(ui.push_aside_md([], mixed=True), " _(may include other changes)_")
+        self.assertEqual(ui.push_aside_md([]), "")
+
 
 if __name__ == "__main__":
     unittest.main()

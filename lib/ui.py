@@ -214,6 +214,17 @@ def link_md(label, url):
     return f"[{label} {LINK_ICON}]({url})"
 
 
+def push_aside_md(also=(), rebase=False, mixed=False):
+    """What else a push on a topic's story line carried, said short and set apart, in both
+    skills: the other topics it was a fix for too and a rebase (`(includes t2 + rebase)`),
+    or that it may hold more than the fix. In italics, which the review-ui mod draws dim:
+    the line's news is the push and its diff, this is the small print."""
+    if also or rebase:
+        said = ", ".join(also) + (" + rebase" if also and rebase else "") if also else "a rebase"
+        return f" _(includes {said})_"
+    return " _(may include other changes)_" if mixed else ""
+
+
 def closed_md(text, at=None, url=None):
     """A topic's closing line, the last of its card before the buttons in both skills: when,
     who closed it and how (`Miriam resolved it`). It carries no link: a resolve is no

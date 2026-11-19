@@ -1420,8 +1420,7 @@ def story_steps(state, t):
         # (a rebase, other commits) says it may hold more. Mirrors findings.py's `story_steps`.
         also = [x["id"] for x in state["topics"] if x is not t and f.get("after")
                 and any(p.get("after") == f["after"] for p in x.get("pushes") or [])]
-        return link + (f" · also {', '.join(also)}" if also
-                       else " · may include other changes" if f.get("mixed") else "")
+        return link + ui.push_aside_md(also, mixed=bool(f.get("mixed")) and not also)
 
     # A topic pushed before its pushes were kept one by one has its link alone.
     fixes = (kept_fixes(state, t) or [{"url": t["diff_url"]}]) if is_pushed_fix(t) or t.get("pushes") else []

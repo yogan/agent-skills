@@ -3562,8 +3562,8 @@ class TestAuthorFixes(unittest.TestCase):
                            {"new_path": "b.ts", "old_path": "b.ts", "diff": self.ELSEWHERE}])
         self.walk()
         with patch.object(F, "get_worktree", return_value=None):
-            self.assertIn("· also t2", "\n".join(F.story_steps(self.state, self.t)))
-            self.assertIn("· also t1", "\n".join(F.story_steps(self.state, self.state["topics"][1])))
+            self.assertIn("_(includes t2)_", "\n".join(F.story_steps(self.state, self.t)))
+            self.assertIn("_(includes t1)_", "\n".join(F.story_steps(self.state, self.state["topics"][1])))
 
     def test_a_fix_that_came_with_a_rebase_says_so_and_shows_only_the_mr_s_own_files(self):
         self.push("B", 2, [{"new_path": "a.ts", "old_path": "a.ts", "diff": self.FIX},
@@ -3575,7 +3575,7 @@ class TestAuthorFixes(unittest.TestCase):
         self.assertEqual(f["paths"], ["a.ts"])            # upstream.ts is the target branch's
         with patch.object(F, "get_worktree", return_value=None):
             line = next(x for x in F.story_steps(self.state, self.t) if "pushed" in x)
-        self.assertIn("· with a rebase", line)
+        self.assertIn("_(includes a rebase)_", line)
         self.assertNotIn("may include other changes", line)
 
     def test_where_the_versions_cannot_tell_one_fix_spans_the_comment_to_the_head(self):

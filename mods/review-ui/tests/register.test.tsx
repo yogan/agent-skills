@@ -726,6 +726,13 @@ test("a step's text is one flow of runs: names, code, links and a size", () => {
   ])
 })
 
+test("a push's small print is its own run, and a name with underscores is not one", () => {
+  expect(inlineOf('Robin pushed a fix · [diff \u{F03CC}](u) _(includes t2 + rebase)_', ['Robin']).slice(-2)).toEqual([
+    { kind: 'plain', text: ' ' }, { kind: 'aside', text: '(includes t2 + rebase)' },
+  ])
+  expect(inlineOf('Robin renamed my_var_name').map(r => r.kind)).toEqual(['plain'])
+})
+
 test("a press's line goes on under the card's steps, and stands apart from anything else", () => {
   const o = { when: '14:02', icon: '\u{F048A}', text: 'You posted it', url: 'u', label: 'thread' }
   expect(withOutcome('13:55 \u{F012C} You agreed the plan', o, '\u{F03CC}')).toBe('13:55 \u{F012C} You agreed the plan\n14:02 \u{F048A} You posted it · [thread \u{F03CC}](u)')

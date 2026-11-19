@@ -3428,7 +3428,7 @@ class TestFixPerPush(unittest.TestCase):
         # grouped, a plan agreed between two pushes stood above both.
         self.assertEqual(out, [f"{T.ui.PUSHED_ICON} You pushed a fix (push 1) · [diff {LINK_ICON}](G/diffs?diff_id=2&start_sha=A)",
                                f"{T.ui.PUSHED_ICON} You pushed a fix (push 2) · [diff {LINK_ICON}](G/diffs?diff_id=4&start_sha=X)"
-                               " · may include other changes"])
+                               " _(may include other changes)_"])
 
     def test_a_push_that_was_another_topic_s_too_says_which(self):
         state, t = self.topic(self.push("A", "B", 2))
@@ -3436,7 +3436,7 @@ class TestFixPerPush(unittest.TestCase):
         t["plan"] = "p"
         with mock.patch.object(T, "_git", return_value=""):
             out = [x for x in T.story_steps(state, t) if "pushed" in x]
-        self.assertTrue(out[0].endswith(" · also t3"), out[0])
+        self.assertTrue(out[0].endswith(" _(includes t3)_"), out[0])
 
 
 class TestStateByWord(unittest.TestCase):
