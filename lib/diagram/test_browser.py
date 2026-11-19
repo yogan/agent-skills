@@ -11,12 +11,14 @@ renderer's.
 Run: `python3 lib/diagram/test_browser.py`
 """
 import os
+import shutil
 import subprocess
 import sys
 import time
 import unittest
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, REPO)
 
 from lib import parallel
 from lib.diagram import browser, render
@@ -112,6 +114,63 @@ class TestTheBrowserPool(unittest.TestCase):
         self.assertFalse(os.path.exists(killed.profile))
         running = subprocess.run(["pgrep", "-f", killed.profile], capture_output=True, text=True)
         self.assertEqual(running.stdout.split(), [], "Chrome is still running")
+
+    def test_a_caller_killed_outright_leaves_no_browser_running(self):
+        """A killed command is SIGKILLed with its whole process group, node with it, and
+        Chrome, which puppeteer starts in a group of its own, kept running: about forty of
+        them piled up over days."""
+        caller, profile = self.caller()
+        os.killpg(caller.pid, 9)
+        caller.wait(timeout=10)
+        self.assertEqual(self.left_running(profile), [], "Chrome outlived its caller")
+
+    def test_a_caller_killed_mid_page_leaves_no_browser_running(self):
+        """Node reads its closed stdin only once the page in hand is done, and a page that
+        never finishes would keep node and Chrome for good."""
+        caller, profile = self.caller(hang=True)
+        os.kill(caller.pid, 9)
+        caller.wait(timeout=10)
+        self.assertEqual(self.left_running(profile), [], "Chrome outlived its caller")
+
+    def caller(self, hang=False):
+        """A process of its own that starts a browser and waits to be killed; with `hang`, it
+        first hands it a page that never finishes loading."""
+        script = (
+            "import sys, time\n"
+            f"sys.path.insert(0, {REPO!r})\n"
+            "from lib.diagram import browser\n"
+            "b = browser._Browser()\n"
+            "b.ask('{\"jobs\": []}', 60)\n"
+            "print(b.profile, flush=True)\n"
+            + ("b.proc.stdin.write(b'{\"jobs\": [{\"key\": \"k\", \"html\": "
+               "\"<script>for(;;){}</script>\"}]}\\n')\n" if hang else "")
+            + "time.sleep(60)\n")
+        caller = subprocess.Popen([sys.executable, "-c", script], stdout=subprocess.PIPE,
+                                  text=True, start_new_session=True)
+        profile = caller.stdout.readline().strip()
+        caller.stdout.close()
+        self.assertTrue(profile and os.path.isdir(profile), "the caller started no browser")
+        self.addCleanup(shutil.rmtree, profile, ignore_errors=True)
+        if hang:
+            time.sleep(1)       # the page is in Chrome's hands before the caller goes
+        return caller, profile
+
+    @staticmethod
+    def left_running(profile, within=15):
+        """The processes still using `profile` once they have had `within` seconds to go; any
+        found are this test's own, and killed. Generous, because Chrome quits slowly on a busy
+        machine, and still well short of the 30 seconds after which a hung page gives up on
+        its own and lets node close Chrome without the fix."""
+        deadline = time.monotonic() + within
+        while True:
+            found = subprocess.run(["pgrep", "-f", profile], capture_output=True,
+                                   text=True).stdout.split()
+            if not found or time.monotonic() > deadline:
+                break
+            time.sleep(0.2)
+        for pid in found:
+            subprocess.run(["kill", "-9", pid], capture_output=True)
+        return found
 
     def test_shutdown_leaves_nothing_running(self):
         """`atexit` calls this. A browser surviving the command is the failure mode that
