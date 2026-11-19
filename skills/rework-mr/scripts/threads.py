@@ -3010,7 +3010,9 @@ def keep_pushed_fixes(state, ctx, iid):
       diff link (its start, and the head of the version it names), kept in git where git
       still has both commits. Its link spans every push since the topic's first, so it is
       clean only where GitLab has no version between the two;
-    - a push whose link GitLab had not made yet when it was pushed gets it now."""
+    - a push whose link GitLab had not made yet when it was pushed gets it now;
+    - a push recorded with no time (from a link, before pushes kept theirs) gets its
+      version's, which its line in the topic's story is drawn and ordered by."""
     root = (_git("rev-parse", "--show-toplevel") or "").strip()
     if not root:
         return
@@ -3019,7 +3021,8 @@ def keep_pushed_fixes(state, ctx, iid):
         return
     old = [(t, ends) for t in state["topics"] if is_pushed_fix(t) and not t.get("pushes")
            and not t.get("fix_lost") and (ends := fix_refs.from_diff_url(t["diff_url"]))]
-    unlinked = [(t, p) for t in state["topics"] for p in t.get("pushes") or [] if not p.get("url")]
+    unlinked = [(t, p) for t in state["topics"] for p in t.get("pushes") or []
+                if not p.get("url") or not p.get("at")]
     if not (old or unlinked):
         return
     vs = versions(ctx, iid) or []
@@ -3034,12 +3037,16 @@ def keep_pushed_fixes(state, ctx, iid):
             t["fix_lost"] = True          # asked once: git no longer has it, the link stays
             continue
         older = vs[k + 1].get("head_commit_sha") if k + 1 < len(vs) else None
+        # When GitLab made the version: the push's time, which its line in the topic's story
+        # is drawn and ordered by among the others.
         t["pushes"] = [{"before": start, "start": start, "after": head, "url": t["diff_url"],
-                        "clean": older == start}]
+                        "clean": older == start, "at": vs[k].get("created_at")}]
     web = ctx.get("web")
     for t, p in unlinked:
         k = next((k for k, v in enumerate(vs) if v.get("head_commit_sha") == p["after"]), None)
-        if web and k is not None and p.get("start"):
+        if k is not None and not p.get("at"):
+            p["at"] = vs[k].get("created_at")     # a push recorded with no time
+        if web and k is not None and p.get("start") and not p.get("url"):
             p["url"] = f"{web}/-/merge_requests/{iid}/diffs?diff_id={vs[k]['id']}&start_sha={p['start']}"
             # The topic's newest push is its fix as pushed: without the link the topic read
             # as a fix still to make, and its card offered to make it again.

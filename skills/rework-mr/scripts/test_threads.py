@@ -1388,14 +1388,23 @@ class TestCodeContext(unittest.TestCase):
         state["topics"].append({**state["topics"][0], "id": "t2",
                                 "diff_url": "http://gl/-/merge_requests/3/diffs?diff_id=8&start_sha=" + "1" * 40})
         try:
-            with mock.patch.object(T, "versions", return_value=[{"id": 9, "head_commit_sha": head},
-                                                                {"id": 8, "head_commit_sha": self.sha}]) as vs:
+            with mock.patch.object(T, "versions", return_value=[
+                    {"id": 9, "head_commit_sha": head, "created_at": "2026-11-09T12:31:00Z"},
+                    {"id": 8, "head_commit_sha": self.sha}]) as vs:
                 T.keep_pushed_fixes(state, {}, 3)
                 self.assertEqual(T.fix_refs.kept(self.repo, "rework-mr", 3), {"t1/push1": (self.sha, head)})
-                # One push: GitLab has no version between the link's two ends.
+                # One push: GitLab has no version between the link's two ends. Its time is
+                # the version's: a push made by hand and linked afterwards has no other.
                 self.assertEqual(state["topics"][0]["pushes"], [
                     {"before": self.sha, "start": self.sha, "after": head,
-                     "url": state["topics"][0]["diff_url"], "clean": True}])
+                     "url": state["topics"][0]["diff_url"], "clean": True, "at": "2026-11-09T12:31:00Z"}])
+                # In the topic's story it comes after a reply made before it, with its time.
+                notes = state["threads"]["d1"]["notes"]
+                notes[0]["at"], notes[1]["at"] = "2026-11-09T11:30:00Z", "2026-11-09T11:57:00Z"
+                story = T.story_steps(state, state["topics"][0])
+                pushed = next(i for i, x in enumerate(story) if "You pushed a fix" in x)
+                self.assertGreater(pushed, next(i for i, x in enumerate(story) if "You [replied" in x))
+                self.assertTrue(story[pushed].startswith(T.ui.at_md("2026-11-09T12:31:00Z")))
                 # A start git no longer has: the link alone, and not asked again.
                 self.assertTrue(state["topics"][1].get("fix_lost"))
                 T.keep_pushed_fixes(state, {}, 3)
@@ -1442,6 +1451,16 @@ class TestCodeContext(unittest.TestCase):
         finally:
             T.fix_refs.drop(self.repo, "rework-mr", 3)
             self._git("reset", "-q", "--hard", self.sha)
+
+    def test_a_push_recorded_with_no_time_gets_its_version_s(self):
+        state = self.pushed_state()
+        t = state["topics"][0]
+        t["pushes"] = [{"before": self.sha, "start": self.sha, "after": "f" * 40, "url": "http://gl/d"}]
+        with mock.patch.object(T, "versions", return_value=[
+                {"id": 9, "head_commit_sha": "f" * 40, "created_at": "2026-11-09T12:31:00Z"}]):
+            T.keep_pushed_fixes(state, {"web": "http://gl/g/p"}, 3)
+        self.assertEqual(t["pushes"][0], {"before": self.sha, "start": self.sha, "after": "f" * 40,
+                                          "url": "http://gl/d", "at": "2026-11-09T12:31:00Z"})
 
     def test_a_push_linked_later_makes_its_topic_a_pushed_fix(self):
         """GitLab had not made the push's version within the wait: the push was recorded
