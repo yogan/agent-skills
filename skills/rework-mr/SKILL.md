@@ -33,8 +33,10 @@ and never offer that line unasked. Where you would ask the question a button ans
 your recommendation instead, or on what you just did. The passes run as rounds there: see
 *Rounds (where cards are drawn)*.
 
-**Card text is markdown.** Whatever you store for a card to show (`--why`, `--plan`, `--did`)
-has every identifier, path, value and `file:line` in backticks, so the card draws it as code.
+**Card text is markdown, written to the person reading the card.** Whatever you store for a
+card to show (`--why`, `--plan`, `--did`) has every identifier, path, value and `file:line` in
+backticks, so the card draws it as code, and speaks to its reader as "you", or names nobody:
+"You chose her option 2", or "Option 2".
 
 **A card ends your reply.** The user decides on the card, so it is the last thing they read.
 Whatever you have to say (the answer to the user's question, what you did and why) goes

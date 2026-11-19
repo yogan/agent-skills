@@ -42,8 +42,10 @@ unasked: a "press Post to post it" under a card is exactly the noise above. Wher
 question a button answers, end on your recommendation instead, or on what you just did. Show a
 topic with the `show_topic` tool where you have it, in place of `quote <t> --focus`.
 
-**Card text is markdown.** Whatever you store for a card to show (`--why`, `--text`) has every
-identifier, path, value and `file:line` in backticks, so the card draws it as code.
+**Card text is markdown, written to the person reading the card.** Whatever you store for a
+card to show (`--why`, `--text`) has every identifier, path, value and `file:line` in
+backticks, so the card draws it as code, and speaks to its reader as "you", or names nobody:
+"You chose to wait for Alex", or "Waits for Alex".
 
 **A card ends your reply.** The user decides on the card, so it is the last thing they read.
 Whatever you have to say (the answer to the user's question, what you did and why) goes

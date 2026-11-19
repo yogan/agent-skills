@@ -598,7 +598,7 @@ export const argsFor = (press: Press, topic: string, card: ReviewCard | null): s
     case 'ack':
       return ['set', topic, '--state', 'acked']
     case 'wait':
-      return ['verdict', topic, 'wait', '--text', 'The user chose to wait for the author to push or answer.']
+      return ['verdict', topic, 'wait', '--text', 'You chose to wait for the author to push or answer.']
     case 'resolve':
       return ['resolve', topic]
     case 'link':

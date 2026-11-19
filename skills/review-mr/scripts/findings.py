@@ -2480,7 +2480,7 @@ def judge_prompt(state, ctx, iid, skip=()):
             for t in state["topics"] if topic_status(state, t) != "dropped"] + [""]
     out += ["## How to answer", "",
             "Every text in English, every identifier, path and value in it in backticks: the "
-            "card draws them as code.", ""]
+            "card draws them as code. " + judge.CARD_VOICE, ""]
     out += [f"- {', '.join(ids)}: {_ANSWER_FORMS[k]}" for k, ids in kinds.items() if ids]
     out += ["", judge.ANSWER]
     return judge.request("\n".join(out), items, j["topics"], j["own"])

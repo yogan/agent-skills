@@ -2736,7 +2736,7 @@ def judge_prompt(state, iid, skip=()):
                "`needs`." if agreed else "")
             + " A topic marked *give summary* also takes \"summary\": \"<an English one-liner: "
             "the point the reviewer first made>\". Every identifier, path and value in "
-            "backticks: the card draws them as code.", "", judge.ANSWER]
+            "backticks: the card draws them as code. " + judge.CARD_VOICE, "", judge.ANSWER]
     return judge.request("\n".join(out), items, todo)
 
 
