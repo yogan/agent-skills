@@ -428,6 +428,25 @@ SCENARIOS = [
             Expect(r"\}\) => \{", region="panel", wait=30),
         ]),
     Scenario(
+        "rereview-news", "MR !2 waiting: main moves, Alex rebases onto it with a fix, and News names the topics whose lines the push changed",
+        REVIEW2, needs_rig=True, mods=[MOD], recording="rereview-2", steps=[
+            Prompt("/review-mr !2", timeout=600),
+            Panel(True),
+            Expect(r"\bNews\b", region="panel", wait=60),
+            # The update check has seen Alex's first push (it changed t5's import line too)
+            # before the rebase comes, so the rebase's line is its own.
+            Expect(r"Alex pushed · touches", region="panel", wait=120),
+            Check(f"{NEWS} main", r"main moved"),
+            Check(f"{NEWS} rebase-fix", r"replied"),
+            # The rebase with the fix: its line names the topics whose lines it changed, not
+            # every topic on a file it touched (t5's import is forty lines from the fix).
+            Expect(r"rebased onto main", region="panel", wait=240),
+            Expect(r"rebased onto main[^\n]*\bt5\b", region="panel", absent=True),
+            # t2's fix is beside its comment's line: named once judged its fix. (t4's is too,
+            # but rereview-2's recording has no judgment of t4's news to play.)
+            Expect(r"rebased onto main, 2 files · touches t2\b", region="panel", wait=240),
+        ]),
+    Scenario(
         "rework-3", "MR !3, rework: three reviewer threads", WORK,
         needs_rig=True, mods=[MOD], steps=[
             Prompt("/rework-mr !3", timeout=600),
