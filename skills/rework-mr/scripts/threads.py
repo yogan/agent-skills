@@ -3027,7 +3027,10 @@ def keep_pushed_fixes(state, ctx, iid):
     for t, (start, diff_id) in old:
         k = at.get(diff_id)
         head = vs[k].get("head_commit_sha") if k is not None else None
-        if not head or not fix_refs.keep(root, SKILL, iid, push_key(t["id"], 1), start, head):
+        # Its base, for a push that came with a rebase: the fix alone is kept, not what the
+        # rebase brought in from the target branch.
+        if not head or not fix_refs.keep(root, SKILL, iid, push_key(t["id"], 1), start, head,
+                                         onto=vs[k].get("base_commit_sha")):
             t["fix_lost"] = True          # asked once: git no longer has it, the link stays
             continue
         older = vs[k + 1].get("head_commit_sha") if k + 1 < len(vs) else None
@@ -3191,8 +3194,14 @@ def push_fix(ctx, iid, path, tid, committed=False):
         t["diff_url"] = url
     save(path, state)
     # The fix as pushed, for the diff viewer after the push, held in git against the force
-    # push that leaves both commits on no branch.
-    fix_refs.keep(root, SKILL, iid, push_key(tid, n), frm, head)
+    # push that leaves both commits on no branch. Where it starts on GitLab's head from
+    # before a rebase, from that head rebased onto the version's base: what the rebase
+    # brought in from the target branch is no part of the fix.
+    onto = None
+    if frm == start and not fix_refs.is_ancestor(root, start, head):
+        onto = next((v.get("base_commit_sha") for v in versions(ctx, iid) or []
+                     if v.get("head_commit_sha") == head), None)
+    fix_refs.keep(root, SKILL, iid, push_key(tid, n), frm, head, onto=onto)
     if sid:
         say, close = hunk_close_decision(hunk.user_notes(sid))
         if close:

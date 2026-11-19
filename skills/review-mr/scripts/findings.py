@@ -3354,9 +3354,12 @@ def walk_fixes(state, ctx, iid, vs=None):
                 if near:
                     fix["near"] = True
                 if rebase:
-                    # What the viewer and the files list show of it: the files the MR itself
-                    # changes, the target branch's own left out. A file both changed still
-                    # shows both.
+                    # What the viewer and the files list show of it: the push against the
+                    # head before it rebased onto the new base (`fix_refs.rebased`), so the
+                    # target branch's changes are left out, in a file both changed too.
+                    # Where that merge conflicts, the files the MR itself changes, the
+                    # target branch's own left out; a file both changed then shows both.
+                    fix["base"] = cur.get("base_commit_sha")
                     own = compare(cur.get("base_commit_sha"), cur.get("head_commit_sha"))
                     if own is not None:
                         fix["paths"] = sorted({d.get("new_path") or d.get("old_path") for d in own})
@@ -3412,8 +3415,11 @@ def keep_author_fixes(state, wt, iid):
     for t in state["topics"]:
         for n, f in enumerate(fixes_of(t), 1):
             key = t["id"] if f.get("legacy") else fix_key(t, n)
-            if have.get(key) != (f["before"], f["after"]):
-                fix_refs.keep(wt, SKILL, iid, key, f["before"], f["after"])
+            k = have.get(key)
+            # A push that came with a rebase is kept from the head before it rebased onto
+            # its base, a commit of its own: the same push, so not kept again.
+            if not k or k[1] != f["after"] or (k[0] != f["before"] and not f.get("base")):
+                fix_refs.keep(wt, SKILL, iid, key, f["before"], f["after"], onto=f.get("base"))
 
 
 def kept_fixes(state, t, kept=None):

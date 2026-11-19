@@ -95,6 +95,45 @@ class FixRefsTest(unittest.TestCase):
         self.assertEqual(fix_refs.kept(self.repo, "rework-mr", 3), {})
         self.assertEqual(set(fix_refs.kept(self.repo, "rework-mr", 4)), {"t1"})
 
+    def rebase_with_a_fix(self):
+        """The target branch moves (a docs change, and a line of a file the branch changes
+        too), and the branch is rebased onto it and fixed in one push: (old head, target,
+        new head)."""
+        old = self.after
+        git(self.repo, "checkout", "-q", "-b", "target", self.before)
+        self.write("README.md", "docs\n")
+        self.write("src/old_name.ts", "zero\none\ntwo\nthree\n")
+        onto = self.commit("docs and a line from the target branch")
+        git(self.repo, "checkout", "-q", "-b", "branch", old)
+        git(self.repo, "rebase", "-q", "target")
+        self.write("src/new_name.ts", "zero\none\nTWO fixed\nthree\n")
+        return old, onto, self.commit("the fix, squashed into its commit")
+
+    def test_a_push_that_came_with_a_rebase_keeps_the_fix_alone(self):
+        old, onto, new = self.rebase_with_a_fix()
+        # Without the target branch's base, the rebase's changes are in it.
+        fix_refs.keep(self.repo, "rework-mr", 3, "t1/push1", old, new)
+        self.assertIn("README.md", [p for p, _, _ in fix_refs.stat(
+            self.repo, fix_refs.kept(self.repo, "rework-mr", 3)["t1/push1"])])
+        self.assertTrue(fix_refs.keep(self.repo, "rework-mr", 3, "t1/push1", old, new, onto=onto))
+        ends = fix_refs.kept(self.repo, "rework-mr", 3)["t1/push1"]
+        self.assertEqual(fix_refs.stat(self.repo, ends), [("src/new_name.ts", 1, 1)])
+        self.assertIn("-TWO\n+TWO fixed", fix_refs.patch(self.repo, ends))
+        # The same commit every time: a later keep finds the fix as kept.
+        self.assertEqual(fix_refs.rebased(self.repo, old, onto), ends[0])
+
+    def test_a_push_with_no_rebase_keeps_its_own_start(self):
+        self.assertTrue(fix_refs.keep(self.repo, "rework-mr", 3, "t1", self.before, self.after,
+                                      onto=self.before))
+        self.assertEqual(fix_refs.kept(self.repo, "rework-mr", 3), {"t1": (self.before, self.after)})
+
+    def test_a_rebase_that_conflicts_keeps_the_head_before_it(self):
+        old = self.after
+        git(self.repo, "checkout", "-q", "-b", "target", self.before)
+        self.write("src/old_name.ts", "one\ndeux\nthree\n")
+        onto = self.commit("the same line, changed otherwise")
+        self.assertEqual(fix_refs.rebased(self.repo, old, onto), old)
+
     def test_a_saved_link_gives_its_start_and_version(self):
         url = "http://gitlab.test/g/p/-/merge_requests/3/diffs?diff_id=17&start_sha=abc1234def"
         self.assertEqual(fix_refs.from_diff_url(url), ("abc1234def", 17))

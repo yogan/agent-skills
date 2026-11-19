@@ -12,7 +12,10 @@ rework-mr keeps the person's own fix (the MR's head before the topic's first pus
 head that push made); review-mr the author's (the code a push changed the topic's lines
 from, and the head it made). A ref holds its commit against `git gc`, which a force push
 would otherwise leave unreachable, so the fix can be shown as long as the MR is open; once
-it is merged or closed they are dropped (`drop`), all of the MR's at once.
+it is merged or closed they are dropped (`drop`), all of the MR's at once. A push that came
+with a rebase keeps, as its start, the head before it rebased onto the new base (`rebased`):
+a topic's diff holds what the push changed, never what the rebase brought in from the target
+branch.
 
 The same in both skills modulo the skill's name, which is why it is here.
 """
@@ -37,11 +40,44 @@ def has_commit(repo, sha):
     return bool(sha) and _git(repo, "cat-file", "-e", f"{sha}^{{commit}}") is not None
 
 
-def keep(repo, skill, iid, tid, before, after):
+def is_ancestor(repo, a, b):
+    return subprocess.run(["git", "-C", repo, "merge-base", "--is-ancestor", a, b],
+                          capture_output=True).returncode == 0
+
+
+def rebased(repo, before, onto):
+    """`before` as it reads rebased onto `onto`: a commit on `onto` whose files are `onto`'s
+    with the branch's own change up to `before` merged in. Diffed against the head a push
+    after a rebase made, it shows what the push changed and nothing the target branch
+    brought in, a file both of them changed included. `before` itself where no rebase lies
+    between (`onto` is already in it), where the merge conflicts (then nobody can say whose
+    a line is) or where git cannot merge without a checkout (older than 2.40). The commit is
+    the same for the same two every time, so a later keep finds it unchanged."""
+    if not onto or not has_commit(repo, onto) or is_ancestor(repo, onto, before):
+        return before
+    base = (_git(repo, "merge-base", before, onto) or "").strip()
+    if not base:
+        return before
+    tree = (_git(repo, "merge-tree", "--write-tree", f"--merge-base={base}", onto, before) or "").strip()
+    if not re.fullmatch(r"[0-9a-f]{40,64}", tree):
+        return before
+    when = (_git(repo, "log", "-1", "--format=%ad", "--date=raw", onto) or "").strip()
+    env = {**os.environ, "GIT_AUTHOR_NAME": "fix_refs", "GIT_AUTHOR_EMAIL": "fix_refs@localhost",
+           "GIT_COMMITTER_NAME": "fix_refs", "GIT_COMMITTER_EMAIL": "fix_refs@localhost",
+           "GIT_AUTHOR_DATE": when, "GIT_COMMITTER_DATE": when}
+    r = subprocess.run(["git", "-C", repo, "commit-tree", tree, "-p", onto, "-m",
+                        f"{before} rebased onto {onto}"], capture_output=True, text=True, env=env)
+    return r.stdout.strip() if r.returncode == 0 and r.stdout.strip() else before
+
+
+def keep(repo, skill, iid, tid, before, after, onto=None):
     """Keep `before` and `after` as the fix under key `tid` (a topic, or a topic's push); False where git does not have both
-    (a commit never fetched, or already collected), and nothing is written then."""
+    (a commit never fetched, or already collected), and nothing is written then. `onto`:
+    what `after` starts from on the target branch (GitLab's base of the version it made),
+    so that a push which came with a rebase keeps `before` rebased onto it (`rebased`)."""
     if not (repo and has_commit(repo, before) and has_commit(repo, after)):
         return False
+    before = rebased(repo, before, onto)
     base = f"{prefix(skill, iid)}{tid}/"
     # One transaction: a fix is never left with one end only.
     script = f"start\nupdate {base}before {before}\nupdate {base}after {after}\ncommit\n"

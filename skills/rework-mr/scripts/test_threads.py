@@ -1408,6 +1408,41 @@ class TestCodeContext(unittest.TestCase):
             T.fix_refs.drop(self.repo, "rework-mr", 3)
             self._git("reset", "-q", "--hard", self.sha)
 
+    def test_a_push_recorded_from_its_link_after_a_rebase_keeps_the_fix_alone(self):
+        """A push made by hand that rebased onto the target branch and fixed in one, its link
+        stored afterwards: the fix kept in git, which the sidebar's files and the diff viewer
+        show, held the target branch's docs change as well."""
+        def sha():
+            return subprocess.run(["git", "rev-parse", "HEAD"], cwd=self.repo, capture_output=True,
+                                  text=True).stdout.strip()
+        lines = [f"const line{i} = {i}" for i in range(1, 31)]
+        try:
+            lines[4] = "const line5 = 5 // ours"
+            self._write("\n".join(lines) + "\n")
+            self._git("commit", "-qam", "ours")
+            old = sha()
+            self._git("reset", "-q", "--hard", self.sha)
+            with open(os.path.join(self.repo, "README.md"), "w") as fh:
+                fh.write("docs\n")
+            self._git("add", "README.md")
+            self._git("commit", "-qm", "docs on the target branch")
+            onto = sha()
+            self._git("cherry-pick", old)
+            lines[9] = "const line10 = 100"
+            self._write("\n".join(lines) + "\n")
+            self._git("commit", "-qam", "the fix")
+            head = sha()
+            state = self.pushed_state(diff_url=f"http://gl/-/merge_requests/3/diffs?diff_id=9&start_sha={old}")
+            with mock.patch.object(T, "versions", return_value=[
+                    {"id": 9, "head_commit_sha": head, "base_commit_sha": onto},
+                    {"id": 8, "head_commit_sha": old, "base_commit_sha": self.sha}]):
+                T.keep_pushed_fixes(state, {}, 3)
+            ends = T.fix_refs.kept(self.repo, "rework-mr", 3)["t1/push1"]
+            self.assertEqual(T.fix_refs.stat(self.repo, ends), [(self.file, 1, 1)])
+        finally:
+            T.fix_refs.drop(self.repo, "rework-mr", 3)
+            self._git("reset", "-q", "--hard", self.sha)
+
     def test_a_push_linked_later_makes_its_topic_a_pushed_fix(self):
         """GitLab had not made the push's version within the wait: the push was recorded
         without a link, and the topic read as a fix still to make even once it had one."""
@@ -3851,6 +3886,46 @@ class TestPushFixGit(unittest.TestCase):
         self.assertEqual([f["url"] for f in fixes], [f"G/diffs?diff_id=2&start_sha={heads[0]}",
                                                      f"G/diffs?diff_id=4&start_sha={heads[2]}"])
         self.assertFalse(any(f["mixed"] for f in fixes))
+
+    def rebased(self):
+        """The branch rebased onto a target branch that moved by a docs commit, as asked
+        along with a fix: GitLab's head is still the pre-rebase one, and the version the
+        push makes has the target's commit as its base. (pre-rebase head, target's commit)"""
+        old = self.git("rev-parse", "HEAD")
+        self.git("checkout", "-q", "-b", "target", "HEAD^")
+        self.r.write("d.txt", "docs\n")
+        self.git("add", "d.txt")
+        self.git("commit", "-q", "--no-verify", "-m", "docs: d")
+        onto = self.git("rev-parse", "HEAD")
+        self.git("checkout", "-q", "main")
+        self.git("rebase", "-q", "--no-verify", "target")
+
+        def versions(*_a):
+            head = self.git("rev-parse", "origin/main")
+            mine = [{"id": 8, "head_commit_sha": head, "base_commit_sha": onto}] if head != old else []
+            return mine + [{"id": 7, "head_commit_sha": old, "base_commit_sha": self.r.target}]
+        mock.patch.object(T, "versions", side_effect=versions).start()
+        return old, onto
+
+    def test_a_fix_with_a_rebase_is_pushed_and_kept_without_the_rebase(self):
+        self.rebased()
+        self.fix(fixup=[f"{self.git('rev-parse', 'HEAD')} feat: c"], files=["c.txt"])
+        self.push()
+        self.assertEqual(self.log(), ["feat: c", "docs: d", "feat: a and b"])
+        ends = T.fix_refs.kept(self.r.root, "rework-mr", 1)["t1/push1"]
+        self.assertEqual([f for f, _a, _r in T.fix_refs.stat(self.r.root, ends)], ["c.txt"])
+
+    def test_a_fix_committed_before_the_press_with_a_rebase_is_kept_without_it(self):
+        """Committed before the press, the fix starts on GitLab's head, which is from before
+        the rebase: kept from that head rebased onto the version's base."""
+        self.rebased()
+        target = self.git("rev-parse", "HEAD")
+        self.fix(fixup=[f"{target} feat: c"], files=["c.txt"])
+        self.git("commit", "-q", "--no-verify", f"--fixup={target}")
+        self.push(committed=True)
+        self.assertEqual(self.log(), ["feat: c", "docs: d", "feat: a and b"])
+        ends = T.fix_refs.kept(self.r.root, "rework-mr", 1)["t1/push1"]
+        self.assertEqual([f for f, _a, _r in T.fix_refs.stat(self.r.root, ends)], ["c.txt"])
 
     def test_a_new_commit_alone_is_pushed_as_one(self):
         stamp = self.fix(new=["fix: the old helper"])

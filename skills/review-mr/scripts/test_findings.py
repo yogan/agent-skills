@@ -1771,6 +1771,47 @@ class TestStateForTheMod(unittest.TestCase):
                 F.keep_author_fixes(state, wt, 7)
                 self.assertEqual([t["fix_kept"] for t in F.state_json(state)["topics"]], [False, False])
 
+    def test_a_push_that_came_with_a_rebase_is_kept_without_the_target_branch_s_changes(self):
+        """Alex rebased onto main, which had moved by a docs change, and fixed the topic in
+        the same push: the fix the sidebar lists and the viewer shows held the docs too."""
+        with tempfile.TemporaryDirectory() as wt:
+            git = lambda *a: subprocess.run(["git", "-C", wt, *a], check=True,  # noqa: E731
+                                            capture_output=True, text=True).stdout.strip()
+            git("init", "-q", "-b", "main")
+            for k, v in (("user.email", "t@example.invalid"), ("user.name", "t"), ("commit.gpgsign", "false")):
+                git("config", k, v)
+
+            def commit(path, text, msg):
+                with open(os.path.join(wt, path), "w") as fh:
+                    fh.write(text)
+                git("add", path)
+                git("commit", "-qm", msg)
+                return git("rev-parse", "HEAD")
+            body = "one\nm1\nm2\nm3\n{}\n"
+            commit("a.ts", body.format("end"), "base")
+            git("checkout", "-qb", "feature")
+            before = commit("a.ts", body.format("end, two"), "the author's change")
+            git("checkout", "-q", "main")
+            commit("README.md", "docs\n", "docs on main")
+            # main changed the fix's file too, away from the author's lines.
+            onto = commit("a.ts", body.replace("one", "ONE").format("end"), "main's own line")
+            git("checkout", "-q", "feature")
+            git("rebase", "-q", "main")
+            after = commit("a.ts", body.replace("one", "ONE").format("end, two fixed"), "the fix")
+            state = new_state()
+            state["iid"] = 7
+            F.add_topic(state, summary="a", file="a.ts", line=1)
+            state["topics"][0]["fixes"] = [{"before": before, "after": after, "at": "x", "mixed": True,
+                                            "rebase": True, "base": onto, "paths": ["a.ts"]}]
+            with patch.object(F, "get_worktree", return_value=wt):
+                F.keep_author_fixes(state, wt, 7)
+                ends = F.kept_fix(state, state["topics"][0])
+                self.assertEqual(F.fix_refs.stat(wt, ends, ["a.ts"]), [("a.ts", 1, 1)])
+                self.assertNotIn("+ONE", F.fix_refs.patch(wt, ends, ["a.ts"]))
+                with patch.object(F.fix_refs, "keep") as keep:      # kept: not kept again
+                    F.keep_author_fixes(state, wt, 7)
+                keep.assert_not_called()
+
     def test_the_sidebar_lists_the_author_s_fix_and_shows_a_file_picked_from_it(self):
         state = new_state()
         state["iid"] = 7
@@ -3656,6 +3697,7 @@ class TestAuthorFixes(unittest.TestCase):
         self.walk()
         (f,) = F.fixes_of(self.t)
         self.assertEqual(f["paths"], ["a.ts"])            # upstream.ts is the target branch's
+        self.assertEqual(f["base"], "N")                  # kept rebased onto it (`fix_refs.rebased`)
         with patch.object(F, "get_worktree", return_value=None):
             line = next(x for x in F.story_steps(self.state, self.t) if "pushed" in x)
         self.assertIn("_(includes a rebase)_", line)
