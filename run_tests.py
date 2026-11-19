@@ -82,9 +82,33 @@ PASSED = REPO_ROOT / ".run_tests_passed.json"
 SHARD_OVER = 9.0
 
 
+def repo_files(suffix=".py", root=None):
+    """Every file of this checkout ending in `suffix`, sorted: what git tracks, and what it
+    would track (untracked files not ignored).
+
+    Git decides, not a walk of the folder, because the folder holds more than the checkout:
+    other git worktrees made inside it (`.claude/worktrees/…`, each a full copy of the repo)
+    and ignored caches (`.cache/before`, another copy) once had their tests found and run with
+    the checkout's own, and the commit hook took 8 to 11 minutes instead of seconds. Git lists
+    neither: an ignored folder is skipped, and a folder that is a checkout of its own appears
+    as one entry, never its files. Run inside such a worktree, git lists that worktree.
+
+    A copy with no git (the test box's) holds nothing but the checkout's files already, so
+    there a walk of the folder is the same answer.
+    """
+    root = Path(root or REPO_ROOT)
+    proc = subprocess.run(["git", "ls-files", "-co", "--exclude-standard", "-z"],
+                          cwd=root, capture_output=True)
+    if proc.returncode != 0:
+        return sorted(p for p in root.rglob(f"*{suffix}") if "__pycache__" not in p.parts)
+    # A tracked file deleted but not yet committed is still listed by git.
+    return sorted(path for name in set(proc.stdout.decode("utf-8", "surrogateescape").split("\0"))
+                  if name.endswith(suffix) and (path := root / name).is_file())
+
+
 def find_test_files(include_slow, patterns):
-    for path in sorted(REPO_ROOT.rglob("test_*.py")):
-        if "__pycache__" in path.parts:
+    for path in repo_files():
+        if not path.name.startswith("test_"):
             continue
         if path.name.endswith("_slow.py") and not include_slow:
             continue
@@ -622,7 +646,7 @@ def main():
 
     selected = None
     if only_changed:
-        every = [p for p in REPO_ROOT.rglob("*.py") if "__pycache__" not in p.parts]
+        every = repo_files()
         selected, note = select_changed(set(every), base)
         if selected is None:
             print(f"--changed: running everything ({note})")

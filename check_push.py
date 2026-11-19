@@ -113,7 +113,7 @@ def scenarios():
 
 def skill_modules():
     """Each skill -> every repo Python file its scripts reach through imports."""
-    every = {p for p in HERE.rglob("*.py") if "__pycache__" not in p.parts}
+    every = set(run_tests.repo_files())
     graph = run_tests.import_graph(every)
     reach = {}
     for skill in (HERE / "skills").iterdir():

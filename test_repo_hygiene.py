@@ -32,9 +32,11 @@ from pathlib import Path
 os.environ["REVIEW_UI_DRAWN"] = "0"   # the views as without the review-ui mod, whatever session runs this (lib/ui.py)
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import run_tests  # noqa: E402
 
 REPO_ROOT = Path(__file__).resolve().parent
-TESTS = [p for p in REPO_ROOT.rglob("test_*.py") if "__pycache__" not in p.parts]
+
+TESTS = [p for p in run_tests.repo_files() if p.name.startswith("test_")]
 
 # Any of these means the file has taken responsibility for what it created.
 CLEANS_UP = ("addCleanup", "rmtree", "tearDown", ".cleanup()", "os.unlink", "os.remove")

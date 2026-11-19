@@ -27,7 +27,7 @@ _spec = importlib.util.spec_from_file_location(
 rt = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(rt)
 
-EVERY = {p for p in rt.REPO_ROOT.rglob("*.py") if "__pycache__" not in p.parts}
+EVERY = set(rt.repo_files())
 
 
 class TestSelectionCoversTheObviousCase(unittest.TestCase):
@@ -401,6 +401,54 @@ class TestDiscovery(unittest.TestCase):
         self.assertTrue(picked)
         self.assertTrue(all("test_" in n for n in picked))
         self.assertNotIn("test_gitlab.py", picked)
+
+
+class TestOnlyThisCheckoutsFiles(unittest.TestCase):
+    """The folder holds more than the checkout: a git worktree made inside it and an ignored
+    copy of the repo had their tests run with its own, and the commit hook took 8 to 11
+    minutes."""
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.repo = Path(tmp.name).resolve()
+        self._git("init", "-q")
+        self._write(".gitignore", "/.cache/\n")
+        self._write("test_tracked.py")
+        self._git("add", ".")
+        self._git("commit", "-q", "-m", "one")
+        self._write("test_new.py")                                  # untracked, not ignored
+        self._write(".cache/before/test_copy.py")                   # ignored
+        self._git("worktree", "add", "-q", "--detach", ".claude/worktrees/side")
+        self._write(".claude/worktrees/side/test_side.py")          # another checkout's
+
+    def _git(self, *args, cwd=None):
+        subprocess.run(["git", "-c", "user.email=t@example.com", "-c", "user.name=t", *args],
+                       cwd=cwd or self.repo, check=True, capture_output=True)
+
+    def _write(self, rel, text="x = 1\n"):
+        path = self.repo / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text)
+
+    def _names(self, root):
+        return [str(p.relative_to(root)) for p in rt.repo_files(root=root)]
+
+    def test_neither_a_worktree_inside_nor_an_ignored_folder_is_part_of_it(self):
+        self.assertEqual(self._names(self.repo), ["test_new.py", "test_tracked.py"])
+
+    def test_inside_a_worktree_its_own_files_are_found(self):
+        """Where an agent works: a worktree under `.claude/worktrees/` of the main checkout."""
+        side = self.repo / ".claude/worktrees/side"
+        self.assertEqual(self._names(side), ["test_side.py", "test_tracked.py"])
+
+    def test_the_runner_finds_this_checkouts_own_tests(self):
+        """The live repo, wherever it is checked out: its own test file is found, and nothing
+        under a folder git leaves out."""
+        found = list(rt.find_test_files(True, []))
+        self.assertIn(Path(__file__).resolve(), found)
+        self.assertFalse([p for p in found
+                          if {".claude", ".cache"} & set(p.relative_to(rt.REPO_ROOT).parts)])
 
 
 class TestFingerprint(unittest.TestCase):
