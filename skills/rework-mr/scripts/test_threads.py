@@ -1995,14 +1995,13 @@ class TestRounds(unittest.TestCase):
             self.assertEqual(T.current_topic(state), nxt)
         self.assertEqual(state["pass"], "plan")
 
-    def test_a_round_that_ran_out_says_when_it_ended(self):
+    def test_a_round_that_ran_out_ends(self):
         state = self.state(1)
         T.start_round(state)
         T.topic_for(state, "t1")["state"] = "waiting"
         state["threads"]["d1"]["awaiting"] = "reviewer"
         self.assertIsNone(T.current_topic(state))
         self.assertFalse(state["in_round"])
-        self.assertTrue(state["round_end"])
 
     def test_a_fix_keeps_its_topic_current_through_push_and_reply(self):
         state = self.state(1)

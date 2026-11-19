@@ -838,9 +838,11 @@ test('the legend is a key in the list\'s line, opening under the list with every
   expect((await texts()).some(t => t.endsWith(' high'))).toBe(false)   // closed at first
   expect((await ui.find({ type: 'Button', key: 'legend' }))?.props.label).toBe('\u{F064E}')
   await ui.press({ key: 'legend' })
-  // Only what is on screen: one high topic, and the box's mark for what needs the person.
+  // Only what is on screen: one high topic, and the mark of a topic flagged new, in one
+  // word: "news", "FYI" and "needs you" were three words for one icon.
   expect((await texts()).some(t => t.endsWith(' high'))).toBe(true)
-  expect((await texts()).some(t => t.endsWith(' needs you'))).toBe(true)
+  expect((await texts()).some(t => t.endsWith(' new'))).toBe(true)
+  for (const word of [' news', ' FYI', ' needs you']) expect((await texts()).some(t => t.endsWith(word))).toBe(false)
   for (const word of [' critical', ' question', ' being judged']) expect((await texts()).some(t => t.endsWith(word))).toBe(false)
   await ui.press({ key: 'legend' })
   expect((await texts()).some(t => t.endsWith(' high'))).toBe(false)
@@ -973,7 +975,7 @@ test('between rounds news stays out of the chat: the band counts it, the box say
   // A push: when first, then who, what it touches, and its size, dim: the topics carry what to do.
   expect(texts).toContain('Jonas pushed · touches t2')
   expect(texts.some(t => /^ *\d\d:\d\d$/.test(t) || /^Nov 5, \d\d:\d\d$/.test(t))).toBe(true)
-  expect((await panel.find({ type: 'Button', key: 'open-round' }))?.props.label).toBe('Check t2')
+  expect((await panel.find({ type: 'Button', key: 'open-round' }))?.props.label).toBe('Check the news')
   await panel.press({ key: 'open-round' })
   await panel.unmount()
   expect(w.ran.map(r => r.argv.slice(2).join(' '))).toContain('open --iid 42')
@@ -988,7 +990,8 @@ test("a news line's topic handle opens the topic here; the rest of the line is t
   await openReview($, w, view('t1'))
   const panel = await $.ui.mount({ ...PANEL, surface: 'terminal' })
   const link = (await panel.findAll({ type: 'Markdown' })).map(m => String(m.props.text ?? '')).find(t => t.includes('note_7'))
-  expect(link).toBe('[Jonas answered: looks fixed \u{f03cc}](https://gl/g/p/-/merge_requests/42#note_7)')
+  // The link mark joined to the last word: it never wraps onto a line alone.
+  expect(link).toBe('[Jonas answered: looks fixed\u00a0\u{f03cc}](https://gl/g/p/-/merge_requests/42#note_7)')
   await panel.press({ key: 'inbox-topic-0' })
   await panel.unmount()
   expect(w.ran.map(r => r.argv.slice(2).join(' ')).some(c => /\bt2\b/.test(c))).toBe(true)
@@ -1649,6 +1652,8 @@ test('with every topic handled, the band says the review waits and the sidebar s
   await band.unmount()
   const panel = await $.ui.mount({ ...PANEL, surface: 'terminal' })
   expect(await panel.find({ type: 'Text', text: '2 topics wait on the author' })).toBeDefined()
+  // Nothing flagged new: the box says so, above what waits.
+  expect(await panel.find({ type: 'Text', text: 'No news' })).toBeDefined()
   // Before the first tick no check is scheduled: nothing says one.
   expect(await panel.find({ type: 'Text', text: /next check|–/i })).toBeUndefined()
   await panel.press({ key: 'check-now' })
@@ -3144,7 +3149,7 @@ test('a merged MR says so at the top and in its box, with what still matters and
   expect(texts.some(t => / by Jan$/.test(t))).toBe(false)
   expect(texts).toContain('\u{f062d}')
   const md = (await panel.findAll({ type: 'Markdown' })).map(m => String(m.props.text))
-  expect(md.some(m => m.startsWith('[Jan pushed ') && m.endsWith(`](${push.url})`))).toBe(true)
+  expect(md.some(m => m.startsWith('[Jan pushed') && m.endsWith(`](${push.url})`))).toBe(true)
   expect(texts).toContain('Jan left it open as the MR closed')
   expect(texts).toContain('its draft was never posted')
   // GitLab is not asked again: no word of checks, no key for one.
@@ -3166,18 +3171,19 @@ test('every push is a dim line of the box saying what it did; auto-merge goes on
   }) }))
   const lines = inboxOf(r)?.lines.map(l => `${l.at?.slice(11, 16)} ${l.tone} ${l.what}${l.size ? ` [${l.size}]` : ''}`)
   expect(lines).toEqual([
-    '15:10 info Jan pushed · no change to the code',
+    '15:10 info Jan pushed, no change to the code',
     '15:12 info Jan pushed · touches t1 [\u{f4d2} 1 file +2 −0]',
-    '15:13 info Jan rebased · no change to the MR',          // no size: it would count the target's commits
-    '15:14 info Jan rebased · and changed 1 file',
+    '15:13 info Jan rebased, no change to the MR',          // no size: it would count the target's commits
+    '15:14 info Jan rebased, 1 file',
     // Whose files "changes 2 of its files" meant was anybody's guess; and the topics whose
-    // code the rebased push changed are named, as a plain push's are.
-    '15:15 info Jan rebased onto main · and changed 2 files · touches t2, t4',
+    // code the rebased push changed are named, as a plain push's are. Short, so it fits the
+    // box on one line: "rebased onto main · and changed 2 files · touches …" wrapped.
+    '15:15 info Jan rebased onto main, 2 files · touches t2, t4',
   ])
 })
 
 test('the box gives one line a topic with the verdict, resolved-but-not-fixed said as such, and +n more past five', () => {
-  const ts = ['t1', 't2', 't3', 't4', 't5', 't6', 't7'].map(id => ({ ...topic(id, 'needs_ack'), verdict: id === 't2' ? 'more' : id === 't1' ? 'settled' : null }))
+  const ts = ['t1', 't2', 't3', 't4', 't5', 't6', 't7'].map(id => ({ ...topic(id, 'needs_ack'), inbox: 'new', verdict: id === 't2' ? 'more' : id === 't1' ? 'settled' : null }))
   const r = JSON.parse(stateOf(null, ts, { author: 'Jonas', inbox: inbox({ replies: ['t1', 't3', 't4', 't5', 't6', 't7'], resolved: ['t2'], first: 't1' }) }))
   const box = inboxOf(r, { topics: ['t3'], failed: [] })
   expect(box?.lines.slice(0, 3).map(l => [l.topic, l.what, l.tone])).toEqual([
@@ -3186,7 +3192,15 @@ test('the box gives one line a topic with the verdict, resolved-but-not-fixed sa
   expect(box?.more).toBe(2)
   const one = inboxOf(JSON.parse(stateOf(null, ts, { author: 'Jonas', inbox: inbox({ resolved: ['t2'], first: 't2' }) })))
   expect(one?.lines.map(l => l.what)).toEqual(['Jonas resolved, not fixed'])
-  expect(one?.button).toBe('Check t2')
+  // The button says what it does, not which topics: the round goes through them all.
+  expect(one?.button).toBe('Check the news')
+})
+
+test("the box says an answer's verdict in its card's words: partly fixed where the card says so", () => {
+  const t1 = { ...topic('t1', 'needs_ack'), inbox: 'new', verdict: 'more', verdict_case: 'partly-fixed' }
+  const t2 = { ...topic('t2', 'needs_ack'), inbox: 'new', verdict: 'more', verdict_case: 'fix-wrong' }
+  const r = JSON.parse(stateOf(null, [t1, t2], { author: 'Alex', inbox: inbox({ replies: ['t1'], resolved: ['t2'], first: 't1' }) }))
+  expect(inboxOf(r)?.lines.map(l => l.what)).toEqual(['Alex answered: partly fixed', 'Alex resolved, fix is wrong'])
 })
 
 test("a merged MR's box offers to check an answer not accepted yet, not to open a round", async ($, on) => {
@@ -3641,22 +3655,24 @@ test('rework-mr: Merge in the box runs the script with no model turn; Clean up l
 })
 
 
-test('the box lists what arrived during the last round apart from what came after it', () => {
-  const r = JSON.parse(stateOf(null, [topic('t1', 'open')], { author: 'Jan', inbox: inbox({
-    round_end: '2026-11-09T12:00:00Z',
+test('the box is one timeline of the news, oldest first, with nothing said apart', () => {
+  // "During your round" headed news that had come before the round started: gone. The box
+  // lists what is new, in the order it happened, topics among pushes and the MR's news.
+  const t1 = { ...topic('t1', 'needs_ack'), inbox: 'new', news: ['reply'], news_at: '2026-11-09T12:10:00Z' }
+  const r = JSON.parse(stateOf(null, [t1], { author: 'Jan', inbox: inbox({
+    replies: ['t1'],
     pushes: [
-      { at: '2026-11-09T11:30:00Z', stat: '\u{f4d2} 3 files +9 −1', topics: [], rebase: false },
-      { at: '2026-11-09T12:30:00Z', stat: '\u{f4d2} 1 file +1 −1', topics: [], rebase: false },
+      { at: '2026-11-09T11:30:00Z', stat: '\u{f4d2} 3 files +9 −1', topics: ['t1'], rebase: false },
+      { at: '2026-11-09T12:30:00Z', stat: '\u{f4d2} 1 file +1 −1', topics: ['t1'], rebase: false },
     ],
     mr: [{ kind: 'approved', at: '2026-11-09T11:45:00Z', by: 'Robin' }],
   }) }))
   const box = inboxOf(r)
-  expect(box?.lines.map(l => [l.at, l.what])).toEqual([['2026-11-09T12:30:00Z', 'Jan pushed']])
-  expect(box?.during.map(l => [l.at, l.what])).toEqual([['2026-11-09T11:30:00Z', 'Jan pushed'], ['2026-11-09T11:45:00Z', 'Robin approved the MR']])
+  expect(box?.lines.map(l => [l.at, l.what])).toEqual([
+    ['2026-11-09T11:30:00Z', 'Jan pushed · touches t1'], ['2026-11-09T11:45:00Z', 'Robin approved the MR'],
+    ['2026-11-09T12:10:00Z', 'Jan answered'], ['2026-11-09T12:30:00Z', 'Jan pushed · touches t1']])
   expect(box?.hasNews).toBe(true)
-  // Before any round ended, everything is news as before.
-  const fresh = inboxOf(JSON.parse(stateOf(null, [topic('t1', 'open')], { author: 'Jan', inbox: inbox({ pushes: [{ at: '2026-11-09T11:30:00Z', topics: [], rebase: false }] }) })))
-  expect([fresh?.lines.length, fresh?.during.length]).toEqual([1, 0])
+  expect(Object.keys(box ?? {})).not.toContain('during')
 })
 
 test("review-mr: an answer that leaves the next move to the author is a dim line and a dim mark, never a round's stop", () => {
@@ -3666,7 +3682,8 @@ test("review-mr: an answer that leaves the next move to the author is a dim line
   expect(box?.lines.map(l => [l.topic, l.what, l.tone, l.kind, l.at])).toEqual([['t2', 'Jonas answered: fix to come', 'info', 'waits', '2026-11-09T12:10:00Z']])
   expect(box?.count).toBe(0)
   expect(box?.button).toBeNull()
-  expect(inboxMark(waits as never, [], [])).toEqual({ key: 'fyi', icon: '\u{f09de}', isDim: true })
+  // Flagged new as any news is: one mark, one word, whatever the topic's group.
+  expect(inboxMark(waits as never, [], [])).toEqual({ key: 'new', icon: '\u{f09de}', color: 'yellow' })
 })
 
 

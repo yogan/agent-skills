@@ -1571,9 +1571,11 @@ NEEDS_YOU = ("needs_ack", "draft")
 
 
 def inbox_of(state, t, status=None):
-    """Where `t` stands in the inbox: `new` (news the user has not opened), `yours` (opened,
-    not decided), or None for a topic that does not need the user (or an
-    unposted one in the first pass, which has no news to speak of)."""
+    """Where `t` stands in the inbox: `new` (news that needs the user, not opened yet),
+    `fyi` (news only to know of, not opened yet), `yours` (opened, not decided), or None.
+    Both kinds of news flag the topic new in the sidebar, until the user opens it: every
+    comment of somebody else's and every push on its lines. Neither moves it: an answer only
+    to know of leaves it where it waits."""
     status = status or topic_status(state, t)
     v = peer_view_of(state, t) if peer_waiting(state, t) else None
     if v and v["says"] == "fyi" and t.get("state") != "acked":
@@ -1583,11 +1585,21 @@ def inbox_of(state, t, status=None):
         # An answer judged to leave the next move to the author (they agreed, the fix is to
         # come): only to know of, until the user opens it; never part of a round.
         return None if t.get("seen") == answer_mark(state, t) else "fyi"
+    if status == "open" and t["thread_ids"] and t.get("seen") != answer_mark(state, t) and _others_last(state, t):
+        # Somebody other than the author wrote last (another reviewer joined in): the
+        # author's move still, so only to know of.
+        return "fyi"
     if status not in NEEDS_YOU:
         return None
     if not t["thread_ids"] or t.get("follow_up") == "offer":
         return None
     return "yours" if t.get("seen") == answer_mark(state, t) else "new"
+
+
+def _others_last(state, t):
+    """Whether one of `t`'s threads has a comment of somebody else's as its newest."""
+    return any(((state["threads"].get(x) or {}).get("notes") or [{"mine": True}])[-1].get("mine") is False
+               for x in t["thread_ids"])
 
 
 def round_pick(state, after=None):
@@ -1628,8 +1640,6 @@ def next_up(state):
     t = round_pick(state, state.get("focus"))
     if t is None:
         state["in_round"] = False     # nothing left: the round is over
-        # When: the box lists what arrived during the round apart from what came after.
-        state["round_end"] = datetime.datetime.now(datetime.timezone.utc).isoformat()
     return t
 
 
@@ -2269,7 +2279,8 @@ def news_of(state, t):
     thr = [x for x in (state["threads"].get(i) for i in t["thread_ids"]) if x]
     if peer_waiting(state, t, thr):
         kinds.append("thread")
-    if any(x.get("awaiting") == "you" and not x.get("resolved") for x in thr) and "thread" not in kinds:
+    if "thread" not in kinds and (any(x.get("awaiting") == "you" and not x.get("resolved") for x in thr)
+                                  or _others_last(state, t)):
         kinds.append("reply")
     if any(x.get("resolved") for x in thr):
         kinds.append("resolved")
@@ -2294,15 +2305,16 @@ def push_topics(state, p):
 
 
 def inbox_json(state, topics):
-    """The sidebar's inbox: what arrived since the user last worked through it, by kind,
-    each with its topics, the pushes one line each, and what waits. `topics` are
+    """The sidebar's inbox: what happened to the topics flagged new, by kind, each with its
+    topics, the pushes that touched them one line each, and what waits. `topics` are
     `state_json`'s records, which carry each topic's own `news`."""
-    # News is what the user has not put off: a topic put off is listed as such, once.
-    fresh = [x for x in topics if x["inbox"] in ("new", "yours", "fyi")]
+    # News is what the user has not opened yet: an opened topic is no news, decided or not.
+    fresh = [x for x in topics if x["inbox"] in ("new", "fyi")]
+    flagged = {x["id"] for x in fresh}
 
     def having(kind):
         return [x["id"] for x in fresh if kind in x["news"]]
-    pushes = state.get("pushes") or []
+    pushes = [p for p in state.get("pushes") or [] if flagged & set(push_topics(state, p))]
     proposals = [{"thread": p["thread"], "into": p["into"]} for p in state.get("proposals") or []]
     own = unsettled_own(state) if state.get("own_review") in ("done", "skipped") else []
     times = ([x["news_at"] for x in fresh if x["news_at"]] + [p["at"] for p in pushes]
@@ -2310,6 +2322,8 @@ def inbox_json(state, topics):
     first = round_pick(state)
     return {
         "since": min(times) if times else None,
+        # Who wrote last on each topic with a reply: News names them, as every card does.
+        "by": {x["id"]: who for x in fresh if (who := _last_other(state, x["id"]))},
         "replies": having("reply"), "resolved": having("resolved"),
         "threads": [{"id": x["id"], "by": (topic_for(state, x["id"]) or {}).get("by"),
                      "fyi": x["inbox"] == "fyi"}
@@ -2317,8 +2331,6 @@ def inbox_json(state, topics):
         "pushes": [{**{k: p.get(k) for k in ("at", "stat", "rebase", "url", "same", "own", "onto")},
                     "topics": push_topics(state, p)} for p in pushes],
         "mr": state.get("mr_news") or [],
-        # When the last round ended: news from before it arrived while the user worked.
-        "round_end": state.get("round_end"),
         "own": proposals, "matching": len(own),
         "waiting": sum(1 for x in topics if x["status"] == "open"),
         "first": first["id"] if first else None,
@@ -2326,6 +2338,21 @@ def inbox_json(state, topics):
         "newer_push": bool(state.get("worktree_head") and state.get("seen_head")
                            and state["worktree_head"] != state["seen_head"]),
     }
+
+
+def _last_other(state, tid):
+    """The first name of whoever else wrote the newest comment of somebody else's on `tid`."""
+    notes = [n for x in (topic_for(state, tid) or {}).get("thread_ids") or []
+             for n in (state["threads"].get(x) or {}).get("notes") or [] if n.get("mine") is False]
+    return first_name(notes[-1].get("author")) if notes else None
+
+
+def prune_pushes(state):
+    """Forget each push that is no news any more: every topic it touched opened since. One
+    not yet linked to its diff stays, for `link_pushes`."""
+    flagged = {t["id"] for t in state["topics"] if inbox_of(state, t) in ("new", "fyi")}
+    state["pushes"] = [p for p in state.get("pushes") or [] if not p.get("url")
+                       or flagged & set((p.get("topics") or []) + (p.get("beside") or []))]
 
 
 def judge_list(state):
@@ -2552,6 +2579,9 @@ def state_json(state):
             # Merged or closed, and not settled: the user's to raise elsewhere or drop.
             "left": t["id"] in left,
             "verdict": (verdict_of(state, t) or {}).get("says"),
+            # What is wrong with an answer that does not settle it (`VERDICT_CASES`): the News
+            # box says it in the card's own words.
+            "verdict_case": (verdict_of(state, t) or {}).get("case"),
             # What a button that acts on the verdict hands the chat, which did not judge it.
             "verdict_text": (verdict_of(state, t) or {}).get("text"),
             "peer": peer_waiting(state, t),
@@ -4512,6 +4542,7 @@ def main():
             check_pushes(state, ctx, iid, base)
             link_pushes(state, ctx, iid)
             walk_fixes(state, ctx, iid)
+            prune_pushes(state)
             status = mr_status(ctx, iid, me)
             state.setdefault("mr_news", []).extend(mr_news(state.get("mr_status"), status, now_iso()))
             state["mr_status"] = status
@@ -4541,7 +4572,7 @@ def main():
         if ui.drawn():
             walk_fixes(state, ctx, iid)
         move_worktree(state, ctx, iid)
-        state["pushes"] = []
+        # The pushes stay News while a topic they touched is flagged new (`prune_pushes`).
         state["mr_news"] = []
         if args.topic:
             topic_for(state, args.topic) or die(f"no topic {args.topic}")

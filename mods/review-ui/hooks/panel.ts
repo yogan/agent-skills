@@ -21,8 +21,7 @@ export const INBOX_ICON: Record<string, string> = {
   push: '\u{f0718}', // md-source_commit
   thread: '\u{f05cb}', // md-account_voice
   own: '\u{f017c}', // md-comment_account_outline
-  new: '\u{f09de}', // md-circle_medium
-  fyi: '\u{f09de}', // md-circle_medium, dim: news only to know of
+  new: '\u{f09de}', // md-circle_medium: something happened that the person has not opened
   judging: '\u{f01d8}', // md-dots_horizontal
   unjudged: '\u{f05d6}', // md-alert_circle_outline
   draft: '\u{f0cb6}', // md-pencil_outline
@@ -46,7 +45,7 @@ export const MR_COLOR: Record<string, string> = {
   'pipeline-running': 'yellow', 'pipeline-passed': 'green', 'pipeline-failed': 'red',
 }
 export const INBOX_WORD: Record<string, string> = {
-  new: 'news', fyi: 'FYI', judging: 'being judged', unjudged: 'not judged',
+  new: 'new', judging: 'being judged', unjudged: 'not judged',
   draft: 'draft to post',
 }
 // A row's inbox mark: the slot is there on every row, so titles line up.
@@ -56,17 +55,17 @@ export const inboxMark = (t: ReviewTopic, unjudged: string[], judging: string[])
   const isDraft = t.draft != null && (t.status === 'draft' || t.status === 'needs_ack')
   if (!t.inbox) return isDraft ? { key: 'draft', icon: INBOX_ICON.draft as string } : undefined
   if (unjudged.includes(t.id)) return { key: 'unjudged', icon: INBOX_ICON.unjudged as string, color: 'yellow' }
-  // Being judged: dim, but in the colour of news on a topic the heading counts as new, so
-  // the count is marked where it is counted.
+  // A topic flagged new: something happened to it (a comment of somebody else's, a push on
+  // its lines) that the person has not opened. Whether it needs them or is only to know of
+  // (another reviewer's FYI thread, a fix to come), one mark and one word: the group it is
+  // in says which. Being judged, the mark says that, in the same colour.
+  const isNew = t.inbox === 'new' || t.inbox === 'fyi'
   if (judging.includes(t.id)) {
-    return t.inbox === 'new'
+    return isNew
       ? { key: 'judging', icon: INBOX_ICON.judging as string, color: 'yellow' }
       : { key: 'judging', icon: INBOX_ICON.judging as string, isDim: true }
   }
-  if (t.inbox === 'new') return { key: 'new', icon: INBOX_ICON.new as string, color: 'yellow' }
-  // Only to know of (another reviewer's FYI thread, an answer that leaves the next move to
-  // the author): news's mark, dim, until the topic is opened.
-  if (t.inbox === 'fyi') return { key: 'fyi', icon: INBOX_ICON.new as string, isDim: true }
+  if (isNew) return { key: 'new', icon: INBOX_ICON.new as string, color: 'yellow' }
   return isDraft ? { key: 'draft', icon: INBOX_ICON.draft as string } : undefined
 }
 

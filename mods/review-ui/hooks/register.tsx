@@ -2524,12 +2524,11 @@ export const register: Register = on => {
     // the toggle in it where it was, so the pointer opens and closes it without moving.
     const isLegendShown = await read($, legendShown)
     const markGroup: { icon: string; word: string; color?: string }[] = [...shownMarks].map(k => ({ icon: INBOX_ICON[k] as string, word: INBOX_WORD[k] as string, color: k === 'new' || k === 'unjudged' ? 'yellow' : undefined }))
-    // The box's marks too, where it is drawn: what needs the person and what is being judged.
-    // A line only to know of says what it is in words, beside an icon of its kind.
+    // The box's marks too, where it is drawn: what is being judged. Each line says what it is
+    // in words, beside an icon of its kind; what is new is the list's "new" mark.
     const boxTones = new Set((!code && waitingOf(r) ? inboxOf(r)?.lines ?? [] : []).map(l => l.tone))
     const boxGroup = [
-      ...(boxTones.has('needs') ? [{ icon: INBOX_ICON.new as string, word: 'needs you', color: 'yellow' }] : []),
-      ...(boxTones.has('busy') ? [{ icon: INBOX_ICON.judging as string, word: 'being judged' }] : []),
+      ...(boxTones.has('busy') && !shownMarks.has('judging') ? [{ icon: INBOX_ICON.judging as string, word: 'being judged' }] : []),
     ]
     // The MR's own marks at the right of its title, which say nothing in words there.
     const mrMarks = mrMarksOf(r.mr)
@@ -3080,7 +3079,7 @@ export const register: Register = on => {
     const opener = box?.first ?? (r.inbox?.own.length ? 'yours' : null)
     // Never while a round's step waits: the box is not drawn then (`waiting`).
     const end = waiting ? endOf(r, waiting.count === 0) : undefined
-    const boxWhen = Math.max(0, ...[...(box?.lines ?? []), ...(box?.during ?? [])].map(l => (l.at ? [...whenOf(l.at)].length : 0)))
+    const boxWhen = Math.max(0, ...(box?.lines ?? []).map(l => (l.at ? [...whenOf(l.at)].length : 0)))
     const cleaned = waiting ? await read($, cleanedUp) : null
     const openerLabel = isOver ? 'Check the answers' : box?.button ?? (opener === 'yours' ? 'Open your comment' : 'Start the round')
     // When GitLab is asked next, and a small press to ask it now, at the sidebar's foot while
@@ -3117,7 +3116,8 @@ export const register: Register = on => {
         )}
         {/* A topic's line links to its thread on GitLab; a push's, to what it changed. */}
         {l.url
-          ? <Markdown text={`[${l.what} ${LINK_ICON}](${l.url})`} dimColor={l.tone !== 'needs' || undefined} />
+          // The link mark joined to the last word by a no-break space: never on a line alone.
+          ? <Markdown text={`[${l.what}\u00a0${LINK_ICON}](${l.url})`} dimColor={l.tone !== 'needs' || undefined} />
           : <Text color={l.tone === 'good' ? 'green' : undefined} dimColor={(l.tone !== 'needs' && l.tone !== 'good') || undefined} wrap="wrap">{l.what}</Text>}
         {l.size && sizeOf(l.size) && <Text>{drawSize(Text, (sizeOf(l.size) as { size: DiffSize }).size, true)}</Text>}
       </Box>
@@ -3148,13 +3148,9 @@ export const register: Register = on => {
               {(box?.more ?? 0) > 0 && <Text dimColor>{`+${box?.more} more, in the list above`}</Text>}
             </Box>
           )}
-          {/* What arrived while the person worked through the last round: apart, under a dim
-              word of its own, so it does not read as news of after it. */}
-          {(box?.during.length ?? 0) > 0 && (
-            <Box flexDirection="column" marginTop={1}>
-              <Text dimColor>During your round</Text>
-              {box?.during.map((l, i) => boxRow(l, i, 'during'))}
-            </Box>
+          {/* Nothing flagged new: it says so, above what waits. */}
+          {!box?.hasNews && !r.merged && r.mr?.state !== 'merged' && r.mr?.state !== 'closed' && waiting.count > 0 && (
+            <Box marginTop={1}><Text dimColor>No news</Text></Box>
           )}
           {/* What waits, and on whom; merged or closed, the title and the lines say it all,
               as they do where nothing waits and the lines say what arrived. */}

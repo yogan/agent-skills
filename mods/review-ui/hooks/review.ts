@@ -879,8 +879,13 @@ export const waitingLine = (w: { count: number; who: string }): string =>
 // `at`: when it happened, where a reliable time exists, drawn first as a card's step is.
 // `good`: a good end (the MR merged), drawn green.
 export type InboxLine = { tone: 'needs' | 'busy' | 'info' | 'good'; what: string; topic?: string; url?: string; size?: string; kind?: string; at?: string | null }
-// `during`: what arrived while the user worked through the last round, listed apart.
-export type Inbox = { lines: InboxLine[]; during: InboxLine[]; more: number; count: number; hasNews: boolean; since: string | null; first: string | null; button: string | null }
+export type Inbox = { lines: InboxLine[]; more: number; count: number; hasNews: boolean; since: string | null; first: string | null; button: string | null }
+
+// An answer that does not settle its topic, in the words of its card's verdict (findings.py's
+// `VERDICT_CASES`), short: "partly fixed" where the card says "Partly fixed".
+const VERDICT_SAID: Record<string, string> = {
+  'not-fixed': 'not fixed', 'partly-fixed': 'partly fixed', 'fix-wrong': 'fix is wrong', 'comment-wrong': 'comment was wrong',
+}
 
 // Topic lines shown before the rest are summed up as "+n more": the sidebar lists them all.
 const BOX_TOPICS = 5
@@ -912,8 +917,9 @@ export const inboxOf = (review: ReviewState | null, judging: { topics: string[];
   const verdictOf = (id: string): { text: string; tone: InboxLine['tone'] } | null => {
     if (judging.failed.includes(id)) return { text: 'could not be judged', tone: 'needs' }
     if (judging.topics.includes(id)) return { text: 'judging…', tone: 'busy' }
-    const v = review.topics.find(t => t.id === id)?.verdict
-    return v === 'settled' ? { text: 'looks fixed', tone: 'needs' } : v === 'more' ? { text: 'not fixed', tone: 'needs' } : null
+    const t = review.topics.find(x => x.id === id)
+    return t?.verdict === 'settled' ? { text: 'looks fixed', tone: 'needs' }
+      : t?.verdict === 'more' ? { text: VERDICT_SAID[t.verdict_case ?? ''] ?? 'not fixed', tone: 'needs' } : null
   }
   const seen = new Set<string>()
   const topicLine = (id: string, did: string, isFyi = false) => {
@@ -930,7 +936,7 @@ export const inboxOf = (review: ReviewState | null, judging: { topics: string[];
       tone: isFyi || isWait ? 'info' : v?.tone ?? 'needs', topic: id,
       kind: isFyi || did.startsWith('opened') ? 'thread' : isWait ? 'waits' : isResolved ? 'resolved' : did.startsWith('left') ? 'left' : 'reply',
       url: t?.thread_url ?? undefined, at: t?.news_at ?? null,
-      what: `${byOf(id)} ${did}${isWait ? ': fix to come' : v ? (isResolved && v.text === 'not fixed' ? ', not fixed' : `: ${v.text}`) : ''}${isFyi ? ' (FYI)' : ''}`,
+      what: `${byOf(id)} ${did}${isWait ? ': fix to come' : v ? (isResolved && v.text !== 'looks fixed' && v.tone === 'needs' ? `, ${v.text}` : `: ${v.text}`) : ''}${isFyi ? ' (FYI)' : ''}`,
     })
   }
   for (const id of box.replies) topicLine(id, isRework ? 'replied' : 'answered')
@@ -955,14 +961,14 @@ export const inboxOf = (review: ReviewState | null, judging: { topics: string[];
     ...box.pushes.map(p => {
       const isSame = p.same === true || (p.stat ? sizeOf(p.stat)?.size.files : undefined) === 0
       const isRebaseOnly = p.rebase && p.own === 0
-      // "changes 2 of its files" left open whose files: the count is of the files the
-      // author's own change differs in, apart from what the target branch brought along.
+      // "2 files": the files the author's own change differs in, apart from what the target
+      // branch brought along. Short, so the line fits the box on one line.
       const what = isSame ? 'no change to the code' : isRebaseOnly ? 'no change to the MR'
-        : p.rebase && p.own ? `and changed ${p.own} file${p.own === 1 ? '' : 's'}` : null
+        : p.rebase && p.own ? `${p.own} file${p.own === 1 ? '' : 's'}` : null
       return { at: p.at, line: {
         tone: 'info' as const, kind: p.rebase ? 'rebase' : 'push', url: isSame || isRebaseOnly ? undefined : p.url ?? undefined,
         size: what || p.rebase ? undefined : p.stat?.replace(/`/g, '') || undefined,
-        at: p.at, what: `${author} ${p.rebase ? `rebased${p.onto ? ` onto ${p.onto}` : ''}` : 'pushed'}${what ? ` · ${what}` : ''}${p.topics.length ? ` · touches ${p.topics.join(', ')}` : ''}` } }
+        at: p.at, what: `${author} ${p.rebase ? `rebased${p.onto ? ` onto ${p.onto}` : ''}` : 'pushed'}${what ? `, ${what}` : ''}${p.topics.length ? ` · touches ${p.topics.join(', ')}` : ''}` } }
     }),
     // rework-mr: a reviewer resolved a thread, often without a word. Only to know of.
     ...(box.resolves ?? []).map(x => ({ at: x.at, line: {
@@ -982,23 +988,27 @@ export const inboxOf = (review: ReviewState | null, judging: { topics: string[];
       line: { tone: review.mr.state === 'merged' ? 'good' as const : 'info' as const, kind: review.mr.state, at: review.mr.state === 'merged' ? review.mr.merged_at : review.mr.closed_at,
         what: `${(review.mr.state === 'merged' ? review.mr.merged_by : review.mr.closed_by) ?? 'Someone'} ${review.mr.state} the MR` } }] : []),
   ]
-  timeline.sort((a, b) => Date.parse(a.at) - Date.parse(b.at))
-  info.push(...timeline.map(x => x.line))
-  // What arrived before the last round ended came in while the user worked: apart, dim.
-  const end = box.round_end ? Date.parse(box.round_end) : NaN
-  const isDuring = (l: InboxLine) => !Number.isNaN(end) && !!l.at && Date.parse(l.at) <= end
+  // One timeline, oldest first: the topics' own lines among the pushes and the MR's news.
+  // A line with no time keeps its place after the one before it.
   const shown = topicLines.slice(0, BOX_TOPICS)
-  const all = [...shown, ...info]
-  const lines = all.filter(l => !isDuring(l))
-  const during = all.filter(isDuring)
+  const all = [...shown.map(line => ({ at: line.at ?? '', line })), ...timeline]
+  let last = -Infinity
+  const keyed = all.map(x => {
+    const t = Date.parse(x.at)
+    last = Number.isNaN(t) ? last : t
+    return { ...x, t: last }
+  })
+  keyed.sort((a, b) => a.t - b.t)
+  const lines = [...keyed.map(x => x.line), ...info]
   const needs = topicLines.filter(l => l.tone !== 'info')
   const count = review.topics.filter(t => t.inbox === 'new' || t.inbox === 'yours').length + box.own.length
-  // The button names the work it opens.
+  // The button names the work it opens, not which topics: the round goes through every
+  // topic that needs the person, the news and what came with it alike, and a count or a
+  // single topic's name said less than that.
   const answers = needs.filter(l => l.topic)
   const button = isRework ? (review.pass === 'fix' ? 'Start fixing' : 'Start planning')
     : box.own.length && !answers.length ? `Decide ${box.own.length}`
-    : answers.length === 1 ? `Check ${answers[0]?.topic}`
-    : answers.length > 1 ? `Check ${answers.length} answers`
+    : answers.length || review.topics.some(t => t.inbox === 'new') ? 'Check the news'
     : box.first ? 'Start the round' : null
-  return { lines, during, more: topicLines.length - shown.length, count, hasNews: all.length > 0, since: box.since, first: box.first, button }
+  return { lines, more: topicLines.length - shown.length, count, hasNews: lines.length > 0, since: box.since, first: box.first, button }
 }

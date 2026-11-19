@@ -27,6 +27,8 @@ export type ReviewTopic = {
   left?: boolean
   // review-mr: the agent's verdict on the author's answer, while that answer stands.
   verdict?: 'settled' | 'more' | null
+  // What is wrong with an answer judged `more`: findings.py's `VERDICT_CASES`.
+  verdict_case?: 'not-fixed' | 'partly-fixed' | 'fix-wrong' | 'comment-wrong' | null
   // Its text, which a button acting on it hands the chat: the chat did not judge it.
   verdict_text?: string | null
   // Every GitLab thread of the topic resolved.
@@ -107,8 +109,6 @@ export type ReviewInbox = {
   first: string | null
   // A push came after the round opened: the sidebar's code is from before it.
   newer_push: boolean
-  // When the last round ended: what arrived before it came in while the user worked.
-  round_end?: string | null
 }
 
 // One comment of a thread, or on the MR itself (rework-mr).
