@@ -159,7 +159,7 @@ export type ReviewState = {
     // What the end of the MR offers: GitLab's word on merging now (`detailed_merge_status`),
     // the head pipeline, whether the user may merge, and GitLab's reason a merge failed.
     merge_status?: string | null
-    pipeline?: { status: 'running' | 'passed' | 'failed'; url?: string | null } | null
+    pipeline?: { status: 'running' | 'passed' | 'failed'; url?: string | null; at?: string | null } | null
     can_merge?: boolean | null
     merge_error?: string | null
     // rework-mr: the merge the user pressed for, until GitLab merged it or it no longer applies.

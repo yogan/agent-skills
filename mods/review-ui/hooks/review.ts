@@ -976,11 +976,11 @@ export const inboxOf = (review: ReviewState | null, judging: { topics: string[];
     ...(box.mr ?? []).filter(m => m.kind === 'approved' || (m.kind === 'auto-merge' && !isMerged)).map(m => ({ at: m.at, line: {
       tone: 'info' as const, kind: m.kind, at: m.at, what: m.kind === 'approved' ? `${m.by ?? 'Someone'} approved the MR` : 'Auto-merge set' } })),
     // The pipeline that passed is part of a merge's story: it is why the merge went through,
-    // and the box went from "approved" straight to "merged". GitLab gives it no time of its
-    // own here, so it stands right before the merge, untimed.
+    // and the box went from "approved" straight to "merged". At the time it finished, which
+    // a pipeline from before that was kept does not say: then right before the merge.
     ...(review.mr?.state === 'merged' && review.mr.pipeline?.status === 'passed' ? [{
-      at: review.mr.merged_at ?? '9999-12-31T00:00:00Z',
-      line: { tone: 'info' as const, kind: 'pipeline', at: null, what: 'The pipeline passed' } }] : []),
+      at: review.mr.pipeline.at ?? review.mr.merged_at ?? '9999-12-31T00:00:00Z',
+      line: { tone: 'info' as const, kind: 'pipeline', at: review.mr.pipeline.at ?? null, what: 'The pipeline passed' } }] : []),
     // Merged or closed, and by whom: the last of the MR's story, under the box's heading.
     ...(review.mr?.state === 'merged' || review.mr?.state === 'closed' ? [{
       // Without a time it still comes last.

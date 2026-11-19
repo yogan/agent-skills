@@ -3168,6 +3168,17 @@ test('a merged MR looks like success: its box and its merge line in green, the p
   await panel.unmount()
 })
 
+test('the pipeline that passed has its time, and its place in the story by it', async ($, on) => {
+  const mr = { state: 'merged', merged_at: '2026-11-09T15:20:00Z', merged_by: 'You', auto_merge: false, approved_by: ['Miriam'],
+    pipeline: { status: 'passed', at: '2026-11-09T15:10:00Z' } }
+  const r = JSON.parse(reworkState(null, [reworkTopic('t1', 'none')], {
+    mr, in_round: false, inbox: inbox({ mr: [{ kind: 'approved', at: '2026-11-09T15:15:00Z', by: 'Miriam' }, { kind: 'merged', at: '2026-11-09T15:20:00Z', by: 'You' }] }),
+  }))
+  const lines = inboxOf(r)?.lines.filter(l => /approved|pipeline|merged the MR/.test(l.what)).map(l => [l.at, l.what])
+  expect(lines).toEqual([['2026-11-09T15:10:00Z', 'The pipeline passed'], ['2026-11-09T15:15:00Z', 'Miriam approved the MR'],
+    ['2026-11-09T15:20:00Z', 'You merged the MR']])
+})
+
 test('news that is no good end keeps the box as it was: no green', async ($, on) => {
   const w = world(on, [reworkState(null, [{ ...reworkTopic('t1', 'none'), state: 'waiting', status: 'waiting' }], {
     mr: { state: 'opened' }, in_round: false, inbox: inbox({ waiting: 1 }) })])

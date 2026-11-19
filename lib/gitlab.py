@@ -181,11 +181,15 @@ PIPELINE_OF = {"success": "passed", "skipped": "passed", "failed": "failed", "ca
 
 
 def pipeline_of(mr):
-    """The MR's head pipeline as `{status, url}`, or None where it has none."""
+    """The MR's head pipeline as `{status, url, at}`, or None where it has none. `at`: when
+    it finished, for the line that says so among the MR's other news, each of which has its
+    time; None while it runs."""
     p = mr.get("head_pipeline") or None
     if not p or not p.get("status"):
         return None
-    return {"status": PIPELINE_OF.get(p["status"], "running"), "url": p.get("web_url")}
+    status = PIPELINE_OF.get(p["status"], "running")
+    return {"status": status, "url": p.get("web_url"),
+            "at": p.get("finished_at") if status != "running" else None}
 
 
 @functools.lru_cache(maxsize=64)

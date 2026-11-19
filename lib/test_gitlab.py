@@ -209,11 +209,17 @@ class TestTheEndOfTheMr(unittest.TestCase):
 
     def test_a_pipeline_is_running_until_it_passed_or_failed(self):
         of = lambda status: G.pipeline_of({"head_pipeline": {"status": status, "web_url": "u"}})  # noqa: E731
-        self.assertEqual(of("running"), {"status": "running", "url": "u"})
+        self.assertEqual(of("running"), {"status": "running", "url": "u", "at": None})
         self.assertEqual(of("manual")["status"], "running")
         self.assertEqual(of("success")["status"], "passed")
         self.assertEqual(of("canceled")["status"], "failed")
         self.assertIsNone(G.pipeline_of({"head_pipeline": None}))
+
+    def test_a_finished_pipeline_says_when_it_finished(self):
+        """The News box's "The pipeline passed" stood untimed between timed lines."""
+        p = {"status": "success", "web_url": "u", "finished_at": "2026-11-09T15:10:00Z"}
+        self.assertEqual(G.pipeline_of({"head_pipeline": p})["at"], "2026-11-09T15:10:00Z")
+        self.assertIsNone(G.pipeline_of({"head_pipeline": {**p, "status": "running"}})["at"])
 
     def test_gitlabs_reason_is_its_message(self):
         self.assertEqual(G.refusal_of(fake_result(1, '{"message":"405 Method Not Allowed"}', "glab: 405 (HTTP 405)")),
