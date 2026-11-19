@@ -352,8 +352,9 @@ test("a press that closed its topic ends its card on the script's closing line, 
   const again = await $.ui.mount(cardRow('tu-open', view('t1')))
   const texts = (await again.findAll({ type: 'Text' })).map(t => JSON.stringify(t))
   expect(texts.some(t => t.includes(line.slice(4)))).toBe(true)
-  // Its time first and dim, as the card's steps say theirs.
-  expect((await again.findAll({ type: 'Text' })).some(t => t.props.dimColor && String(t.text).trim() === '14:02')).toBe(true)
+  // Its time first and dim, as the card's steps say theirs: the theme's grey as a colour,
+  // which a repaint under the pointer keeps.
+  expect((await again.findAll({ type: 'Text' })).some(t => t.props.color === 'inactive' && String(t.text).trim() === '14:02')).toBe(true)
   expect(texts.some(t => t.includes('Accepted the answer'))).toBe(false)
   // Its thread's link, clickable once the sidebar has moved on to another topic.
   expect((await again.find({ type: 'Link' }))?.props).toMatchObject({ href: 'https://gl/g/p/-/merge_requests/42#note_3', label: 'thread \u{f03cc}' })
@@ -1935,6 +1936,8 @@ test("a topic opened again to look at has one card: the older ones shrink to the
 })
 
 test("a card's steps draw their times dim in one column, and the person as You in their colour", async ($, on) => {
+  // Dim by the theme's grey as a colour, not by `dimColor`: a card with a hover control on it
+  // (a draft's Copy) is repainted under the pointer, and that repaint dropped the dim.
   const head = '\u{f0182} **t1** **summary of t1** · `src/cache.ts:17`'
   const body = `${head}\n\n13:55 \u{F012C} You posted the initial comment · [thread \u{F03CC}](http://gl/n1)\nNov 5, 09:02 \u{F012C} Robin pushed a fix\n\u{F051F} Waits on Robin`
   const out = body + '\n\n<!-- paste-gate:critical\n' + JSON.stringify({ first: head, critical: [], topic: 't1', focus: 't1', review: REVIEW }) + '\n-->'
@@ -1942,7 +1945,7 @@ test("a card's steps draw their times dim in one column, and the person as You i
   await openReview($, w, out)
   const ui = await $.ui.mount(cardRow('tu-open', out))
   const texts = await ui.findAll({ type: 'Text' })
-  const times = texts.filter(t => t.props.dimColor && /^\s*(\d\d:\d\d|Nov 5, 09:02)?$/.test(String(t.text ?? ''))).map(t => String(t.text))
+  const times = texts.filter(t => t.props.color === 'inactive' && /^\s*(\d\d:\d\d|Nov 5, 09:02)?$/.test(String(t.text ?? ''))).map(t => String(t.text))
   // To the column's right: the clock of today's time under the clock of the dated one.
   expect(times).toEqual(['       13:55', 'Nov 5, 09:02', '            '])
   expect(texts.some(t => String(t.text) === 'You' && t.props.color === 'magenta')).toBe(true)

@@ -1119,6 +1119,11 @@ const explainerLink = (
 // A topic's label, the same in the card's title, the band and the panel: its state icon,
 // the handle in the accent colour, and in review-mr the severity (in its colour) or kind.
 const ACCENT = 'cyan'
+// A time beside a step (a card's story, the News box, a press's line): the theme's own dim
+// grey, as a colour. Drawn with `dimColor`, it lit up full white under the pointer on a card
+// that also has a control with a hover (a draft's Copy): the engine repaints such a card as
+// the pointer moves, and that repaint dropped the dim but kept every colour.
+const TIME_COLOR = 'inactive'
 // Inline code where the mod draws text itself rather than as markdown: the colour the
 // engine's markdown gives a code span.
 const CODE_COLOR = 'permission'
@@ -1201,7 +1206,7 @@ const drawParts = ($: EngineInterface, e: Parameters<EngineInterface['ui']['reso
                 {/* The time and the icon keep their width; a long step wraps under its text. The
                     time stands at the column's right, so a time of today (`00:11`) lines up
                     with the clock of the dated ones above it (`Nov 15, 19:51`). */}
-                {whenWidth > 0 && <Box flexShrink={0}><Text dimColor>{(r.step.when ?? '').padStart(whenWidth)}</Text></Box>}
+                {whenWidth > 0 && <Box flexShrink={0}><Text color={TIME_COLOR}>{(r.step.when ?? '').padStart(whenWidth)}</Text></Box>}
                 <Box flexShrink={0}><Text dimColor={isDim || undefined}>{`${'\u00a0'.repeat(r.step.indent)}${r.step.icon}`}</Text></Box>
                 {stepText({ Link, Text }, r.step.rest, `step-text-${at}-${j}-${k}`, isDim, people)}
               </Box>
@@ -1608,7 +1613,7 @@ const outcomeLine = ($: EngineInterface, e: Parameters<EngineInterface['ui']['re
   const isYou = /^You\b/.test(o.text)
   return (
     <Text>
-      {o.when ? <Text dimColor>{`${o.when} `}</Text> : ''}
+      {o.when ? <Text color={TIME_COLOR}>{`${o.when} `}</Text> : ''}
       {o.icon ? `${o.icon} ` : ''}
       {isYou && <Text bold color={isDim ? undefined : YOU_COLOR} dimColor={isDim || undefined}>{YOU}</Text>}
       {isYou ? o.text.slice(3) : o.text}
@@ -3100,7 +3105,7 @@ export const register: Register = on => {
       <Box key={`${part}-${i}`} flexDirection="row" gap={1}>
         {/* Its time first, dim, in a column as wide as the box's widest and to its right, as
             a card's steps are; a line with no reliable time leaves it blank. */}
-        {boxWhen > 0 && <Box flexShrink={0}><Text dimColor>{(l.at ? whenOf(l.at) : '').padStart(boxWhen)}</Text></Box>}
+        {boxWhen > 0 && <Box flexShrink={0}><Text color={TIME_COLOR}>{(l.at ? whenOf(l.at) : '').padStart(boxWhen)}</Text></Box>}
         {/* Its kind's icon, plain: the list beside it marks what needs the person, so the
             box does not mark it again. What needs them is drawn bright, the rest dim. */}
         <Text color={l.tone === 'good' ? 'green' : undefined} dimColor={(l.tone !== 'needs' && l.tone !== 'good') || undefined}>{(l.kind && INBOX_ICON[l.kind]) || '·'}</Text>
