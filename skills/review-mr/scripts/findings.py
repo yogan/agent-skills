@@ -1376,7 +1376,7 @@ def _render_quote(state, tid, refine=False):
         # push of the author's, then whom it waits on or what closed it, the latest event
         # last, right under the others.
         out += ["", *story_steps(state, t)]
-        if closing:
+        if closing and not close_in_story(state, t):
             out.append(closing)
         elif topic_status(state, t) == "open":
             out.append(ui.step_md(ui.STEP_WAITS_ICON, f"Waits on {first_name(state.get('author')) or 'the author'}"))
@@ -1385,6 +1385,15 @@ def _render_quote(state, tid, refine=False):
         out += ["", closing if ui.drawn() else f"_({closing})_"]
     out += _draft_block(state, t, t.get("draft"), follow_up=True)
     return "\n".join(out).strip()
+
+
+def close_in_story(state, t):
+    """Whether the reply a press last closed `t` with is in its threads, where its story
+    tells it as the close (`story_steps`), its link on the words. Mirrors threads.py's."""
+    c = t.get("closed") or {}
+    return c.get("how") == "replied" and bool(c.get("note")) and any(
+        ui.note_key(n.get("url")) == c["note"] for x in t["thread_ids"]
+        for n in (state["threads"].get(x) or {}).get("notes") or [])
 
 
 def closing_line(state, t):
@@ -1447,6 +1456,9 @@ def story_steps(state, t):
             mine = bool(n.get("mine"))
             who = "You" if mine else first_name(n.get("author")) or author
             verb = ("posted the initial comment" if mine else "commented") if i == 0 and k == 0 else "replied"
+            # A reply of yours a press posted with a resolve: that, whatever came after.
+            if mine and (t.get("closed_with") or {}).get(ui.note_key(n.get("url"))) == "replied":
+                verb = "replied and resolved it"
             events.append({"at": n.get("at"), "icon": ui.STEP_DONE_ICON if mine else ui.STATE_ICON["answered"],
                            "text": f"{who} {ui.said_md(verb, n.get('url'))}"})
     fixes = kept_fixes(state, t)
@@ -1507,7 +1519,7 @@ def render_answered(state, t, summ, v):
     out += ["", ui.heading_md(ui.VERDICT_ICON, f"Verdict: {verdict_word(state, t, v)}"), "",
             v["text"].strip()]
     # The topic's whole story, then what closed it: one timeline, the latest event last.
-    steps = story_steps(state, t) + [x for x in [closing_line(state, t)] if x]
+    steps = story_steps(state, t) + [x for x in [closing_line(state, t)] if x and not close_in_story(state, t)]
     if topic_status(state, t) == "open":
         steps.append(ui.step_md(ui.STEP_WAITS_ICON, f"Waits on {author}"))
     if steps:
@@ -2723,6 +2735,7 @@ def post_draft(state, ctx, iid, tid, expect, resolve=False):
         # A follow-up into a thread its author resolved reopens it: the reply asks something
         # of them still, and a resolved thread hides it from their list of open ones.
         th = state["threads"].get(pick) or {}
+        url = f"{ctx['web']}/-/merge_requests/{iid}#note_{note.get('id')}"
         if resolve:
             for x in t["thread_ids"]:
                 other = state["threads"].get(x) or {}
@@ -2731,14 +2744,17 @@ def post_draft(state, ctx, iid, tid, expect, resolve=False):
                     other["resolved"] = True
             t["state"] = "acked"
             t["acked_at"] = now_iso()
-            # How the user closed it, for the line its card ends on (`closing_line`).
-            t["closed"] = {"how": "replied", "at": t["acked_at"]}
+            # How the user closed it, for the line its card ends on (`closing_line`), and
+            # with which comment, which its story tells as that for good: a thread reopened
+            # later still had this reply resolve it. Mirrors threads.py's `post_reply`.
+            t["closed"] = {"how": "replied", "at": t["acked_at"], "note": ui.note_key(url)}
+            t.setdefault("closed_with", {})[ui.note_key(url) or url] = "replied"
         elif th.get("resolved"):
             api_post(f"{disc}/{pick}?resolved=false", {}, method="PUT")
             th["resolved"] = False
         t["draft"] = None
         t.pop("follow_up", None)
-        return f"{ctx['web']}/-/merge_requests/{iid}#note_{note.get('id')}"
+        return url
     fields = {"body": body}
     if t.get("file") and t.get("line"):
         pos = diff_position(ctx, iid, t["file"], int(t["line"]))

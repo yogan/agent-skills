@@ -3430,6 +3430,26 @@ class TestPostAndResolve(unittest.TestCase):
         with patch.dict(os.environ, {"REVIEW_UI_DRAWN": "1"}):
             self.assertIn("You replied and resolved it", F.closing_line(self.state, t))
 
+    def test_the_reply_stays_the_close_in_the_story_after_the_thread_is_reopened(self):
+        with patch.object(F, "api_post", return_value={"id": 9}), \
+                patch.object(F, "_reply_thread", return_value="d1"):
+            url = F.post_draft(self.state, CTX, 2, "t2", None, resolve=True)
+        t, th = self.state["topics"][0], self.state["threads"]["d1"]
+        th["notes"] = [{"author": "Me", "mine": True, "at": "2026-11-09T12:00:00Z", "url": "http://gl/g/p/-/merge_requests/2#note_1"},
+                       {"author": "Me", "mine": True, "at": "2026-11-09T12:36:00Z", "url": url}]
+        said = "You " + F.ui.said_md("replied and resolved it", url)
+        with patch.dict(os.environ, {"REVIEW_UI_DRAWN": "1"}), patch.object(F, "get_worktree", return_value=None):
+            steps = F.story_steps(self.state, t)
+            self.assertTrue(steps[-1].endswith(said), steps)
+            self.assertTrue(F.close_in_story(self.state, t))     # the closing line not again
+            # Alex reopens it with a reply: that comment still replied and resolved it.
+            th["notes"].append({"author": "Alex Kim", "at": "2026-11-09T12:40:00Z", "url": "http://gl/n3"})
+            th["resolved"] = False
+            t["state"] = "open"
+            steps = F.story_steps(self.state, t)
+        self.assertTrue(steps[-2].endswith(said), steps)
+        self.assertIn("Alex", steps[-1])
+
     def test_a_thread_resolved_already_is_not_reopened_by_it(self):
         self.state["threads"]["d1"]["resolved"] = True
         with patch.object(F, "api_post", return_value={"id": 9}) as api, \

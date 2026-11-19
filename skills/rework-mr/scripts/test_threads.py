@@ -3607,6 +3607,34 @@ class TestStateByWord(unittest.TestCase):
         th.update(resolved=False)
         self.assertIsNone(T.closing_line(self.state, self.t1))
 
+    def test_a_fixed_and_resolve_stays_that_after_the_reviewer_reopens_it(self):
+        """t1's "Fixed" + resolve read "You fixed and resolved it" until Miriam reopened the
+        thread, and "12:36 You replied" from then on."""
+        self.pushed()
+        th = self.state["threads"]["d1"]
+        with mock.patch.object(T, "api_post", return_value={"id": 9}):
+            url = T.post_reply(self.state, {"enc": "g%2Fp", "web": "https://gl/g/p"}, 1, "t1", None,
+                               fixed=True, resolve=True)
+        th["notes"].append({"author": "Me", "body": "Fixed", "at": "2026-02-01T12:36:00Z", "mine": True, "url": url})
+        th.update(resolved=True, resolved_by="Me", resolved_mine=True, resolved_at="2026-02-01T12:36:00Z")
+
+        def story():
+            with mock.patch.object(T, "_git", return_value=""), \
+                    mock.patch.object(T, "step_of", return_value="none"):
+                return [x for x in T._step_parts(self.state, self.t1) if x]
+        said = f"You [fixed and resolved it {LINK_ICON}]({url})"
+        # Resolved: the comment that did it is the close, told once.
+        parts = story()
+        self.assertTrue(parts[-1].endswith(said), parts)
+        self.assertEqual(sum("and resolved it" in x for x in parts), 1)
+        # Reopened with a question: that comment still fixed and resolved it.
+        self.reviewer_writes("Why not queryKeys?")
+        th["notes"][-1]["at"] = "2026-02-01T12:37:00Z"
+        th.update(resolved=False)
+        parts = story()
+        self.assertTrue(parts[-2].endswith(said), parts)
+        self.assertIn("Robin replied", parts[-1])
+
     def test_a_closed_pushed_fix_is_one_timeline_the_agreed_plan_timed_the_close_last(self):
         self.pushed()
         self.t1["plan_at"] = "2026-02-01T12:00:00Z"

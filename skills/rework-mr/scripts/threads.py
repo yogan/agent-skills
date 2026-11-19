@@ -1170,6 +1170,7 @@ def _step_parts(state, t):
     the fix in the working tree, or the reply drafted, whichever step the topic is at."""
     st = step_of(state, t)
     out = []
+    told = False                          # the card tells the topic's story
     p = proposal_of(state, t)
     if st == "plan" and p:
         out += [analysis_heading(), "", ui.with_recommendation(p["why"].strip()), ""]
@@ -1181,10 +1182,12 @@ def _step_parts(state, t):
                 out += [*_change_blocks(body), ""]
     elif is_pushed_fix(t) and st in ("reply", "none") and is_fix(t):
         out += [*story_steps(state, t), ""]
+        told = True
     elif st == "reply" and is_pushed_fix(t) and t.get("plan") and t.get("decision"):
         # A pushed fix defended: the story tells it whole, the plan agreed last (to push
         # back) its newest line, so no heading says it a second time.
         out += [*story_steps(state, t), ""]
+        told = True
     elif st in ("fix", "reply") and t.get("plan") and t.get("decision"):
         word = OUTCOME_WORD.get(t.get("outcome") or "fix", "Fix")
         out += [ui.heading_md(ui.ASKED_ICON, f"Agreed plan: {word}"), "", t["plan"].strip(), ""]
@@ -1195,12 +1198,14 @@ def _step_parts(state, t):
                                kept.get("at")), ""]
     if st == "none" and not is_pushed_fix(t):
         out += [*story_steps(state, t), ""]
+        told = True
     if st == "fixed":
         out += [render_fix(state, t["id"]).split("\n", 2)[-1], ""]
     if differs_now(state, t):
         # A reply posted by hand that no longer holds: its correction is the card, at any step.
         return out + [posted.card_md(t, "reply"), ""]
-    closing = closing_line(state, t)
+    # The comment a press closed it with is the story's own line saying so: not twice.
+    closing = None if told and close_in_story(state, t) else closing_line(state, t)
     if closing:
         # The latest event: the timeline's last step where the card tells one, so it goes on
         # under the steps with no gap; else apart. Before a draft still to post.
@@ -1403,6 +1408,10 @@ def story_steps(state, t):
             mine = bool(n.get("mine"))
             who = "You" if mine else first_name(n.get("author")) or "The reviewer"
             verb = "replied" if mine or i else "commented"
+            # A comment of yours a press posted with a resolve: that, whatever came after.
+            how = mine and (t.get("closed_with") or {}).get(ui.note_key(n.get("url")))
+            if how in ("fixed", "replied"):
+                verb = f"{how} and resolved it"
             comments.append({"at": n.get("at"), "icon": done if mine else ui.STATE_ICON["answered"],
                              "text": f"{who} {ui.said_md(verb, n.get('url'))}"})
     # Listed as a topic usually runs (the comment, the plan, the fix, the replies), which is
@@ -1443,6 +1452,14 @@ def story_steps(state, t):
     if t.get("state") == "waiting" and not resolved:
         out.append(ui.step_md(ui.STEP_WAITS_ICON, f"Waits on {reviewer_of(state, t)}"))
     return out
+
+
+def close_in_story(state, t):
+    """Whether the comment a press last closed `t` with is in its threads, where its story
+    tells it as the close (`story_steps`), its link on the words."""
+    key = (t.get("closed") or {}).get("note")
+    return bool(key) and any(ui.note_key(n.get("url")) == key for x in t["thread_ids"]
+                             for n in (state["threads"].get(x) or {}).get("notes") or [])
 
 
 def closing_line(state, t):
@@ -2885,7 +2902,11 @@ def post_reply(state, ctx, iid, tid, expect, fixed=False, resolve=False):
             if not (state["threads"].get(x) or {}).get("resolved"):
                 api_post(f"{disc}/{x}?resolved=true", {}, method="PUT")
         # How the user closed it, for the line its card ends on (`closing_line`).
-        t["closed"] = {"how": "fixed" if fixed else "replied", "at": datetime.datetime.now(datetime.timezone.utc).isoformat()}
+        # And which comment closed it, which its story tells as that for good: a thread the
+        # reviewer reopens later still had this comment fix and resolve it.
+        t["closed"] = {"how": "fixed" if fixed else "replied", "at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+                       "note": ui.note_key(url)}
+        t.setdefault("closed_with", {})[ui.note_key(url) or url] = t["closed"]["how"]
     t["state"] = "waiting"
     t.pop("waiting_on", None)
     if t.get("diff_url"):

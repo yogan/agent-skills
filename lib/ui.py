@@ -201,6 +201,13 @@ def story_md(events):
     return [step_md(e["icon"], e["text"], e.get("at"), e.get("indent", 0)) for _when, _i, e in keyed]
 
 
+def note_key(url):
+    """A comment's id from its link (`…#note_123`), the same whichever base URL made the
+    link: what a press that posted it keeps, and a story finds the comment by again."""
+    m = re.search(r"#note_(\d+)$", url or "")
+    return m.group(1) if m else None
+
+
 def said_md(verb, url):
     """What somebody did in a thread, as a story line says it, the word itself the link to
     that very comment (`replied ↗`): one link, on the comment it is about. A separate
