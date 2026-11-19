@@ -2759,6 +2759,21 @@ class TestAnswersInCode(unittest.TestCase):
         self.assertEqual(self.t["watch"]["sha"], "c1")
         self.assertNotIn("pushed", self.t)
 
+    def test_a_comment_gitlab_moved_on_is_watched_from_where_it_was_written(self):
+        """GitLab moves a comment's position onto every push that leaves its line as it was,
+        a fix just below it included: watched from the position, that push was no news."""
+        self.state["threads"]["d1"].update(head_sha="c1", notes=[{"mine": True, "at": "2026-11-04T10:00:00Z"}])
+        vs = [{"head_commit_sha": "c1", "created_at": "2026-11-04T10:05:00Z"},
+              {"head_commit_sha": "c0", "created_at": "2026-11-04T09:00:00Z"}]
+        beside = [{"new_path": "a.ts", "old_path": "a.ts", "diff": "@@ -12,0 +13,2 @@\n+x\n+y\n"}]
+        back = [{"new_path": "a.ts", "old_path": "a.ts", "diff": "@@ -13,2 +12,0 @@\n-x\n-y\n"}]
+        with patch.object(F, "mr_head", return_value="c1"), patch.object(F, "versions", return_value=vs), \
+                patch.object(F, "_compare", side_effect=lambda ctx, a, b: back if (a, b) == ("c1", "c0") else beside), \
+                patch.object(F, "_gl_compare", return_value={"stat": "`+2/−0` · 1 file"}):
+            F.check_pushes(self.state, None, 1, "b0")
+        self.assertEqual(self.t["watch"], {"sha": "c0", "first": 11, "last": 11})
+        self.assertEqual(self.t["pushed"]["from"], "c0")
+
     def test_a_push_to_another_file_keeps_the_topic_waiting(self):
         files = [{"new_path": "b.ts", "old_path": "b.ts", "diff": "@@ -2,0 +3,2 @@\n+x\n+y\n"}]
         with patch.object(F, "mr_head", return_value="c1"), patch.object(F, "_compare", return_value=files), \
@@ -3483,6 +3498,17 @@ class TestAuthorFixes(unittest.TestCase):
             {"body": "Fixed.", "mine": False, "author": "Lang, Robin", "at": "2026-11-05T11:59:59Z"})
         story = "\n".join(F.story_steps(self.state, self.t))
         self.assertLess(story.index("pushed a fix"), story.index("replied"))
+
+    def test_a_comment_gitlab_moved_on_is_walked_from_where_it_was_written(self):
+        """The push changed the code under the comment, not its line, so GitLab moved the
+        comment's position onto it: walked from the position, that push was never seen, and a
+        verdict of "partly fixed" stood with no push in the story and no diff anywhere."""
+        self.push("B", 2, [{"new_path": "a.ts", "old_path": "a.ts", "diff": "@@ -42 +42 @@\n-p\n+q\n"}])
+        self.state["threads"]["d1"]["head_sha"] = "B"
+        self.diffs[("B", "A")] = [{"new_path": "a.ts", "old_path": "a.ts", "diff": "@@ -42 +42 @@\n-q\n+p\n"}]
+        self.walk()
+        (f,) = F.fixes_of(self.t)
+        self.assertEqual((f["before"], f["after"], f.get("near")), ("A", "B", True))
 
     def test_a_commit_made_long_before_its_push_leaves_the_version_s_time(self):
         self.push("B", 2, [{"new_path": "a.ts", "old_path": "a.ts", "diff": self.FIX}])

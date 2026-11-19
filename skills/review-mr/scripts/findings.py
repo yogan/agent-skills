@@ -1909,20 +1909,53 @@ def pushed_of(state, t):
     return p if p and ui.drawn() and p.get("mark") == decision_mark(state, t) else None
 
 
-def watch_of(t, x):
+def watch_of(t, x, origin=None):
     """The lines a push is checked against: where the comment is, in the code it was last
-    checked at. Started from the thread's own position; None for a comment that is on no
-    line of the new code (on the MR as a whole, or on a line the MR removed)."""
+    checked at. Started from where the comment was posted (`origin`, `comment_origin`'s);
+    None for a comment that is on no line of the new code (on the MR as a whole, or on a
+    line the MR removed)."""
     w = t.get("watch")
     if w:
         return w
     if not (x and x.get("file") and x.get("line") and x.get("side") == "new"):
         return None
-    sha = x.get("head_sha") or t.get("start_sha")
+    sha, first, last = (origin() if origin else None) or (
+        x.get("head_sha") or t.get("start_sha"), x.get("line_start") or x["line"], x["line"])
     if not sha:
         return None
-    t["watch"] = {"sha": sha, "first": x.get("line_start") or x["line"], "last": x["line"]}
+    t["watch"] = {"sha": sha, "first": first, "last": last}
     return t["watch"]
+
+
+def comment_origin(x, vs, compare):
+    """Where the comment `x` was posted: `(sha, first, last)`, the MR's version it was
+    written on and its lines there; None where its position says so already.
+
+    GitLab moves a comment's position along with every push that leaves its lines as they
+    were, so the position names the newest such version, not the one it was written on: a
+    push that changed the code right beside the lines (a `.catch` under the commented one)
+    then lies before the position, and was never seen as the answer it was. A comment can
+    only be written on a version GitLab has recorded, so a position on a version recorded
+    after the comment was moved there; the comment's own is the newest version recorded
+    before it, and its lines there are the position's carried back, unchanged since."""
+    at = instant(((x.get("notes") or [{}])[0]).get("at"))
+    pos = x.get("head_sha")
+    if not (at and pos):
+        return None
+    vs = vs() if callable(vs) else vs
+    ats = {v.get("head_commit_sha"): instant(v.get("created_at")) for v in vs or []}
+    if not (ats.get(pos) and ats[pos] > at):
+        return None
+    before = [v for v in vs if instant(v.get("created_at")) and instant(v.get("created_at")) <= at]
+    if not before:
+        return None
+    sha = max(before, key=lambda v: instant(v.get("created_at"))).get("head_commit_sha")
+    diffs = compare(pos, sha)
+    if not sha or diffs is None:
+        return None
+    _, first, last = code_view.touched((_file_diff(diffs, x["file"]) or {}).get("diff"),
+                                       x.get("line_start") or x["line"], x["line"])
+    return sha, first, last
 
 
 def _file_diff(diffs, path):
@@ -1964,12 +1997,22 @@ def check_pushes(state, ctx, iid, base):
             b, a = own(before), own(after)
             authored = {p for p in set(b) | set(a) if b.get(p) != a.get(p)}
 
+    vs = []
+
+    def mr_versions():
+        if not vs:
+            vs.extend(versions(ctx, iid) or [])
+        return vs
+
+    def origin(x):
+        return comment_origin(x, mr_versions, compare)
+
     touched = []
     for t in state["topics"]:
         if not t["thread_ids"]:
             continue
         x = state["threads"].get(t["thread_ids"][0])
-        w = watch_of(t, x)
+        w = watch_of(t, x, lambda x=x: origin(x))
         if not w:
             continue
         p = t.get("pushed")
@@ -3209,8 +3252,11 @@ def walk_fixes(state, ctx, iid, vs=None):
         x = state["threads"].get(t["thread_ids"][0]) or {}
         if not (x.get("file") and x.get("line") and x.get("side") == "new" and x.get("head_sha")):
             continue
-        w = t.setdefault("fix_walk", {"sha": x["head_sha"], "file": x["file"],
-                                      "first": x.get("line_start") or x["line"], "last": x["line"]})
+        if "fix_walk" not in t:
+            sha, first, last = comment_origin(x, vs, compare) or (
+                x["head_sha"], x.get("line_start") or x["line"], x["line"])
+            t["fix_walk"] = {"sha": sha, "file": x["file"], "first": first, "last": last}
+        w = t["fix_walk"]
         k = at.get(w["sha"])
         if k is None:
             if w["sha"] == head or w.get("lost") and topic_status(state, t) == "acked":
