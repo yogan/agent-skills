@@ -489,12 +489,12 @@ test("a fix's Changes heading carries its size and, dim, its commit counts; each
     '\u{f071b} `455d841` extract keys\n\u{f071c} test: cover the keys'
   const ui = await $.ui.mount({ ...row('python3 $SD/findings.py quote t1 --focus', card + manifest({ first: firstOf(card) })), surface: 'terminal' })
   const texts = await ui.findAll({ type: 'Text' })
-  expect(texts.find(t => t.text === '(1 new commit, 1 commit rewritten)')?.props.dimColor).toBe(true)
+  expect(texts.find(t => t.text === '(1 new commit, 1 commit rewritten)')?.props.color).toBe('inactive')
   const subject = texts.find(t => t.text === 'extract keys')
-  expect([subject?.props.dimColor, subject?.props.italic]).toEqual([true, true])
+  expect([subject?.props.color, subject?.props.italic]).toEqual(['inactive', true])
   expect(texts.find(t => t.text === 'test: cover the keys')?.props.italic).toBe(true)
   // The size beside the heading is said with it: dim, without a diff's colours.
-  expect(texts.find(t => t.text === '+15')?.props.color).toBeUndefined()
+  expect(texts.find(t => t.text === '+15')?.props.color).toBe('inactive')
   // Each blank line of the text stays between the parts: above Changes and above the first
   // commit; not under the Changes heading, which sits on what it heads, nor between commits.
   const gaps = (await ui.findAll({ type: 'Box' })).filter(b => b.props.marginTop === 1 && String(b.key ?? '').startsWith('gap-'))
@@ -547,7 +547,7 @@ test("a comment's author stands apart in the card, the person's own in their col
   expect(md.slice(1, 3)).toEqual(['> seems bad', '> agreed'])
   // The link inline in the head's one line of text, no block of markdown of its own.
   expect((await ui.findAll({ type: 'Link' })).map(l => l.props.href)).toEqual(['http://gl/n1', 'http://gl/n2'])
-  expect(texts.find(t => t.text === 'Nov 5, 12:09')?.props.dimColor).toBe(true)
+  expect(texts.find(t => t.text === 'Nov 5, 12:09')?.props.color).toBe('inactive')
   await ui.unmount()
 })
 

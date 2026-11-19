@@ -1820,7 +1820,7 @@ test('a thread in full gives each comment a line of its own for its link, author
   await openReview($, w, view('t1'))
   const ui = await $.ui.mount({ ...PANEL, surface: 'terminal' })
   // One line of text, the link inline, the time in it dim.
-  expect((await ui.findAll({ type: 'Text' })).find(t => t.text === 'Nov 5, 12:09')?.props.dimColor).toBe(true)
+  expect((await ui.findAll({ type: 'Text' })).find(t => t.text === 'Nov 5, 12:09')?.props.color).toBe('inactive')
   expect((await ui.findAll({ type: 'Link' })).map(l => l.props.href)).toEqual(['http://gl/x#note_2'])
   expect((await ui.findAll({ type: 'Markdown' })).some(m => String(m.props.text).startsWith('seems bad, and more words'))).toBe(true)
   await ui.press({ key: 'thread-open' })
@@ -2022,6 +2022,28 @@ test("a card's steps draw their times dim in one column, and the person as You i
   expect(times).toEqual(['       13:55', 'Nov 5, 09:02', '            '])
   expect(texts.some(t => String(t.text) === 'You' && t.props.color === 'magenta')).toBe(true)
   await ui.unmount()
+})
+
+test("no dim text on a card is drawn with dimColor, which lights up under the pointer: older cards and the newest", async ($, on) => {
+  // The engine repaints a card as the pointer moves over it, and that repaint drops
+  // `dimColor` and keeps colours: dim text is the theme's grey as a colour, everywhere on a card.
+  const card = (tid: string) => {
+    const head = `\u{f0182} **${tid}** **summary of ${tid}** · \`src/cache.ts:17\``
+    const body = `${head}\n\n**\u{f11a7} Agreed plan: Fix**\n\nRename it.\n\n**\u{f189b} Changes**  \u{f4d2} 5 files +18 −15  (2 commits rewritten)\n\n` +
+      'Renamed `queryKeys` (t1).\n\n\u{f071b} `f75def5` extract keys\n\u{f071b} `e15b6a1` use the keys\n\n' +
+      '13:55 \u{F012C} You agreed the plan · [thread \u{F03CC}](http://gl/n1)\n\u{F051F} Waits on Robin'
+    return body + '\n\n<!-- paste-gate:critical\n' + JSON.stringify({ first: head, critical: [], topic: tid, focus: tid, review: REVIEW }) + '\n-->'
+  }
+  const w = world(on, [stateOf('t1', [topic('t1', 'open'), topic('t2', 'open')])])
+  await openReview($, w, card('t1'))
+  await $.tool.call({ tool: 'Bash', command: 'python3 $SD/findings.py quote t1 --iid 42', tool_use_id: 'tu-again' } as never)
+  for (const [id, out] of [['tu-open', card('t1')], ['tu-again', card('t1')], ['tu-other', card('t2')]] as const) {
+    const ui = await $.ui.mount(cardRow(id, out))
+    const lit = (await ui.findAll({ type: 'Text' })).filter(t => t.props.dimColor === true).map(t => String(t.text))
+    expect([id, lit]).toEqual([id, []])
+    expect((await ui.findAll({ type: 'Box' })).some(b => b.props.borderDimColor === true)).toBe(false)
+    await ui.unmount()
+  }
 })
 
 test("a topic still being decided has one card too: the newest holds it, the older one is its title line", async ($, on) => {

@@ -1170,11 +1170,14 @@ const explainerLink = (
 // A topic's label, the same in the card's title, the band and the panel: its state icon,
 // the handle in the accent colour, and in review-mr the severity (in its colour) or kind.
 const ACCENT = 'cyan'
-// A time beside a step (a card's story, the News box, a press's line): the theme's own dim
-// grey, as a colour. Drawn with `dimColor`, it lit up full white under the pointer on a card
-// that also has a control with a hover (a draft's Copy): the engine repaints such a card as
-// the pointer moves, and that repaint dropped the dim but kept every colour.
-const TIME_COLOR = 'inactive'
+// Dim text on a card (a time beside a step, a diff's size beside its heading, a commit's
+// subject, an older card's every word): the theme's own dim grey, as a colour. Drawn with
+// `dimColor`, it lit up full white under the pointer: the engine repaints a card as the
+// pointer moves over it, and that repaint dropped the dim but kept every colour. Markdown
+// takes no colour and keeps its dim through the repaint, so it keeps `dimColor`.
+const DIM_COLOR = 'inactive'
+const TIME_COLOR = DIM_COLOR
+const dimOr = (isDim: boolean | undefined, color?: string) => (isDim ? DIM_COLOR : color)
 // Inline code where the mod draws text itself rather than as markdown: the colour the
 // engine's markdown gives a code span.
 const CODE_COLOR = 'permission'
@@ -1184,9 +1187,9 @@ const labelOf = (t: ReviewState['topics'][number], isReview: boolean): LabelOf =
 const drawLabel = (
   Text: ReturnType<EngineInterface['ui']['resolve']>['Text'], l: LabelOf, props: { bold?: boolean; dimColor?: boolean } = {},
 ) => (
-  <Text {...props}>
-    {`${l.state} `}<Text color={props.dimColor ? undefined : ACCENT}>{l.id}</Text>
-    {l.kind && <Text color={l.kind.color} dimColor={l.kind.isDim || undefined}>{` ${l.kind.icon}`}</Text>}
+  <Text bold={props.bold} color={dimOr(props.dimColor)}>
+    {`${l.state} `}<Text color={dimOr(props.dimColor, ACCENT)}>{l.id}</Text>
+    {l.kind && <Text color={dimOr(props.dimColor || l.kind.isDim, l.kind.color)}>{` ${l.kind.icon}`}</Text>}
   </Text>
 )
 
@@ -1201,11 +1204,11 @@ const author = (Text: ReturnType<EngineInterface['ui']['resolve']>['Text'], name
 // the columns line up.
 const filesOf = (d: DiffSize) => `${d.files} ${d.files === 1 ? 'file' : 'files'}`
 const drawSize = (Text: ReturnType<EngineInterface['ui']['resolve']>['Text'], d: DiffSize, isDim?: boolean, pad?: { files: number; added: number }) => (
-  <Text dimColor={isDim || undefined}>
+  <Text color={dimOr(isDim)}>
     {`\u{f4d2} ${filesOf(d).padEnd(pad?.files ?? 0)} `}
-    <Text color={isDim ? undefined : 'green'}>{`+${d.added}`.padEnd(pad?.added ?? 0)}</Text>
+    <Text color={dimOr(isDim, 'green')}>{`+${d.added}`.padEnd(pad?.added ?? 0)}</Text>
     {' '}
-    <Text color={isDim ? undefined : 'red'}>{`−${d.removed}`}</Text>
+    <Text color={dimOr(isDim, 'red')}>{`−${d.removed}`}</Text>
   </Text>
 )
 
@@ -1226,13 +1229,13 @@ const spaced = (Box: ReturnType<EngineInterface['ui']['resolve']>['Box'], r: Siz
 const stepText = (els: Pick<ReturnType<EngineInterface['ui']['resolve']>, 'Text'> & { Link: (p: { href: string; label?: string }) => JSX.Element }, rest: string, key: string, isDim?: boolean, people: readonly string[] = []) => {
   const { Link, Text } = els
   return (
-    <Text key={key} dimColor={isDim || undefined}>
+    <Text key={key} color={dimOr(isDim)}>
       {inlineOf(rest, people).map((r, n) => (r.kind === 'plain' ? r.text
-        : r.kind === 'code' ? <Text key={`c${n}`} color={isDim ? undefined : CODE_COLOR}>{r.text}</Text>
+        : r.kind === 'code' ? <Text key={`c${n}`} color={dimOr(isDim, CODE_COLOR)}>{r.text}</Text>
         : r.kind === 'bold' ? <Text key={`b${n}`} bold>{r.text}</Text>
-        : r.kind === 'name' ? <Text key={`n${n}`} bold color={isDim ? undefined : personColor(r.text, people)}>{r.text}</Text>
+        : r.kind === 'name' ? <Text key={`n${n}`} bold color={dimOr(isDim, personColor(r.text, people))}>{r.text}</Text>
         : r.kind === 'link' ? <Link key={`l${n}`} href={r.url} label={r.text} />
-        : r.kind === 'aside' ? <Text key={`a${n}`} dimColor italic>{r.text}</Text>
+        : r.kind === 'aside' ? <Text key={`a${n}`} color={DIM_COLOR} italic>{r.text}</Text>
         : <Text key={`s${n}`}>{drawSize(Text, (sizeOf(r.text) as { size: DiffSize }).size, isDim)}</Text>))}
     </Text>
   )
@@ -1258,7 +1261,7 @@ const drawParts = ($: EngineInterface, e: Parameters<EngineInterface['ui']['reso
                     time stands at the column's right, so a time of today (`00:11`) lines up
                     with the clock of the dated ones above it (`Nov 15, 19:51`). */}
                 {whenWidth > 0 && <Box flexShrink={0}><Text color={TIME_COLOR}>{(r.step.when ?? '').padStart(whenWidth)}</Text></Box>}
-                <Box flexShrink={0}><Text dimColor={isDim || undefined}>{`${'\u00a0'.repeat(r.step.indent)}${r.step.icon}`}</Text></Box>
+                <Box flexShrink={0}><Text color={dimOr(isDim)}>{`${'\u00a0'.repeat(r.step.indent)}${r.step.icon}`}</Text></Box>
                 {stepText({ Link, Text }, r.step.rest, `step-text-${at}-${j}-${k}`, isDim, people)}
               </Box>
             )
@@ -1277,7 +1280,7 @@ const drawParts = ($: EngineInterface, e: Parameters<EngineInterface['ui']['reso
             // hard to read. A code span on a mark keeps the text's own colour, as the accent
             // on green or red was the hardest of all to read; unmarked it keeps the accent.
             ? (
-              <Text key={`words-${at}-${j}-${k}`} dimColor={isDim || undefined}>
+              <Text key={`words-${at}-${j}-${k}`} color={dimOr(isDim)}>
                 {r.words.map((w, n) => (w.kind === 'same' && !w.isCode ? w.text
                   : <Text key={`w-${n}`} strikethrough={w.kind === 'removed' || undefined}
                     color={w.isCode && !isDim && w.kind === 'same' ? CODE_COLOR : undefined}
@@ -1288,9 +1291,9 @@ const drawParts = ($: EngineInterface, e: Parameters<EngineInterface['ui']['reso
             // A commit: the hash as code, the subject dim and italic, apart from the text.
             ? (
               <Box key={`commit-${at}-${j}-${k}`} flexDirection="row" gap={1}>
-                <Text dimColor={isDim || undefined}>{r.commit.icon}</Text>
+                <Text color={dimOr(isDim)}>{r.commit.icon}</Text>
                 {r.commit.sha && <Markdown text={`\`${r.commit.sha}\``} dimColor={isDim || undefined} />}
-                <Text dimColor italic wrap="truncate-end">{r.commit.subject}</Text>
+                <Text color={DIM_COLOR} italic wrap="truncate-end">{r.commit.subject}</Text>
               </Box>
             )
             : (
@@ -1301,7 +1304,7 @@ const drawParts = ($: EngineInterface, e: Parameters<EngineInterface['ui']['reso
                 {drawSize(Text, r.size, isDim || HEADING_MD.test(r.before.trim()))}
                 {/* What the size is said with, in brackets (how many commits), drawn dim. */}
                 {r.after.trim() && (r.after.trim().startsWith('(')
-                  ? <Text dimColor>{r.after.trim()}</Text>
+                  ? <Text color={DIM_COLOR}>{r.after.trim()}</Text>
                   : <Markdown text={r.after.trimStart()} dimColor={isDim || undefined} />)}
               </Box>
             )))}
@@ -1311,7 +1314,7 @@ const drawParts = ($: EngineInterface, e: Parameters<EngineInterface['ui']['reso
       // A diff in colour cannot be dimmed: on a card that is not the current one it is plain
       // text, so the colours on screen are the current topic's alone.
       ? (
-        <Text key={`diff-${at}-${j}`} dimColor wrap="truncate-end">
+        <Text key={`diff-${at}-${j}`} color={DIM_COLOR} wrap="truncate-end">
           {[...(p.loc ? [p.loc] : []), ...p.hunks.flatMap(hunk => hunk.split('\n').slice(1)).map(l => `${p.isQuoted ? '▎ ' : ''}${l}`)].join('\n')}
         </Text>
       )
@@ -1320,7 +1323,7 @@ const drawParts = ($: EngineInterface, e: Parameters<EngineInterface['ui']['reso
         {/* A quote's bar, as Markdown draws one, a row per line of the diff; and one for
             the blank line that parts it from the quote's text above. */}
         {p.isQuoted && (
-          <Text dimColor>{[...(j > 0 ? [''] : []), ...p.hunks.flatMap(hunk => hunk.split('\n').slice(1))].map(() => '▎ ').join('\n')}</Text>
+          <Text color={DIM_COLOR}>{[...(j > 0 ? [''] : []), ...p.hunks.flatMap(hunk => hunk.split('\n').slice(1))].map(() => '▎ ').join('\n')}</Text>
         )}
         <Box flexDirection="column" flexGrow={1} marginTop={j > 0 ? 1 : 0}>
           {p.loc && <Text bold color={ACCENT} wrap="truncate-end">{p.loc}</Text>}
@@ -1343,7 +1346,7 @@ const hrefOf = (md: string | undefined): string | undefined => (md ? LINK_MD.exe
 // the draft is not on GitLab yet. Its words are DRAFT_HEAD's, which the box's width counts.
 const DRAFT_HEAD = 'Draft · not posted'
 const draftHead = (Text: ReturnType<EngineInterface['ui']['resolve']>['Text']) => (
-  <Text><Text bold>Draft</Text><Text dimColor> · not posted</Text></Text>
+  <Text><Text bold>Draft</Text><Text color={DIM_COLOR}> · not posted</Text></Text>
 )
 const noteHeadLine = (
   $: EngineInterface, e: Parameters<EngineInterface['ui']['resolve']>[0],
@@ -1352,12 +1355,12 @@ const noteHeadLine = (
   const { Link, Text } = $.ui.resolve(e) as ReturnType<EngineInterface['ui']['resolve']> & { Link: (p: { href: string; label?: string }) => JSX.Element }
   return (
     <Text>
-      {head.hasBar && <Text dimColor>{'▎ '}</Text>}
+      {head.hasBar && <Text color={DIM_COLOR}>{'▎ '}</Text>}
       {head.url && <Link href={head.url} label={LINK_ICON} />}
       {head.url && ' '}
-      {head.isDim ? <Text bold dimColor>{head.author ?? 'someone'}</Text> : author(Text, head.author, head.people)}
+      {head.isDim ? <Text bold color={DIM_COLOR}>{head.author ?? 'someone'}</Text> : author(Text, head.author, head.people)}
       {head.when && ' '}
-      {head.when && <Text dimColor>{head.when}</Text>}
+      {head.when && <Text color={DIM_COLOR}>{head.when}</Text>}
     </Text>
   )
 }
@@ -1550,8 +1553,8 @@ const drawCard = async ($: EngineInterface, e: Parameters<EngineInterface['ui'][
   if (shown && retold && retold !== id && at !== undefined && at < (order.at[retold] ?? 0)) {
     const label: LabelOf = { state: shown.state, id: shown.id, kind: shown.kind ? { isDim: true, icon: shown.kind } : undefined }
     return (
-      <Box borderStyle="round" borderDimColor paddingX={1} flexDirection="column" width="100%">
-        <Text bold dimColor wrap="truncate-end">
+      <Box borderStyle="round" borderColor={DIM_COLOR} paddingX={1} flexDirection="column" width="100%">
+        <Text bold color={DIM_COLOR} wrap="truncate-end">
           {drawLabel(Text, label, { bold: true, dimColor: true })}{shown.summary ? ` ${plainTitle(shown.summary)}` : ''}
         </Text>
       </Box>
@@ -1605,11 +1608,11 @@ const drawCard = async ($: EngineInterface, e: Parameters<EngineInterface['ui'][
     kind: title.kind ? { ...(topic && !isDim ? kindSlot(topic) : { isDim: true }), icon: title.kind } : undefined,
   }
   return (
-    <Box borderStyle="round" borderDimColor={isDim || undefined} paddingX={1} flexDirection="column" width="100%">
+    <Box borderStyle="round" borderColor={dimOr(isDim)} paddingX={1} flexDirection="column" width="100%">
       <Box flexDirection="column" marginBottom={1}>
         <Box flexDirection="row" width="100%">
           <Box flexGrow={1}>
-            <Text bold dimColor={isDim || undefined}>
+            <Text bold color={dimOr(isDim)}>
               {drawLabel(Text, label, { bold: true, ...(isDim ? { dimColor: true } : {}) })}{title.summary ? ` ${plainTitle(title.summary)}` : ''}
             </Text>
           </Box>
@@ -1627,7 +1630,7 @@ const drawCard = async ($: EngineInterface, e: Parameters<EngineInterface['ui'][
       </Box>
       {/* What a press did is the last step of the card's story, in its column. */}
       {isBare
-        ? <Text dimColor>{where}</Text>
+        ? <Text color={DIM_COLOR}>{where}</Text>
         : drawBlocks($, e, done ? withOutcome(title.rest, done, LINK_ICON) : title.rest, isDim, await copyChip($, e, title.id), r?.people)}
       {isBare && done && <Box marginTop={1}>{outcomeLine($, e, done, isDim)}</Box>}
       {buttons}
@@ -1666,7 +1669,7 @@ const outcomeLine = ($: EngineInterface, e: Parameters<EngineInterface['ui']['re
     <Text>
       {o.when ? <Text color={TIME_COLOR}>{`${o.when} `}</Text> : ''}
       {o.icon ? `${o.icon} ` : ''}
-      {isYou && <Text bold color={isDim ? undefined : YOU_COLOR} dimColor={isDim || undefined}>{YOU}</Text>}
+      {isYou && <Text bold color={dimOr(isDim, YOU_COLOR)}>{YOU}</Text>}
       {isYou ? o.text.slice(3) : o.text}
       {o.url && (o.isInline ? ' ' : ' · ')}
       {o.url && <Link href={o.url} label={`${o.label ?? 'open'} ${LINK_ICON}`} />}
@@ -1683,9 +1686,9 @@ const drawPending = async ($: EngineInterface, e: Parameters<EngineInterface['ui
   const label: LabelOf = { state: STATE_ICON[topic?.state ?? ''] ?? ' ', id: tid, kind: topic ? kindSlot(topic) : undefined }
   const what = r?.skill === 'rework-mr' ? 'what the reviewer wrote' : topic?.peer ? 'this thread' : `${r?.author ?? 'the author'}'s answer`
   return (
-    <Box borderStyle="round" borderDimColor paddingX={1} flexDirection="column" width="100%">
+    <Box borderStyle="round" borderColor={DIM_COLOR} paddingX={1} flexDirection="column" width="100%">
       <Text bold>{drawLabel(Text, label, { bold: true })}{topic?.summary ? ` ${plainTitle(topic.summary)}` : ''}</Text>
-      <Text dimColor>{`Judging ${what}…`}</Text>
+      <Text color={DIM_COLOR}>{`Judging ${what}…`}</Text>
     </Box>
   )
 }
