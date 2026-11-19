@@ -145,13 +145,17 @@ export const sectionsOf = (review: ReviewState): Section[] => {
     const round = open.filter(r => inRound.has(r.id))
     const taken = new Set(round.map(r => r.id))
     // The round's topics by what is left on them, as the passes go: while the plans are made,
-    // to plan or planned; in the fix pass, a fix to make or push, or only the reply left.
+    // to plan or planned; in the fix pass, a fix to make or push, or only the reply left, and
+    // after them what needs a plan again (a reviewer wrote on a topic since its plan), which
+    // the round comes to once the fix pass is through.
     const step = (id: string) => topic(id)?.step
+    const toPlan = (id: string) => [undefined, 'plan'].includes(step(id))
     const groups = review.pass === 'fix'
-      ? [{ key: 'round', title: 'To fix', rows: round.filter(r => step(r.id) !== 'reply') },
-        { key: 'reply', title: 'To reply', rows: round.filter(r => step(r.id) === 'reply') }]
-      : [{ key: 'round', title: 'To plan', rows: round.filter(r => [undefined, 'plan'].includes(step(r.id))) },
-        { key: 'planned', title: 'Planned', rows: round.filter(r => ![undefined, 'plan'].includes(step(r.id))) }]
+      ? [{ key: 'round', title: 'To fix', rows: round.filter(r => !toPlan(r.id) && step(r.id) !== 'reply') },
+        { key: 'reply', title: 'To reply', rows: round.filter(r => step(r.id) === 'reply') },
+        { key: 'plan', title: 'To plan', rows: round.filter(r => toPlan(r.id)) }]
+      : [{ key: 'round', title: 'To plan', rows: round.filter(r => toPlan(r.id)) },
+        { key: 'planned', title: 'Planned', rows: round.filter(r => !toPlan(r.id)) }]
     return [
       ...groups,
       { key: 'waiting', rows: open.filter(r => !taken.has(r.id)), title: 'Waiting for reviewers' },
