@@ -1407,10 +1407,11 @@ def closing_line(state, t):
     if topic_status(state, t) == "acked" and t.get("source") not in ("peer", "author"):
         at = c.get("at") or t.get("acked_at")
         if c.get("how") == "accepted":
-            # Resolved with no answer from the author (settled in person, say): there was
-            # no answer to accept.
-            answered = fixes_of(t) or any(not n.get("mine") for x in thr for n in x.get("notes") or [])
-            return ui.closed_md(f"You accepted {author}'s answer and resolved it" if answered
+            # What was accepted: the author's answer in the thread, or only their fix where
+            # they pushed and said nothing. Neither (settled in person, say): nothing was.
+            replied = any(not n.get("mine") for x in thr for n in x.get("notes") or [])
+            what = "answer" if replied else "fix" if fixes_of(t) else None
+            return ui.closed_md(f"You accepted {author}'s {what} and resolved it" if what
                                 else "You resolved it", at, url)
         if c.get("how") == "replied":
             return ui.closed_md("You replied and resolved it", at, url)

@@ -3420,6 +3420,15 @@ class TestPostedCommentCard(unittest.TestCase):
         with patch.dict(os.environ, {"REVIEW_UI_DRAWN": "1"}), patch.object(F, "topic_status", return_value="acked"):
             self.assertIn("You accepted Robin's answer and resolved it", F.closing_line(state, state["topics"][0]))
 
+    def test_a_fix_accepted_with_no_word_in_the_thread_says_the_fix(self):
+        # The author only pushed: there was no answer to accept, only the fix.
+        state = {"iid": 2, "author": "Robin", "threads": {"d1": {"mine": True, "resolved": True, "resolved_mine": True, "notes": [
+            {"body": "Stale.", "mine": True}]}},
+            "topics": [{"id": "t4", "thread_ids": ["d1"], "state": "acked", "closed": {"how": "accepted", "at": "2026-11-10T17:02:00Z"},
+                        "fixes": [{"before": "a", "after": "b", "at": "2026-11-10T16:00:00Z"}]}]}
+        with patch.dict(os.environ, {"REVIEW_UI_DRAWN": "1"}), patch.object(F, "topic_status", return_value="acked"):
+            self.assertIn("You accepted Robin's fix and resolved it", F.closing_line(state, state["topics"][0]))
+
 
 class TestAuthorFixes(unittest.TestCase):
     """The author's fixes to a topic, one per push that changed its lines, found from the
