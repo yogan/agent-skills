@@ -3165,7 +3165,6 @@ export const register: Register = on => {
           // The link mark joined to the last word by a no-break space: never on a line alone.
           ? <Markdown text={`[${l.what}\u00a0${LINK_ICON}](${l.url})`} dimColor={l.tone !== 'needs' || undefined} />
           : <Text color={l.tone === 'good' ? 'green' : undefined} dimColor={(l.tone !== 'needs' && l.tone !== 'good') || undefined} wrap="wrap">{l.what}</Text>}
-        {l.size && sizeOf(l.size) && <Text>{drawSize(Text, (sizeOf(l.size) as { size: DiffSize }).size, true)}</Text>}
       </Box>
     )
     // A good end looks like one: merged, or approved by you with every topic settled. The
@@ -3187,7 +3186,7 @@ export const register: Register = on => {
           </Text>
           {/* One line a topic: who did what, and the agent's verdict where it judged. The mark
               says whether it needs the person (yellow), is being judged, or is only to know of
-              (dim); a push carries its size and links to what it changed. */}
+              (dim); a push links to what it changed. */}
           {(box?.lines.length ?? 0) > 0 && (
             <Box flexDirection="column" marginTop={1}>
               {box?.lines.map((l, i) => boxRow(l, i, 'inbox'))}

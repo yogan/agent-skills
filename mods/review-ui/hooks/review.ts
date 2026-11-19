@@ -868,8 +868,6 @@ export const waitingLine = (w: { count: number; who: string }): string =>
 // The inbox, as the sidebar's box lists it between rounds: one line per kind of news with
 // its topics, one per push, then what was put off. `count` is how many things need the
 // person; `hasNews` whether anything arrived (else the box only says what waits).
-// `detail`: what more there is to say of it (a push's size, or that it was a rebase), after
-// the topics, so the topics of every line start in one column.
 // The sidebar's box between rounds: what happened since the person last looked, and whether
 // it needs them. One line per topic, saying who did what and the agent's verdict where it
 // judged; a push is a line of its own; what needs nothing of them (an approval, auto-merge,
@@ -879,7 +877,7 @@ export const waitingLine = (w: { count: number; who: string }): string =>
 // (panel.ts's `INBOX_ICON`); a line that needs the person, or is being judged, has its mark.
 // `at`: when it happened, where a reliable time exists, drawn first as a card's step is.
 // `good`: a good end (the MR merged), drawn green.
-export type InboxLine = { tone: 'needs' | 'busy' | 'info' | 'good'; what: string; topic?: string; url?: string; size?: string; kind?: string; at?: string | null }
+export type InboxLine = { tone: 'needs' | 'busy' | 'info' | 'good'; what: string; topic?: string; url?: string; kind?: string; at?: string | null }
 // `firstNew`: the first topic flagged new, in the order the sidebar lists them, which the
 // box's button opens, named after it.
 export type Inbox = { lines: InboxLine[]; more: number; count: number; hasNews: boolean; since: string | null; first: string | null; firstNew: string | null; button: string | null }
@@ -957,21 +955,17 @@ export const inboxOf = (review: ReviewState | null, judging: { topics: string[];
   // who merged or closed it is the box's last line.
   const isMerged = (box.mr ?? []).some(m => m.kind === 'merged')
   const timeline: { at: string; line: InboxLine }[] = [
-    // Every push, dim: what it did to the MR in a few words. One that left the code as it was,
-    // or a rebase that left the MR's own change as it was, says so, which is why GitLab
-    // shows new commits while nothing in the review moved; a rebase that did change it says
-    // how many of the MR's files, as its size would count the target branch's commits too.
+    // Every push, dim, in one form: who pushed, whether it was or included a rebase, and the
+    // topics it is news of. No files or lines: the topics' cards and the sidebar show what it
+    // changed, and a rebase's size would count the target branch's commits too. A push that
+    // left the code as it was, or a rebase that left the MR's own change as it was, links to
+    // nothing, as there is nothing to see.
     ...box.pushes.map(p => {
       const isSame = p.same === true || (p.stat ? sizeOf(p.stat)?.size.files : undefined) === 0
       const isRebaseOnly = p.rebase && p.own === 0
-      // "2 files": the files the author's own change differs in, apart from what the target
-      // branch brought along. Short, so the line fits the box on one line.
-      const what = isSame ? 'no change to the code' : isRebaseOnly ? 'no change to the MR'
-        : p.rebase && p.own ? `${p.own} file${p.own === 1 ? '' : 's'}` : null
       return { at: p.at, line: {
-        tone: 'info' as const, kind: p.rebase ? 'rebase' : 'push', url: isSame || isRebaseOnly ? undefined : p.url ?? undefined,
-        size: what || p.rebase ? undefined : p.stat?.replace(/`/g, '') || undefined,
-        at: p.at, what: `${author} ${p.rebase ? `rebased${p.onto ? ` onto ${p.onto}` : ''}` : 'pushed'}${what ? `, ${what}` : ''}${p.topics.length ? ` · touches ${p.topics.join(', ')}` : ''}` } }
+        tone: 'info' as const, kind: 'push', url: isSame || isRebaseOnly ? undefined : p.url ?? undefined,
+        at: p.at, what: `${author} ${p.rebase ? 'rebased and pushed' : 'pushed'}${p.topics.length ? ` · ${p.topics.join(', ')}` : ''}` } }
     }),
     // rework-mr: a reviewer resolved a thread, often without a word. Only to know of.
     ...(box.resolves ?? []).map(x => ({ at: x.at, line: {

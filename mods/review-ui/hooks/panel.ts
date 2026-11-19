@@ -18,14 +18,13 @@ export const STATE_ICON: Record<string, string> = {
 export const INBOX_ICON: Record<string, string> = {
   reply: '\u{f0189}', // md-comment_text_outline
   resolved: '\u{f05e1}', // md-check_circle_outline
-  push: '\u{f0718}', // md-source_commit
+  push: '\u{f0552}', // md-upload: a push, as the cards' story and the push buttons draw it (lib/ui.py's PUSHED_ICON)
   thread: '\u{f05cb}', // md-account_voice
   own: '\u{f017c}', // md-comment_account_outline
   new: '\u{f09de}', // md-circle_medium: something happened that the person has not opened
   judging: '\u{f01d8}', // md-dots_horizontal
   unjudged: '\u{f05d6}', // md-alert_circle_outline
   draft: '\u{f0cb6}', // md-pencil_outline
-  rebase: '\u{f14ce}', // md-source_branch_sync
   merged: '\u{f062d}', // md-source_merge
   pipeline: '\u{f0096}', // md-flask_outline, the checks' icon
   closed: '\u{f015a}', // md-close_circle_outline

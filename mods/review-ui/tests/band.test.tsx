@@ -984,8 +984,11 @@ test('between rounds news stays out of the chat: the band counts it, the box say
   expect(all.find(t => t.text === '\u{f0189}')).toBeDefined()
   expect(all.find(t => t.text === '\u{f0189}')?.props.color).toBeUndefined()
   expect(all.filter(t => t.text === '\u{f09de}' && t.props.color === 'yellow').length).toBe(0)
-  // A push: when first, then who, what it touches, and its size, dim: the topics carry what to do.
-  expect(texts).toContain('Jonas pushed · touches t2')
+  // A push: when first, then who and the topics it is news of, dim: the topics carry what to do.
+  expect(texts).toContain('Jonas pushed · t2')
+  // Led by the push's icon the cards use, the upload arrow; no files or lines.
+  expect(all.find(t => t.text === '\u{f0552}')).toBeDefined()
+  expect(texts.some(t => /\d+ files? \+/.test(t))).toBe(false)
   expect(texts.some(t => /^ *\d\d:\d\d$/.test(t) || /^Nov 5, \d\d:\d\d$/.test(t))).toBe(true)
   // The button opens the news, and says which topic.
   expect((await panel.find({ type: 'Button', key: 'open-round' }))?.props.label).toBe('Open t2')
@@ -3298,27 +3301,25 @@ test('a merged MR says so at the top and in its box, with what still matters and
   await panel.unmount()
 })
 
-test('every push is a dim line of the box saying what it did; auto-merge goes once the MR merged', () => {
+// A plain push said "2 files" first and a rebase ended in a diffstat: two forms for one
+// thing, where the box is the overview and the topics' cards show what changed.
+test('every push is a dim line of the box in one form: who, a rebase or not, its topics; auto-merge goes once the MR merged', () => {
   const r = JSON.parse(stateOf(null, [topic('t1', 'open')], { author: 'Jan', inbox: inbox({
     pushes: [
-      { at: '2026-11-09T15:10:00Z', stat: '\u{f4d2} 0 files +0 −0', topics: [], rebase: false, same: true },
-      { at: '2026-11-09T15:12:00Z', stat: '\u{f4d2} 1 file +2 −0', topics: ['t1'], rebase: false },
-      { at: '2026-11-09T15:13:00Z', stat: '\u{f4d2} 40 files +900 −100', topics: [], rebase: true, own: 0 },
-      { at: '2026-11-09T15:14:00Z', stat: '\u{f4d2} 41 files +902 −100', topics: [], rebase: true, own: 1 },
-      { at: '2026-11-09T15:15:00Z', stat: '\u{f4d2} 42 files +905 −100', topics: ['t2', 't4'], rebase: true, own: 2, onto: 'main' },
+      { at: '2026-11-09T15:10:00Z', stat: '\u{f4d2} 0 files +0 −0', topics: [], rebase: false, same: true, url: 'u0' },
+      { at: '2026-11-09T15:12:00Z', stat: '\u{f4d2} 1 file +2 −0', topics: ['t1'], rebase: false, url: 'u1' },
+      { at: '2026-11-09T15:13:00Z', stat: '\u{f4d2} 40 files +900 −100', topics: [], rebase: true, own: 0, url: 'u2' },
+      { at: '2026-11-09T15:15:00Z', stat: '\u{f4d2} 42 files +905 −100', topics: ['t2', 't4'], rebase: true, own: 2, onto: 'main', url: 'u3' },
     ],
     mr: [{ kind: 'auto-merge', at: '2026-11-09T15:11:00Z', by: null }, { kind: 'merged', at: '2026-11-09T15:20:00Z', by: 'Jan' }],
   }) }))
-  const lines = inboxOf(r)?.lines.map(l => `${l.at?.slice(11, 16)} ${l.tone} ${l.what}${l.size ? ` [${l.size}]` : ''}`)
+  const lines = inboxOf(r)?.lines.map(l => `${l.at?.slice(11, 16)} ${l.tone} ${l.kind} ${l.what}${l.url ? ` -> ${l.url}` : ''}`)
   expect(lines).toEqual([
-    '15:10 info Jan pushed, no change to the code',
-    '15:12 info Jan pushed · touches t1 [\u{f4d2} 1 file +2 −0]',
-    '15:13 info Jan rebased, no change to the MR',          // no size: it would count the target's commits
-    '15:14 info Jan rebased, 1 file',
-    // Whose files "changes 2 of its files" meant was anybody's guess; and the topics whose
-    // code the rebased push changed are named, as a plain push's are. Short, so it fits the
-    // box on one line: "rebased onto main · and changed 2 files · touches …" wrapped.
-    '15:15 info Jan rebased onto main, 2 files · touches t2, t4',
+    // One that left the code as it was links to nothing: there is nothing to see.
+    '15:10 info push Jan pushed',
+    '15:12 info push Jan pushed · t1 -> u1',
+    '15:13 info push Jan rebased and pushed',
+    '15:15 info push Jan rebased and pushed · t2, t4 -> u3',
   ])
 })
 
@@ -3810,8 +3811,8 @@ test('the box is one timeline of the news, oldest first, with nothing said apart
   }) }))
   const box = inboxOf(r)
   expect(box?.lines.map(l => [l.at, l.what])).toEqual([
-    ['2026-11-09T11:30:00Z', 'Jan pushed · touches t1'], ['2026-11-09T11:45:00Z', 'Robin approved the MR'],
-    ['2026-11-09T12:10:00Z', 'Jan answered'], ['2026-11-09T12:30:00Z', 'Jan pushed · touches t1']])
+    ['2026-11-09T11:30:00Z', 'Jan pushed · t1'], ['2026-11-09T11:45:00Z', 'Robin approved the MR'],
+    ['2026-11-09T12:10:00Z', 'Jan answered'], ['2026-11-09T12:30:00Z', 'Jan pushed · t1']])
   expect(box?.hasNews).toBe(true)
   expect(Object.keys(box ?? {})).not.toContain('during')
 })
