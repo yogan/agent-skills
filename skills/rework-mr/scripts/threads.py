@@ -2778,6 +2778,20 @@ def _fenced_diff(text):
     return body if looks_like_diff(body) else None
 
 
+def rebased_here():
+    """Whether the branch was rebased here since its last push, so the fix's push carries
+    the rebase along: its upstream's head is not in it, every commit there is here as a
+    copy (`checks.only_rebased_copies`), and commits the upstream has no copy of came with
+    them (the target branch's). A rewrite that squashed or changed a commit is none."""
+    root = (_git("rev-parse", "--show-toplevel") or "").strip()
+    up = (_git("rev-parse", "--verify", "--quiet", "@{u}") or "").strip()
+    head = (_git("rev-parse", "HEAD") or "").strip()
+    if not (root and up and head) or _git("merge-base", "--is-ancestor", up, head) is not None:
+        return False
+    return checks.only_rebased_copies(root, up, head) and bool(
+        (_git("rev-list", "--left-only", "--cherry-pick", f"{head}...{up}") or "").strip())
+
+
 def render_fix(state, tid):
     """The card of a fix in the working tree, where the mod draws: what the reviewer asked
     and what you did, how big it is, whether it is the change agreed, and the commit it goes
@@ -2813,6 +2827,8 @@ def render_fix(state, tid):
     counts = [f"{len(new)} new commit{'s' if len(new) != 1 else ''}"] if new else []
     if fixups:
         counts.append(f"{len(fixups)} commit{'s' if len(fixups) != 1 else ''} rewritten")
+    if rebased_here():
+        counts.append("includes a rebase")
     out += [f"{ui.heading_md(ui.DID_ICON, 'Changes')}  {diffsize.of_stat(f.get('stat') or [])}"
             + (f"  ({', '.join(counts)})" if counts else ""), ""]
     summary = (f.get("did") or "").strip() or ("Changes applied as planned." if c.get("as_agreed") else "")

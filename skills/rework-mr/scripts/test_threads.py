@@ -3954,6 +3954,22 @@ class TestPushFixGit(unittest.TestCase):
         mock.patch.object(T, "versions", side_effect=versions).start()
         return old, onto
 
+    def test_a_fix_card_says_its_push_includes_a_rebase(self):
+        """Asked to fix and rebase in one push: the card said "1 commit rewritten" alone,
+        and only the chat said that the rebase goes along."""
+        cwd = os.getcwd()
+        os.chdir(self.r.root)
+        self.addCleanup(os.chdir, cwd)
+        self.t1["fix"] = {"did": "d", "fixup": [f"{self.r.target} feat: a and b"], "new": [], "stat": [], "compare": {}}
+        self.assertIn("(1 commit rewritten)", T.render_fix(self.state, "t1"))
+        self.rebased()
+        self.assertIn("(1 commit rewritten, includes a rebase)", T.render_fix(self.state, "t1"))
+        # Squashed here instead: a rewrite, no rebase.
+        self.git("reset", "-q", "--hard", "origin/main")
+        self.r.write("c.txt", "changed\n")
+        self.git("commit", "-q", "--amend", "--no-verify", "-am", "feat: c, changed")
+        self.assertIn("(1 commit rewritten)", T.render_fix(self.state, "t1"))
+
     def test_a_fix_with_a_rebase_is_pushed_and_kept_without_the_rebase(self):
         self.rebased()
         self.fix(fixup=[f"{self.git('rev-parse', 'HEAD')} feat: c"], files=["c.txt"])
