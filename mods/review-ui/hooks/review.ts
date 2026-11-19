@@ -2,6 +2,7 @@
 // comes from `findings.py state`, and register.tsx runs what a press names.
 
 import type { ReviewCard, ReviewOutcome, ReviewState, ReviewTopic } from '../types'
+import { sectionsOf } from './panel.ts'
 import { sizeOf } from './views.ts'
 
 // What a press does. `ask` hands the model a turn, with a prompt the person sees as theirs;
@@ -205,7 +206,7 @@ const ICON: Record<string, string> = {
 export const judgingOf = (j: { run: string | null; topics: string[] }, run: string): string[] => (j.run === run ? j.topics : [])
 
 export const iconOf = (label: string): string | undefined =>
-  ICON[label] ?? (/^(?:Check t\d+|Check \d+ answers|Decide \d+)$/.test(label) ? '\u{F040A}' // md-play: the box's way into the topics
+  ICON[label] ?? (/^(?:Open t\d+|Decide \d+)$/.test(label) ? '\u{F040A}' // md-play: the box's way into the topics
     : label.startsWith('Merge into ') ? '\u{F0F5C}' // md-merge
     : label.startsWith('Link as ') ? '\u{F0339}' : undefined) // md-link_variant
 
@@ -879,7 +880,9 @@ export const waitingLine = (w: { count: number; who: string }): string =>
 // `at`: when it happened, where a reliable time exists, drawn first as a card's step is.
 // `good`: a good end (the MR merged), drawn green.
 export type InboxLine = { tone: 'needs' | 'busy' | 'info' | 'good'; what: string; topic?: string; url?: string; size?: string; kind?: string; at?: string | null }
-export type Inbox = { lines: InboxLine[]; more: number; count: number; hasNews: boolean; since: string | null; first: string | null; button: string | null }
+// `firstNew`: the first topic flagged new, in the order the sidebar lists them, which the
+// box's button opens, named after it.
+export type Inbox = { lines: InboxLine[]; more: number; count: number; hasNews: boolean; since: string | null; first: string | null; firstNew: string | null; button: string | null }
 
 // An answer that does not settle its topic, in the words of its card's verdict (findings.py's
 // `VERDICT_CASES`), short: "partly fixed" where the card says "Partly fixed".
@@ -1000,15 +1003,17 @@ export const inboxOf = (review: ReviewState | null, judging: { topics: string[];
   })
   keyed.sort((a, b) => a.t - b.t)
   const lines = [...keyed.map(x => x.line), ...info]
-  const needs = topicLines.filter(l => l.tone !== 'info')
   const count = review.topics.filter(t => t.inbox === 'new' || t.inbox === 'yours').length + box.own.length
-  // The button names the work it opens, not which topics: the round goes through every
-  // topic that needs the person, the news and what came with it alike, and a count or a
-  // single topic's name said less than that.
-  const answers = needs.filter(l => l.topic)
-  const button = isRework ? (review.pass === 'fix' ? 'Start fixing' : 'Start planning')
-    : box.own.length && !answers.length ? `Decide ${box.own.length}`
-    : answers.length || review.topics.some(t => t.inbox === 'new') ? 'Check the news'
+  // With news that needs the person, the button opens the first topic flagged so, in the
+  // list's order, and is named after it: the round's own first topic can be another (the
+  // pass that runs comes first), and a press beside the news must open the news. News only
+  // to know of (an FYI thread, a fix to come) is no stop of a round. Without, the button
+  // names the work it starts.
+  const firstNew = sectionsOf(review).flatMap(x => x.rows)
+    .find(row => review.topics.find(t => t.id === row.id)?.inbox === 'new')?.id ?? null
+  const button = firstNew ? `Open ${firstNew}`
+    : isRework ? (review.pass === 'fix' ? 'Start fixing' : 'Start planning')
+    : box.own.length ? `Decide ${box.own.length}`
     : box.first ? 'Start the round' : null
-  return { lines, more: topicLines.length - shown.length, count, hasNews: lines.length > 0, since: box.since, first: box.first, button }
+  return { lines, more: topicLines.length - shown.length, count, hasNews: lines.length > 0, since: box.since, first: box.first, firstNew, button }
 }

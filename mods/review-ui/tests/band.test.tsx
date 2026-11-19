@@ -948,8 +948,8 @@ test('a comment of yours matched mid-topic waits for the topic; deciding it brin
   expect(w.prompts).toEqual([])
 })
 
-test('rework-mr: the box opens the pass that runs by its name, and the sidebar\'s foot says when GitLab is asked next', async ($, on) => {
-  const idle = reworkState(null, [reworkTopic('t1', 'plan', { inbox: 'new', news: ['thread'] })], { in_round: false, pass: 'plan', inbox: inbox({ threads: [{ id: 't1' }], first: 't1' }) })
+test('rework-mr: with no news the box opens the pass that runs by its name, and the sidebar\'s foot says when GitLab is asked next', async ($, on) => {
+  const idle = reworkState(null, [reworkTopic('t1', 'plan')], { in_round: false, pass: 'plan', inbox: inbox({ first: 't1' }) })
   const w = world(on, [idle])
   await openRework($, w, reworkView('t1'))
   const panel = await $.ui.mount({ ...PANEL, surface: 'terminal' })
@@ -987,10 +987,11 @@ test('between rounds news stays out of the chat: the band counts it, the box say
   // A push: when first, then who, what it touches, and its size, dim: the topics carry what to do.
   expect(texts).toContain('Jonas pushed · touches t2')
   expect(texts.some(t => /^ *\d\d:\d\d$/.test(t) || /^Nov 5, \d\d:\d\d$/.test(t))).toBe(true)
-  expect((await panel.find({ type: 'Button', key: 'open-round' }))?.props.label).toBe('Check the news')
+  // The button opens the news, and says which topic.
+  expect((await panel.find({ type: 'Button', key: 'open-round' }))?.props.label).toBe('Open t2')
   await panel.press({ key: 'open-round' })
   await panel.unmount()
-  expect(w.ran.map(r => r.argv.slice(2).join(' '))).toContain('open --iid 42')
+  expect(w.ran.map(r => r.argv.slice(2).join(' '))).toContain('open t2 --iid 42')
   expect(w.placed.length).toBe(1)
 })
 
@@ -2117,6 +2118,25 @@ test('a file the MR only edits keeps its marks and says nothing beside its name'
   expect(all).toContain('-b')
   expect(await ui.find({ type: 'Text', text: 'new' })).toBeUndefined()
   await ui.unmount()
+})
+
+// A reopened thread to plan again while the fix pass runs: the press beside its news opened
+// the fix pass's own first topic, one with no news, under another name.
+test('rework-mr: the box opens the first topic flagged new, named after it, not the round\'s first', async ($, on) => {
+  const t1 = { ...reworkTopic('t1', 'plan'), inbox: 'new', news: ['reply'], news_at: '2026-11-09T12:36:00Z' }
+  const idle = reworkState(null, [t1, reworkTopic('t2', 'reply')], {
+    in_round: false, pass: 'fix', round: ['t2', 't1'], inbox: inbox({ replies: ['t1'], by: { t1: 'Miriam' }, first: 't2' }) })
+  const opened = reworkState('t1', [{ ...t1, inbox: 'yours' }, reworkTopic('t2', 'reply')], { in_round: true, pass: 'fix', round: ['t1', 't2'], inbox: inbox() })
+  const w = world(on, [idle, opened])
+  await openRework($, w, reworkView('t1'))
+  const panel = await $.ui.mount({ ...PANEL, surface: 'terminal' })
+  expect((await panel.find({ type: 'Button', key: 'open-round' }))?.props.label).toBe('Open t1')
+  await panel.press({ key: 'open-round' })
+  await panel.unmount()
+  expect(w.ran.map(r => r.argv.slice(2).join(' '))).toContain('open t1 --iid 42')
+  // No news: the button names the work, and the script's round says where it starts.
+  const quiet = JSON.parse(reworkState(null, [reworkTopic('t1', 'fix'), reworkTopic('t2', 'reply')], { pass: 'fix', round: ['t1', 't2'], inbox: inbox({ first: 't1' }) }))
+  expect([inboxOf(quiet)?.button, inboxOf(quiet)?.firstNew]).toEqual(['Start fixing', null])
 })
 
 // rework-mr: the same band and cards, for the author's steps (threads.py's `step_of`).
@@ -3312,8 +3332,9 @@ test('the box gives one line a topic with the verdict, resolved-but-not-fixed sa
   expect(box?.more).toBe(2)
   const one = inboxOf(JSON.parse(stateOf(null, ts, { author: 'Jonas', inbox: inbox({ resolved: ['t2'], first: 't2' }) })))
   expect(one?.lines.map(l => l.what)).toEqual(['Jonas resolved, not fixed'])
-  // The button says what it does, not which topics: the round goes through them all.
-  expect(one?.button).toBe('Check the news')
+  // The button opens the first topic flagged new, in the list's order, and is named after it.
+  expect(one?.button).toBe('Open t1')
+  expect(one?.firstNew).toBe('t1')
 })
 
 test("the box says an answer's verdict in its card's words: partly fixed where the card says so", () => {

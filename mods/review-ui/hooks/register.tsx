@@ -3120,12 +3120,14 @@ export const register: Register = on => {
     const checkLine = checkWords && (when.failed
       ? <Text color="yellow">{checkWords}</Text>
       : <Text dimColor>{checkWords}</Text>)
-    const opener = box?.first ?? (r.inbox?.own.length ? 'yours' : null)
+    // Where the box's button goes: the first topic flagged new, exactly that one; else where
+    // the script's round starts, or a comment of the person's own whose match waits.
+    const opener = box?.firstNew ?? box?.first ?? (r.inbox?.own.length ? 'yours' : null)
     // Never while a round's step waits: the box is not drawn then (`waiting`).
     const end = waiting ? endOf(r, waiting.count === 0) : undefined
     const boxWhen = Math.max(0, ...(box?.lines ?? []).map(l => (l.at ? [...whenOf(l.at)].length : 0)))
     const cleaned = waiting ? await read($, cleanedUp) : null
-    const openerLabel = isOver ? 'Check the answers' : box?.button ?? (opener === 'yours' ? 'Open your comment' : 'Start the round')
+    const openerLabel = box?.firstNew ? box.button as string : isOver ? 'Check the answers' : box?.button ?? (opener === 'yours' ? 'Open your comment' : 'Start the round')
     // When GitLab is asked next, and a small press to ask it now, at the sidebar's foot while
     // the box is drawn: rarely pressed, so out of the box and out of the way. Merged or
     // closed, GitLab is not asked again: no word of checks, no press for one.
@@ -3236,7 +3238,7 @@ export const register: Register = on => {
           {!cleaned && opener && (
             <Box flexDirection="row" justifyContent="center" marginTop={1}>
               {drawChip({ Box, Button, Text }, { key: 'open-round', label: openerLabel, press: { kind: 'next' }, isPrimary: true },
-                () => { void (async () => { if (!(await isHeld($, r, opener === 'yours' ? undefined : opener))) await openRound($, s) })() })}
+                () => { void (async () => { if (!(await isHeld($, r, opener === 'yours' ? undefined : opener))) await openRound($, s, box?.firstNew ?? undefined) })() })}
             </Box>
           )}
         </Box>
