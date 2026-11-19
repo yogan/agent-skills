@@ -2259,7 +2259,10 @@ def emit(state, block, topic=None):
 
 def news_of(state, t):
     """What arrived on `t` that waits for the user, and when it last did: `(kinds, at)`,
-    the kinds among `reply`, `resolved`, `push` and `thread` (another reviewer's)."""
+    the kinds among `reply`, `resolved`, `push` and `thread` (another reviewer's). The time
+    is that of the thread's newest comment where the thread has news, which is what the News
+    box's line about the topic says; a push has a line and a time of its own there, and
+    dated by it, a thread from days ago read as opened at the time of the push."""
     if inbox_of(state, t) is None:
         return [], None
     kinds, at = [], []
@@ -2270,11 +2273,12 @@ def news_of(state, t):
         kinds.append("reply")
     if any(x.get("resolved") for x in thr):
         kinds.append("resolved")
-    at += [x.get("last_at") for x in thr if x.get("last_at")]
+    at += [x.get("last_at") for x in thr if x.get("last_at")] if kinds else []
     push = pushed_of(state, t)
     if push:
+        if not kinds:
+            at.append(push["at"])
         kinds.append("push")
-        at.append(push["at"])
     return kinds, max(at) if at else None
 
 

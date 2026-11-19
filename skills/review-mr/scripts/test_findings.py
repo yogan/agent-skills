@@ -2720,6 +2720,13 @@ class TestAnswersInCode(unittest.TestCase):
         self.assertEqual(self.state["pushes"][0]["topics"], ["t1"])
         self.assertIn("pushed a change to the lines", judge_prompt(self.state)[0])
 
+    def test_a_topic_s_news_is_dated_by_its_comment_not_by_a_push(self):
+        """Chidi's thread from Nov 15 said 00:21 in the News box, the time of a push."""
+        self.state["threads"]["d1"].update(awaiting="you", last_at="2026-11-04T10:00:00Z")
+        self.push(TouchedDiff.REWRITE)
+        self.t["pushed"]["at"] = "2026-11-19T00:21:00Z"
+        self.assertEqual(F.news_of(self.state, self.t), (["reply", "push"], "2026-11-04T10:00:00Z"))
+
     def test_a_push_is_noted_once_however_often_the_check_runs(self):
         self.push(TouchedDiff.REWRITE)
         at = self.t["pushed"]["at"]
