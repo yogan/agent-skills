@@ -37,11 +37,13 @@ export const INBOX_ICON: Record<string, string> = {
   'pipeline-failed': '\u{f110a}', // md-progress_close
   left: '\u{f05d6}', // md-alert_circle_outline
 }
-// What happened to the MR as a whole, each kind in one colour wherever it is drawn: the
-// sidebar's heading (the icon alone) and the News box (the icon and what it says).
+// What happened to the MR as a whole, each kind in one colour wherever it is drawn (the
+// sidebar's heading, its legend, the News box), in the theme's colours of success and
+// failure: what went well green, what failed red. A pipeline running and auto-merge set are
+// waits, no warnings: no colour.
 export const MR_COLOR: Record<string, string> = {
-  merged: 'magenta', closed: 'red', 'auto-merge': 'yellow', approved: 'green',
-  'pipeline-running': 'yellow', 'pipeline-passed': 'green', 'pipeline-failed': 'red',
+  merged: 'success', closed: 'error', approved: 'success',
+  'pipeline-passed': 'success', 'pipeline-failed': 'error',
 }
 export const INBOX_WORD: Record<string, string> = {
   new: 'new', judging: 'being judged', unjudged: 'not judged',

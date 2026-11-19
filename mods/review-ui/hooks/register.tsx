@@ -3,7 +3,7 @@ import type { EngineInterface, Register } from 'claude-code'
 
 import type { ReviewCard, ReviewHost, ReviewOutcome, ReviewJudging, ReviewNote, ReviewNotice, ReviewPlaced, ReviewSession, ReviewState } from '../types'
 import {
-  argsFor, buttonsFor, checkPrompt, judgingOf, endOf, hasNext, iconOf, isHeldTopic, isMergeWatched, isSettledHere, outcomeOf, earlyPrompt, proposePrompt, replyPrompt, clockOf, currentTopic, didText, inboxOf, sentenceOf, noteForModel, stepOf, untilOf, waitingLine, waitingOf,
+  argsFor, boxLookOf, buttonsFor, checkPrompt, judgingOf, endOf, hasNext, iconOf, isHeldTopic, isMergeWatched, outcomeOf, earlyPrompt, proposePrompt, replyPrompt, clockOf, currentTopic, didText, inboxOf, sentenceOf, noteForModel, stepOf, untilOf, waitingLine, waitingOf,
   type BandButton, type InboxLine,
 } from './review.ts'
 import {
@@ -1395,12 +1395,18 @@ const drawBlocks = ($: EngineInterface, e: Parameters<EngineInterface['ui']['res
 // and a cap inverted is a block with the cap's shape cut out of it. Outside, they take the
 // inverted label's colour while the pointer is over the chip, so it inverts whole.
 const CHIP_CAPS = ['\u{E0B6}', '\u{E0B4}']
-// The Done box's border where every topic is settled and the MR is not approved or merged
-// yet: a dark green, a step short of the green of a good end.
-const NEAR_END = '#3b6b45'
-// `good`: the press that completes the review, in the Done box border's dark green, its text
-// a light green that the pointer turns into the fill (a chip inverts under it).
-const CHIP_FILL = { primary: '#7aa2f7', muted: '#3b4261', good: NEAR_END }
+// The box's colours as the MR stands (`boxLookOf`), the theme's, so a light theme and a dark
+// one each draw them in their own shades: success, a failure, and the dark green of an MR
+// approved (or as good as) but not merged yet, a step short of success. The theme's green of
+// an added line's background is that step in both: darker than success on a dark theme,
+// lighter on a light one.
+const SUCCESS = 'success'
+const FAILURE = 'error'
+const NEAR_END = 'diffAdded'
+// `good`: the press that ends the MR (Approve MR, Merge, Set to auto-merge), in a dark green
+// whose light green text the pointer turns into the fill (a chip inverts under it). A pair of
+// its own, as every chip's is, so it reads the same on any theme.
+const CHIP_FILL = { primary: '#7aa2f7', muted: '#3b4261', good: '#3b6b45' }
 const CHIP_TEXT = { primary: '#1a1b26', muted: '#c0caf5', good: '#c3e88d' }
 const drawChip = (
   ui: { Box: ReturnType<EngineInterface['ui']['resolve']>['Box']; Button: ReturnType<EngineInterface['ui']['resolve']>['Button']; Text: ReturnType<EngineInterface['ui']['resolve']>['Text'] },
@@ -3153,7 +3159,7 @@ export const register: Register = on => {
         {boxWhen > 0 && <Box flexShrink={0}><Text color={TIME_COLOR}>{(l.at ? whenOf(l.at) : '').padStart(boxWhen)}</Text></Box>}
         {/* Its kind's icon, plain: the list beside it marks what needs the person, so the
             box does not mark it again. What needs them is drawn bright, the rest dim. */}
-        <Text color={l.tone === 'good' ? 'green' : undefined} dimColor={(l.tone !== 'needs' && l.tone !== 'good') || undefined}>{(l.kind && INBOX_ICON[l.kind]) || '·'}</Text>
+        <Text color={l.tone === 'good' ? SUCCESS : undefined} dimColor={(l.tone !== 'needs' && l.tone !== 'good') || undefined}>{(l.kind && INBOX_ICON[l.kind]) || '·'}</Text>
         {/* The topic's handle opens it here; the rest of the line goes to GitLab, and says so. */}
         {l.topic && (
           <Button key={`${part}-topic-${i}`} plain onPress={() => { void showTopic($, s, l.topic as string) }}>
@@ -3164,23 +3170,21 @@ export const register: Register = on => {
         {l.url
           // The link mark joined to the last word by a no-break space: never on a line alone.
           ? <Markdown text={`[${l.what}\u00a0${LINK_ICON}](${l.url})`} dimColor={l.tone !== 'needs' || undefined} />
-          : <Text color={l.tone === 'good' ? 'green' : undefined} dimColor={(l.tone !== 'needs' && l.tone !== 'good') || undefined} wrap="wrap">{l.what}</Text>}
+          : <Text color={l.tone === 'good' ? SUCCESS : undefined} dimColor={(l.tone !== 'needs' && l.tone !== 'good') || undefined} wrap="wrap">{l.what}</Text>}
       </Box>
     )
-    // A good end looks like one: merged, or approved by you with every topic settled. The
-    // box's border and its heading are green then. Every topic settled with nothing new and
-    // the MR not approved or merged yet is nearly there: the border a dark green, so the
-    // step still to take does not read as done.
-    const isGoodEnd = !!waiting && (r.mr?.state === 'merged' || end?.tone === 'good')
-    const isNearEnd = !!waiting && !isGoodEnd && r.mr?.state !== 'closed' && waiting.count === 0
-      && !box?.hasNews && r.topics.every(isSettledHere)
+    // One rule for both skills (`boxLookOf`): merged, the whole box green; approved or as
+    // good as, a dark green border, as the press that ends the MR has; failed, red.
+    const look = waiting ? boxLookOf(r, end, waiting.count) : 'plain'
+    const isGoodEnd = look === 'merged'
+    const border = { merged: SUCCESS, approved: NEAR_END, failed: FAILURE, plain: undefined }[look]
     const waitPart = waiting && (
       <Box key="waiting" flexGrow={1} flexDirection="column" justifyContent="center" alignItems="center">
-        <Box key="waiting-box" borderStyle="round" borderDimColor={!(isGoodEnd || isNearEnd) || undefined} borderColor={isGoodEnd ? 'green' : isNearEnd ? NEAR_END : undefined} paddingX={2} flexDirection="column" alignItems="center">
+        <Box key="waiting-box" borderStyle="round" borderDimColor={!border || undefined} borderColor={border} paddingX={2} flexDirection="column" alignItems="center">
           {/* One word for where the MR stands, as a card's heading names its part: who did
               what, and when, is in the step lines under it. The line under it says what
               waits, and on whom: the heading does not say it again. */}
-          <Text key="waiting-head" bold color={isGoodEnd ? 'green' : undefined}>
+          <Text key="waiting-head" bold color={isGoodEnd ? SUCCESS : undefined}>
             {r.mr?.state === 'merged' ? 'Merged' : r.mr?.state === 'closed' ? 'Closed'
               : box?.hasNews ? 'News' : waiting.count > 0 ? 'Done for now' : 'Done'}
           </Text>
@@ -3222,7 +3226,7 @@ export const register: Register = on => {
             : end && (
               <Box flexDirection="column" alignItems="center" marginTop={1}>
                 {end.text && (
-                  <Text color={end.tone === 'needs' ? 'yellow' : end.tone === 'good' ? 'green' : undefined} dimColor={end.tone === 'info' || undefined}>
+                  <Text color={end.tone === 'needs' ? FAILURE : end.tone === 'good' ? SUCCESS : undefined} dimColor={end.tone === 'info' || undefined}>
                     {end.tone === 'busy' ? `${INBOX_ICON.judging} ${end.text}` : end.text}
                   </Text>
                 )}

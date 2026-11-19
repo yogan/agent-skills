@@ -771,7 +771,7 @@ export const waitingOf = (review: ReviewState | null): { count: number; who: str
 
 // The end of the MR, as the Done box's last line says it: what is happening, or what is
 // missing, and the one press that takes it on where there is one. `tone`: `busy` while
-// GitLab works on it, `needs` where something failed, `info` otherwise.
+// GitLab works on it, `needs` where something failed (drawn red), `info` otherwise.
 // `good`: a good end reached (approved by you), drawn green: success looks like success.
 export type EndLine = { text: string; tone: 'info' | 'busy' | 'needs' | 'good'; button?: BandButton }
 
@@ -837,13 +837,33 @@ export const endOf = (review: ReviewState | null, settled: boolean): EndLine | u
   if (!isApproved(mr)) return { text: 'Waits for approval', tone: 'info' }
   if (mr.can_merge === false) return { text: 'You may not merge it', tone: 'info' }
   if (mr.pipeline?.status === 'running') {
-    return { text: '', tone: 'info', button: { key: 'merge-mr', label: 'Set to auto-merge', press: { kind: 'merge-mr' }, isPrimary: true } }
+    return { text: '', tone: 'info', button: { key: 'merge-mr', label: 'Set to auto-merge', press: { kind: 'merge-mr' }, isPrimary: true, isGood: true } }
   }
   if (mr.merge_status === 'mergeable') {
-    return { text: '', tone: 'info', button: { key: 'merge-mr', label: 'Merge', press: { kind: 'merge-mr' }, isPrimary: true } }
+    return { text: '', tone: 'info', button: { key: 'merge-mr', label: 'Merge', press: { kind: 'merge-mr' }, isPrimary: true, isGood: true } }
   }
   const s = mr.merge_status ?? ''
   return s ? { text: MERGE_MISSING[s] ?? `${s[0]?.toUpperCase()}${s.slice(1).replaceAll('_', ' ')}`, tone: 'info' } : undefined
+}
+
+// How the box between rounds looks, one rule for both skills, as the MR stands:
+// - `merged`: the whole box in the green of success;
+// - `approved`: approved, or every topic settled with the approval the step left (review-mr
+//   offers it; rework-mr waits for it): a dark green border, the press that ends the MR
+//   (Approve MR, Merge, Set to auto-merge) in the same green, since the end is near but not
+//   reached;
+// - `failed`: the pipeline or the merge failed: a red border, and the line saying so red;
+// - `plain` otherwise. Waiting for a running pipeline is no warning: no colour says it.
+export type BoxLook = 'merged' | 'approved' | 'failed' | 'plain'
+export const boxLookOf = (review: ReviewState | null, end: EndLine | undefined, waiting: number): BoxLook => {
+  const mr = review?.mr
+  if (!review || !mr) return 'plain'
+  if (mr.state === 'merged') return 'merged'
+  if (mr.state !== 'opened') return 'plain'
+  if (end?.tone === 'needs') return 'failed'
+  // review-mr: the end is offered only once every topic is settled here (`endOf`).
+  if (review.skill === 'review-mr') return end ? 'approved' : 'plain'
+  return waiting === 0 && (isApproved(mr) || review.topics.every(isSettledHere)) ? 'approved' : 'plain'
 }
 
 // Whether the update check watches the merge: GitLab is asked every tick while it merges or

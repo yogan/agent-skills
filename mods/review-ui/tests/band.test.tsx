@@ -2,7 +2,7 @@ import type { On } from 'claude-code'
 import type { Engine } from 'claude-code/testing'
 import { expect, mock, test } from 'claude-code/testing'
 import { inboxMark } from '../hooks/panel.ts'
-import { buttonsFor, CI_PROMPT, endOf, iconOf, inboxOf, isMergeWatched, judgingOf, proposePrompt, sentenceOf, untilOf } from '../hooks/review.ts'
+import { boxLookOf, buttonsFor, CI_PROMPT, endOf, iconOf, inboxOf, isMergeWatched, judgingOf, proposePrompt, sentenceOf, untilOf } from '../hooks/review.ts'
 import { BAR_LOWER, BAR_UPPER, barPaint, type BarLook, type BarSpec } from '../hooks/sidebar.ts'
 
 // The test runtime's timer, which the engine's types leave out (a mod has no timers of its own).
@@ -3246,9 +3246,11 @@ test('a merged MR looks like success: its box and its merge line in green, the p
   await openRework($, w, reworkView('t1'))
   const panel = await $.ui.mount({ ...PANEL, surface: 'terminal' })
   const drawn = JSON.stringify(await panel.findAll({ type: 'Box' }))
-  expect(drawn).toContain('"borderColor":"green"')
-  expect((await panel.find({ type: 'Text', text: 'Merged' }))?.props.color).toBe('green')
-  expect((await panel.find({ type: 'Text', text: 'You merged the MR' }))?.props.color).toBe('green')
+  expect(drawn).toContain('"borderColor":"success"')
+  expect((await panel.find({ type: 'Text', text: 'Merged' }))?.props.color).toBe('success')
+  expect((await panel.find({ type: 'Text', text: 'You merged the MR' }))?.props.color).toBe('success')
+  // The merged icon is green everywhere: the heading's too.
+  expect((await panel.findAll({ type: 'Text' })).filter(t => t.text === '\u{f062d}').map(t => t.props.color)).toEqual(['success', 'success'])
   const story = (await panel.findAll({ type: 'Text' })).map(t => String(t.text ?? '')).filter(t => /approved|pipeline|merged the MR/.test(t))
   expect(story).toEqual(['Miriam approved the MR', 'The pipeline passed', 'You merged the MR'])
   await panel.unmount()
@@ -3270,7 +3272,7 @@ test('news that is no good end keeps the box as it was: no green', async ($, on)
     mr: { state: 'opened' }, in_round: false, inbox: inbox({ waiting: 1 }) })])
   await openRework($, w, reworkView('t1'))
   const panel = await $.ui.mount({ ...PANEL, surface: 'terminal' })
-  expect(JSON.stringify(await panel.findAll({ type: 'Box' }))).not.toContain('"borderColor":"green"')
+  expect(JSON.stringify(await panel.findAll({ type: 'Box' }))).not.toContain('"borderColor"')
   expect((await panel.find({ type: 'Text', text: 'Done for now' }))?.props.color).toBeUndefined()
   await panel.unmount()
 })
@@ -3595,20 +3597,22 @@ test("the MR's own news: icons in the heading, the same icon and colour with its
   await openReview($, w, view('t1'))
   const panel = await $.ui.mount({ ...PANEL, surface: 'terminal' })
   const all = await panel.findAll({ type: 'Text' })
-  expect(all.find(t => t.text === '\u{f051f}')?.props.color).toBe('yellow')
-  expect(all.find(t => t.text === '\u{f0514}')?.props.color).toBe('green')
+  // Auto-merge set is a wait, no warning: no colour. Approved is green.
+  expect(all.find(t => t.text === '\u{f051f}')?.props.color).toBeUndefined()
+  expect(all.find(t => t.text === '\u{f0514}')?.props.color).toBe('success')
   expect(all.some(t => /auto-merge on|Jan, You/.test(t.text ?? ''))).toBe(false)
   await panel.unmount()
 })
 
 test("the MR's head pipeline is an icon beside the approval: running, passed, failed, none without one", async ($, on) => {
-  const icons = { running: ['\u{f0996}', 'yellow'], passed: ['\u{f0995}', 'green'], failed: ['\u{f110a}', 'red'] }
+  // Running is a wait, no warning: no colour.
+  const icons = { running: ['\u{f0996}', undefined], passed: ['\u{f0995}', 'success'], failed: ['\u{f110a}', 'error'] }
   const w = world(on, [
     ...Object.keys(icons).map(status => stateOf('t1', [topic('t1', 'draft', 'abc')], { mr: { state: 'opened', approved_by: ['Jan'], pipeline: { status } } })),
     stateOf('t1', [topic('t1', 'draft', 'abc')], { mr: { state: 'opened', approved_by: ['Jan'], pipeline: null } }),
   ])
   await openReview($, w, view('t1'))
-  const all = Object.values(icons).flat().filter((_, i) => i % 2 === 0)
+  const all = Object.values(icons).map(([icon]) => icon as string)
   for (const [icon, color] of Object.values(icons)) {
     const panel = await $.ui.mount({ ...PANEL, surface: 'terminal' })
     const texts = await panel.findAll({ type: 'Text' })
@@ -3747,15 +3751,15 @@ test('review-mr: Approve MR waits for every topic to be settled here, whatever G
   expect(endOf(of('wontfix'), true)?.button?.label).toBe('Approve MR')
 })
 
-test('every topic settled and the MR not approved yet: a dark green border, green only once approved', async ($, on) => {
+test('review-mr: every topic settled, approvable or approved by you: a dark green border, as the Approve button has', async ($, on) => {
   const mr = { state: 'opened', approved_by: [], approvals_left: 0 }
   const settled = (more: object) => stateOf(null, [{ ...topic('t1', 'acked'), state: 'done' }], { in_round: false, inbox: inbox(), mr: { ...mr, ...more } })
   const w = world(on, [settled({}), settled({ approved_by: ['You'] })], { 'approve-mr': { stdout: settled({ approved_by: ['You'] }) } })
   await openReview($, w, view('t1'))
   let panel = await $.ui.mount({ ...PANEL, surface: 'terminal' })
   let drawn = JSON.stringify(await panel.findAll({ type: 'Box' }))
-  expect(drawn).toContain('"borderColor":"#3b6b45"')
-  expect(drawn).not.toContain('"borderColor":"green"')
+  expect(drawn).toContain('"borderColor":"diffAdded"')
+  expect(drawn).not.toContain('"borderColor":"success"')
   expect((await panel.find({ type: 'Text', text: 'Done' }))?.props.color).toBeUndefined()
   const chip = JSON.stringify(await panel.find({ type: 'Button', key: 'approve-mr' }))
   // The button in the border's dark green, its light green text the fill under the pointer.
@@ -3765,10 +3769,59 @@ test('every topic settled and the MR not approved yet: a dark green border, gree
   await panel.press({ key: 'approve-mr' })
   await panel.unmount()
   panel = await $.ui.mount({ ...PANEL, surface: 'terminal' })
+  // Approved by you is the same step short of merged: the dark green border stays, the words
+  // say it in green; the bright green box is a merged MR's alone.
   drawn = JSON.stringify(await panel.findAll({ type: 'Box' }))
-  expect(drawn).toContain('"borderColor":"green"')
-  expect((await panel.find({ type: 'Text', text: 'Done' }))?.props.color).toBe('green')
-  expect(JSON.stringify(await panel.findAll({ type: 'Text' }))).toContain('Approved by you')
+  expect(drawn).toContain('"borderColor":"diffAdded"')
+  expect((await panel.find({ type: 'Text', text: 'Done' }))?.props.color).toBeUndefined()
+  expect((await panel.find({ type: 'Text', text: 'Approved by you' }))?.props.color).toBe('success')
+  await panel.unmount()
+})
+
+// One colour rule for the box in both skills: approved (or as good as) a dark green border,
+// merged the whole box green, failed red, and a wait no colour at all.
+test('the box looks as the MR stands, the same rule in both skills', () => {
+  const look = (skill: 'rework-mr' | 'review-mr', mr: object, settled = true, topics: object[] = []) => {
+    const r = { ...(ended(skill, mr) as object), topics } as never
+    return boxLookOf(r, endOf(r, settled), settled ? 0 : 1)
+  }
+  expect(look('rework-mr', {})).toBe('approved')                                       // Merge offered
+  expect(look('rework-mr', { pipeline: { status: 'running' } })).toBe('approved')      // Set to auto-merge
+  expect(look('rework-mr', { auto_merge: true, merge: { how: 'auto', at: 'x' } })).toBe('approved')
+  expect(look('rework-mr', { approved_by: [] })).toBe('approved')                      // settled, the approval to come
+  expect(look('rework-mr', { approved_by: [] }, true, [{ id: 't1', state: 'answered' }])).toBe('plain')
+  expect(look('rework-mr', {}, false)).toBe('plain')                                   // a topic waits
+  expect(look('rework-mr', { pipeline: { status: 'failed' } }, false)).toBe('failed')
+  expect(look('rework-mr', { merge: { how: 'merge', at: 'x', error: 'no' } })).toBe('failed')
+  expect(look('rework-mr', { state: 'merged' })).toBe('merged')
+  expect(look('review-mr', { approved_by: [] })).toBe('approved')                      // Approve MR offered
+  expect(look('review-mr', { approved_by: ['You'] })).toBe('approved')
+  expect(look('review-mr', { state: 'merged' })).toBe('merged')
+  expect(look('review-mr', {}, true, [{ id: 't1', state: 'answered' }])).toBe('plain')
+  expect(look('rework-mr', { state: 'closed' })).toBe('plain')
+})
+
+test('rework-mr: an approved MR\'s box and its merge press are dark green', async ($, on) => {
+  const mr = { state: 'opened', approved_by: ['Robin'], approvals_left: 0, merge_status: 'mergeable', can_merge: true }
+  const idle = (more: object) => reworkState(null, [reworkTopic('t1', 'none', { state: 'done' })], { in_round: false, mr: { ...mr, ...more }, inbox: inbox() })
+  const w = world(on, [idle({ pipeline: { status: 'running' } })])
+  await openRework($, w, reworkView('t1'))
+  const panel = await $.ui.mount({ ...PANEL, surface: 'terminal' })
+  expect(JSON.stringify(await panel.findAll({ type: 'Box' }))).toContain('"borderColor":"diffAdded"')
+  const chip = JSON.stringify(await panel.find({ type: 'Button', key: 'merge-mr' }))
+  expect(chip).toContain('Set to auto-merge')
+  expect(chip).toContain('"backgroundColor":"#3b6b45"')
+  expect(chip).toContain('"color":"#c3e88d"')
+  await panel.unmount()
+})
+
+test('rework-mr: a failed pipeline is red, the border and the words', async ($, on) => {
+  const mr = { state: 'opened', approved_by: ['Robin'], approvals_left: 0, merge_status: 'mergeable', can_merge: true, pipeline: { status: 'failed' } }
+  const w = world(on, [reworkState(null, [reworkTopic('t1', 'none', { state: 'done' })], { in_round: false, mr, inbox: inbox() })])
+  await openRework($, w, reworkView('t1'))
+  const panel = await $.ui.mount({ ...PANEL, surface: 'terminal' })
+  expect(JSON.stringify(await panel.findAll({ type: 'Box' }))).toContain('"borderColor":"error"')
+  expect((await panel.find({ type: 'Text', text: 'Pipeline failed' }))?.props.color).toBe('error')
   await panel.unmount()
 })
 
