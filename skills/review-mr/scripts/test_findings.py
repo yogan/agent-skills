@@ -2774,6 +2774,29 @@ class TestAnswersInCode(unittest.TestCase):
         self.assertEqual(self.t["watch"], {"sha": "c0", "first": 11, "last": 11})
         self.assertEqual(self.t["pushed"]["from"], "c0")
 
+    def test_a_push_beside_another_reviewer_s_lines_is_no_news_of_it(self):
+        """Chidi's thread was on an import; Alex's fix changed the loader forty lines down,
+        and News said the push touched Chidi's thread too."""
+        self.t["source"] = "peer"
+        self.push("@@ -40,0 +41,2 @@\n+x\n+y\n")
+        self.assertNotIn("pushed", self.t)
+        self.assertEqual((self.state["pushes"][0]["topics"], self.state["pushes"][0]["beside"]), ([], []))
+
+    def test_a_later_push_that_left_the_lines_alone_is_no_news_of_the_topic(self):
+        """A push noted for the topic and not answered yet: the next push, elsewhere, was
+        compared from the comment and so named the topic again, and dated its news anew."""
+        self.t["source"] = "peer"
+        self.push(TouchedDiff.REWRITE)
+        files = {("c0", "c1"): [{"new_path": "a.ts", "old_path": "a.ts", "diff": TouchedDiff.REWRITE}],
+                 ("c0", "c2"): [{"new_path": "a.ts", "old_path": "a.ts", "diff": TouchedDiff.REWRITE}],
+                 ("c1", "c2"): [{"new_path": "b.ts", "old_path": "b.ts", "diff": "@@ -1 +1 @@\n-x\n+y\n"}]}
+        with patch.object(F, "mr_head", return_value="c2"), \
+                patch.object(F, "_compare", side_effect=lambda ctx, a, b: files[(a, b)]), \
+                patch.object(F, "_gl_compare", return_value={"stat": "`+1/−1` · 1 file"}):
+            F.check_pushes(self.state, None, 1, "b0")
+        self.assertEqual(self.t["pushed"]["to"], "c1")
+        self.assertEqual(self.state["pushes"][1]["topics"], [])
+
     def test_a_push_to_another_file_keeps_the_topic_waiting(self):
         files = [{"new_path": "b.ts", "old_path": "b.ts", "diff": "@@ -2,0 +3,2 @@\n+x\n+y\n"}]
         with patch.object(F, "mr_head", return_value="c1"), patch.object(F, "_compare", return_value=files), \
@@ -2790,7 +2813,10 @@ class TestAnswersInCode(unittest.TestCase):
         self.push("@@ -2,0 +3,2 @@\n+x\n+y\n")
         self.assertEqual(F.topic_status(self.state, self.t), "needs_ack")
         self.assertTrue(self.t["pushed"]["near"])
-        self.assertEqual(self.state["pushes"][0]["topics"], ["t1"])
+        # Not named by the push until judged its fix: by file alone, it named every topic
+        # on the file.
+        self.assertEqual((self.state["pushes"][0]["topics"], self.state["pushes"][0]["beside"]), ([], ["t1"]))
+        self.assertEqual(F.push_topics(self.state, self.state["pushes"][0]), [])
         prompt = judge_prompt(self.state)[0]
         self.assertIn("though not to its lines", prompt)
         self.assertIn("*push beside its lines*", prompt)
@@ -2812,6 +2838,7 @@ class TestAnswersInCode(unittest.TestCase):
         self.t["fixes"] = [{"before": "c0", "after": "c1", "near": True}]
         F.store_verdict(self.state, self.t, "settled", "The guard above the line covers it.")
         self.assertEqual(F.fixes_of(self.t), [{"before": "c0", "after": "c1"}])
+        self.assertEqual(F.push_topics(self.state, self.state["pushes"][0]), ["t1"])
 
     def test_a_rebase_that_moved_the_lines_without_the_author_is_no_news(self):
         own = [{"new_path": "a.ts", "old_path": "a.ts", "diff": "@@ -1 +1 @@\n-x\n+y\n"}]
@@ -2842,7 +2869,7 @@ class TestAnswersInCode(unittest.TestCase):
                 patch.object(F, "mr_object", return_value={"target_branch": "main"}):
             F.check_pushes(self.state, None, 1, "b1")
         self.assertEqual(F.topic_status(self.state, self.t), "needs_ack")
-        self.assertEqual(self.state["pushes"][0]["topics"], ["t1"])
+        self.assertEqual(self.state["pushes"][0]["beside"], ["t1"])
         self.assertEqual((self.state["pushes"][0]["own"], self.state["pushes"][0]["onto"]), (1, "main"))
 
     def test_a_push_that_left_the_code_as_it_was_is_said_as_such(self):

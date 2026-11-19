@@ -2007,7 +2007,7 @@ def check_pushes(state, ctx, iid, base):
     def origin(x):
         return comment_origin(x, mr_versions, compare)
 
-    touched = []
+    touched, beside = [], []
     for t in state["topics"]:
         if not t["thread_ids"]:
             continue
@@ -2038,11 +2038,20 @@ def check_pushes(state, ctx, iid, base):
         if (w["sha"] == head or (p and p.get("to") == head)
                 or (not p and topic_status(state, t) not in ("open", "needs_ack"))):
             continue
-        diffs = compare(w["sha"], head)
+        # From the push noted already where one waits: its change to the lines is that
+        # push's, and a later push that left them alone is no news of the topic.
+        since, first, last = w["sha"], w["first"], w["last"]
+        if p:
+            noted = compare(w["sha"], p["to"])
+            if noted is None:
+                continue
+            _, first, last = code_view.touched((_file_diff(noted, x["file"]) or {}).get("diff"), first, last)
+            since = p["to"]
+        diffs = compare(since, head)
         if diffs is None:
             continue
         d = _file_diff(diffs, x["file"])
-        hit, a, b = code_view.touched((d or {}).get("diff"), w["first"], w["last"])
+        hit, a, b = code_view.touched((d or {}).get("diff"), first, last)
         if hit and authored is not None and x["file"] not in authored:
             hit = False                   # the rebase moved it, not the author
         # The author's push changed the comment's file elsewhere: an answer in code is as
@@ -2050,7 +2059,10 @@ def check_pushes(state, ctx, iid, base):
         # above), so the topic is the user's to look at too, and the agent judges whether
         # the change concerns it. After a rebase only where the MR's own change to the file
         # is known to differ: what the target branch brought along is nobody's answer.
+        # Not for another reviewer's thread: nobody judges a push for one, and a change
+        # elsewhere in its file is no news of it.
         near = (not hit and bool(((d or {}).get("diff") or "").strip())
+                and t.get("source") not in ("peer", "author")
                 and (not rebased or (authored is not None and x["file"] in authored)))
         if hit or near:
             t["pushed"] = {"from": (p or {}).get("from") or w["sha"], "to": head,
@@ -2058,7 +2070,7 @@ def check_pushes(state, ctx, iid, base):
             if near:
                 t["pushed"]["near"] = True
             t["pushed"]["mark"] = decision_mark(state, t)
-            touched.append(t["id"])
+            (beside if near else touched).append(t["id"])
         elif not p:
             w.update(sha=head, first=a, last=b)
     if seen and seen != head:
@@ -2069,7 +2081,9 @@ def check_pushes(state, ctx, iid, base):
         # size would count the target branch's commits it brought along.
         state.setdefault("pushes", []).append({
             "at": now_iso(), "head": head, "from": seen, "stat": (stat or {}).get("stat"),
-            "topics": touched, "rebase": rebased,
+            # The topics whose lines it changed; those it changed beside their lines are
+            # its own once the agent judged it their fix (`push_topics`).
+            "topics": touched, "beside": beside, "rebase": rebased,
             # What it was rebased onto, for the line that says so.
             "onto": (mr_object(ctx, iid) or {}).get("target_branch") if rebased else None,
             "same": (stat or {}).get("paths") == [],
@@ -2264,6 +2278,17 @@ def news_of(state, t):
     return kinds, max(at) if at else None
 
 
+def push_topics(state, p):
+    """The topics push `p` is news of: those whose lines it changed, and those it changed
+    beside their lines that the agent judged it a fix of (`settle_near_fixes`). A change
+    elsewhere in a comment's file names its topic only then: by file alone, a push named
+    every topic on the file it touched."""
+    judged = [t["id"] for t in state["topics"] if t["id"] in (p.get("beside") or [])
+              and any(f.get("after") == p.get("head") and not (f.get("near") or f.get("off"))
+                      for f in t.get("fixes") or [])]
+    return [t["id"] for t in state["topics"] if t["id"] in (p.get("topics") or []) + judged]
+
+
 def inbox_json(state, topics):
     """The sidebar's inbox: what arrived since the user last worked through it, by kind,
     each with its topics, the pushes one line each, and what waits. `topics` are
@@ -2285,7 +2310,8 @@ def inbox_json(state, topics):
         "threads": [{"id": x["id"], "by": (topic_for(state, x["id"]) or {}).get("by"),
                      "fyi": x["inbox"] == "fyi"}
                     for x in fresh if "thread" in x["news"]],
-        "pushes": [{k: p.get(k) for k in ("at", "stat", "topics", "rebase", "url", "same", "own", "onto")} for p in pushes],
+        "pushes": [{**{k: p.get(k) for k in ("at", "stat", "rebase", "url", "same", "own", "onto")},
+                    "topics": push_topics(state, p)} for p in pushes],
         "mr": state.get("mr_news") or [],
         # When the last round ended: news from before it arrived while the user worked.
         "round_end": state.get("round_end"),
