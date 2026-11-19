@@ -3347,6 +3347,29 @@ class TestPushFix(unittest.TestCase):
         self.assertEqual(self.checks.push.call_args.args[2], "NEW")
         self.assertNotIn("push_from", self.t1)
 
+    def test_a_stopped_push_leaves_the_fix_made_on_its_card_with_why_and_the_push_to_retry(self):
+        """The card fell back to the plan and Fix it once the fix was committed and the push
+        stopped: it read as if nothing was fixed."""
+        self.checks.push.side_effect = self.checks.Stop("the branch on GitLab has commits yours does not")
+        with self.assertRaises(T.Handoff):
+            self.push()
+        self.working_diff.return_value = ""                 # committed: the tree is clean
+        T._WORKING.clear()
+        self.assertEqual(T.step_of(self.state, self.t1), "fixed")
+        with mock.patch.dict(os.environ, {"REVIEW_UI_DRAWN": "1"}), \
+                mock.patch.object(T, "checks_of", return_value="passed"), \
+                mock.patch.object(T, "rebased_here", return_value=False):
+            card = "\n".join(T._step_parts(self.state, self.t1))
+        self.assertIn("Made, not pushed: the push stopped", card)
+        self.assertIn("the branch on GitLab has commits yours does not.", card)
+        self.assertIn("Ack and push tries the push again", card)
+        self.assertLess(card.index("the push stopped"), card.index("Changes"))
+        # Pushed on the retry: nothing of the stop is left.
+        self.checks.push.side_effect = None
+        self.push()
+        self.assertNotIn("push_stopped", self.t1)
+        self.assertEqual(T.step_of(self.state, self.t1), "reply")
+
     def test_a_stop_while_pushing_goes_back_to_the_agent_in_its_words(self):
         self.checks.autosquash.side_effect = self.checks.Stop("squashing conflicts")
         with self.assertRaisesRegex(T.Handoff, "squashing conflicts"):

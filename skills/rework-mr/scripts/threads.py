@@ -2221,8 +2221,8 @@ def start_fix_round(t, keep_checks=False):
     on the new fix itself (a fix shown on a plan that was to reply only)."""
     if (t.get("outcome") or "fix") == "fix" and t.get("diff_url"):
         for k in ("diff_url", "fix", *(() if keep_checks else ("checked",)), "push_token",
-                  "push_from", "handed_from", "reply_early", "post_differs", "early_posted",
-                  "reply_posted", "fix_lost"):
+                  "push_from", "push_stopped", "handed_from", "reply_early", "post_differs",
+                  "early_posted", "reply_posted", "fix_lost"):
             t.pop(k, None)
         if not t.get("reply_for"):
             # Stored before drafts carried their round, it would count under any plan.
@@ -2358,7 +2358,8 @@ def step_of(state, t, status=None):
         return "plan"
     if not is_fix(t) or t.get("diff_url"):
         return "reply"
-    return "fixed" if t.get("fix") and working_diff().strip() else "fix"
+    # Made: in the working tree, or committed by a push that stopped before it went up.
+    return "fixed" if t.get("fix") and (working_diff().strip() or t.get("push_stopped")) else "fix"
 
 
 STEP_WORDS = {
@@ -2418,7 +2419,7 @@ def drop_fix(state, iid, t, why, plan, outcome, new=(), aside=False):
         for p in new:
             os.remove(os.path.join(root, p))
         _WORKING.clear()
-    for k in ("fix", "checked", "push_token", "push_from", "handed_from", "kept",
+    for k in ("fix", "checked", "push_token", "push_from", "push_stopped", "handed_from", "kept",
               *(() if aside else ("reply_early", "agreed_change", "change", "answer_now"))):
         t.pop(k, None)
     if not aside:
@@ -2822,6 +2823,12 @@ def _fix_parts(state, t):
     where they did not pass."""
     f = t.get("fix") or {}
     out = []
+    stop = t.get("push_stopped")
+    if stop:
+        # Above all else: the fix is made, and its push is what is left to do.
+        out += [ui.heading_md(ui.DIFFERS_ICON, "Made, not pushed: the push stopped"), "",
+                f"{stop.get('why', '').strip().rstrip('.')}.", "",
+                "Ack and push tries the push again, from the commits already made.", ""]
     # What changed, in short: the plan is above it and the thread in the sidebar, so neither
     # is told again; the checks only where they did not pass, as passing is what a shown
     # fix means.
@@ -3222,6 +3229,13 @@ def push_fix(ctx, iid, path, tid, committed=False):
             checks.autosquash(root, oldest, c["tree"])
         checks.push(root, rec, before)
     except checks.Stop as e:
+        # Kept with the topic: its card goes on saying the fix is made and why the push
+        # stopped, until a push goes through or the fix goes.
+        hold(path)
+        state = load(path)
+        topic_for(state, tid)["push_stopped"] = {
+            "why": str(e), "at": datetime.datetime.now(datetime.timezone.utc).isoformat()}
+        save(path, state)
         raise Handoff(f"Pushing {tid}'s fix stopped: {e}") from e
     if not handed:
         # Only a push whose commit ran the real hooks here tells whether the record's early
@@ -3250,7 +3264,7 @@ def push_fix(ctx, iid, path, tid, committed=False):
                                        # its card's story says so after the push too.
                                        "differs": ((t.get("fix") or {}).get("compare") or {}).get("differs")})
     n = len(t["pushes"])
-    for k in ("push_from", "push_start", "handed_from", "start_sha"):
+    for k in ("push_from", "push_start", "handed_from", "start_sha", "push_stopped"):
         t.pop(k, None)
     if url:
         t["diff_url"] = url
@@ -3657,6 +3671,7 @@ def main():
                     "change of direction, significantly more or less>'`")
             t.pop("push_token", None)
             t.pop("handed_from", None)
+            t.pop("push_stopped", None)             # a new fix: no push of it tried yet
             # Code changed on a plan that was to reply only (a push-back that also adds a
             # comment): it is a fix now, held until pushed as the topic's own, never left for
             # another topic's push to take along. On a topic whose earlier fix is pushed it is
