@@ -1123,16 +1123,17 @@ class TestReplyDraft(unittest.TestCase):
         ):
             self.assertIn(kept, out)
 
-    def test_refine_of_a_drawn_reply_is_not_set_off_by_the_draft_it_rewords(self):
-        """Where the mod draws, the topic's card carries its draft. A reworded draft is no
-        change of context: the refined card is the draft alone."""
+    def test_a_drawn_reply_view_is_the_topic_s_whole_card_refined_or_not(self):
+        """Where the mod draws, the topic's older cards are folded away, so a reworded draft
+        comes up on the whole card, once: the mod leaves out what the sidebar shows."""
         with mock.patch.dict(os.environ, {"REVIEW_UI_DRAWN": "1"}), \
                 mock.patch.object(T, "step_of", return_value="reply"):
             state = self._shown("Gefixt, und noch viel mehr.\n")
             T.topic_for(state, "t1")["reply"] = "Kürzer.\n"
             out = T.render_reply_view(state, "t1", "Kürzer.\n", refine=True)
         self.assertNotIn("changed since this was last shown", out)
-        self.assertNotIn("unbounded retry", out)
+        self.assertIn("unbounded retry", out)
+        self.assertEqual(out.count("> Kürzer."), 1)
 
     def test_refine_falls_back_when_the_context_was_never_shown(self):
         """The short render must not be a topic's first reply view — the user would be
@@ -2357,6 +2358,74 @@ class TestHandedOverPush(unittest.TestCase):
             self.run_push({"id": "t1", "push_token": "abcd1234"}, "--resolve")
 
 
+class TestOneCardHoldsTheWholeTopic(unittest.TestCase):
+    """Where the mod draws, a topic's older cards are folded to their title line, so every
+    view of it is its whole card: the analysis, the recommendation, the plan, the change, the
+    draft, the story, in that order, whichever command printed it. Seen: a topic's Post card
+    without the reply it posts (an early one), and a reply's card without the analysis the
+    plan was agreed on, which only the card above it had."""
+
+    CTX = {"enc": "g%2Fp", "web": "https://gl/g/p"}
+
+    def setUp(self):
+        mock.patch.dict(os.environ, {"REVIEW_UI_DRAWN": "1"}).start()
+        self.addCleanup(mock.patch.stopall)
+        T._WORKING.clear()
+        self.addCleanup(T._WORKING.clear)
+        self.state = TestRounds.state(1)
+        T.start_round(self.state)
+        self.t1 = T.topic_for(self.state, "t1")
+        mock.patch.object(T, "working_diff", return_value="").start()
+
+    def run_cmd(self, *argv, stdin=""):
+        with mock.patch.object(sys, "argv", ["threads.py", *argv, "--iid", "1"]), \
+                mock.patch.object(T, "resolve_state", return_value=(self.CTX, 1, "/s", self.state)), \
+                mock.patch.object(T, "save"), mock.patch.object(T, "hold"), \
+                mock.patch("sys.stdin", io.StringIO(stdin)), \
+                mock.patch("sys.stdout", new_callable=io.StringIO) as out:
+            T.main()
+        return out.getvalue()
+
+    def propose(self, outcome):
+        self.run_cmd("propose", "t1", "--says", "needs", "--why",
+                     "It retries forever. **Recommendation:** answer it with a cap.",
+                     "--outcome", outcome, "--plan", f"a plan to {outcome}")
+
+    def order(self, out, *parts):
+        at = [out.index(p) for p in parts]
+        self.assertEqual(at, sorted(at), out)
+
+    def test_a_reply_s_card_keeps_the_analysis_it_was_agreed_on(self):
+        self.propose("reply")
+        self.run_cmd("agree", "t1", "--focus")
+        self.run_cmd("set", "t1", "--reply", "-", stdin="Kommt in einem eigenen MR.\n")
+        out = self.run_cmd("reply-view", "t1", "--refine")
+        self.order(out, "Analysis", "It retries forever.", "Recommendation", "Agreed plan: Reply only",
+                   "Draft reply", "> Kommt in einem eigenen MR.")
+
+    def test_a_reply_ahead_of_the_fix_is_on_the_card_that_posts_it(self):
+        self.propose("fix")
+        self.run_cmd("agree", "t1")
+        self.run_cmd("set", "t1", "--reply", "-", "--early", stdin="Mache ich so.\n")
+        self.assertEqual(T.step_of(self.state, self.t1), "fix")
+        self.assertTrue(T.state_json(self.state)["topics"][0]["early"])      # Post is offered
+        out = self.run_cmd("quote", "t1", "--focus")
+        self.order(out, "Analysis", "Agreed plan: Fix", "Draft reply, to post ahead of the fix",
+                   "> Mache ich so.")
+
+    def test_a_fix_s_card_keeps_the_analysis_and_the_plan_above_the_fix(self):
+        self.propose("fix")
+        self.run_cmd("agree", "t1")
+        self.t1["fix"] = {"did": "Capped it.", "fixup": ["abc123 the commit"], "stat": [["a.py", 2, 1]],
+                          "compare": {"as_agreed": True}}
+        with mock.patch.object(T, "step_of", return_value="fixed"), \
+                mock.patch.object(T, "checks_of", return_value="passed"), \
+                mock.patch.object(T, "rebased_here", return_value=False):
+            out = "\n".join(T._step_parts(self.state, self.t1))
+        self.order(out, "Analysis", "Agreed plan: Fix", "Changes", "Capped it.", "abc123")
+        self.assertEqual(out.count("Agreed plan"), 1)
+
+
 class TestReplyAfterTheFix(unittest.TestCase):
     """A longer reply after the fix explains it, ends on the line that links the fix, and
     never resolves: the reviewer reads it and resolves the thread."""
@@ -2978,11 +3047,14 @@ class TestFixAgainstThePlan(unittest.TestCase):
             T.refuse_leaving_fix(self.state, "t2")
         self.assertIn("t1", err.getvalue())
 
-    def test_the_reply_agreed_is_kept_through_the_fix_and_hidden_until_pushed(self):
+    def test_the_reply_agreed_is_kept_through_the_fix_and_said_to_go_up_after_it(self):
+        """The card holds the whole topic, the reply it will post too, under the fix."""
         t1, _old = self.push_back_on_a_pushed_fix()
         self.show("--differs", "Adds a comment saying why it stays.")
         self.assertTrue(T.draft_holds(self.state, t1))
-        self.assertNotIn("Draft reply", "\n".join(T._step_parts(self.state, t1)))
+        parts = "\n".join(T._step_parts(self.state, t1))
+        self.assertIn("Draft reply, to post after the fix", parts)
+        self.assertLess(parts.index("Changes"), parts.index("Draft reply"))
 
     def test_after_the_push_the_reply_ends_on_the_new_push_s_link_alone(self):
         """It carried the earlier push's link, already posted in the thread."""
@@ -3642,7 +3714,8 @@ class TestStateByWord(unittest.TestCase):
         th.update(resolved=True, resolved_by="Haas, Miriam - X1", resolved_at="2026-02-01T13:02:00Z")
         with mock.patch.object(T, "_git", return_value=""):
             parts = T._step_parts(self.state, self.t1)
-        steps = parts[:parts.index("")]
+        # The story is the card's last part, after the analysis the plan stood on.
+        steps = parts[:-1][len(parts) - 2 - parts[:-1][::-1].index(""):]
         self.assertTrue(any(re.search(r"^(Feb 1, )?\d\d:00 \S+ You agreed the plan: Fix\. p$", x) for x in steps))
         self.assertRegex(steps[-1], r" Miriam resolved it$")        # no gap before the close
 

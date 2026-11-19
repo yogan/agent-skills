@@ -1965,7 +1965,7 @@ test('beside the sidebar, a closed topic\'s card says where it stands, and keeps
   await ui.unmount()
 })
 
-test("a topic opened again to look at has one card: the older ones shrink to their title and say it is below", async ($, on) => {
+test("a topic opened again to look at has one card: the older ones shrink to their title line", async ($, on) => {
   const head = '\u{f0182} **t1** **summary of t1** · `src/cache.ts:17`'
   const out = `${head}\n\nsome view\n\n<!-- paste-gate:critical\n` + JSON.stringify({ first: head, critical: [], topic: 't1', focus: 't1', review: REVIEW }) + '\n-->'
   // Opened from the sidebar's Closed group: current, and closed.
@@ -1979,10 +1979,9 @@ test("a topic opened again to look at has one card: the older ones shrink to the
     return all
   }
   const older = await texts('tu-open')
-  expect(older).toContain('Shown again below.')
+  expect(older.some(t => t.includes('summary of t1'))).toBe(true)
   expect(older.some(t => t.includes('some view'))).toBe(false)
   const newer = await texts('tu-again')
-  expect(newer).not.toContain('Shown again below.')
   expect(newer.some(t => t.includes('some view'))).toBe(true)
 })
 
@@ -2003,14 +2002,32 @@ test("a card's steps draw their times dim in one column, and the person as You i
   await ui.unmount()
 })
 
-test("a topic still being decided keeps every card it had", async ($, on) => {
+test("a topic still being decided has one card too: the newest holds it, the older one is its title line", async ($, on) => {
   const head = '\u{f0182} **t1** **summary of t1** · `src/cache.ts:17`'
   const out = `${head}\n\nsome view\n\n<!-- paste-gate:critical\n` + JSON.stringify({ first: head, critical: [], topic: 't1', focus: 't1', review: REVIEW }) + '\n-->'
   const w = world(on, [stateOf('t1', [topic('t1', 'needs_ack')])])
   await openReview($, w, out)
   await $.tool.call({ tool: 'Bash', command: 'python3 $SD/findings.py quote t1 --iid 42', tool_use_id: 'tu-again' } as never)
   const ui = await $.ui.mount(cardRow('tu-open', out))
-  expect(await ui.find({ type: 'Text', text: 'Shown again below.' })).toBeUndefined()
+  expect(JSON.stringify(await ui.findAll({ type: 'Markdown' }))).not.toContain('some view')
+  // One line, nothing under it: no buttons, no ✕, no text of the topic's.
+  expect((await ui.findAll({ type: 'Text' })).filter(t => String(t.text ?? '').trim()).length).toBeLessThanOrEqual(3)
+  expect(await ui.find({ type: 'Button' })).toBeUndefined()
+  await ui.unmount()
+  const newest = await $.ui.mount(cardRow('tu-again', out))
+  expect(JSON.stringify(await newest.findAll({ type: 'Markdown' }))).toContain('some view')
+  await newest.unmount()
+})
+
+test("a view of a topic that is not its card (a diff on its own) leaves the card above it whole", async ($, on) => {
+  const head = '\u{f0182} **t1** **summary of t1** · `src/cache.ts:17`'
+  const out = `${head}\n\nsome view\n\n<!-- paste-gate:critical\n` + JSON.stringify({ first: head, critical: [], topic: 't1', focus: 't1', review: REVIEW }) + '\n-->'
+  const diff = '```diff\n-a\n+b\n```\n\n<!-- paste-gate:critical\n' + JSON.stringify({ first: '```diff', critical: [], topic: 't1', focus: 't1', review: REVIEW }) + '\n-->'
+  const w = world(on, [stateOf('t1', [topic('t1', 'needs_ack')])])
+  await openReview($, w, out)
+  w.tool.stdout = diff
+  await $.tool.call({ tool: 'Bash', command: 'python3 $SD/findings.py diff t1 --show --iid 42', tool_use_id: 'tu-diff' } as never)
+  const ui = await $.ui.mount(cardRow('tu-open', out))
   expect(JSON.stringify(await ui.findAll({ type: 'Markdown' }))).toContain('some view')
   await ui.unmount()
 })

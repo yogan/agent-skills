@@ -2427,14 +2427,21 @@ class TestVerdict(unittest.TestCase):
                 F.emit(self.state, "card", "t1")
             self.assertEqual(F.inbox_of(self.state, self.t), "yours")
 
-    def test_a_changed_verdict_shows_the_change_alone(self):
-        F.store_verdict(self.state, self.t, "more", "Writes still skip it.", case="partly-fixed")
-        before = F.verdict_of(self.state, self.t)
-        F.store_verdict(self.state, self.t, "settled", "Holds on a deeper read.")
-        card = F.render_verdict_change(self.state, self.t, before)
-        self.assertIn("Verdict: Settled", card)
-        self.assertIn("_was: Partly fixed_", card)
-        self.assertNotIn("What you asked", card)
+    def test_a_changed_verdict_shows_the_topic_s_whole_card(self):
+        """The card up before is folded away once the changed verdict's comes, so the new one
+        is the whole topic: what was asked as well as the new verdict."""
+        self.state["threads"]["d1"]["mine"] = True
+        F.store_verdict(self.state, self.t, "more", "Writes still skip it.", case="partly-fixed",
+                        asked="Asked for the locale in the key.")
+        with self.drawn(), patch.object(F, "resolve_state", return_value=(CTX, 2, "/s", self.state)), \
+                patch.object(F, "current_user", return_value="ann"), \
+                patch.object(F, "save"), patch.object(F.ui, "record"), \
+                patch.object(sys, "argv", ["findings.py", "verdict", "t1", "settled", "--text",
+                                           "Holds on a deeper read.", "--iid", "2"]), \
+                redirect_stdout(io.StringIO()) as out:
+            F.main()
+        self.assertIn("Verdict: Settled", out.getvalue())
+        self.assertIn("What you asked", out.getvalue())
 
     def test_the_verdict_heading_names_what_is_wrong(self):
         F.store_verdict(self.state, self.t, "more", "Restore the 200.", case="comment-wrong")

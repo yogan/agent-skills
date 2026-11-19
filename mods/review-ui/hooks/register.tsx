@@ -580,19 +580,20 @@ const shownCard = async ($: EngineInterface, id: string, stdout: string) => {
   const view = viewOf(stdout)
   if (!view) return
   await update($, hostCard, () => ({ id, topic: view.topic ?? null, step: view.step ?? null, face: view.face ?? null }))
-  await noteCard($, id, view.topic)
+  await noteCard($, id, view.topic, view.text)
 }
 
-// A card come up, in the order cards do. A topic that waits on the other side or is closed
-// has a card only when it is opened to look at, and that card tells its whole story: the
-// older cards of the same topic shrink to their title (`drawCard`), so the chat tells it once.
-const noteCard = async ($: EngineInterface, id: string, topic: string | undefined) => {
-  const r = await read($, review)
-  const t = topic ? r?.topics.find(x => x.id === topic) : undefined
-  const isRetold = !!topic && !!standing(r, t)
+// A card come up, in the order cards do. One card per topic: every view of a topic is its
+// whole card (both skills' scripts print it so), so the newest holds all of it and the older
+// cards of the same topic shrink to their title line (`drawCard`). Only a card with the
+// topic's title on it takes over: a view that is not the topic's card (a diff on its own)
+// leaves the card before it whole. `text`: the view's, or null for a card that waits for
+// the judgment (`drawPending`), which is drawn with its title.
+const noteCard = async ($: EngineInterface, id: string, topic: string | undefined, text: string | null) => {
+  const isCard = !!topic && (text === null || !!titleOf(splitLead(text)[1]))
   await update($, cards, c => ({
     n: c.n + 1, at: { ...c.at, [id]: c.n + 1 },
-    retold: isRetold && topic ? { ...c.retold, [topic]: id } : c.retold,
+    retold: isCard && topic ? { ...c.retold, [topic]: id } : c.retold,
   }))
 }
 
@@ -620,7 +621,7 @@ const placeOutput = async ($: EngineInterface, stdout: string) => {
   await update($, placed, m => ({ ...m, [id]: view.text }))
   await update($, placedOf, m => ({ ...m, [id]: { topic: view.topic, draft: view.draft } }))
   await update($, hostCard, () => ({ id, topic: view.topic ?? null, step: view.step ?? null, face: view.face ?? null }))
-  await noteCard($, id, view.topic)
+  await noteCard($, id, view.topic, view.text)
   await $.ui.place({ id })
   return true
 }
@@ -654,7 +655,7 @@ const placeTopic = async ($: EngineInterface, s: ReviewSession, tid: string, foc
     const id = `card-${Object.keys(await read($, placed)).length + 1}`
     await update($, placed, m => ({ ...m, [id]: `${PENDING}${tid}` }))
     await update($, hostCard, () => ({ id, topic: tid }))
-    await noteCard($, id, tid)
+    await noteCard($, id, tid, null)
     await update($, card, () => ({ topic: tid, draft: null }))
     await $.ui.place({ id })
     if (!judgingNow(await read($, judging)).includes(tid)) await fillPending($, s)   // it finished meanwhile
@@ -668,7 +669,7 @@ const placeTopic = async ($: EngineInterface, s: ReviewSession, tid: string, foc
   await update($, placed, m => ({ ...m, [id]: view.text }))
   await update($, placedOf, m => ({ ...m, [id]: { topic: view.topic, draft: view.draft } }))
   await update($, hostCard, () => ({ id, topic: tid, step: view.step ?? null, face: view.face ?? null }))
-  await noteCard($, id, tid)
+  await noteCard($, id, tid, view.text)
   await update($, card, () => ({ topic: tid, draft: manifestOf(q.stdout)?.draft ?? null }))
   await $.ui.place({ id })
   planWanted = tid
@@ -1501,7 +1502,8 @@ const drawCard = async ($: EngineInterface, e: Parameters<EngineInterface['ui'][
   // the topic is no longer current: a card keeps the shape it had, rather than growing its
   // thread back when the sidebar moves on to another topic.
   const shown = titleOf(view)
-  // An older card of a topic opened again since: its title, and where its story is now.
+  // An older card of a topic with a newer one below: its title line alone, dim. The newer
+  // card holds the whole topic, so the chat shows each topic once, where it was shown last.
   const order = await read($, cards)
   const retold = shown ? order.retold[shown.id] : undefined
   // A card the mod never saw come up (drawn before it counted cards) is left as it is.
@@ -1510,10 +1512,9 @@ const drawCard = async ($: EngineInterface, e: Parameters<EngineInterface['ui'][
     const label: LabelOf = { state: shown.state, id: shown.id, kind: shown.kind ? { isDim: true, icon: shown.kind } : undefined }
     return (
       <Box borderStyle="round" borderDimColor paddingX={1} flexDirection="column" width="100%">
-        <Text bold dimColor>
+        <Text bold dimColor wrap="truncate-end">
           {drawLabel(Text, label, { bold: true, dimColor: true })}{shown.summary ? ` ${plainTitle(shown.summary)}` : ''}
         </Text>
-        <Text dimColor>Shown again below.</Text>
       </Box>
     )
   }

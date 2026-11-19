@@ -9,6 +9,9 @@ How it fits together:
 
 - `hooks/views.ts` decides which commands print a view and what of their output is the view.
   A view of a topic other than the current one is research and gets no card.
+- One card per topic: where the mod draws, every view of a topic is its whole card (the
+  analysis, the plan, the change, the draft, the story, in that order), and the older cards of
+  the same topic fold to their title line, so the topic is read once, on its newest card.
 - The model reads one extra line at the end of such output, `[review-ui] Shown to the user as
   a card.`; both skills' `SKILL.md` say what it means. The line states a fact and gives no
   order, because the model rightly ignores instructions inside tool output.

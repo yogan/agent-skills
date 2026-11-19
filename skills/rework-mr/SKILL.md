@@ -280,9 +280,8 @@ propose a plan…`): research it with the code at hand, store the proposal and s
   stored draft out of use, and the command that did it says so. Where the old words still
   hold exactly under the new plan (the user changed a reply-only plan to "add the line, then
   post that the rest comes later"), `set <t> --keep-reply` takes the draft up again: the card
-  shows it while the fix is still to make, leaves it out while the fix waits for its push (the
-  push is decided on the change alone), and after the push shows it with Post, in full, as it
-  will be posted, its `Fixed:` line included. A draft that is simply wrong now
+  shows it as the reply to post after the fix until the push, and after the push with Post,
+  in full, as it will be posted, its `Fixed:` line included. A draft that is simply wrong now
   goes with `set <t> --drop-reply`. Never tell the user to edit a draft before posting it:
   the card posts what it shows.
 - **A topic moved by word.** Whatever the user and you agree on in the chat is carried out

@@ -1114,10 +1114,11 @@ def render_quote(state, tid, remember=True):
         if x.get("url") and not ui.drawn():
             out.append(x["url"])
         # Code FIRST, comment second: the reviewer's note is about these lines, and a
-        # verdict on code the user cannot see is unreviewable. Once the topic's fix is pushed,
-        # what changed on them is that fix, which the card's steps link and the diff viewer
-        # shows whole (`pushed_steps`): a diff of it here would be a second, partial copy.
-        code = render_code_context(x, state.get("diff_base"), drift=not (ui.drawn() and t.get("diff_url")))
+        # verdict on code the user cannot see is unreviewable. Once the topic's fix is made,
+        # what changed on them is that fix, which the card's steps link and the sidebar and
+        # the diff viewer show whole: a diff of it here would be a second, partial copy.
+        made = ui.drawn() and (t.get("diff_url") or step_of(state, t) == "fixed")
+        code = render_code_context(x, state.get("diff_base"), drift=not made)
         if code:
             out += ["", code]
         # The file, anchor and the file as the comment saw it let a reviewer's
@@ -1165,30 +1166,33 @@ def differs_now(state, t):
 
 
 def _step_parts(state, t):
-    """What a topic's card says beyond its thread, where the mod draws: the plan proposed
-    (the agent's analysis, its recommendation, the change it would make), the plan agreed,
-    the fix in the working tree, or the reply drafted, whichever step the topic is at."""
+    """What a topic's card says beyond its thread, where the mod draws: the whole topic,
+    whatever step it is at, in one order: the agent's analysis and its recommendation, the
+    plan (proposed or agreed), the change (the one proposed or agreed, or the fix made), the
+    reply drafted, then the story and its latest event. Every view of a topic prints this
+    (`render_quote`), and the mod folds a topic's older cards away, so its newest card is the
+    only one left whole and must answer every button under it by itself."""
     st = step_of(state, t)
     out = []
-    told = False                          # the card tells the topic's story
-    p = proposal_of(state, t)
-    if st == "plan" and p:
-        out += [analysis_heading(), "", ui.with_recommendation(p["why"].strip()), ""]
-        if p.get("says") == "needs" and p.get("plan"):
-            out += [ui.heading_md(ui.ASKED_ICON, f"Plan: {OUTCOME_WORD.get(p.get('outcome'), 'Fix')}"),
-                    "", p["plan"].strip(), ""]
-            body = _fenced_diff(p.get("change"))
-            if body:
-                out += [*_change_blocks(body), ""]
-    elif is_pushed_fix(t) and st in ("reply", "none") and is_fix(t):
-        out += [*story_steps(state, t), ""]
-        told = True
-    elif st == "reply" and is_pushed_fix(t) and t.get("plan") and t.get("decision"):
-        # A pushed fix defended: the story tells it whole, the plan agreed last (to push
-        # back) its newest line, so no heading says it a second time.
-        out += [*story_steps(state, t), ""]
-        told = True
-    elif st in ("fix", "reply") and t.get("plan") and t.get("decision"):
+    p = proposal_of(state, t) if st == "plan" else None
+    agreed = bool(t.get("plan") and t.get("decision"))
+    # The story is told where there is one beyond the comment and the plan the card heads
+    # anyway: a fix pushed, a round before this one, a fix dropped, or nothing left to do.
+    told = (st == "none" or is_pushed_fix(t) or len(plans_of(t)) > 1 or bool(t.get("dropped")))
+    # The analysis the plan stands on: the one proposed while it is decided, the one agreed
+    # once it is.
+    why = (p or {}).get("why") if st == "plan" else t.get("decision") if agreed else None
+    if why and why.strip():
+        out += [analysis_heading(), "", ui.with_recommendation(why.strip()), ""]
+    if p and p.get("says") == "needs" and p.get("plan"):
+        out += [ui.heading_md(ui.ASKED_ICON, f"Plan: {OUTCOME_WORD.get(p.get('outcome'), 'Fix')}"),
+                "", p["plan"].strip(), ""]
+        body = _fenced_diff(p.get("change"))
+        if body:
+            out += [*_change_blocks(body), ""]
+    # A pushed fix's own plan, and a fix defended after its push, are the story's newest
+    # lines: no heading says them a second time.
+    elif agreed and st in ("fix", "fixed", "reply") and not (is_pushed_fix(t) and st == "reply"):
         word = OUTCOME_WORD.get(t.get("outcome") or "fix", "Fix")
         out += [ui.heading_md(ui.ASKED_ICON, f"Agreed plan: {word}"), "", t["plan"].strip(), ""]
         kept = t.get("kept") or {}
@@ -1196,32 +1200,35 @@ def _step_parts(state, t):
             out += [ui.step_md(ui.STATE_ICON["answered"],
                                f"{names_md(kept['who'])} wrote again; the plan still holds",
                                kept.get("at")), ""]
-    if st == "none" and not is_pushed_fix(t):
-        out += [*story_steps(state, t), ""]
-        told = True
+        # The change agreed with it, which Fix it is to make.
+        body = _fenced_diff(t.get("agreed_change")) if st == "fix" else None
+        if body:
+            out += [*_change_blocks(body), ""]
     if st == "fixed":
-        out += [render_fix(state, t["id"]).split("\n", 2)[-1], ""]
+        out += [*_fix_parts(state, t), ""]
+    x = state["threads"].get((t["thread_ids"] or [None])[0]) or {}
+    draft = draft_of(state, t)
     if differs_now(state, t):
-        # A reply posted by hand that no longer holds: its correction is the card, at any step.
-        return out + [posted.card_md(t, "reply"), ""]
+        # A reply posted by hand that no longer holds: its correction takes the draft's place.
+        out += [posted.card_md(t, "reply"), ""]
+    elif draft and not (st == "fixed" and early_reply(t)):
+        # One meant to go up ahead of the fix says so, as one kept for after it does; an
+        # early one is no longer offered once the fix is made, which its push answers.
+        head = ("Draft reply, to post ahead of the fix" if early_reply(t) and st != "reply"
+                else "Draft reply, to post after the fix" if st in ("fix", "fixed")
+                else "Draft reply")
+        out += [ui.heading_md(ui.DRAFT_ICON, head), "", _quote_draft(draft, x.get("file")), ""]
+    if told:
+        out += [*story_steps(state, t), ""]
     # The comment a press closed it with is the story's own line saying so: not twice.
     closing = None if told and close_in_story(state, t) else closing_line(state, t)
     if closing:
         # The latest event: the timeline's last step where the card tells one, so it goes on
-        # under the steps with no gap; else apart. Before a draft still to post.
+        # under the steps with no gap; else apart.
         if len(out) > 1 and out[-1] == "" and _STEP.match(out[-2]):
             out.insert(len(out) - 1, closing)
         else:
             out += [closing, ""]
-    draft = draft_of(state, t)
-    if draft and (st == "reply" or (st == "fix" and not early_reply(t))):
-        x = state["threads"].get((t["thread_ids"] or [None])[0]) or {}
-        # Kept through a plan that became a fix: on its card while the fix is still to make,
-        # so the words agreed are not lost from sight; not while the fix waits for its push,
-        # which is decided on the change alone; with Post after it, whole, as it is posted.
-        out += [ui.heading_md(ui.DRAFT_ICON, "Draft reply" if st == "reply"
-                              else "Draft reply, to post after the fix"), "",
-                _quote_draft(draft, x.get("file")), ""]
     return out
 
 
@@ -1622,6 +1629,17 @@ def render_reply_view(state, tid, body, refine=False):
         ),
         None,
     )
+    if ui.drawn():
+        # Where the mod draws, the topic's whole card, its draft in it: the older cards of the
+        # topic are folded away, so this one is all that is left to read. `refine` changes
+        # nothing there: what the sidebar shows (the code, the thread) the card leaves out.
+        quote = render_quote(state, tid)
+        shown = _quote_draft(body, path)
+        if shown in quote:
+            return quote
+        # A draft the card would not show (the step offers no post of it): it is asked to
+        # be shown, so it is, under the card.
+        return "\n".join([quote, "", ui.heading_md(ui.DRAFT_ICON, "Draft reply"), "", shown])
     out = []
     if refine and t.get("shown") != context_digest(state, tid):
         out.append(
@@ -1632,26 +1650,16 @@ def render_reply_view(state, tid, body, refine=False):
         )
         refine = False
     if not refine:
-        quote = render_quote(state, tid)
-        if ui.drawn() and draft_holds(state, t):
-            # The draft follows below, as the view's own part: not twice.
-            quote = quote.split(f"\n{ui.heading_md(ui.DRAFT_ICON, 'Draft reply')}", 1)[0].rstrip()
-        out += [quote, ""]
+        out += [render_quote(state, tid), ""]
     out += [
-        # Where the mod draws, headed as every draft is in both skills, a Copy beside it.
-        ui.heading_md(ui.DRAFT_ICON, "Draft reply") if ui.drawn()
-        else f"**Draft reply — {tref(tid)}:**" if refine else "**Draft reply:**",
+        f"**Draft reply — {tref(tid)}:**" if refine else "**Draft reply:**",
         "",
         _quote_draft(body, path),
     ]
-    if not ui.drawn():
-        # Where the mod draws, the card posts it; Copy says where it goes.
-        out += ["", f"Thread (to post on): {render_url(state, tid)}"]
-    if not ui.drawn():
-        # Where the mod draws, the card's own buttons ask this.
-        out += ["", "**`c`** copy to clipboard · **`p`** post on GitLab · "
-                "**`n`** next topic (already replied/resolved) · "
-                "or just type your thoughts to refine it."]
+    out += ["", f"Thread (to post on): {render_url(state, tid)}",
+            "", "**`c`** copy to clipboard · **`p`** post on GitLab · "
+            "**`n`** next topic (already replied/resolved) · "
+            "or just type your thoughts to refine it."]
     return "\n".join(out)
 
 
@@ -2797,7 +2805,6 @@ def render_fix(state, tid):
     and what you did, how big it is, whether it is the change agreed, and the commit it goes
     into. The diff itself is the sidebar's."""
     t = topic_for(state, tid) or die(f"no topic {tid}")
-    f = t.get("fix") or {}
     x = state["threads"].get((t["thread_ids"] or [None])[0]) or {}
     path = code_view.place_now((_git("rev-parse", "--show-toplevel") or "").strip(), x)
     title = title_md(state, t, t.get("summary") or "")
@@ -2806,6 +2813,15 @@ def render_fix(state, tid):
         # One form for the plan agreed wherever a card heads it: with its kind.
         word = OUTCOME_WORD.get(t.get("outcome") or "fix", "Fix")
         out += [ui.heading_md(ui.ASKED_ICON, f"Agreed plan: {word}"), "", t["plan"].strip(), ""]
+    return "\n".join(out + _fix_parts(state, t)).rstrip()
+
+
+def _fix_parts(state, t):
+    """A fix in the working tree, below the plan it carries out: whether you want it now,
+    how it differs from the plan, how big it is, the commits it goes into, and its checks
+    where they did not pass."""
+    f = t.get("fix") or {}
+    out = []
     # What changed, in short: the plan is above it and the thread in the sidebar, so neither
     # is told again; the checks only where they did not pass, as passing is what a shown
     # fix means.
@@ -2841,7 +2857,9 @@ def render_fix(state, tid):
         out.append(f"{ui.NEW_COMMIT_ICON} {subject}")
     if checks_of(t) != "passed":
         out += ([""] if out[-1] else []) + checks_line(t)
-    return "\n".join(out).rstrip()
+    while out and not out[-1]:
+        out.pop()
+    return out
 
 
 def mark_seen(state):
@@ -3665,7 +3683,9 @@ def main():
                     t["fix"]["made_on"] = was
                 CURRENT.jump(state, args.topic)
                 reload_open_viewer(notes)
-                emit(state, render_fix(state, args.topic), args.topic)
+                # The topic's whole card, the fix in it: the card the fix was made from is
+                # folded away once this one is up.
+                emit(state, render_quote(state, args.topic), args.topic)
                 save(path, state)
                 return
             save(path, state)
@@ -3825,8 +3845,10 @@ def main():
             except ValueError as e:
                 die(str(e))
             save(path, state)
-            emit(state, f"{title_md(state, t, t.get('summary') or '')}\n\n"
-                 + posted.card_md(t, "reply"), args.topic)
+            # Drawn, the topic's whole card, the correction in its draft's place.
+            emit(state, render_quote(state, t["id"], remember=False) if ui.drawn()
+                 else f"{title_md(state, t, t.get('summary') or '')}\n\n" + posted.card_md(t, "reply"),
+                 args.topic)
         elif args.ok:
             t.pop("post_differs", None)
             if early_reply(t) and t.pop("reply_early"):

@@ -1246,6 +1246,10 @@ def _render_quote(state, tid, refine=False):
     if refine and not (t.get("draft") or t.get("note")):
         die(f"--refine re-shows a reworded DRAFT and {tref(tid)} has none — everything it "
             f"renders is context. Use plain `quote {tid}`")
+    # Where the mod draws, every view of a topic is its whole card: the older cards of the
+    # topic are folded away, so the newest is all that is left to read, and what the sidebar
+    # shows (the code, the thread) the card leaves out by itself.
+    refine = refine and not ui.drawn()
     # A card wraps a long title to its own width, so where the mod draws the summary goes
     # in whole; a pasted heading is cut to a line.
     summ = (t.get("summary") if ui.drawn() else None) or short_summary(state, t)
@@ -1371,6 +1375,9 @@ def _render_quote(state, tid, refine=False):
         # card a press brings up has no model turn beside it.
         out += ["", ui.heading_md(ui.VERDICT_ICON, f"Verdict: {verdict_word(state, t, v)}"), "",
                 v["text"].strip()]
+    # A card's order, the same in both skills: what is decided on (the analysis, the
+    # verdict), the draft that answers it, then the story, its latest event last.
+    out += _draft_block(state, t, t.get("draft"), follow_up=True)
     if is_own_posted:
         # The topic's whole story, as rework-mr's card tells its own: every comment, every
         # push of the author's, then whom it waits on or what closed it, the latest event
@@ -1381,9 +1388,8 @@ def _render_quote(state, tid, refine=False):
         elif topic_status(state, t) == "open":
             out.append(ui.step_md(ui.STEP_WAITS_ICON, f"Waits on {first_name(state.get('author')) or 'the author'}"))
     elif closing:
-        # The latest thing that happened to the topic, last before what is decided on it.
+        # The latest thing that happened to the topic, the card's last line.
         out += ["", closing if ui.drawn() else f"_({closing})_"]
-    out += _draft_block(state, t, t.get("draft"), follow_up=True)
     return "\n".join(out).strip()
 
 
@@ -1518,29 +1524,16 @@ def render_answered(state, t, summ, v):
         out += ["", ui.heading_md(ui.DID_ICON, f"What {author} did"), "", did]
     out += ["", ui.heading_md(ui.VERDICT_ICON, f"Verdict: {verdict_word(state, t, v)}"), "",
             v["text"].strip()]
-    # The topic's whole story, then what closed it: one timeline, the latest event last.
+    # The follow-up that answers the verdict, then the topic's whole story and what closed
+    # it: one timeline, the latest event last, right above the buttons.
+    out += _draft_block(state, t, t.get("draft"), follow_up=True)
     steps = story_steps(state, t) + [x for x in [closing_line(state, t)] if x and not close_in_story(state, t)]
     if topic_status(state, t) == "open":
         steps.append(ui.step_md(ui.STEP_WAITS_ICON, f"Waits on {author}"))
     if steps:
         out += ["", *steps]
-    out += _draft_block(state, t, t.get("draft"), follow_up=True)
     t["shown"] = _digest(out)
     return "\n".join(out).strip()
-
-
-def render_verdict_change(state, t, before):
-    """The card of a verdict the chat changed: the topic's title, the new verdict, what it
-    was. The rest of the topic's card is unchanged and up already."""
-    v = verdict_of(state, t)
-    x = state["threads"].get(t["thread_ids"][0], {})
-    path = _place(state, x)
-    title = title_md(state, t, t.get("summary") or short_summary(state, t))
-    was = verdict_word(state, t, before)
-    out = [f"{title} · {loc_link_md(state, path)}" if path else title, "",
-           ui.heading_md(ui.VERDICT_ICON, f"Verdict: {verdict_word(state, t, v)}"),
-           *([f"_was: {was}_"] if was != verdict_word(state, t, v) else []), "", v["text"].strip()]
-    return "\n".join(out)
 
 
 def draft_body(state, tid):
@@ -4620,10 +4613,10 @@ def main():
         store_verdict(state, t, args.says, args.text, did=args.did, asked=args.asked,
                       case=args.case, unrelated=args.unrelated_push)
         if before and ui.drawn() and args.says != "wait":
-            # A verdict the chat changed (Analyse more): the topic's card is up already, so
-            # this shows what changed and nothing else.
+            # A verdict the chat changed (Analyse more): the topic's whole card with it, since
+            # the card up already is folded away once this one comes.
             save(path, state)
-            emit(state, render_verdict_change(state, t, before), t["id"])
+            emit(state, render_quote(state, t["id"]), t["id"])
         else:
             save(path, state)
             left = needs_verdict(state)
@@ -4690,7 +4683,9 @@ def main():
             except ValueError as e:
                 die(str(e))
             save(path, state)
-            emit(state, f"{title_md(state, t, t.get('summary') or '')}\n\n"
+            # Drawn, the topic's whole card, the correction under it.
+            emit(state, render_quote(state, t["id"]) if ui.drawn()
+                 else f"{title_md(state, t, t.get('summary') or '')}\n\n"
                  + posted.card_md(t, "comment", posted_code(state, t)), args.topic)
         elif args.ok:
             t.pop("post_differs", None)
