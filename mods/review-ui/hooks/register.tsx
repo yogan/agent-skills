@@ -139,12 +139,12 @@ const DISCUSSED_BG = '#2b3a55'
 // the bar's whole length shows as well as where the window is, and neither draws the eye. The
 // thumb under the pointer, dragged, or shown where a press would put it is a step lighter
 // (`lit`); while that preview shows, the thumb where the window is now fades to a step off
-// the track (`former`). Its marks are the theme's green, red and yellow for a file's added,
-// removed and changed rows, and its cyan for the topic's lines: each reads against the track,
-// the thumb and the lit thumb alike.
+// the track (`former`). Its marks are the theme's green, red and yellow (an orange on screen)
+// for a file's added, removed and replaced rows, as an IDE's gutter colours them, and its cyan
+// for the topic's lines: each reads against the track, the thumb and the lit thumb alike.
 const BAR_LOOK: BarLook = {
   track: '#262a3c', thumb: '#4f5679', lit: '#5c6490', former: '#363b55',
-  added: '#9ece6a', removed: '#f7768e', both: '#e0af68', topic: '#7dcfff',
+  added: '#9ece6a', removed: '#f7768e', modified: '#e0af68', topic: '#7dcfff',
 }
 // The link to a comment on GitLab, as a glyph (Nerd Fonts md-open_in_new). Mirrors
 // lib/fences.py's LINK_ICON.
@@ -2832,10 +2832,10 @@ export const register: Register = on => {
       // topic with no thread yet has its lines marked too: they are what the area is about.
       const topicRows = !isOtherFile && v.at ? { lo: v.at[0] - 1, hi: v.at[1] - 1 + B, to: firstOffset(v, room) - 1 } : undefined
       // Each row's diff sign at its place on the bar, the thread box's rows after the lines it
-      // is on. None for a file the MR adds or removes whole: one colour from top to bottom
-      // marks nothing, as in the file itself.
+      // is on, as no line at all (''). None for a file the MR adds or removes whole: one
+      // colour from top to bottom marks nothing, as in the file itself.
       const signs = v.whole ? undefined
-        : [...v.rows.slice(0, anchor).map(row => row[0]), ...Array.from({ length: B }, () => ' '), ...v.rows.slice(anchor).map(row => row[0])]
+        : [...v.rows.slice(0, anchor).map(row => row[0]), ...Array.from({ length: B }, () => ''), ...v.rows.slice(anchor).map(row => row[0])]
       // What the line says of the file, past its name: a word each, and only where the code
       // would otherwise look unexpected (or is the person's own, not pushed yet).
       const where = `${v.file}${v.line ? `:${v.start && v.start !== v.line ? `${v.start}–` : ''}${v.line}` : ''}`

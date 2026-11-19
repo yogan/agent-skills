@@ -4,7 +4,7 @@ import type { BarLook, BarSpec } from '../hooks/sidebar.ts'
 
 // Colours by name, so a drawing reads as words.
 const LOOK: BarLook = {
-  track: 'track', thumb: 'thumb', lit: 'lit', former: 'former', added: 'added', removed: 'removed', both: 'both', topic: 'topic',
+  track: 'track', thumb: 'thumb', lit: 'lit', former: 'former', added: 'added', removed: 'removed', modified: 'modified', topic: 'topic',
 }
 const spec = (more: Partial<BarSpec> = {}): BarSpec => ({ count: 24, shown: 8, from: 5, rows: 8, look: LOOK, ...more })
 const glyphs = (b: BarSpec, at: number | null = null, drag: number | null = null) => barPaint(b, { at, drag }).map(c => c.glyph).join('')
@@ -97,14 +97,40 @@ test("a file's changes stand on the cells for their rows, in the right half of a
   signs[10] = '+'
   signs[23] = '-'
   const changes = changeKinds(24, 8, signs)
-  expect(changes).toEqual([[2, 'added'], [3, 'both'], [7, 'removed']])
+  expect(changes).toEqual([[2, 'added'], [3, 'modified'], [7, 'removed']])
   const cells = barPaint(spec({ changes }))
   // On the thumb and off it alike: the half in the change's colour, the rest what is under it.
   expect(cells[2]).toMatchObject({ glyph: '▐', color: 'added', backgroundColor: 'thumb' })
-  expect(cells[3]).toMatchObject({ glyph: '▐', color: 'both', backgroundColor: 'thumb' })
+  expect(cells[3]).toMatchObject({ glyph: '▐', color: 'modified', backgroundColor: 'thumb' })
   expect(cells[7]).toMatchObject({ glyph: '▐', color: 'removed', backgroundColor: 'track' })
   // A cell the thumb's end covers less than half of is the track's behind a change.
   expect(barPaint(spec({ changes: [[1, 'added']] }))[1]).toMatchObject({ glyph: '▐', backgroundColor: 'track' })
+})
+
+test("a replaced line is one change wherever its rows fall, never a removal beside an addition", () => {
+  // A file of 63 lines with six lines replaced (each a removed row, then its added row): 69
+  // rows on 25 cells, under three to a cell, so most pairs fall across two cells.
+  const replaced = [9, 34, 37, 40, 48, 53]
+  const signs: string[] = []
+  for (let line = 1; line <= 63; line++) {
+    if (replaced.includes(line)) signs.push('-')
+    signs.push(replaced.includes(line) ? '+' : ' ')
+  }
+  const changes = changeKinds(69, 25, signs)
+  expect(changes.length).toBeGreaterThan(6)
+  expect(changes.every(([, kind]) => kind === 'modified')).toBe(true)
+  // A line added and another removed, rows apart but on one cell: neither is a replacement.
+  // The removed one shows, as the one no longer to be seen in the file.
+  expect(changeKinds(8, 2, [' ', '+', ' ', '-', ' ', ' ', ' ', ' '])).toEqual([[0, 'removed']])
+  expect(changeKinds(8, 2, [' ', '+', '+', ' ', '-', ' ', ' ', ' '])).toEqual([[0, 'added'], [1, 'removed']])
+  // Of a replaced line and an added one in one cell, the replaced one shows; of more added
+  // rows than replaced ones, the added.
+  expect(changeKinds(8, 1, ['-', '+', ' ', '+', ' ', ' ', ' ', ' '])).toEqual([[0, 'modified']])
+  expect(changeKinds(8, 1, ['-', '+', ' ', '+', '+', '+', ' ', ' '])).toEqual([[0, 'added']])
+  // A stretch of several removed rows and one added row is one replacement, over every cell.
+  expect(changeKinds(8, 4, [' ', '-', '-', '-', '+', ' ', ' ', ' '])).toEqual([[0, 'modified'], [1, 'modified'], [2, 'modified']])
+  // A box set in between the two halves of a replaced line ('' rows) leaves it one.
+  expect(changeKinds(8, 4, [' ', '-', '', '', '', '+', ' ', ' '])).toEqual([[0, 'modified'], [2, 'modified']])
 })
 
 test("the topic's mark is the left half of its cells, over the thumb, the track or a change", async () => {

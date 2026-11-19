@@ -190,9 +190,9 @@ export const thumbOf = (count: number, shown: number, from: number, rows: number
 // as a diff viewer's overview ruler marks them.
 export type BarLook = {
   track: string; thumb: string; lit: string; former: string
-  added: string; removed: string; both: string; topic: string
+  added: string; removed: string; modified: string; topic: string
 }
-export type ChangeKind = 'added' | 'removed' | 'both'
+export type ChangeKind = 'added' | 'removed' | 'modified'
 export type BarSpec = {
   count: number; shown: number; from: number; rows: number; look: BarLook
   topic?: { cells: number[]; to: number }
@@ -220,25 +220,42 @@ export const cellsOf = (count: number, rows: number, lo: number, hi: number): nu
   return Array.from({ length: b - a + 1 }, (_, i) => a + i)
 }
 
-// The cells of the track that stand for changed rows: for each, whether a row it stands for
-// is removed and whether one is added. `signs` is each row's diff sign at its place on the
-// track (rows the track has that are no line, such as a box set in among them, as ' '). Rows
-// in the window count too: a change does not stop being one while it shows.
-export const changeCells = (count: number, rows: number, signs: string[]): Map<number, { isRemoved: boolean; isAdded: boolean }> => {
-  const out = new Map<number, { isRemoved: boolean; isAdded: boolean }>()
-  signs.forEach((sign, m) => {
-    if (sign !== '-' && sign !== '+') return
-    const cell = cellOf(count, rows, m)
-    const was = out.get(cell) ?? { isRemoved: false, isAdded: false }
-    out.set(cell, sign === '-' ? { ...was, isRemoved: true } : { ...was, isAdded: true })
-  })
-  return out
-}
+// Of kinds that cover a cell equally, the one it shows: a replaced line before a removed one,
+// the line no longer in the file and easiest to miss, before an added one.
+const KIND_RANK: ChangeKind[] = ['modified', 'removed', 'added']
 
-// The same, as each cell's one kind: a cell with a removed and an added row both is a changed
-// stretch, as a diff viewer's ruler marks a line it replaced.
-export const changeKinds = (count: number, rows: number, signs: string[]): [number, ChangeKind][] =>
-  [...changeCells(count, rows, signs)].map(([cell, c]) => [cell, c.isAdded && c.isRemoved ? 'both' : c.isAdded ? 'added' : 'removed'])
+// The cells of the track that stand for changed rows, each with its one kind, as an IDE's
+// gutter and overview ruler mark them: a stretch of changed rows with removed and added rows
+// both is a replaced (modified) stretch, every row of it; one with only added rows is added,
+// one with only removed rows removed. The kind is the stretch's, not the row's: a replaced
+// line is a removed row and an added one, and where the two fall in two cells, each kind by
+// its row would mark a removal and an addition that are not there. A cell that stands for
+// rows of several stretches shows the kind most of its changed rows have.
+//
+// `signs` is each row's diff sign at its place on the track; a row that is no line, such as a
+// box set in among them, is '', which neither ends a stretch nor counts in it, so a box set
+// between the two halves of a replaced line leaves it one. Rows in the window count too: a
+// change does not stop being one while it shows.
+export const changeKinds = (count: number, rows: number, signs: string[]): [number, ChangeKind][] => {
+  const isChange = (s: string | undefined) => s === '-' || s === '+'
+  const tally = new Map<number, Record<ChangeKind, number>>()
+  for (let lo = 0; lo < signs.length;) {
+    if (!isChange(signs[lo])) { lo++; continue }
+    let hi = lo
+    while (hi + 1 < signs.length && (isChange(signs[hi + 1]) || signs[hi + 1] === '')) hi++
+    const stretch = signs.slice(lo, hi + 1)
+    const kind: ChangeKind = stretch.includes('-') && stretch.includes('+') ? 'modified' : stretch.includes('+') ? 'added' : 'removed'
+    stretch.forEach((s, k) => {
+      if (!isChange(s)) return
+      const cell = cellOf(count, rows, lo + k)
+      const t = tally.get(cell) ?? { modified: 0, removed: 0, added: 0 }
+      t[kind] += 1
+      tally.set(cell, t)
+    })
+    lo = hi + 1
+  }
+  return [...tally].map(([cell, t]) => [cell, KIND_RANK.reduce((best, k) => (t[k] > t[best] ? k : best))])
+}
 
 // Where the pointer is on the track, in eighths from its top: the place within the cell where
 // the terminal reports one (none does through tmux), else the cell's middle.

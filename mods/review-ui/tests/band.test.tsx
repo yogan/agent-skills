@@ -1414,7 +1414,7 @@ test("the file's scrollbar marks where the file has changes, in their colours, a
   // The right half of a cell, over the track: a replaced line in yellow, an added one in green,
   // in order down the lower part of the bar.
   const ticks = cells.flatMap((c, i) => (c.glyph === '▐' ? [{ i, color: c.color, bg: c.bg }] : []))
-  expect(ticks.map(t => t.color)).toEqual([look.both, look.added])
+  expect(ticks.map(t => t.color)).toEqual([look.modified, look.added])
   expect(ticks.every(t => t.bg === look.track)).toBe(true)
   expect(ticks[0]?.i).toBeGreaterThan(cells.length / 2)
   await click(ui, 'code', ticks[0]?.i as number)

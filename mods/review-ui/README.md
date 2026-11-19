@@ -75,8 +75,9 @@ How it fits together:
   while it has the keys) closes it, and the band's Show sidebar button brings it back.
 - Whatever scrolls has a scrollbar like an IDE's: the pointer over its track shows the thumb
   where a press would put it, at its full length; a press puts it there, and the thumb drags.
-  A file's bar marks its added, removed and changed lines, and the topic's lines, over the
-  thumb as over the track. It is a module of its own (`hooks/scrollbar.tsx`, a `Client`), so
+  A file's bar marks its added, removed and replaced lines (green, red, orange, as an IDE's
+  gutter: a replaced line is one change, not a removal beside an addition), and the topic's
+  lines, over the thumb as over the track. It is a module of its own (`hooks/scrollbar.tsx`, a `Client`), so
   it follows the pointer with no redraw of the sidebar; a surface without one draws it at
   rest, a press on a cell jumping there.
 
