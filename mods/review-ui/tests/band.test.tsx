@@ -3,6 +3,7 @@ import type { Engine } from 'claude-code/testing'
 import { expect, mock, test } from 'claude-code/testing'
 import { inboxMark } from '../hooks/panel.ts'
 import { buttonsFor, CI_PROMPT, endOf, iconOf, inboxOf, isMergeWatched, judgingOf, proposePrompt, sentenceOf, untilOf } from '../hooks/review.ts'
+import { BAR_LOWER, BAR_UPPER, barPaint, type BarLook, type BarSpec } from '../hooks/sidebar.ts'
 
 // The test runtime's timer, which the engine's types leave out (a mod has no timers of its own).
 declare const setTimeout: (run: () => void, ms: number) => unknown
@@ -155,23 +156,34 @@ const openReview = async ($: Engine, w: World, stdout: string) => {
 const labels = async (ui: { findAll: (q: { type: string }) => Promise<{ props: Record<string, unknown> }[]> }) =>
   (await ui.findAll({ type: 'Button' })).map(b => b.props.label)
 
-// An area's scrollbar, by its name (`list`, `files`, `code`, `box`, `mr`, `thread`): a press on
-// its track jumps there, `page` presses its top cell (`up`) or its bottom one (`down`). `bar` is
-// the thumb's cells and the track's, in order (null where the area has no bar).
-type Scrolls = { findAll: (q: { type: string }) => Promise<{ key?: unknown; text?: unknown; props: Record<string, unknown> }[]>; press: (q: { key: string }) => Promise<unknown> }
-const page = async (ui: Scrolls, tag: string, dir: 'up' | 'down') => {
-  const keys = (await ui.findAll({ type: 'Button' })).map(b => String(b.key ?? ''))
-    .filter(k => k.startsWith(`${tag}-${dir === 'up' ? 'above' : 'below'}-`))
-  const key = dir === 'up' ? keys[0] : keys[keys.length - 1]
-  if (!key) throw new Error(`${tag}'s scrollbar has no track ${dir === 'up' ? 'above' : 'below'} its thumb`)
-  await ui.press({ key })
+// An area's scrollbar, by its name (`list`, `files`, `code`, `box`, `mr`, `thread`), drawn by
+// its own module under the key `bar-<name>`: a press on its track jumps there, `page` presses
+// its top cell (`up`) or its bottom one (`down`). `bar` is the thumb's cells and the track's,
+// in order, as the sidebar handed them to the bar (null where the area has no bar).
+type Scrolls = {
+  find: (q: { type: string; key?: string }) => Promise<{ props: Record<string, unknown> } | undefined>
+  findAll: (q: { type: string; in?: string }) => Promise<{ text?: unknown; props: Record<string, unknown> }[]>
+  pointer: (e: { type: 'down' | 'up' | 'move' | 'leave'; x: number; y: number; button?: 'left'; in: string }) => Promise<void>
 }
+// The bar as its module drew it: each cell's glyph and colours.
+const drawnBar = async (ui: Scrolls, tag: string) => (await ui.findAll({ type: 'Text', in: `bar-${tag}` }))
+  .map(t => ({ glyph: String(t.text), color: t.props.color, bg: t.props.backgroundColor }))
+// A press on cell `y` of an area's bar, as a click there: the button down, then up.
+const click = async (ui: Scrolls, tag: string, y: number) => {
+  await ui.pointer({ type: 'down', x: 0, y, button: 'left', in: `bar-${tag}` })
+  await ui.pointer({ type: 'up', x: 0, y, button: 'left', in: `bar-${tag}` })
+}
+const specOf = async (ui: Scrolls, tag: string) =>
+  (await ui.find({ type: 'Client', key: `bar-${tag}` }))?.props.props as BarSpec | undefined
 const bar = async (ui: Scrolls, tag: string) => {
-  const keys = [...(await ui.findAll({ type: 'Button' })), ...(await ui.findAll({ type: 'Box' }))].map(b => String(b.key ?? ''))
-  const cells = keys.filter(k => new RegExp(`^${tag}-(bar|above|below)-\\d+$`).test(k))
-    .map(k => ({ i: Number(k.split('-').pop()), at: k.includes('-above-') ? 'above' : k.includes('-below-') ? 'below' : 'thumb' }))
-    .sort((a, b) => a.i - b.i)
-  return cells.length ? cells.map(c => c.at) : null
+  const spec = await specOf(ui, tag)
+  return spec ? barPaint(spec).map(c => c.at) : null
+}
+const page = async (ui: Scrolls, tag: string, dir: 'up' | 'down') => {
+  const cells = await bar(ui, tag)
+  const y = dir === 'up' ? 0 : (cells?.length ?? 0) - 1
+  if (!cells || cells[y] === 'thumb') throw new Error(`${tag}'s scrollbar has no track ${dir === 'up' ? 'above' : 'below'} its thumb`)
+  await click(ui, tag, y)
 }
 
 test("the band's buttons are chips with no hotkey, Show sidebar too, with its icon", async ($, on) => {
@@ -511,9 +523,9 @@ test('news in a folded group is marked on its header; a scrolled list marks none
   // Closed is folded: its header carries the mark its row would.
   expect((await ui.findAll({ type: 'Text' })).some(t => t.text === ` ${news}` && t.props.color === 'yellow')).toBe(true)
   // t1 is scrolled out above: its row's own mark says it when it comes into view, the bar
-  // carries no tick for it.
+  // carries no mark for it.
   expect((await bar(ui, 'list'))?.[0]).toBe('above')
-  expect((await ui.findAll({ type: 'Text' })).some(t => t.text === '━')).toBe(false)
+  expect((await specOf(ui, 'list'))?.topic).toBeUndefined()
   await ui.unmount()
 })
 
@@ -1342,26 +1354,27 @@ test("the thread scrolls out of view with its lines, marked on the file's scroll
   const w = world(on, [stateOf('t1', [topic('t1', 'open')], { thread })], { code: { stdout: JSON.stringify(code) } })
   await openReview($, w, view('t1'))
   const ui = await $.ui.mount({ ...PANEL, surface: 'terminal' })
+  const look = (await specOf(ui, 'code'))?.look as BarLook
   const md = async () => (await ui.findAll({ type: 'Markdown' })).map(m => m.props.text as string).join('\n')
-  const mark = async () => (await ui.findAll({ type: 'Button' })).map(b => String(b.key ?? '')).find(k => k.startsWith('code-mark-'))
+  const marks = async () => (await drawnBar(ui, 'code')).flatMap((c, i) => (c.glyph === '▌' && c.color === look.topic ? [i] : []))
   expect(await md()).toContain('odd')
-  expect(await mark()).toBeUndefined()                                      // in view: no mark
+  // Its line and the thread under it, in view: marked all the same, near the top.
+  const at = await marks()
+  expect(at.length).toBeGreaterThan(0)
+  expect(Math.max(...at)).toBeLessThan(3)
   await page(ui, 'code', 'down')                                            // to the end
   expect(firstLine((await ui.findAll({ type: 'Code' }))[0]?.props.source)).toBeGreaterThan(10)
-  // Out of view with its lines: gone from the file, a mark near the top of its scrollbar.
+  // Out of view with its lines: gone from the file, its mark where it was.
   expect(await md()).not.toContain('odd')
   expect(await ui.find({ type: 'Button', key: 'thread-back' })).toBeUndefined()
-  const key = await mark()
-  expect(Number(key?.split('-').pop())).toBeLessThan(3)
-  // One place, one mark.
-  expect((await ui.findAll({ type: 'Button' })).filter(b => String(b.key ?? '').startsWith('code-mark-'))).toHaveLength(1)
-  await ui.press({ key: key as string })
+  expect(await marks()).toEqual(at)
+  await click(ui, 'code', at[0] as number)
   expect(firstLine((await ui.findAll({ type: 'Code' }))[0]?.props.source)).toBeLessThanOrEqual(10)
   expect(await md()).toContain('odd')
   await ui.unmount()
 })
 
-test("the file's scrollbar ticks where the file has changes, in their colours, a press there going to them", async ($, on) => {
+test("the file's scrollbar marks where the file has changes, in their colours, a press there going to them", async ($, on) => {
   // 200 lines: line 150 replaced, line 180 added, out of the window that opens on line 10.
   const rows: unknown[][] = [...codeOf(200, [10, 10]).rows]
   rows.splice(149, 1, ['-', 150, null, 'old'], ['+', null, 150, 'new'])
@@ -1370,79 +1383,112 @@ test("the file's scrollbar ticks where the file has changes, in their colours, a
   const w = world(on, [stateOf('t1', [topic('t1', 'open')])], { code: { stdout: JSON.stringify(code) } })
   await openReview($, w, view('t1'))
   const ui = await $.ui.mount({ ...PANEL, surface: 'terminal' })
-  const ticks = (await ui.findAll({ type: 'Button' })).filter(b => String(b.key ?? '').startsWith('code-change-'))
-  expect(ticks.length).toBe(2)
-  const glyphs = JSON.stringify(ticks.map(t => t.children))
-  expect(glyphs).toContain('"color":"red","backgroundColor":"green"')     // replaced: both halves
-  expect(glyphs).toContain('▐')                                           // added alone: the right half
-  // The ticks lie in the lower part of the bar, in order.
-  const cells = ticks.map(t => Number(String(t.key).split('-').pop()))
-  expect(cells[0]).toBeLessThan(cells[1] as number)
-  await ui.press({ key: ticks[0]?.key as string })
+  const look = (await specOf(ui, 'code'))?.look as BarLook
+  const cells = await drawnBar(ui, 'code')
+  // The right half of a cell, over the track: a replaced line in yellow, an added one in green,
+  // in order down the lower part of the bar.
+  const ticks = cells.flatMap((c, i) => (c.glyph === '▐' ? [{ i, color: c.color, bg: c.bg }] : []))
+  expect(ticks.map(t => t.color)).toEqual([look.both, look.added])
+  expect(ticks.every(t => t.bg === look.track)).toBe(true)
+  expect(ticks[0]?.i).toBeGreaterThan(cells.length / 2)
+  await click(ui, 'code', ticks[0]?.i as number)
   expect(firstLine((await ui.findAll({ type: 'Code' }))[0]?.props.source)).toBeGreaterThan(100)
+  // Under the thumb now, the change reads on the thumb: the same half, the thumb behind it.
+  const after = (await drawnBar(ui, 'code'))[ticks[0]?.i as number]
+  expect(after?.glyph).toBe('▐')
+  expect([look.thumb, look.lit]).toContain(after?.bg)
   await ui.unmount()
 })
 
-test("under the pointer, a change tick looks as any cell of the track does: the thumb's colour, no half block", async ($, on) => {
-  // The pointer inverts a button: a half block in red or green turned into its other half in
-  // the track's colour. The tick's hover paints the whole cell in the thumb's colour instead,
-  // which the inversion leaves as it is, as it does an empty cell.
-  const rows: unknown[][] = [...codeOf(200, [10, 10]).rows]
-  rows.splice(149, 1, ['-', 150, null, 'old'], ['+', null, 150, 'new'])
-  const w = world(on, [stateOf('t1', [topic('t1', 'open')])], { code: { stdout: JSON.stringify(codeOf(200, [10, 10], { rows })) } })
+test('hovering the track shows the thumb where a press would put it, whole; the thumb where it is fades', async ($, on) => {
+  // The topic near the end and the window at the top: its mark is apart from the thumb and from
+  // where the pointer goes.
+  const w = world(on, [stateOf('t1', [topic('t1', 'draft')])], { code: { stdout: JSON.stringify(codeOf(200, [190, 190])) } })
   await openReview($, w, view('t1'))
   const ui = await $.ui.mount({ ...PANEL, surface: 'terminal' })
-  const ticks = (await ui.findAll({ type: 'Button' })).filter(b => String(b.key ?? '').startsWith('code-change-'))
-  expect(ticks.length).toBe(1)
-  expect(JSON.stringify(ticks[0]?.children)).toContain('"hover":{"color":"#4f5679","backgroundColor":"#4f5679"}')
+  const look = (await specOf(ui, 'code'))?.look as BarLook
+  await page(ui, 'code', 'up')
+  await ui.pointer({ type: 'leave', x: 0, y: 0, in: 'bar-code' })              // the pointer off it
+  const spec = await specOf(ui, 'code') as BarSpec
+  // How much of the bar is drawn in a colour, in eighths of a cell: a full block is eight, a
+  // partial one as many as it fills.
+  const eighths = (cells: Awaited<ReturnType<typeof drawnBar>>, color: string) => cells
+    .filter(c => c.color === color && c.glyph !== ' ')
+    .reduce((n, c) => n + Math.max(BAR_LOWER.indexOf(c.glyph as never), BAR_UPPER.indexOf(c.glyph as never)), 0)
+  const lit = async () => (await drawnBar(ui, 'code')).flatMap((c, i) => (c.color === look.lit && c.glyph !== ' ' ? [`${i}${c.glyph}`] : []))
+  const atRest = await drawnBar(ui, 'code')
+  const thumb = eighths(atRest, look.thumb)
+  expect(thumb).toBeGreaterThan(16)
+  expect(eighths(atRest, look.lit)).toBe(0)
+  // Over the track below the thumb: the thumb there, at its full length and lit, the one at
+  // the window faint, and nothing scrolled yet.
+  const y = Math.floor(spec.rows / 2) + 2
+  await ui.pointer({ type: 'move', x: 0, y, in: 'bar-code' })
+  const hovered = await drawnBar(ui, 'code')
+  expect(eighths(hovered, look.lit)).toBe(thumb)
+  expect(eighths(hovered, look.former)).toBe(thumb)
+  expect(eighths(hovered, look.thumb)).toBe(0)
+  expect(hovered[y]?.color).toBe(look.lit)
+  expect((await specOf(ui, 'code'))?.from).toBe(spec.from)
+  // The press puts it exactly there: the thumb where the preview was, lit under the pointer,
+  // and the faint one gone.
+  const preview = await lit()
+  await click(ui, 'code', y)
+  expect(await lit()).toEqual(preview)
+  expect(eighths(await drawnBar(ui, 'code'), look.former)).toBe(0)
+  // Off the bar: at rest again.
+  await ui.pointer({ type: 'leave', x: 0, y, in: 'bar-code' })
+  expect(eighths(await drawnBar(ui, 'code'), look.thumb)).toBe(thumb)
   await ui.unmount()
 })
 
-test("the topic's lines out of the window are marked on the file's scrollbar, with no thread yet too", async ($, on) => {
+test('a drag of the thumb moves the file with it, from where it was grabbed', async ($, on) => {
+  const w = world(on, [stateOf('t1', [topic('t1', 'draft')])], { code: { stdout: JSON.stringify(codeOf(200, [10, 10])) } })
+  await openReview($, w, view('t1'))
+  const ui = await $.ui.mount({ ...PANEL, surface: 'terminal' })
+  const top = async () => firstLine((await ui.findAll({ type: 'Code' }))[0]?.props.source)
+  const grab = ((await bar(ui, 'code')) ?? []).indexOf('thumb')
+  const before = await top()
+  await ui.pointer({ type: 'down', x: 0, y: grab, button: 'left', in: 'bar-code' })
+  expect(await top()).toBe(before)                                          // grabbed: not moved
+  await ui.pointer({ type: 'move', x: 0, y: grab + 5, button: 'left', in: 'bar-code' })
+  const mid = await top()
+  expect(mid).toBeGreaterThan(before + 20)                                  // five cells: a fifth of the way
+  // Past the bar's foot the drag goes on, to the end.
+  await ui.pointer({ type: 'move', x: 0, y: 99, button: 'left', in: 'bar-code' })
+  await ui.pointer({ type: 'up', x: 0, y: 99, button: 'left', in: 'bar-code' })
+  expect(((await bar(ui, 'code')) ?? []).at(-1)).toBe('thumb')
+  await ui.unmount()
+})
+
+test("the topic's lines are marked on the file's scrollbar in view and out, with no thread yet too", async ($, on) => {
   const w = world(on, [stateOf('t1', [topic('t1', 'draft')])], { code: { stdout: JSON.stringify(codeOf(200, [100, 100])) } })
   await openReview($, w, view('t1'))
   const ui = await $.ui.mount({ ...PANEL, surface: 'terminal' })
-  const mark = async () => (await ui.findAll({ type: 'Button' })).map(b => String(b.key ?? '')).find(k => k.startsWith('code-mark-'))
-  expect(await mark()).toBeUndefined()                                      // in view: no mark
+  const look = (await specOf(ui, 'code'))?.look as BarLook
+  const mark = async () => (await drawnBar(ui, 'code')).findIndex(c => c.glyph === '▌' && c.color === look.topic)
+  // In view: on the thumb, which stays behind it.
+  const at = await mark()
+  expect(at).toBeGreaterThan(0)
+  expect([look.thumb, look.lit]).toContain((await drawnBar(ui, 'code'))[at]?.bg)
   await page(ui, 'code', 'up')                                              // to the top
-  const key = await mark()
-  expect(key).toBeDefined()
-  await ui.press({ key: key as string })
+  expect(await mark()).toBe(at)
+  expect((await drawnBar(ui, 'code'))[at]?.bg).toBe(look.track)
+  // Hovered, the mark shows where a press on it goes: back to the topic's lines.
+  await ui.pointer({ type: 'move', x: 0, y: at, in: 'bar-code' })
+  expect((await drawnBar(ui, 'code')).some(c => c.color === look.lit)).toBe(true)
+  await click(ui, 'code', at)
   expect(firstLine((await ui.findAll({ type: 'Code' }))[0]?.props.source)).toBeGreaterThan(50)
   await ui.unmount()
 })
 
-test("where the thumb covers the topic's mark, its cell is drawn in the mark's colour, its shape kept", async ($, on) => {
-  // 200 lines, the topic's on line 100: on a track of a cell per ten lines, a window that ends
-  // a few lines above it puts the thumb on the mark's cell.
-  const w = world(on, [stateOf('t1', [topic('t1', 'draft')])], { code: { stdout: JSON.stringify(codeOf(200, [100, 100])) } })
-  await openReview($, w, view('t1'))
-  const ui = await $.ui.mount({ ...PANEL, surface: 'terminal' })
-  const thumbs = async () => (await ui.findAll({ type: 'Box' })).filter(b => /^code-bar-\d+$/.test(String(b.key ?? '')))
-  // Each cell of the track below the thumb pressed in turn, from the top, until the thumb
-  // stands on the mark's cell.
-  let found = false
-  for (let k = 0; k < 30 && !found; k += 1) {
-    await page(ui, 'code', 'up')
-    const below = (await ui.findAll({ type: 'Button' })).map(b => String(b.key ?? '')).filter(x => x.startsWith('code-below-'))
-    if (k >= below.length) break
-    await ui.press({ key: below[k] as string })
-    found = JSON.stringify(await thumbs()).includes('"color":"cyan"')
-  }
-  expect(found).toBe(true)
-  // Never a tick and a thumb on one cell: the tick gives the cell up to the thumb.
-  const cells = (await thumbs()).map(b => Number(String(b.key).split('-').pop()))
-  const marks = (await ui.findAll({ type: 'Button' })).map(b => String(b.key ?? '')).filter(k => k.startsWith('code-mark-'))
-  for (const m of marks) expect(cells).not.toContain(Number(m.split('-').pop()))
-  await ui.unmount()
-})
-
-test("a file the MR adds whole has no change ticks: one colour from top to bottom marks nothing", async ($, on) => {
+test("a file the MR adds whole has no change marks: one colour from top to bottom marks nothing", async ($, on) => {
   const code = codeOf(200, [10, 10], { whole: 'added', rows: codeOf(200, [10, 10]).rows.map(r => ['+', null, r[2], r[3]]) })
   const w = world(on, [stateOf('t1', [topic('t1', 'open')])], { code: { stdout: JSON.stringify(code) } })
   await openReview($, w, view('t1'))
   const ui = await $.ui.mount({ ...PANEL, surface: 'terminal' })
-  expect((await ui.findAll({ type: 'Button' })).filter(b => String(b.key ?? '').startsWith('code-change-'))).toHaveLength(0)
+  expect((await specOf(ui, 'code'))?.changes).toBeUndefined()
+  expect((await drawnBar(ui, 'code')).some(c => c.glyph === '▐')).toBe(false)
   await ui.unmount()
 })
 
@@ -3238,7 +3284,7 @@ test('a thread with no file is the thread box, always in full, scrolling on its 
   expect(await panel.find({ type: 'Button', key: 'thread-open' })).toBeUndefined()   // never folded
   // Taller than its area: its own scrollbar, its rows a window of the thread, the reply
   // further down coming into view as it scrolls.
-  expect(await panel.find({ type: 'Box', key: 'box-bar' })).toBeDefined()
+  expect(await bar(panel, 'box')).not.toBeNull()
   const md = async () => (await panel.findAll({ type: 'Markdown' })).map(m => String(m.props.text))
   // At its end, on the newest comment; the thread's start comes into view as it scrolls up.
   expect(await md()).toContain('will check')

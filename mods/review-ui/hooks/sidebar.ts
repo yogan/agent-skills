@@ -181,46 +181,160 @@ export const thumbOf = (count: number, shown: number, from: number, rows: number
   return { top, end: top + size }
 }
 
-// Each cell of the track: what of it the thumb covers, as the glyph that draws it (a space
-// where it covers nothing), and whether the cell lies above the thumb, in it, or below it.
-export const barCells = (count: number, shown: number, from: number, rows: number):
-  { glyph: string; at: 'above' | 'thumb' | 'below' }[] => {
-  const { top, end } = thumbOf(count, shown, from, rows)
-  return Array.from({ length: rows }, (_, i) => {
-    const a = i * 8
-    const lo = Math.max(a, top)
-    const hi = Math.min(a + 8, end)
-    if (hi <= lo) return { glyph: ' ', at: a + 8 <= top ? 'above' as const : 'below' as const }
-    if (lo === a && hi === a + 8) return { glyph: '█', at: 'thumb' as const }
-    // Starting inside the cell, the thumb fills its lower part; ending inside, its upper part.
-    return { glyph: hi === a + 8 ? BAR_LOWER[a + 8 - lo] as string : BAR_UPPER[hi - a] as string, at: 'thumb' as const }
-  })
+// What a scrollbar draws, as plain data: the sidebar works it out and hands it to the bar's
+// own drawing (scrollbar.tsx), which draws it again as the pointer moves over it, with no
+// round trip to the sidebar.
+//
+// `look`: its colours. `topic`: the cells standing for the lines the area is about, and the
+// row a press on them takes the window to. `changes`: the cells standing for changed rows,
+// as a diff viewer's overview ruler marks them.
+export type BarLook = {
+  track: string; thumb: string; lit: string; former: string
+  added: string; removed: string; both: string; topic: string
+}
+export type ChangeKind = 'added' | 'removed' | 'both'
+export type BarSpec = {
+  count: number; shown: number; from: number; rows: number; look: BarLook
+  topic?: { cells: number[]; to: number }
+  changes?: [number, ChangeKind][]
+}
+// What the pointer is doing to it: where it rests, in eighths of a cell from the track's top
+// (null: off the bar), and the row a drag holds the window at (null: no drag).
+export type BarPointer = { at: number | null; drag: number | null }
+// One cell as drawn, whether it lies above the thumb, in it or below it, and whether it stands
+// for the topic's lines.
+export type BarCell = {
+  glyph: string; color: string; backgroundColor: string
+  at: 'above' | 'thumb' | 'below'; isTopic: boolean
 }
 
-// The cells of the track standing for rows out of the window (`marks`, row indexes): where a
-// row with news lies that the person cannot see, the bar says so.
-export const markedCells = (count: number, shown: number, from: number, rows: number, marks: number[]): Set<number> =>
-  new Set(marks.filter(m => m < from || m >= from + shown)
-    .map(m => Math.min(rows - 1, Math.floor(m * rows / Math.max(1, count)))))
+// The cell a row of the area stands on.
+const cellOf = (count: number, rows: number, m: number): number =>
+  Math.min(rows - 1, Math.max(0, Math.floor(m * rows / Math.max(1, count))))
 
-// The cells of the track that stand for changed rows, as a diff viewer's overview ruler marks
-// them: for each, whether a row it stands for is removed and whether one is added. `signs` is
-// each row's diff sign at its place on the track (rows the track has that are no line, such
-// as a box set in among them, as ' '). Unlike `markedCells`, rows in the window count too: a
-// change does not stop being one while it shows.
+// The cells that stand for rows `lo`..`hi` (row indexes, from 0): every one between, so a
+// long stretch is as long on the bar as in the area.
+export const cellsOf = (count: number, rows: number, lo: number, hi: number): number[] => {
+  const a = cellOf(count, rows, lo)
+  const b = cellOf(count, rows, Math.max(lo, hi))
+  return Array.from({ length: b - a + 1 }, (_, i) => a + i)
+}
+
+// The cells of the track that stand for changed rows: for each, whether a row it stands for
+// is removed and whether one is added. `signs` is each row's diff sign at its place on the
+// track (rows the track has that are no line, such as a box set in among them, as ' '). Rows
+// in the window count too: a change does not stop being one while it shows.
 export const changeCells = (count: number, rows: number, signs: string[]): Map<number, { isRemoved: boolean; isAdded: boolean }> => {
   const out = new Map<number, { isRemoved: boolean; isAdded: boolean }>()
   signs.forEach((sign, m) => {
     if (sign !== '-' && sign !== '+') return
-    const cell = Math.min(rows - 1, Math.floor(m * rows / Math.max(1, count)))
+    const cell = cellOf(count, rows, m)
     const was = out.get(cell) ?? { isRemoved: false, isAdded: false }
     out.set(cell, sign === '-' ? { ...was, isRemoved: true } : { ...was, isAdded: true })
   })
   return out
 }
 
-// Where a press on cell `cell` of a scrollbar's track scrolls to (the row the window then
-// starts at): its share of the way down the track, of the way the window can go. A press on
-// the top cell goes to the top, on the bottom one to the end, from wherever the window is.
-export const jumpOf = (count: number, shown: number, rows: number, cell: number): number =>
-  rows <= 1 ? 0 : Math.round(Math.max(0, count - shown) * Math.min(1, Math.max(0, cell / (rows - 1))))
+// The same, as each cell's one kind: a cell with a removed and an added row both is a changed
+// stretch, as a diff viewer's ruler marks a line it replaced.
+export const changeKinds = (count: number, rows: number, signs: string[]): [number, ChangeKind][] =>
+  [...changeCells(count, rows, signs)].map(([cell, c]) => [cell, c.isAdded && c.isRemoved ? 'both' : c.isAdded ? 'added' : 'removed'])
+
+// Where the pointer is on the track, in eighths from its top: the place within the cell where
+// the terminal reports one (none does through tmux), else the cell's middle.
+export const eighthOf = (y: number, fine?: number): number => Math.floor((fine ?? y + 0.5) * 8)
+
+// The row the window starts at for a thumb whose top is `top` eighths down the track: the
+// thumb's share of the way it can go, of the way the window can.
+export const fromTop = (count: number, shown: number, rows: number, top: number): number => {
+  const { top: t, end } = thumbOf(count, shown, 0, rows)
+  const room = rows * 8 - (end - t)
+  const max = count - shown
+  if (max <= 0 || room <= 0) return 0
+  return Math.round(max * Math.min(room, Math.max(0, top)) / room)
+}
+
+// Where a press on the track takes the window, `at` eighths down it: the thumb's middle under
+// the pointer, as an IDE's scrollbar does, so the top of the track is the top of the area and
+// its foot the end. The preview a hover shows is exactly the thumb this puts there.
+export const centredOn = (count: number, shown: number, rows: number, at: number): number => {
+  const { top, end } = thumbOf(count, shown, 0, rows)
+  return fromTop(count, shown, rows, at - Math.floor((end - top) / 2))
+}
+
+// Whether `at` is on the thumb, which a press there grabs.
+export const isOnThumb = (b: BarSpec, at: number): boolean => {
+  const { top, end } = thumbOf(b.count, b.shown, b.from, b.rows)
+  return at >= top && at < end
+}
+
+// Whether `at` is on the topic's mark off the thumb, where a press takes the window to the
+// topic's lines.
+export const isOnTopic = (b: BarSpec, at: number): boolean =>
+  !isOnThumb(b, at) && !!b.topic?.cells.includes(Math.floor(at / 8))
+
+// What a press at `at` does: on the thumb, nothing (it is grabbed, for a drag); on the
+// topic's mark, the window to the topic's lines; elsewhere the window to where the thumb
+// would be centred there.
+export const pressOf = (b: BarSpec, at: number): number | null => {
+  if (isOnThumb(b, at)) return null
+  if (b.topic && isOnTopic(b, at)) return Math.min(Math.max(0, b.count - b.shown), Math.max(0, b.topic.to))
+  return centredOn(b.count, b.shown, b.rows, at)
+}
+
+// Where the thumb would go, while the pointer rests on the bar with no button down: the row a
+// press there takes the window to, or null where it would stay put.
+export const previewOf = (b: BarSpec, p: BarPointer): number | null => {
+  if (p.at === null || p.drag !== null) return null
+  const to = pressOf(b, p.at)
+  return to === null || to === b.from ? null : to
+}
+
+// Each cell of the bar as drawn.
+//
+// At rest the thumb is the share shown, where the window is, its ends block elements filled
+// from the bottom (where it starts inside a cell) or from the top (where it ends inside one).
+// The pointer on it, or dragging it, lights it. The pointer elsewhere on the track shows the
+// thumb where a press would put it, at its full length and lit, and the thumb where the window
+// is now in a faint tone, so the person sees both where they are and where they would go.
+//
+// A cell holds one glyph in two colours, which is the terminal's limit: where parts of two of
+// these meet in one, the later (the preview over the faint thumb, a thumb over the track) is
+// the glyph and the other its background. The topic's mark (the cell's left half) and a change
+// (its right half) are drawn over whichever covers most of the cell, so they read on the track
+// and on the thumb alike; such a cell gives up the eighths of a thumb's end.
+export const barPaint = (b: BarSpec, p: BarPointer = { at: null, drag: null }): BarCell[] => {
+  const { look } = b
+  const real = thumbOf(b.count, b.shown, p.drag ?? b.from, b.rows)
+  const preview = previewOf(b, p)
+  const isHovered = p.at !== null && p.at >= real.top && p.at < real.end
+  const layers = preview !== null
+    ? [{ ...real, color: look.former }, { ...thumbOf(b.count, b.shown, preview, b.rows), color: look.lit }]
+    : [{ ...real, color: p.drag !== null || isHovered ? look.lit : look.thumb }]
+  const topic = new Set(b.topic?.cells ?? [])
+  const changes = new Map(b.changes ?? [])
+  const colorOf = (k: number) => layers[k]?.color ?? look.track
+  // The layer that covers most of `tones`, the later on a tie.
+  const most = (tones: number[]) => {
+    const n = new Map<number, number>()
+    tones.forEach(k => n.set(k, (n.get(k) ?? 0) + 1))
+    return [...n].sort((x, y) => y[1] - x[1] || y[0] - x[0])[0]?.[0] ?? -1
+  }
+  return Array.from({ length: b.rows }, (_, i) => {
+    const a = i * 8
+    const at = a + 8 <= real.top ? 'above' as const : a >= real.end ? 'below' as const : 'thumb' as const
+    const isTopic = topic.has(i)
+    // Each eighth's layer: the last one over it, else the track (-1).
+    const tones = Array.from({ length: 8 }, (_, e) => layers.reduce((k, l, j) => (a + e >= l.top && a + e < l.end ? j : k), -1))
+    const change = changes.get(i)
+    if (isTopic) return { glyph: '▌', color: look.topic, backgroundColor: change ? look[change] : colorOf(most(tones)), at, isTopic }
+    if (change) return { glyph: '▐', color: look[change], backgroundColor: colorOf(most(tones)), at, isTopic }
+    const upper = Math.max(...tones)
+    if (upper < 0) return { glyph: ' ', color: look.track, backgroundColor: look.track, at, isTopic }
+    const n = tones.filter(k => k === upper).length
+    const rest = tones.filter(k => k !== upper)
+    // Starting inside the cell, a layer fills its lower part; ending inside, its upper part.
+    const glyph = n === 8 ? '█' : tones[7] === upper ? BAR_LOWER[n] as string : BAR_UPPER[n] as string
+    return { glyph, color: colorOf(upper), backgroundColor: rest.length ? colorOf(most(rest)) : look.track, at, isTopic }
+  })
+}

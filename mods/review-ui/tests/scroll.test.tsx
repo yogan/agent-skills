@@ -1,5 +1,13 @@
 import { expect, test } from 'claude-code/testing'
-import { barCells, changeCells, jumpOf, markedCells, thumbOf } from '../hooks/sidebar.ts'
+import { barPaint, cellsOf, centredOn, changeKinds, eighthOf, fromTop, pressOf, previewOf, thumbOf } from '../hooks/sidebar.ts'
+import type { BarLook, BarSpec } from '../hooks/sidebar.ts'
+
+// Colours by name, so a drawing reads as words.
+const LOOK: BarLook = {
+  track: 'track', thumb: 'thumb', lit: 'lit', former: 'former', added: 'added', removed: 'removed', both: 'both', topic: 'topic',
+}
+const spec = (more: Partial<BarSpec> = {}): BarSpec => ({ count: 24, shown: 8, from: 5, rows: 8, look: LOOK, ...more })
+const glyphs = (b: BarSpec, at: number | null = null, drag: number | null = null) => barPaint(b, { at, drag }).map(c => c.glyph).join('')
 
 test('the thumb is the share shown, at where the window is', async () => {
   // 8 of 24 rows on a track of 8 cells: a third of 64 eighths.
@@ -14,34 +22,98 @@ test('a thumb is never shorter than a cell, and fills the track when all shows',
   expect(thumbOf(3, 5, 0, 5)).toEqual({ top: 0, end: 40 })
 })
 
-test("the thumb's ends are partial blocks, from the bottom where it starts and from the top where it ends", async () => {
-  const cells = barCells(24, 8, 5, 8)
+test("at rest, the thumb's ends are partial blocks, from the bottom where it starts and from the top where it ends", async () => {
+  const cells = barPaint(spec())
   expect(cells.map(c => c.glyph).join('')).toBe(' ▃██\u{1FB82}   ')
   expect(cells.map(c => c.at)).toEqual(['above', 'thumb', 'thumb', 'thumb', 'thumb', 'below', 'below', 'below'])
+  expect(cells.map(c => c.color)).toEqual(['track', 'thumb', 'thumb', 'thumb', 'thumb', 'track', 'track', 'track'])
+  expect(cells.every(c => c.backgroundColor === 'track')).toBe(true)
 })
 
-test('a mark stands on the cell for its row, only where the row is out of the window', async () => {
-  expect([...markedCells(24, 8, 5, 8, [0, 6, 23])]).toEqual([0, 7])
+test('a press on the track centres the thumb on the pointer: the top cell is the top, the bottom one the end', async () => {
+  // 8 of 80 rows on 8 cells: the thumb a cell long, the window can go 72 rows.
+  expect(centredOn(80, 8, 8, eighthOf(0))).toBe(0)
+  expect(centredOn(80, 8, 8, eighthOf(7))).toBe(72)
+  expect(centredOn(80, 8, 8, eighthOf(4))).toBe(41)        // the middle of cell 4: 32 of 56 eighths
+  // Where the terminal reports where in the cell the pointer is, that counts.
+  expect(centredOn(80, 8, 8, eighthOf(4, 4.0))).toBe(36)
+  // The thumb it puts there has its middle under the pointer.
+  const { top, end } = thumbOf(24, 8, centredOn(24, 8, 8, 40), 8)
+  expect(Math.abs((top + end) / 2 - 40)).toBeLessThanOrEqual(1)
 })
 
-test("a file's changes stand on the cells for their rows, a removed and an added row in one cell both", async () => {
-  // 24 rows on 8 cells, three to a cell: a change in row 4 (cell 1), one replaced in rows 9-10
-  // (cell 3), one added at the end (cell 7).
+test("a drag keeps the thumb where it was grabbed: its top follows the pointer's move", async () => {
+  // 21 eighths of thumb on 64: the window goes 16 rows over 43 eighths of the track.
+  expect(fromTop(24, 8, 8, 0)).toBe(0)
+  expect(fromTop(24, 8, 8, 43)).toBe(16)
+  expect(fromTop(24, 8, 8, 99)).toBe(16)                   // past the foot: the end
+  expect(fromTop(24, 8, 8, -9)).toBe(0)
+  expect(fromTop(24, 8, 8, 13)).toBe(5)
+})
+
+test('a press on the thumb grabs it, on the topic\'s mark goes to the topic, elsewhere centres there', async () => {
+  const b = spec({ topic: { cells: [7], to: 12 } })
+  expect(pressOf(b, 20)).toBeNull()                        // the thumb: eighths 13 to 33
+  expect(pressOf(b, 60)).toBe(12)                          // the mark, in cell 7
+  expect(pressOf(b, 4)).toBe(0)
+  // Under the thumb the mark is the thumb's: a press there grabs it.
+  expect(pressOf(spec({ topic: { cells: [2], to: 12 } }), 20)).toBeNull()
+})
+
+test('hovering the track shows the thumb where a press would put it, at its full length, the thumb at the window faint', async () => {
+  const b = spec()
+  const at = eighthOf(7)
+  const to = previewOf(b, { at, drag: null })
+  expect(to).toBe(16)                                      // the foot: the end
+  const cells = barPaint(b, { at, drag: null })
+  // The preview: the thumb at the end, lit, as long as the thumb (21 eighths: the ▅ at its top
+  // and two full cells); the thumb at the window, faint, as it was.
+  expect(glyphs(b, at)).toBe(' ▃██\u{1FB82}▅██')
+  expect(cells.map(c => c.color)).toEqual(['track', 'former', 'former', 'former', 'former', 'lit', 'lit', 'lit'])
+  // A press there puts the thumb exactly where the preview was.
+  expect([...glyphs({ ...b, from: to as number })].slice(5)).toEqual([...glyphs(b, at)].slice(5))
+  // Where the faint thumb ends and the preview starts in one cell, with track between, the
+  // preview is the glyph and what covers most of the rest behind it.
+  const near = barPaint(b, { at: eighthOf(5), drag: null })
+  expect(near[4]).toMatchObject({ glyph: '▅', color: 'lit', backgroundColor: 'former' })
+})
+
+test('the pointer on the thumb, or a drag, lights it and shows no preview', async () => {
+  const b = spec()
+  expect(previewOf(b, { at: 20, drag: null })).toBeNull()
+  expect(barPaint(b, { at: 20, drag: null }).filter(c => c.at === 'thumb').every(c => c.color === 'lit')).toBe(true)
+  // Dragged, the thumb is drawn where the drag holds the window, ahead of the sidebar.
+  const dragged = barPaint(b, { at: 60, drag: 16 })
+  expect(dragged.map(c => c.glyph).join('')).toBe('     ▅██')
+  expect(dragged.filter(c => c.glyph !== ' ').every(c => c.color === 'lit')).toBe(true)
+})
+
+test("a file's changes stand on the cells for their rows, in the right half of a cell, a replaced line in a colour of its own", async () => {
+  // 24 rows on 8 cells, three to a cell: a line added in row 7 (cell 2), one replaced in rows
+  // 9-10 (cell 3), one removed at the end (cell 7); the thumb over cells 1 to 4.
   const signs = Array.from({ length: 24 }, () => ' ')
-  signs[4] = '+'
+  signs[7] = '+'
   signs[9] = '-'
   signs[10] = '+'
-  signs[23] = '+'
-  expect([...changeCells(24, 8, signs)]).toEqual([
-    [1, { isRemoved: false, isAdded: true }],
-    [3, { isRemoved: true, isAdded: true }],
-    [7, { isRemoved: false, isAdded: true }],
-  ])
+  signs[23] = '-'
+  const changes = changeKinds(24, 8, signs)
+  expect(changes).toEqual([[2, 'added'], [3, 'both'], [7, 'removed']])
+  const cells = barPaint(spec({ changes }))
+  // On the thumb and off it alike: the half in the change's colour, the rest what is under it.
+  expect(cells[2]).toMatchObject({ glyph: '▐', color: 'added', backgroundColor: 'thumb' })
+  expect(cells[3]).toMatchObject({ glyph: '▐', color: 'both', backgroundColor: 'thumb' })
+  expect(cells[7]).toMatchObject({ glyph: '▐', color: 'removed', backgroundColor: 'track' })
+  // A cell the thumb's end covers less than half of is the track's behind a change.
+  expect(barPaint(spec({ changes: [[1, 'added']] }))[1]).toMatchObject({ glyph: '▐', backgroundColor: 'track' })
 })
 
-test('a press on the track jumps there: the top cell to the top, the bottom one to the end, between to its part', async () => {
-  // 8 of 80 rows on a track of 8 cells: the window can go 72 rows.
-  expect(jumpOf(80, 8, 8, 0)).toBe(0)
-  expect(jumpOf(80, 8, 8, 7)).toBe(72)
-  expect(jumpOf(80, 8, 8, 4)).toBe(41)        // four sevenths of the way the window can go
+test("the topic's mark is the left half of its cells, over the thumb, the track or a change", async () => {
+  // Rows 6 to 14 of 24: cells 2 to 4.
+  expect(cellsOf(24, 8, 6, 14)).toEqual([2, 3, 4])
+  expect(cellsOf(24, 8, 23, 23)).toEqual([7])
+  const cells = barPaint(spec({ topic: { cells: [3, 5], to: 12 }, changes: [[5, 'added']] }))
+  expect(cells[3]).toMatchObject({ glyph: '▌', color: 'topic', backgroundColor: 'thumb', isTopic: true })
+  expect(cells[5]).toMatchObject({ glyph: '▌', color: 'topic', backgroundColor: 'added', isTopic: true })
+  // Hovered, the mark shows where a press on it goes.
+  expect(previewOf(spec({ topic: { cells: [7], to: 12 } }), { at: 60, drag: null })).toBe(12)
 })

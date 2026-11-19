@@ -12,8 +12,8 @@ import {
 } from './panel.ts'
 import { blocksOf, type DiffSize, type SizeRun, inlineOf, withEmoji, withOutcome, withoutDraft, isPostCommand, isViewCommand, partsOf, sizeOf, sizeRunsOf, withoutPasted, withSuggestions, manifestOf, titleOf, viewOf, withNote, withoutExcerpt, withoutExcerptLabel, withoutThread } from './views.ts'
 import {
-  askedFor, barCells, clampOffset, codeArgsOf, changeCells, codeWindow, currentOwn, firstOffset, jumpOf, markedCells, phaseOf, pushOf, stepOwn,
-  type CodeView,
+  askedFor, barPaint, cellsOf, changeKinds, clampOffset, codeArgsOf, codeWindow, currentOwn, firstOffset, phaseOf, pressOf, pushOf, stepOwn,
+  type BarLook, type BarSpec, type CodeView,
 } from './sidebar.ts'
 import { COMMENTED, iconOfFile } from './files.ts'
 
@@ -127,9 +127,16 @@ const CHECKING = 'Checking GitLab'
 // colour still reads on a dark theme.
 const DISCUSSED_BG = '#2b3a55'
 // A scrollbar's colours: its thumb a muted grey-blue, its track a step off the background, so
-// the bar's whole length shows as well as where the window is, and neither draws the eye.
-const BAR_THUMB = '#4f5679'
-const BAR_TRACK = '#262a3c'
+// the bar's whole length shows as well as where the window is, and neither draws the eye. The
+// thumb under the pointer, dragged, or shown where a press would put it is a step lighter
+// (`lit`); while that preview shows, the thumb where the window is now fades to a step off
+// the track (`former`). Its marks are the theme's green, red and yellow for a file's added,
+// removed and changed rows, and its cyan for the topic's lines: each reads against the track,
+// the thumb and the lit thumb alike.
+const BAR_LOOK: BarLook = {
+  track: '#262a3c', thumb: '#4f5679', lit: '#5c6490', former: '#363b55',
+  added: '#9ece6a', removed: '#f7768e', both: '#e0af68', topic: '#7dcfff',
+}
 // The link to a comment on GitLab, as a glyph (Nerd Fonts md-open_in_new). Mirrors
 // lib/fences.py's LINK_ICON.
 const LINK_ICON = '\u{f03cc}'
@@ -879,6 +886,10 @@ type CodeArea = {
   lists?: { top: number; bottom: number; key: string; max: number; at: number; on: string | null }[]
 }
 const codeAreas = new Map<string, CodeArea>()
+// What each scrollbar the sidebar last drew does with the row its own drawing posts (a press
+// on its track, a step of a drag), by the bar's key: set as it is drawn, since the post
+// carries plain data and the closure stays here.
+const barJumps = new Map<string, (to: number) => unknown>()
 // The comments on the MR whole on screen at the last drawing, per session: a drawing may not
 // write state, so they are marked seen at the next update check, wheel or press (`flushSeen`).
 const mrOnScreen = new Map<string, { mr: string; urls: string[] }>()
@@ -2096,6 +2107,17 @@ export const register: Register = on => {
     return {}
   })
 
+  // A scrollbar's own drawing posts the row its window is to start at: a press on its track or
+  // its topic's mark, or a step of a drag. Plain data from code, so checked before it moves
+  // anything.
+  on('ui.message', async ($, e, next) => {
+    const jump = e.requestId === PANE ? barJumps.get(e.element) : undefined
+    const to = (e.data as { to?: unknown } | null)?.to
+    if (!jump || typeof to !== 'number' || !Number.isFinite(to)) return next(e)
+    await jump(Math.max(0, Math.round(to)))
+    return {}
+  })
+
   // Closing the panel by its ✕ or ctrl+x x flips the band's toggle back.
   on('ui.close', async ($, e, next) => {
     const out = await next(e)
@@ -2112,6 +2134,9 @@ export const register: Register = on => {
   // what the icons mean.
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
     const { Box, Button, Code, Markdown, Text } = $.ui.resolve(e)
+    // A scrollbar's own drawing, where the surface runs one.
+    const table = $.ui.resolve(e)
+    const Client = 'Client' in table ? table.Client : undefined
     const { s, r } = await known($)
     if (!s || !r) return <Text dimColor>No review open in this session yet.</Text>
     const phase = phaseOf(r)
@@ -2193,58 +2218,34 @@ export const register: Register = on => {
     // window starts unless the person moved it for this `item` (the current one). `rows` is
     // the lines themselves, or how many there are and a drawing of a run of them (a thread's,
     // whose code block is one element over several lines).
-    // The scrollbar beside `shown` of `count` rows scrolled `from` down, `rows` cells tall.
-    // A press on the track jumps there (`jump`, the row the window then starts at, from 0):
-    // scrolling a little is the wheel's.
-    // `mark`: rows out of the window that hold what the area is about (a thread's lines, out
-    // of the file's window), a tick on the track in the accent colour, a press on which
-    // brings them back.
+    // The scrollbar beside `shown` of `count` rows scrolled `from` down, `rows` cells tall, as
+    // an IDE's: its thumb the share shown, the pointer over the track showing the thumb where a
+    // press would put it, a press putting it there (`jump`, the row the window then starts
+    // at, from 0), the thumb dragged. Scrolling a little is the wheel's.
+    // `topic`: the rows the area is about (a topic's lines, `lo`..`hi`), marked on the bar in
+    // the topic's colour wherever the window is, and the row a press on the mark takes the
+    // window to (`to`), so they come back into view.
     // `signs`: each row's diff sign, for a file's bar: where its changes are, as a diff
-    // viewer's overview ruler shows them, in the left half of a cell for a removed row and the
-    // right half for an added one, so a cell with both shows both. Under the thumb and the
-    // accent's tick, which say more of where the person is.
+    // viewer's overview ruler shows them.
+    // Drawn by its own module (scrollbar.tsx), which follows the pointer itself; a surface with
+    // no such module draws the same bar at rest, a press on a cell doing what it does there.
     const scrollBar = (tag: string, count: number, shown: number, from: number, rows: number,
-      jump: (to: number) => void, mark?: { rows: number[]; press: () => void }, signs?: string[]) => {
-      const ticks = markedCells(count, shown, from, rows, mark?.rows ?? [])
-      const changes = signs ? changeCells(count, rows, signs) : new Map<number, { isRemoved: boolean; isAdded: boolean }>()
+      jump: (to: number) => void, topic?: { lo: number; hi: number; to: number }, signs?: string[]) => {
+      const spec: BarSpec = {
+        count, shown, from, rows, look: BAR_LOOK,
+        ...(topic ? { topic: { cells: cellsOf(count, rows, topic.lo, topic.hi), to: topic.to } } : {}),
+        ...(signs ? { changes: changeKinds(count, rows, signs) } : {}),
+      }
+      barJumps.set(`bar-${tag}`, jump)
+      if (Client) return <Client key={`bar-${tag}`} module="./scrollbar.tsx" props={spec} width={1} height={rows} />
       return (
         <Box key={`${tag}-bar`} flexDirection="column" flexShrink={0} width={1}>
-          {barCells(count, shown, from, rows).map((c, i) => {
-            // The thumb over the mark's cell takes the mark's colour, its shape kept: the
-            // thumb says where the window is, the colour that the topic's lines are there.
-            if (c.at === 'thumb') {
-              return <Box key={`${tag}-bar-${i}`}><Text color={ticks.has(i) && mark ? ACCENT : BAR_THUMB} backgroundColor={BAR_TRACK}>{c.glyph}</Text></Box>
-            }
-            // Under the pointer a button inverts, which turns a glyph in a colour of its own
-            // into an odd one (a half block's other half, in the track's colour). Hovered, a
-            // cell with one is painted the thumb's colour whole, as an empty cell inverts to.
-            const hovered = { color: BAR_THUMB, backgroundColor: BAR_THUMB }
-            if (ticks.has(i) && mark) {
-              return (
-                <Box key={`${tag}-cell-${i}`}>
-                  <Button key={`${tag}-mark-${i}`} plain onPress={mark.press}>
-                    <Text color={ACCENT} backgroundColor={BAR_TRACK} hover={hovered}>━</Text>
-                  </Button>
-                </Box>
-              )
-            }
-            const change = changes.get(i)
-            if (!change) {
-              return (
-                <Button key={`${tag}-${c.at}-${i}`} plain onPress={() => jump(jumpOf(count, shown, rows, i))}>
-                  <Text color={BAR_THUMB} backgroundColor={BAR_TRACK}> </Text>
-                </Button>
-              )
-            }
-            return (
-              <Box key={`${tag}-cell-${i}`}>
-                <Button key={`${tag}-change-${i}`} plain onPress={() => jump(jumpOf(count, shown, rows, i))}>
-                  {change.isRemoved
-                    ? <Text color="red" backgroundColor={change.isAdded ? 'green' : BAR_TRACK} hover={hovered}>▌</Text>
-                    : <Text color="green" backgroundColor={BAR_TRACK} hover={hovered}>▐</Text>}
-                </Button>
-              </Box>
-            )
+          {barPaint(spec).map((c, i) => {
+            const to = pressOf(spec, i * 8 + 4)
+            const cell = <Text color={c.color} backgroundColor={c.backgroundColor}>{c.glyph}</Text>
+            return to === null
+              ? <Box key={`${tag}-${c.at}-${i}`}>{cell}</Box>
+              : <Button key={`${tag}-${c.at}-${i}`} plain onPress={() => jump(to)}>{cell}</Button>
           })}
         </Box>
       )
@@ -2723,7 +2724,6 @@ export const register: Register = on => {
       const w2 = after - wrapped > 0 ? codeWindow(shape, after - wrapped, firstAfter) : null
       const isBoxIn = boxShown > 0
       const move = (to: number) => update($, codeAt, m => ({ ...m, [code.key]: Math.min(maxStart, Math.max(1, to)) }))
-      const back = () => move(firstOffset(v, room))
       const isFileScrolled = N + B > H
       // The runs of each stretch of the file. The lines the topic is about carry a bar in the
       // gutter, left of their numbers and over exactly them, in the topic's severity colour
@@ -2774,12 +2774,11 @@ export const register: Register = on => {
       // The file's scrollbar, where it does not fit: the area's whole height, the thread box
       // among its lines included, its thumb the share of the file's lines shown.
       const jump = (to: number) => move(to + 1)
-      // Where the topic's lines are (and its thread, under them), one tick on the bar at the
-      // middle of the lines, while none of them is in the window: one place, one mark,
-      // however many rows its lines and box take. A topic with no thread yet has its lines
-      // marked too: they are what the area is about.
-      const linesOut = !isOtherFile && v.at !== null && (v.at[1] < start || v.at[0] > start + H - 1)
-      const markRows = linesOut && v.at ? [Math.floor((v.at[0] + v.at[1]) / 2) - 1] : []
+      // Where the topic's lines are and its thread under them, marked on the bar over all the
+      // rows they take, in the window or out of it, as an IDE marks the selection on its
+      // ruler; a press on the mark brings them back to where the file first showed them. A
+      // topic with no thread yet has its lines marked too: they are what the area is about.
+      const topicRows = !isOtherFile && v.at ? { lo: v.at[0] - 1, hi: v.at[1] - 1 + B, to: firstOffset(v, room) - 1 } : undefined
       // Each row's diff sign at its place on the bar, the thread box's rows after the lines it
       // is on. None for a file the MR adds or removes whole: one colour from top to bottom
       // marks nothing, as in the file itself.
@@ -2811,7 +2810,7 @@ export const register: Register = on => {
             <Box flexDirection="column" flexGrow={1} flexShrink={1}>{runs}</Box>
             {isFileScrolled && <Text> </Text>}
             {isFileScrolled && scrollBar('code', N + B, H, start - 1, H, jump,
-              markRows.length ? { rows: markRows, press: back } : undefined, signs)}
+              topicRows, signs)}
           </Box>
         </Box>
       )

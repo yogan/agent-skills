@@ -70,6 +70,12 @@ How it fits together:
   inside itself past it, by its arrows at its right corners or the wheel over it; the file
   takes the rest, so the sidebar fits its pane. It opens by itself; its ✕ (or ctrl+x x
   while it has the keys) closes it, and the band's Show sidebar button brings it back.
+- Whatever scrolls has a scrollbar like an IDE's: the pointer over its track shows the thumb
+  where a press would put it, at its full length; a press puts it there, and the thumb drags.
+  A file's bar marks its added, removed and changed lines, and the topic's lines, over the
+  thumb as over the track. It is a module of its own (`hooks/scrollbar.tsx`, a `Client`), so
+  it follows the pointer with no redraw of the sidebar; a surface without one draws it at
+  rest, a press on a cell jumping there.
 
 - In a session the mod draws, the scripts render for it (`lib/ui.py`): one state vocabulary
   for both skills with its icons, Nerd Font icons for severity, kind and source, and an opener
