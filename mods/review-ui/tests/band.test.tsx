@@ -971,7 +971,7 @@ test('between rounds news stays out of the chat: the band counts it, the box say
   expect(all.filter(t => t.text === '\u{f09de}' && t.props.color === 'yellow').length).toBe(0)
   // A push: when first, then who, what it touches, and its size, dim: the topics carry what to do.
   expect(texts).toContain('Jonas pushed · touches t2')
-  expect(texts.some(t => /^\d\d:\d\d +$/.test(t) || /^Nov 5, \d\d:\d\d$/.test(t))).toBe(true)
+  expect(texts.some(t => /^ *\d\d:\d\d$/.test(t) || /^Nov 5, \d\d:\d\d$/.test(t))).toBe(true)
   expect((await panel.find({ type: 'Button', key: 'open-round' }))?.props.label).toBe('Check t2')
   await panel.press({ key: 'open-round' })
   await panel.unmount()
@@ -1942,8 +1942,9 @@ test("a card's steps draw their times dim in one column, and the person as You i
   await openReview($, w, out)
   const ui = await $.ui.mount(cardRow('tu-open', out))
   const texts = await ui.findAll({ type: 'Text' })
-  const times = texts.filter(t => t.props.dimColor && /^(\d\d:\d\d|Nov 5, 09:02|\s+)\s*$/.test(String(t.text ?? ''))).map(t => String(t.text))
-  expect(times).toEqual(['13:55       ', 'Nov 5, 09:02', '            '])
+  const times = texts.filter(t => t.props.dimColor && /^\s*(\d\d:\d\d|Nov 5, 09:02)?$/.test(String(t.text ?? ''))).map(t => String(t.text))
+  // To the column's right: the clock of today's time under the clock of the dated one.
+  expect(times).toEqual(['       13:55', 'Nov 5, 09:02', '            '])
   expect(texts.some(t => String(t.text) === 'You' && t.props.color === 'magenta')).toBe(true)
   await ui.unmount()
 })

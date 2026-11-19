@@ -1197,8 +1197,10 @@ const drawParts = ($: EngineInterface, e: Parameters<EngineInterface['ui']['reso
           : 'step' in r
             ? (
               <Box key={`step-${at}-${j}-${k}`} flexDirection="row" gap={1}>
-                {/* The time and the icon keep their width; a long step wraps under its text. */}
-                {whenWidth > 0 && <Box flexShrink={0}><Text dimColor>{(r.step.when ?? '').padEnd(whenWidth)}</Text></Box>}
+                {/* The time and the icon keep their width; a long step wraps under its text. The
+                    time stands at the column's right, so a time of today (`00:11`) lines up
+                    with the clock of the dated ones above it (`Nov 15, 19:51`). */}
+                {whenWidth > 0 && <Box flexShrink={0}><Text dimColor>{(r.step.when ?? '').padStart(whenWidth)}</Text></Box>}
                 <Box flexShrink={0}><Text dimColor={isDim || undefined}>{`${'\u00a0'.repeat(r.step.indent)}${r.step.icon}`}</Text></Box>
                 {stepText({ Link, Text }, r.step.rest, `step-text-${at}-${j}-${k}`, isDim, people)}
               </Box>
@@ -3095,9 +3097,9 @@ export const register: Register = on => {
     // One line of the box: its time, its mark, the topic's handle, what happened.
     const boxRow = (l: InboxLine, i: number, part: string) => (
       <Box key={`${part}-${i}`} flexDirection="row" gap={1}>
-        {/* Its time first, dim, in a column as wide as the box's widest, as a
-            card's steps are; a line with no reliable time leaves it blank. */}
-        {boxWhen > 0 && <Box flexShrink={0}><Text dimColor>{(l.at ? whenOf(l.at) : '').padEnd(boxWhen)}</Text></Box>}
+        {/* Its time first, dim, in a column as wide as the box's widest and to its right, as
+            a card's steps are; a line with no reliable time leaves it blank. */}
+        {boxWhen > 0 && <Box flexShrink={0}><Text dimColor>{(l.at ? whenOf(l.at) : '').padStart(boxWhen)}</Text></Box>}
         {/* Its kind's icon, plain: the list beside it marks what needs the person, so the
             box does not mark it again. What needs them is drawn bright, the rest dim. */}
         <Text color={l.tone === 'good' ? 'green' : undefined} dimColor={(l.tone !== 'needs' && l.tone !== 'good') || undefined}>{(l.kind && INBOX_ICON[l.kind]) || '·'}</Text>
