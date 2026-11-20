@@ -404,6 +404,24 @@ test('Post posts the draft its card showed, as a press', async ($, on) => {
   expect(JSON.stringify(w.rows.appended())).toContain('No topic needs the user now')
 })
 
+test("Post sends the draft version of the card it is on, though another topic's view came last", async ($, on) => {
+  const both = [topic('t1', 'draft', 'v9'), topic('t2', 'draft', 'v2')]
+  const w = world(on, [
+    stateOf(null, both, { own_review: 'pending', own_threads: [] }),
+    stateOf('t1', both, { own_review: 'done' }),
+  ], { 'own-review': { stdout: view('t1', 'v9') } })
+  await openReview($, w, view('t2', 'v2'))
+  let ui = await mountStep($, 'terminal')
+  w.move()                                 // what the press's sync reads: the review done
+  await ui.press({ key: 'own-done' })      // its next card placed: t1's
+  await ui.unmount()
+  ui = await mountStep($, 'terminal')
+  await ui.press({ key: 'post' })
+  await ui.unmount()
+  const post = w.ran.find(r => r.argv[2] === 'post')
+  expect(post?.argv.slice(2)).toEqual(['post', 't1', '--expect', 'v9', '--iid', '42'])
+})
+
 test('a refused press says why in the band', async ($, on) => {
   const w = world(on, [stateOf('t1', [topic('t1', 'draft', 'v7')])], {
     post: { exitCode: 1, stdout: '', stderr: 'error: the draft of ◈ t1 changed after the card you pressed Post under was drawn' },

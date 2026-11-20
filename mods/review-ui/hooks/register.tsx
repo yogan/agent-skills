@@ -697,6 +697,19 @@ const momentOf = (r: ReviewState | null, tid: string | null | undefined): string
   const t = r?.topics.find(x => x.id === tid)
   return t ? JSON.stringify([t.status, t.step, t.draft, t.inbox, t.news_at, t.outcome, t.pushed, t.resolved, t.verdict]) : null
 }
+// What the card the step's buttons are on showed: its topic and its draft's version, which
+// Post sends for the script to check. From that card's own record where the mod placed or
+// drew it again; else the last view's (`card`), which a card the model's call brought up is.
+// Not the last view's alone: a card placed after it (a press's next card, a pending card
+// filled in) left it naming another topic or no version, and Post then sent no version at
+// all, so a draft changed since was posted unseen.
+const shownOnHost = async ($: EngineInterface): Promise<ReviewCard | null> => {
+  const host = await read($, hostCard)
+  const own = host && ((await read($, placedOf))[host.id] ?? (await read($, redrawn))[host.id])
+  if (own?.topic) return { topic: own.topic, draft: own.draft ?? null }
+  return read($, card)
+}
+
 // A press's line also goes once the model takes a turn: whatever it does next is newer.
 const clearSaid = ($: EngineInterface) => update($, notice, n => (n && !n.isError && !n.isWarning ? null : n))
 
@@ -1950,7 +1963,7 @@ const stepControls = async ($: EngineInterface, s: ReviewSession, r: ReviewState
         return
       }
       default: {
-        const args = argsFor(b.press, t, await read($, card))
+        const args = argsFor(b.press, t, await shownOnHost($))
         if (!args) return
         const env = ['post', 'resolve', 'apply-edit'].includes(b.press.kind) ? await pressEnv($) : undefined
         // An agreed plan the model goes on with on the same topic: a reply ahead of the fix,
