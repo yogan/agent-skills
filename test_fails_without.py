@@ -45,6 +45,19 @@ class TestFailsWithout(unittest.TestCase):
     def test_a_fix_that_is_not_there_once_is_not_tried(self):
         self.assertEqual(self.run_cli("absent", "x", CHECK), 2)
 
+    def test_a_command_that_cannot_start_could_not_try_and_the_fix_is_back(self):
+        """It raised, and the traceback's exit 1 reads as "the test proves nothing"."""
+        self.assertEqual(self.run_cli("'fixed'", "'broken'", ["no-such-command-for-this-test"]), 2)
+        self.assertEqual(self.read(), "value = 'fixed'\n")
+
+    def test_the_file_comes_back_byte_for_byte(self):
+        """Read and written as text, CRLF line ends came back as LF."""
+        with open(self.path, "wb") as fh:
+            fh.write(b"a = 1\r\nvalue = 'fixed'\r\n")
+        self.assertEqual(self.run_cli("'fixed'", "'broken'", CHECK), 0)
+        with open(self.path, "rb") as fh:
+            self.assertEqual(fh.read(), b"a = 1\r\nvalue = 'fixed'\r\n")
+
     def test_the_fix_is_back_even_when_the_run_breaks(self):
         with mock.patch.object(F.subprocess, "run", side_effect=KeyboardInterrupt), \
                 self.assertRaises(KeyboardInterrupt):

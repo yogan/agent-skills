@@ -22,8 +22,10 @@ def main(argv):
     if "--" not in argv or argv.index("--") != 3 or len(argv) < 5:
         print(__doc__.strip().splitlines()[2].strip(), file=sys.stderr)
         return 2
-    path, fixed, unfixed, cmd = argv[0], argv[1], argv[2], argv[4:]
-    with open(path, encoding="utf-8") as fh:
+    path, cmd = argv[0], argv[4:]
+    # Bytes throughout: the file goes back exactly as it was, CRLF line ends and all.
+    fixed, unfixed = (a.encode("utf-8", "surrogateescape") for a in argv[1:3])
+    with open(path, "rb") as fh:
         original = fh.read()
     if original.count(fixed) != 1:
         print(f"{path}: the fixed text occurs {original.count(fixed)} times, not once",
@@ -34,11 +36,16 @@ def main(argv):
     for sig in (signal.SIGTERM, signal.SIGHUP):
         signal.signal(sig, lambda signum, _frame: sys.exit(128 + signum))
     try:
-        with open(path, "w", encoding="utf-8") as fh:
+        with open(path, "wb") as fh:
             fh.write(original.replace(fixed, unfixed))
         r = subprocess.run(cmd)
+    except OSError as e:
+        # A command that cannot start proves nothing either way: "could not try", not the
+        # exit 1 of a traceback, which reads as "the test proves nothing".
+        print(f"could not run {cmd[0]}: {e}", file=sys.stderr)
+        return 2
     finally:
-        with open(path, "w", encoding="utf-8") as fh:
+        with open(path, "wb") as fh:
             fh.write(original)
     if r.returncode == 0:
         print(f"the command PASSED without the fix in {path}: the test does not prove it")
