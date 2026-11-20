@@ -307,7 +307,8 @@ propose a plan…`): research it with the code at hand, store the proposal and s
   on your own. On their word (in the chat, or a note in the diff viewer: "this whole idea is
   wrong, stop"), run `drop-fix <t> --why '<what was found>' --plan '<one sentence: what the
   reply says>' [--outcome reply|push-back|question] [--new <file the fix added>]…`: the fix is
-  kept in git, the working tree goes back to HEAD and the plan becomes that reply. Then draft
+  kept in git, the working tree goes back to HEAD (a fix a stopped push already committed is
+  taken out of the branch too) and the plan becomes that reply. Then draft
   it (`set <t> --reply -`) and show it (`reply-view <t>`). A later fix of the topic may start
   from the kept one: `plans` names it.
 - **A fix for another topic than the current one** (you went on to an agreed plan while the

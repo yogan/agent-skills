@@ -2426,32 +2426,50 @@ def drop_fix(state, iid, t, why, plan, outcome, new=(), aside=False):
     it back is a fix of its own, or a reply. `aside`: the fix is not wanted yet (made while
     the user was on another topic): kept and taken out the same way, the plan left as it
     is, and the topic it was made from current again. It comes back by itself when its
-    topic is current next (`restore_aside`)."""
+    topic is current next (`restore_aside`).
+
+    A fix a push committed and then stopped on (a failing hook, a conflict, the remote's
+    commits) is in the branch, not the working tree: kept the same way, from where that
+    push started, and the branch put back there, or the next push would carry it up."""
     root = (_git("rev-parse", "--show-toplevel") or "").strip() or die("not in a git checkout")
     new = [p for p in dict.fromkeys([*new, *((t.get("checked") or {}).get("new") or [])])
            if os.path.exists(os.path.join(root, p))]
     diff = working_diff()
-    if is_pushed_fix(t) and is_fix(t) and not (diff.strip() or new):
+    head = (_git("rev-parse", "HEAD") or "").strip()
+    # Where the push started: the agent's commits from a press that handed them over start
+    # where it did; otherwise the branch as the push found it.
+    start = t.get("handed_from") or t.get("push_from")
+    committed = bool(start) and head != start
+    if aside and committed:
+        die(f"{tref(t['id'])}'s fix is committed by a push that stopped, so it cannot be put "
+            "aside: push it (its card's press), or drop it (`drop-fix`).")
+    if is_pushed_fix(t) and is_fix(t) and not (diff.strip() or new or committed):
         die(f"{tref(t['id'])}'s fix is pushed, and nothing of it is in the working tree: "
             "taking it back is a new fix (agree one), or a reply (`set --outcome`).")
     kept = None
     was = {k: t[k] for k in ("fix", "checked") if k in t}
     if aside and not (diff.strip() or new):
         die(f"nothing of {tref(t['id'])}'s fix is in the working tree to put aside")
-    if diff.strip() or new:
-        head = (_git("rev-parse", "HEAD") or "").strip()
-        tree = checks.snapshot(root, new) or die("could not read the fix's files from the working tree")
-        commit = (_git("commit-tree", tree, "-p", head, "-m", f"rework-mr: dropped fix for {t['id']}")
-                  or "").strip() or die("could not keep the fix in git; nothing was changed")
+    if diff.strip() or new or committed:
+        tip = head
+        if diff.strip() or new:
+            tree = checks.snapshot(root, new) or die("could not read the fix's files from the working tree")
+            tip = (_git("commit-tree", tree, "-p", head, "-m", f"rework-mr: dropped fix for {t['id']}")
+                   or "").strip() or die("could not keep the fix in git; nothing was changed")
         kept = f"{t['id']}/dropped{len(t.get('dropped') or []) + 1}"
-        fix_refs.keep(root, SKILL, iid, kept, head, commit) or die(
+        fix_refs.keep(root, SKILL, iid, kept, start if committed else head, tip) or die(
             "could not keep the fix in git; nothing was changed")
-        if _git("restore", "--source=HEAD", "--staged", "--worktree", "--", ":/") is None:
+        if (diff.strip() or new) and _git("restore", "--source=HEAD", "--staged", "--worktree",
+                                          "--", ":/") is None:
             die(f"the fix is kept ({kept}), but the working tree could not be put back to "
                 "HEAD: `git status` says what is left")
         for p in new:
             os.remove(os.path.join(root, p))
         _WORKING.clear()
+        # `--keep`: whatever else is in the working tree stays, or the reset refuses.
+        if committed and _git("reset", "--quiet", "--keep", start) is None:
+            die(f"the fix is kept ({kept}), but the branch could not be put back to where the "
+                f"push started ({start[:8]}): `git status` says why")
     for k in ("fix", "checked", "push_token", "push_from", "push_stopped", "handed_from", "kept",
               *(() if aside else ("reply_early", "agreed_change", "change", "answer_now"))):
         t.pop(k, None)

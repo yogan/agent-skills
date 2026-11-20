@@ -3998,6 +3998,31 @@ class TestDropFix(unittest.TestCase):
         self.assertIn(f"dropped fix kept: `git diff {ref}/before {ref}/after`", T.render_plans(self.state))
         self.assertTrue(T.state_json(self.state)["topics"][0]["dropped"])
 
+    def test_a_fix_a_stopped_push_committed_is_kept_and_taken_out_of_the_branch(self):
+        """The push committed the fix and stopped (a failing hook): dropped, it was said to
+        be gone while it stayed in the branch, and the next topic's push carried it up."""
+        start = self.git("rev-parse", "HEAD")
+        self.r.write("a.txt", "the fix\n")
+        self.git("commit", "-q", "--no-verify", "-am", "fixup! feat: a and b")
+        fixed = self.git("rev-parse", "HEAD")
+        self.t1.update(fix={"did": "d", "fixup": [start]}, checked={"ok": True},
+                       push_from=start, push_stopped={"why": "the pre-push hook failed"})
+        self.r.write("notes.txt", "not the fix's\n")
+        T.drop_fix(self.state, 1, self.t1, "not wanted", "say so", "reply")
+        self.assertEqual(self.git("rev-parse", "HEAD"), start)
+        self.assertEqual(self.git("status", "--porcelain"), "?? notes.txt")
+        ref = "refs/rework-mr/mr1/t1/dropped1"
+        self.assertEqual((self.git("rev-parse", f"{ref}/before"), self.git("rev-parse", f"{ref}/after")),
+                         (start, fixed))
+        self.assertNotIn("push_stopped", self.t1)
+        self.assertEqual(T.step_of(self.state, self.t1), "reply")
+        # Not put aside: the working tree's diff is not where it is.
+        self.t1.update(push_from=start)
+        self.git("reset", "-q", "--keep", fixed)
+        with self.assertRaises(SystemExit):
+            T.drop_fix(self.state, 1, self.t1, "later", "p", "fix", aside=True)
+        self.assertEqual(self.git("rev-parse", "HEAD"), fixed)
+
     def test_a_fix_put_aside_goes_back_to_its_topic_and_returns_with_its_own(self):
         """A fix made while t2 was current, put aside: out of the working tree, kept in git,
         t2 current again; once t1 is current, the fix is back, ready to push, its commit
