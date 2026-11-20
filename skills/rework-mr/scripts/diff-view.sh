@@ -18,7 +18,7 @@
 # shape: the viewer reloads from the working tree rather than from what is piped here, so
 # a narrowed diff and the window would be showing two different things.
 set -euo pipefail
-t="${1:?usage: diff-view.sh <t> [--note FILE:LINE:TEXT]... [--did TEXT] [--as-agreed | --differs TEXT] [--fixup SHA_SUBJECT]... [--new-commit SUBJECT]... [--iid N] [-- git-diff-args...]}"
+t="${1:?usage: diff-view.sh <t> [--note FILE:LINE:TEXT]... [--did TEXT] [--as-agreed | --differs TEXT] [--fixup SHA_SUBJECT]... [--new-commit SUBJECT]... [--carries TOPIC]... [--iid N] [-- git-diff-args...]}"
 shift
 # Anything before a lone `--` is ours (notes for the viewer); anything after belongs to
 # git. Collected rather than forwarded blindly so the two cannot be confused — and an
@@ -33,7 +33,7 @@ while [ "$#" -gt 0 ] && [ "$1" != "--" ]; do
       mine+=("$1" "$2"); shift 2 ;;
     --note=*) mine+=("--note" "${1#--note=}"); shift ;;
     --as-agreed) mine+=("$1"); shift ;;
-    --did|--differs|--fixup|--new-commit|--iid)
+    --did|--differs|--fixup|--new-commit|--carries|--iid)
       [ "$#" -ge 2 ] || { echo "diff-view.sh: $1 needs a value" >&2; exit 2; }
       mine+=("$1" "$2"); shift 2 ;;
     *)

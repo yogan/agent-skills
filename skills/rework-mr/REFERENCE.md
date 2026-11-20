@@ -5,7 +5,11 @@ Full code-and-reply mechanics. `SD=~/.claude/skills/rework-mr/scripts`.
 **One topic all the way through before the next.** Take a topic change → blame → diff → ACK →
 fixup → push → diff URL → reply, then start the next. Never edit a second topic's code while one
 is in flight. **Never batch several topics into one diff/push unless the user explicitly asks** —
-one push and one `Fixed: <url>` per topic by default. Two ACK stops per topic: after the diff
+one push and one `Fixed: <url>` per topic by default. Asked to fix several in one push, make
+them as one fix and show it on one topic's card with `diff-view.sh <t> --carries <other>` per
+other topic: the card names them, and the push is recorded on each, so each goes on to its own
+reply with the push's link. A fix that went out in another topic's push without that (told so
+after the push) is recorded with `set <t> --pushed-with <other>`. Two ACK stops per topic: after the diff
 (before any commit/push) and after the reply draft (before posting).
 
 A topic whose plan is reply-only / push-back / question skips steps 1–6 — just draft and send

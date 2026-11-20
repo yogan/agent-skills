@@ -321,6 +321,9 @@ propose a plan…`): research it with the code at hand, store the proposal and s
   they pass, then show it with
   `diff-view.sh <t> --did '<one short sentence: the change in summary>' --fixup '<sha> <subject>' --as-agreed`,
   one `--fixup` per commit it rewrites, one `--new-commit '<subject>'` per commit it adds.
+  A fix the user asked to make for several topics in one push is shown on one of them, with
+  `--carries <other>` per other topic: the card names them and the push is recorded on each
+  (told only after a push that it carried another topic's fix: `set <t> --pushed-with <other>`).
   The card shows the plan above the summary and the thread in the sidebar, so `--did` is the
   change alone ("Changes applied as planned.", or what it does beyond that). `--as-agreed` is your judgment of the fix against the plan and
   change agreed (`plans`): it carries out the idea, with no surprise in it, no change of

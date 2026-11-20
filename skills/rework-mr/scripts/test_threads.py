@@ -1398,7 +1398,8 @@ class TestCodeContext(unittest.TestCase):
                 # the version's: a push made by hand and linked afterwards has no other.
                 self.assertEqual(state["topics"][0]["pushes"], [
                     {"before": self.sha, "start": self.sha, "after": head,
-                     "url": state["topics"][0]["diff_url"], "clean": True, "at": "2026-11-09T12:31:00Z"}])
+                     "url": state["topics"][0]["diff_url"], "clean": True, "at": "2026-11-09T12:31:00Z",
+                     "rebase": False}])
                 # In the topic's story it comes after a reply made before it, with its time.
                 notes = state["threads"]["d1"]["notes"]
                 notes[0]["at"], notes[1]["at"] = "2026-11-09T11:30:00Z", "2026-11-09T11:57:00Z"
@@ -3299,6 +3300,50 @@ class TestPushFix(unittest.TestCase):
         self.assertEqual(self.t1["diff_url"], url)
         self.assertEqual(T.step_of(self.state, self.t1), "reply")
 
+    def test_a_fix_made_for_two_topics_is_pushed_on_both(self):
+        """Asked to fix t1 and t2 in one push, the press recorded the push on t1 alone: t2
+        went on offering its plan as if nothing was done, and its story had no push."""
+        self.t1["fix"]["carries"] = ["t2"]
+        self.versions.return_value = [{"id": 7, "head_commit_sha": "NEW", "base_commit_sha": "MAIN2"},
+                                      {"id": 6, "head_commit_sha": "OLD", "base_commit_sha": "MAIN1"}]
+        _, url = self.push()
+        t2 = T.topic_for(self.state, "t2")
+        self.assertEqual(t2["diff_url"], url)
+        self.assertEqual(len(t2["pushes"]), 1)
+        self.assertEqual({k: v for k, v in t2["pushes"][0].items() if k != "differs"},
+                         {k: v for k, v in self.t1["pushes"][0].items() if k != "differs"})
+        self.assertTrue(t2["pushes"][0]["rebase"])
+        self.assertEqual(T.step_of(self.state, t2), "reply")
+        with mock.patch.object(T, "_git", return_value=""):
+            line = next(x for x in T.story_steps(self.state, self.t1) if "pushed" in x)
+        self.assertTrue(line.endswith(" _(includes t2 + rebase)_"), line)
+
+    def test_the_fix_card_names_the_topics_it_carries(self):
+        self.t1["fix"]["carries"] = ["t2"]
+        with mock.patch.object(T, "rebased_here", return_value=True), \
+                mock.patch.object(T, "checks_of", return_value="passed"):
+            self.assertIn("(1 commit rewritten, includes t2 + a rebase)", T.render_fix(self.state, "t1"))
+
+    def test_a_fix_pushed_with_another_topic_s_is_recorded_from_the_chat(self):
+        """Told in the chat that t2 went out in t1's push, the agent stored the link alone:
+        no push on t2, so its story line had no time and t1's did not name t2."""
+        self.push()
+        t2 = T.topic_for(self.state, "t2")
+        self.set("t2", "--diff-url", self.t1["diff_url"])
+        self.assertEqual(t2["pushes"][0]["after"], self.t1["pushes"][0]["after"])
+        self.assertEqual(t2["pushes"][0]["at"], self.t1["pushes"][0]["at"])
+        t2.pop("pushes")
+        t2.pop("diff_url")
+        self.set("t2", "--pushed-with", "t1")
+        self.assertEqual(t2["pushes"][0]["at"], self.t1["pushes"][0]["at"])
+        self.assertEqual(t2["diff_url"], self.t1["diff_url"])
+
+    def set(self, *argv):
+        with mock.patch.object(sys, "argv", ["threads.py", "set", *argv]), redirect_stdout(io.StringIO()), \
+                mock.patch.object(T, "_git", return_value=None), \
+                mock.patch.object(T, "resolve_state", return_value=(self.ctx, 1, "/state", self.state)):
+            T.main()
+
     def test_a_fix_without_passed_checks_goes_back_to_the_agent(self):
         self.t1["checked"] = {"ok": False, "failed": "frontend checks"}
         with self.assertRaisesRegex(T.Handoff, "verify t1"):
@@ -3519,7 +3564,7 @@ class TestFixPerPush(unittest.TestCase):
         _, t = self.topic(self.push("A", "B", 2), self.push("B", "C", 3))
         self.assertEqual(T.fixes_of(t), [{"pushes": [1, 2], "before": "A", "start": "A", "after": "C",
                                           "url": "G/diffs?diff_id=3&start_sha=A", "mixed": False, "at": None,
-                                          "differs": None}])
+                                          "differs": None, "rebase": False}])
 
     def test_how_a_fix_differed_from_its_plan_stays_in_the_story_after_the_push(self):
         """Before the push its card said "Differs from the plan you agreed"; after it only
@@ -3585,6 +3630,18 @@ class TestFixPerPush(unittest.TestCase):
         with mock.patch.object(T, "_git", return_value=""):
             out = [x for x in T.story_steps(state, t) if "pushed" in x]
         self.assertTrue(out[0].endswith(" _(includes t3)_"), out[0])
+
+    def test_a_push_that_came_with_a_rebase_says_so_and_which_topics_it_carried(self):
+        """The push carried t2's fix and a rebase, and its line said "(may include other
+        changes)": the rebase was known and never passed on."""
+        state, t = self.topic({**self.push("A", "B", 2, clean=False), "rebase": True})
+        t["plan"] = "p"
+        with mock.patch.object(T, "_git", return_value=""):
+            out = [x for x in T.story_steps(state, t) if "pushed" in x]
+            self.assertTrue(out[0].endswith(" _(includes a rebase)_"), out[0])
+            state["topics"].append({"id": "t2", "thread_ids": [], "pushes": [self.push("A", "B", 2)]})
+            out = [x for x in T.story_steps(state, t) if "pushed" in x]
+        self.assertTrue(out[0].endswith(" _(includes t2 + rebase)_"), out[0])
 
 
 class TestStateByWord(unittest.TestCase):
@@ -4073,6 +4130,7 @@ class TestPushFixGit(unittest.TestCase):
         self.assertEqual(self.log(), ["feat: c", "docs: d", "feat: a and b"])
         ends = T.fix_refs.kept(self.r.root, "rework-mr", 1)["t1/push1"]
         self.assertEqual([f for f, _a, _r in T.fix_refs.stat(self.r.root, ends)], ["c.txt"])
+        self.assertTrue(self.t1["pushes"][0]["rebase"])
 
     def test_a_fix_committed_before_the_press_with_a_rebase_is_kept_without_it(self):
         """Committed before the press, the fix starts on GitLab's head, which is from before

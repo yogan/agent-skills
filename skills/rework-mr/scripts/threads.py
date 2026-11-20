@@ -1286,11 +1286,12 @@ def fixes_of(t):
     """The topic's pushed fixes, oldest first, one per push (`t["pushes"]`), never with
     another topic's change: consecutive pushes of it, with nothing pushed between them and
     nothing but the fix in either, are one fix. Each is `{"pushes": [n, …], "before",
-    "after", "url", "mixed"}`: `before` and `after` the commits its change lies between,
-    `url` GitLab's diff of it (the last push's version, from where the first one started),
-    `mixed` where that link may show more than the fix (a push recorded before pushes were
-    kept one by one, or one that carried a rebase or other commits along), `differs` how the
-    fix differed from the plan agreed, where the agent said it did."""
+    "after", "url", "mixed", "rebase"}`: `before` and `after` the commits its change lies
+    between, `url` GitLab's diff of it (the last push's version, from where the first one
+    started), `mixed` where that link may show more than the fix (a push recorded before
+    pushes were kept one by one, or one that carried a rebase or other commits along),
+    `rebase` where the push came with a rebase, `differs` how the fix differed from the plan
+    agreed, where the agent said it did."""
     out = []
     for n, p in enumerate(t.get("pushes") or [], 1):
         last = out[-1] if out else None
@@ -1304,7 +1305,7 @@ def fixes_of(t):
             continue
         out.append({"pushes": [n], "before": p["before"], "start": p.get("start"),
                     "after": p["after"], "url": p.get("url"), "mixed": not p.get("clean"),
-                    "at": p.get("at"), "differs": p.get("differs")})
+                    "at": p.get("at"), "differs": p.get("differs"), "rebase": bool(p.get("rebase"))})
     return out
 
 
@@ -1434,11 +1435,12 @@ def story_steps(state, t):
 
     def said(f):
         link = f" · {ui.link_md('diff', f['url'])}" if f.get("url") else ""
-        # A push that was another topic's too says which; one that carried more than the fix
-        # (a rebase, other commits) says it may hold more. Mirrors findings.py's `story_steps`.
+        # A push that was another topic's too says which, and one that came with a rebase
+        # says so; one that carried other commits along says it may hold more. Mirrors
+        # findings.py's `story_steps`.
         also = [x["id"] for x in state["topics"] if x is not t and f.get("after")
                 and any(p.get("after") == f["after"] for p in x.get("pushes") or [])]
-        return link + ui.push_aside_md(also, mixed=bool(f.get("mixed")) and not also)
+        return link + ui.push_aside_md(also, rebase=bool(f.get("rebase")), mixed=bool(f.get("mixed")))
 
     # A topic pushed before its pushes were kept one by one has its link alone.
     fixes = (kept_fixes(state, t) or [{"url": t["diff_url"]}]) if is_pushed_fix(t) or t.get("pushes") else []
@@ -2852,8 +2854,11 @@ def _fix_parts(state, t):
     counts = [f"{len(new)} new commit{'s' if len(new) != 1 else ''}"] if new else []
     if fixups:
         counts.append(f"{len(fixups)} commit{'s' if len(fixups) != 1 else ''} rewritten")
-    if rebased_here():
-        counts.append("includes a rebase")
+    # What else goes out in the push, in the words its line in the story will use: the
+    # other topics' fixes made in this one, and a rebase.
+    carried = [*(f.get("carries") or []), *(["a rebase"] if rebased_here() else [])]
+    if carried:
+        counts.append("includes " + " + ".join(carried))
     out += [f"{ui.heading_md(ui.DID_ICON, 'Changes')}  {diffsize.of_stat(f.get('stat') or [])}"
             + (f"  ({', '.join(counts)})" if counts else ""), ""]
     summary = (f.get("did") or "").strip() or ("Changes applied as planned." if c.get("as_agreed") else "")
@@ -3104,7 +3109,8 @@ def keep_pushed_fixes(state, ctx, iid):
         # When GitLab made the version: the push's time, which its line in the topic's story
         # is drawn and ordered by among the others.
         t["pushes"] = [{"before": start, "start": start, "after": head, "url": t["diff_url"],
-                        "clean": older == start, "at": vs[k].get("created_at")}]
+                        "clean": older == start, "at": vs[k].get("created_at"),
+                        "rebase": pushed_base(vs, head)[1]}]
     web = ctx.get("web")
     for t, p in unlinked:
         k = next((k for k, v in enumerate(vs) if v.get("head_commit_sha") == p["after"]), None)
@@ -3116,6 +3122,56 @@ def keep_pushed_fixes(state, ctx, iid):
             # as a fix still to make, and its card offered to make it again.
             if p is t["pushes"][-1] and not t.get("diff_url"):
                 t["diff_url"] = p["url"]
+
+
+def pushed_base(vs, head):
+    """(base, rebased) of the version GitLab made for a push of `head`: the target branch's
+    commit it stands on, and whether that differs from the version's before it (the push
+    came with a rebase). (None, False) where GitLab has no such version."""
+    vs = vs or []
+    k = next((k for k, v in enumerate(vs) if v.get("head_commit_sha") == head), None)
+    if k is None:
+        return None, False
+    base = vs[k].get("base_commit_sha")
+    old = vs[k + 1].get("base_commit_sha") if k + 1 < len(vs) else None
+    return base, bool(base and old and base != old)
+
+
+def took(t):
+    """Drop what a push in progress kept on `t`: it is pushed."""
+    for k in ("push_from", "push_start", "handed_from", "start_sha", "push_stopped"):
+        t.pop(k, None)
+
+
+def carry_push(t, push):
+    """Record `push`, another topic's, on `t` as well: `t`'s fix went out in it (the user
+    asked for both in one push). The same record, its time and link, so `t`'s story tells
+    the push and its `Fixed:` reply links it; how the fix differed from a plan is the other
+    topic's to say. False where `t` has it already."""
+    if any(p.get("after") == push.get("after") for p in t.get("pushes") or []):
+        return False
+    t.setdefault("pushes", []).append({**push, "differs": None})
+    took(t)
+    if push.get("url"):
+        t["diff_url"] = push["url"]
+    return True
+
+
+def carry_pushed(state, iid, t, src, url=None):
+    """`t`'s fix went out in a push of `src`'s, told after the push (`set <t> --pushed-with
+    <src>`, or `--diff-url` with the link of that push): record it on `t` as well, and keep
+    its change in git under `t` too. `url`: that push, else `src`'s latest. The push, or
+    None where `src` has none."""
+    pushes = [(n, p) for n, p in enumerate(src.get("pushes") or [], 1) if not url or p.get("url") == url]
+    if not pushes:
+        return None
+    n, push = pushes[-1]
+    if carry_push(t, push):
+        root = (_git("rev-parse", "--show-toplevel") or "").strip()
+        ends = fix_refs.kept(root, SKILL, iid).get(push_key(src["id"], n)) if root else None
+        if ends:
+            fix_refs.keep(root, SKILL, iid, push_key(t["id"], len(t["pushes"])), *ends)
+    return push
 
 
 def diff_url_for(ctx, iid, start, head):
@@ -3256,30 +3312,36 @@ def push_fix(ctx, iid, path, tid, committed=False):
     if tree(frm) == tree(head) and start:
         frm = start                        # committed before the press: the change is GitLab's
     clean = bool(start) and tree(frm) == tree(start)
+    # Whether it came with a rebase is GitLab's to say: the version it made stands on
+    # another base than the one before it (as review-mr reads the author's pushes).
+    base, rebase = pushed_base(versions(ctx, iid), head)
     hold(path)
     state = load(path)
     t = topic_for(state, tid)
-    t.setdefault("pushes", []).append({"before": frm, "start": start, "after": head, "url": url,
-                                       "clean": clean,
-                                       "at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
-                                       # How it differed from the plan agreed, kept with the push:
-                                       # its card's story says so after the push too.
-                                       "differs": ((t.get("fix") or {}).get("compare") or {}).get("differs")})
-    n = len(t["pushes"])
-    for k in ("push_from", "push_start", "handed_from", "start_sha", "push_stopped"):
-        t.pop(k, None)
+    push = {"before": frm, "start": start, "after": head, "url": url, "clean": clean,
+            "rebase": rebase, "at": datetime.datetime.now(datetime.timezone.utc).isoformat()}
+    # How it differed from the plan agreed, kept with the push: its card's story says so
+    # after the push too. This topic's plan, not the plans of the topics it carries.
+    t.setdefault("pushes", []).append(
+        {**push, "differs": ((t.get("fix") or {}).get("compare") or {}).get("differs")})
+    keys = [push_key(tid, len(t["pushes"]))]
+    took(t)
     if url:
         t["diff_url"] = url
+    # The fix of every topic the user asked to fix along with this one is in this push too:
+    # each records it as its own, and its card and `Fixed:` reply go on from there.
+    for c in (t.get("fix") or {}).get("carries") or []:
+        other = topic_for(state, c)
+        if other and other is not t and carry_push(other, push):
+            keys.append(push_key(c, len(other["pushes"])))
     save(path, state)
     # The fix as pushed, for the diff viewer after the push, held in git against the force
     # push that leaves both commits on no branch. Where it starts on GitLab's head from
     # before a rebase, from that head rebased onto the version's base: what the rebase
     # brought in from the target branch is no part of the fix.
-    onto = None
-    if frm == start and not fix_refs.is_ancestor(root, start, head):
-        onto = next((v.get("base_commit_sha") for v in versions(ctx, iid) or []
-                     if v.get("head_commit_sha") == head), None)
-    fix_refs.keep(root, SKILL, iid, push_key(tid, n), frm, head, onto=onto)
+    onto = base if frm == start and not fix_refs.is_ancestor(root, start, head) else None
+    for key in keys:
+        fix_refs.keep(root, SKILL, iid, key, frm, head, onto=onto)
     if sid:
         say, close = hunk_close_decision(hunk.user_notes(sid))
         if close:
@@ -3401,6 +3463,9 @@ def main():
     pdv.add_argument("--new-commit", action="append", default=[], metavar="SUBJECT",
                      help="a new commit the fix makes, by its "
                      "subject, made before the fixups (repeatable)")
+    pdv.add_argument("--carries", action="append", default=[], metavar="TOPIC",
+                     help="another topic whose fix is in this one, as the user asked for both "
+                     "in one push: the push is recorded on it too (repeatable)")
     pdv.add_argument("--as-agreed", action="store_true",
                      help="where the review-ui mod draws: the fix carries out the plan agreed")
     pdv.add_argument("--differs", metavar="TEXT",
@@ -3482,6 +3547,9 @@ def main():
         ps.add_argument(f"--{f}")
     ps.add_argument("--outcome", choices=OUTCOMES,
                     help="with --decision: what the plan does (default fix)")
+    ps.add_argument("--pushed-with", metavar="TOPIC",
+                    help="<t>'s fix went out in TOPIC's latest push (both fixed in one push): "
+                    "that push is recorded on <t> too")
     ps.add_argument(
         "--reply",
         help="the drafted reply body; `-` reads stdin (use a quoted "
@@ -3685,8 +3753,11 @@ def main():
                 start_fix_round(t, keep_checks=True)
                 if held:
                     t["reply_for"] = draft_round(state, t)
+            for c in args.carries:
+                if c == args.topic or not topic_for(state, c):
+                    die(f"--carries names another topic of this MR whose fix is in this one, not {c!r}")
             t["fix"] = {"did": args.did, "fixup": args.fixup, "new": args.new_commit, "stat": diff_stat(diff),
-                        "notes": notes,
+                        "notes": notes, "carries": list(dict.fromkeys(args.carries)),
                         "compare": {"as_agreed": bool(args.as_agreed), "differs": args.differs}}
             if drawn:
                 # Where the mod draws, the fix is a card and its diff the sidebar's: the diff
@@ -4162,9 +4233,17 @@ def main():
                     t["reply_early"] = True
                 else:
                     t.pop("reply_early", None)
+            if f == "diff-url" and any(carry_pushed(state, iid, t, x, v) for x in state["topics"] if x is not t):
+                continue                        # another topic's push: now this one's too
             t[fld.get(f, f)] = v
             if f == "diff-url" and t.get("pushes") and not t["pushes"][-1].get("url"):
                 t["pushes"][-1]["url"] = v      # the link the push could not wait for
+        if args.pushed_with:
+            src = topic_for(state, args.pushed_with)
+            if not src or src is t:
+                die(f"--pushed-with names the other topic whose push carried {tref(args.topic)}'s fix")
+            carry_pushed(state, iid, t, src) or die(f"{tref(args.pushed_with)} has no push recorded "
+                                                    "to carry: push it first")
         if args.outcome and not is_fix({"outcome": args.outcome}) and step_of(state, t) == "fixed":
             die(f"{tref(args.topic)}'s fix is in the working tree: a plan that only replies "
                 f"would leave it there, to be pushed with the next topic's. Drop it first "
