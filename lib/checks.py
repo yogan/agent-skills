@@ -551,7 +551,11 @@ def take_in(root, before):
     if not lacking(root, theirs, before):
         return theirs
     head = _out(root, "rev-parse", "HEAD")
-    r = git(root, "cherry-pick", "--allow-empty", f"{before}..{theirs}", env=_clean_env())
+    # A commit whose change the fix already makes (a suggestion the reviewer applied that
+    # the author made by hand as well) comes out empty: dropped, as it adds nothing, where
+    # git would otherwise stop on it.
+    r = git(root, "cherry-pick", "--allow-empty", "--empty=drop", f"{before}..{theirs}",
+            env=_clean_env())
     if r.returncode != 0:
         git(root, "cherry-pick", "--abort")
         git(root, "reset", "--quiet", "--hard", head)

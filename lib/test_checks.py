@@ -347,6 +347,29 @@ class TestPush(Case):
         self.assertEqual(self.r.read("a.txt"), "one fixed\n")
         self.assertEqual(self.r.read("b.txt"), "two\nsuggested\n")
 
+    def test_a_commit_that_makes_the_fix_s_own_change_is_taken_in_as_nothing(self):
+        # The reviewer applied on the remote what the fix makes: taking it in adds nothing,
+        # and the push goes through with the fix.
+        rec = self.r.record()
+        other = os.path.join(self.r.d, "other")
+        sh(self.r.d, "git", "clone", "-q", os.path.join(self.r.d, "remote.git"), other)
+        with open(os.path.join(other, "a.txt"), "w") as fh:
+            fh.write("one fixed\n")
+        sh(other, "git", "-c", "user.name=R", "-c", "user.email=r@example.invalid", "commit",
+           "-qam", "Apply suggestion")
+        sh(other, "git", "push", "-q")
+        theirs = sh(other, "git", "rev-parse", "HEAD")
+        stamp = self.fix(rec)
+        before = sh(self.r.root, "git", "rev-parse", "HEAD")
+        with self.assertRaises(checks.Behind):
+            self.push(rec, stamp)
+        fixed = sh(self.r.root, "git", "rev-parse", "HEAD")
+        self.assertEqual(checks.take_in(self.r.root, before), theirs)
+        self.assertEqual(sh(self.r.root, "git", "rev-parse", "HEAD"), fixed)
+        checks.push(self.r.root, rec, theirs)
+        self.assertEqual(sh(self.r.root, "git", "rev-parse", "origin/main"), fixed)
+        self.assertEqual(self.r.read("a.txt"), "one fixed\n")
+
     def test_a_commit_that_does_not_apply_leaves_the_branch_as_it_was(self):
         rec = self.r.record()
         self.r.write("b.txt", "two\nmine\n")
