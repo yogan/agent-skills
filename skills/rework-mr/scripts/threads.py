@@ -98,6 +98,7 @@ from lib.mr_common import (
     mr_news,
     topic_handles,
     DEFAULT_LANG,
+    LANG_GIVEAWAYS,
     MR_LEVEL,
     first_name,  # noqa: E402
     people,
@@ -495,6 +496,31 @@ def summary_language_warning(state, topics):
         f"English. Reword each with `set <t> --summary '<short English line>'`, "
         f"then re-render."
     )
+
+
+def thread_language(state, t):
+    """The language the reviewers write `t`'s threads in, read from their comments' text
+    (`reads_as`): one of `LANG_GIVEAWAYS`, else English."""
+    said = "\n".join(n.get("body") or "" for x in t["thread_ids"]
+                     for n in (state["threads"].get(x) or {}).get("notes") or [] if not n.get("mine"))
+    return next((x for x in LANG_GIVEAWAYS if reads_as(said, x)), "en")
+
+
+def draft_language_warning(state, t, body):
+    """Say so when a reply draft reads as another language than its thread's: the rule is
+    stated, and a German draft still came back for a reviewer writing English.
+
+    Mirrors review-mr's function of the same name, but there the language is the one set
+    for the repository and here it is the thread's. Only a draft that positively reads as
+    another language is flagged: an English draft has no word list to be told by, and a
+    short German one reads as nothing at all."""
+    lang = thread_language(state, t)
+    other = next((x for x in LANG_GIVEAWAYS if x != lang and reads_as(body, x)), None)
+    if not other:
+        return None
+    return (f"⚠️ this draft reads as {other}, but {reviewer_of(state, t)} writes this thread "
+            f"in {lang}: write the reply in the thread's language and store it again "
+            f"(`set {t['id']} --reply -`).")
 
 
 def ui_state(state, t, status=None):
@@ -4270,6 +4296,8 @@ def main():
         print(step_report(state, t))
         if note := stale_draft_note(state, t, held):
             print(note)
+        if args.reply is not None and (warn := draft_language_warning(state, t, t["reply"])):
+            print(warn)
         if args.reply is not None and not args.early and t.get("early_posted") and fixed_due(state, t):
             print(f"A reply ahead of the fix is posted in {tref(args.topic)}'s thread already: the "
                   "reviewer has read what the fix does. Keep this one to what is new since; "

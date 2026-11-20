@@ -3644,6 +3644,34 @@ class TestFixPerPush(unittest.TestCase):
         self.assertTrue(out[0].endswith(" _(includes t2 + rebase)_"), out[0])
 
 
+class TestDraftLanguage(unittest.TestCase):
+    """A reply draft is in its thread's language, and storing one that is not says so."""
+
+    def setUp(self):
+        self.state = TestRounds.state(1)
+        TestRounds.agree(self.state, "t1")
+        self.thread = self.state["threads"]["d1"]["notes"][0]
+
+    def store(self, body):
+        out = io.StringIO()
+        with mock.patch.object(sys, "argv", ["threads.py", "set", "t1", "--reply", body]), \
+                redirect_stdout(out), mock.patch.object(T, "save"), \
+                mock.patch.object(T, "resolve_state", return_value=({}, 1, "/state", self.state)):
+            T.main()
+        return out.getvalue()
+
+    def test_a_german_draft_in_an_english_thread_is_flagged_when_stored(self):
+        """Robin writes English and the draft came back German: nothing said so."""
+        self.thread["body"] = "The detail key is not refetched after an update, so the page shows stale data."
+        out = self.store("Ich habe den Detail-Key ergänzt, und die Seite wird jetzt nach dem Update neu geladen.")
+        self.assertIn("this draft reads as de, but Robin writes this thread in en", out)
+        self.assertNotIn("reads as", self.store("I added the detail key, so the page refetches after an update."))
+
+    def test_a_german_draft_in_a_german_thread_is_not(self):
+        self.thread["body"] = "Der Detail-Key wird nach dem Update nicht neu geladen, und die Seite bleibt alt."
+        self.assertNotIn("reads as", self.store("Ich habe den Detail-Key ergänzt, und die Seite lädt neu."))
+
+
 class TestStateByWord(unittest.TestCase):
     """Moving a topic by talking to the agent, along the workflows it has to carry: an
     answer and a wait, a pushed fix defended or redone, a fix dropped while it is made. Each
