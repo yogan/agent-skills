@@ -15,7 +15,7 @@ import unittest
 HERE = os.path.dirname(os.path.abspath(__file__))
 
 
-class KeepNotesTests(unittest.TestCase):
+class TestKeepNotes(unittest.TestCase):
     def test_the_extensions_own_tests_pass(self):
         if not shutil.which("bun"):
             self.skipTest("bun is not installed: the extension's tests cannot run here")

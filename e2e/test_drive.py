@@ -33,7 +33,7 @@ def screen(left, right=None, rows=30):
 PROMPT = ["─" * WIDTH, "❯ ", "─" * WIDTH]
 
 
-class PanelTest(unittest.TestCase):
+class TestPanel(unittest.TestCase):
     def test_closed_without_a_divider(self):
         s = screen(["⏺ Hello"] + [""] * 25 + PROMPT)
         self.assertIsNone(drive.divider_column(s))
@@ -82,7 +82,7 @@ class PanelTest(unittest.TestCase):
         self.assertIn("in the transcript", drive.region_of(s, "main"))
 
 
-class FindTextTest(unittest.TestCase):
+class TestFindText(unittest.TestCase):
     def test_row_and_column_are_zero_based_cells(self):
         s = "first\n  ✕ close\n"
         self.assertEqual(drive.find_text(s, "✕"), (1, 2))
@@ -102,7 +102,7 @@ class FindTextTest(unittest.TestCase):
         self.assertIsNone(drive.find_text(screen(["⏺ t1 is done"] + [""] * 25 + PROMPT), " t1 ", "panel"))
 
 
-class PromptBoxTest(unittest.TestCase):
+class TestPromptBox(unittest.TestCase):
     def test_claudes_prompt_is_a_prompt_line_under_a_rule(self):
         self.assertTrue(drive.has_prompt_box("⏺ hi\n" + "─" * 80 + "\n❯ \n" + "─" * 80))
 
@@ -110,7 +110,7 @@ class PromptBoxTest(unittest.TestCase):
         self.assertFalse(drive.has_prompt_box("~/src/demo main\n❯ clear; claude --model sonnet"))
 
 
-class StepTest(unittest.TestCase):
+class TestStep(unittest.TestCase):
     def test_every_scenario_step_is_one_the_driver_runs(self):
         import scenarios
         known = (drive.Prompt, drive.Type, drive.Keys, drive.Click, drive.Expect, drive.Check,
@@ -152,7 +152,7 @@ class StepTest(unittest.TestCase):
         self.assertNotIn("--model", cmd)
 
 
-class EnginePromptTest(unittest.TestCase):
+class TestEnginePrompt(unittest.TestCase):
     def test_the_engines_own_question_is_answered_before_a_step_reads_the_screen(self):
         screens = ["cards\n  Teach auto mode about your environment?\n  1. Yes\n  2. Not now",
                    "cards\n  ❯ "]
@@ -172,7 +172,7 @@ class EnginePromptTest(unittest.TestCase):
         self.assertTrue(logged)
 
 
-class RecordingTest(unittest.TestCase):
+class TestRecording(unittest.TestCase):
     REC = {"streams": [
         {"name": "main", "first": "go", "replies": [
             {"prompts": ["go"], "content": [{"type": "tool_use", "id": "a", "name": "Bash", "input": {}}]},
@@ -230,7 +230,7 @@ class RecordingTest(unittest.TestCase):
                          ["npm install -g left-pad", "python3 -c 'import os'"])
 
 
-class OutputTest(unittest.TestCase):
+class TestOutput(unittest.TestCase):
     def test_each_line_reaches_a_file_as_it_is_printed(self):
         """A file gets block-buffered output, so a log of a running verify stayed empty to
         the end. Each line has to be there before anything flushes."""
@@ -264,7 +264,7 @@ class Clock:
         return ""
 
 
-class WaitTest(unittest.TestCase):
+class TestWait(unittest.TestCase):
     """The driver waits for what the screen says, not for a fixed time."""
     BUTTON = " Agree plan \ue0b4"
 
@@ -368,7 +368,7 @@ class WaitTest(unittest.TestCase):
         self.assertLess(clock.now, 30)
 
 
-class LaunchTest(unittest.TestCase):
+class TestLaunch(unittest.TestCase):
     """A launch in claude's fallback interface is not one a scenario can run in."""
     NOTE = ("Claude Code's fullscreen renderer didn't finish starting last time on this machine, "
             "so this launch is using the classic renderer.")
@@ -396,7 +396,7 @@ class LaunchTest(unittest.TestCase):
             drive.ready_in_fullscreen(self.pane([self.NOTE, self.NOTE]), mock.Mock())
 
 
-class CopyTest(unittest.TestCase):
+class TestCopy(unittest.TestCase):
     """A scenario on the rig runs in a copy of the rig that is its alone."""
 
     def scenario(self, name, cwd="~/src/agent-skills-demo-review-mr1"):
@@ -456,7 +456,7 @@ class CopyTest(unittest.TestCase):
         self.assertEqual(ran.call_args.kwargs["env"]["E2E_SRC"], "~/src/agent-skills-e2e/rework-fix")
 
 
-class ResetTest(unittest.TestCase):
+class TestReset(unittest.TestCase):
     def test_every_rig_scenario_names_the_merge_request_it_works_on(self):
         # One that named none would get the whole reset: slower, and nothing says so.
         import scenarios

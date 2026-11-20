@@ -73,7 +73,7 @@ class Rig:
         self.done.append(("reply", discussion_id))
 
 
-class NewsTest(unittest.TestCase):
+class TestNews(unittest.TestCase):
     def setUp(self):
         build = tempfile.TemporaryDirectory()
         self.addCleanup(build.cleanup)

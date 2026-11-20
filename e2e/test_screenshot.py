@@ -9,7 +9,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import screenshot as S  # noqa: E402
 
 
-class Cells(unittest.TestCase):
+class TestCells(unittest.TestCase):
     def test_a_colour_holds_until_reset(self):
         row = S.cells("a\x1b[38;2;1;2;3mbc\x1b[0md")[0]
         self.assertEqual([(c[0], c[1].get("fg")) for c in row],
@@ -34,7 +34,7 @@ class Cells(unittest.TestCase):
         self.assertEqual(len(S.cells("\U000f084d")[0]), 1)
 
 
-class Crop(unittest.TestCase):
+class TestCrop(unittest.TestCase):
     SCREEN = "\n".join(["chat" + " " * 16 + "│" + "panel"] * 28 + ["─" * 40, "❯ prompt"])
 
     def test_the_sidebar_is_right_of_the_divider_and_stops_where_it_does(self):

@@ -24,7 +24,7 @@ def run(folder, name, scenario, seconds, passed=True, reset=6.0):
                   {"kind": "panel", "seconds": 0.5}]}))
 
 
-class TimingTest(unittest.TestCase):
+class TestTiming(unittest.TestCase):
     def setUp(self):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)

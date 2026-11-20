@@ -31,7 +31,7 @@ def _run(*cmd):
     return subprocess.run(cmd, capture_output=True, text=True, timeout=300, cwd=REPO)
 
 
-class ModTests(unittest.TestCase):
+class TestMod(unittest.TestCase):
     def test_there_is_a_mod(self):
         self.assertTrue(MODS)
 

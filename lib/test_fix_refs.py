@@ -20,7 +20,7 @@ def git(repo, *args):
                           check=True).stdout.strip()
 
 
-class FixRefsTest(unittest.TestCase):
+class TestFixRefs(unittest.TestCase):
     def setUp(self):
         self._dir = tempfile.TemporaryDirectory()
         self.repo = self._dir.name

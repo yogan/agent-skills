@@ -17,7 +17,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from lib import ui  # noqa: E402
 
 
-class DrawnTest(unittest.TestCase):
+class TestDrawn(unittest.TestCase):
     def setUp(self):
         self.marks = tempfile.mkdtemp()            # this test's own; removed whole
         self.addCleanup(shutil.rmtree, self.marks)
@@ -49,7 +49,7 @@ class DrawnTest(unittest.TestCase):
             self.assertTrue(ui.drawn())
 
 
-class RecordTest(DrawnTest):
+class TestRecord(TestDrawn):
     def test_a_drawn_session_keeps_the_last_view_in_its_mark(self):
         open(os.path.join(self.marks, "s1"), "w").close()
         with self.env(CLAUDE_CODE_SESSION_ID="s1"):
@@ -74,7 +74,7 @@ class RecordTest(DrawnTest):
             self.assertEqual(fh.read(), "")
 
 
-class ExpireTest(DrawnTest):
+class TestExpire(TestDrawn):
     OLD, RECENT, OURS = ("0b2c4d6e-1111-4222-8333-944455556666", "0b2c4d6e-1111-4222-8333-944455557777",
                          "0b2c4d6e-1111-4222-8333-944455558888")
 
@@ -100,7 +100,7 @@ class ExpireTest(DrawnTest):
         self.assertEqual(os.listdir(self.marks), [self.OLD])
 
 
-class VocabularyTest(unittest.TestCase):
+class TestVocabulary(unittest.TestCase):
     def test_every_state_has_an_icon_and_a_word(self):
         self.assertEqual(set(ui.STATE_ICON), set(ui.STATE_WORD))
         self.assertTrue(set(ui.CLOSED) <= set(ui.STATE_ICON))
@@ -111,7 +111,7 @@ class VocabularyTest(unittest.TestCase):
         self.assertEqual(ui.kind_icon("issue", None), ui.NO_SEVERITY)
 
 
-class ModMirrorTest(unittest.TestCase):
+class TestModMirror(unittest.TestCase):
     """The mod draws the panel with its own copy of these icons (hooks/panel.ts)."""
 
     def test_the_mods_icons_are_these(self):

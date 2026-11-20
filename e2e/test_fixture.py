@@ -17,7 +17,7 @@ import fixture  # noqa: E402
 SLUG = "demo-bulletproof-react"
 
 
-class WipeTest(unittest.TestCase):
+class TestWipe(unittest.TestCase):
     def setUp(self):
         home = tempfile.TemporaryDirectory()
         self.addCleanup(home.cleanup)
@@ -56,7 +56,7 @@ class WipeTest(unittest.TestCase):
         self.assertIn(f"review-mr/{SLUG}--mr1", self.left())     # the person's own is untouched
 
 
-class CopyTest(unittest.TestCase):
+class TestCopy(unittest.TestCase):
     """E2E_PROJECT and E2E_SRC build a copy of the rig, beside the demo's and apart from it."""
 
     def paths(self, **env):
@@ -89,7 +89,7 @@ class CopyTest(unittest.TestCase):
         self.assertEqual((got["E2E_PROJECT"], got["E2E_GITLAB_HOST"]), ("demo/e2e-rework-fix", "gitlab.test"))
 
 
-class CounterTest(unittest.TestCase):
+class TestCounter(unittest.TestCase):
     def test_the_next_merge_request_gets_the_number_asked_for(self):
         with mock.patch.object(fixture, "psql", return_value="2\nUPDATE 1") as psql:
             fixture.next_mr_number(513, 3)

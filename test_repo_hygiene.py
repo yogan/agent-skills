@@ -58,6 +58,21 @@ class TestEveryTestRuns(unittest.TestCase):
                 guilty.append(str(path.relative_to(REPO_ROOT)))
         self.assertEqual(guilty, [], "code after the __main__ guard never runs under the runner")
 
+    def test_every_class_with_tests_is_named_test_something(self):
+        """A file split across the runner's workers runs only its `Test*` classes, one per
+        worker (`run_tests._classes`), so a class with tests under any other name is left out
+        of a split file without a word. Base classes without tests of their own may be called
+        anything."""
+        import ast
+        guilty = []
+        for path in TESTS:
+            for node in ast.parse(path.read_text(encoding="utf-8")).body:
+                if (isinstance(node, ast.ClassDef) and not node.name.startswith("Test")
+                        and any(isinstance(f, (ast.FunctionDef, ast.AsyncFunctionDef))
+                                and f.name.startswith("test") for f in node.body)):
+                    guilty.append(f"{path.relative_to(REPO_ROOT)}: {node.name}")
+        self.assertEqual(guilty, [], "a split file would not run these classes")
+
 
 class TestTemporaryFilesAreCleanedUp(unittest.TestCase):
     def test_every_mkdtemp_is_paired_with_a_cleanup(self):

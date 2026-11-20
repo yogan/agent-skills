@@ -66,7 +66,7 @@ def reminded(words):
     return [text("<system-reminder>\ncontext the engine adds\n</system-reminder>"), text(words)]
 
 
-class Recording(unittest.TestCase):
+class TestRecording(unittest.TestCase):
     def test_replies_in_order_one_per_message_id(self):
         replies = M.conversation(LINES)
         self.assertEqual([[b["type"] for b in r["content"]] for r in replies],
@@ -153,7 +153,7 @@ class Recording(unittest.TestCase):
         self.assertEqual(M.human(reminded("Do  the\nthing")), "Do the thing")
 
 
-class Answering(unittest.TestCase):
+class TestAnswering(unittest.TestCase):
     def setUp(self):
         main = M.conversation(LINES)
         agent = M.conversation([user("Judge the news on MR !3"), said("j1", text("judged"))])
@@ -217,7 +217,7 @@ class Answering(unittest.TestCase):
         self.assertEqual(self.mock.misses, [])
 
 
-class ModCalls(unittest.TestCase):
+class TestModCalls(unittest.TestCase):
     """The mod's own model call has no tools and no transcript: the mod keeps it in a file,
     the recording takes it from there, and a replay answers it by its prompt."""
 
@@ -260,7 +260,7 @@ class ModCalls(unittest.TestCase):
         self.assertEqual(json.loads(self.ask(mock, self.HEAD + f"## {new}: a comment")), {new: {"into": None}})
 
 
-class RunMadeIds(unittest.TestCase):
+class TestRunMadeIds(unittest.TestCase):
     """A comment posted or a commit made in the run gets an id of its own each time."""
 
     LINES = [
@@ -345,7 +345,7 @@ class RunMadeIds(unittest.TestCase):
         self.assertEqual(M.ID.findall("added a facade, 1287 lines, deadbeef"), [])
 
 
-class Offered(unittest.TestCase):
+class TestOffered(unittest.TestCase):
     def test_a_hand_back_the_run_does_not_offer_becomes_the_agents_last_words(self):
         mock = M.Mock({"streams": []})
         got = mock.offered([{"type": "tool_use", "id": "h", "name": M.HANDBACK,
@@ -365,7 +365,7 @@ class Offered(unittest.TestCase):
             {"t": ["13bc7efd0"]})
 
 
-class Wire(unittest.TestCase):
+class TestWire(unittest.TestCase):
     def setUp(self):
         self.mock = M.Mock({"streams": [{"name": "main", "first": "ping", "replies": [
             {"prompts": ["ping"], "content": [call("tu1", "echo hi")]}]}]})

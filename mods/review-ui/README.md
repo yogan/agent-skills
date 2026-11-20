@@ -172,4 +172,4 @@ A change here that moves one of these moves the other in the same commit:
   have no gate;
 - the chips' caps (`CHIP_CAPS`, `hooks/register.tsx`) and the e2e scenarios' `CAP`
   (`e2e/scenarios.py`), which find buttons by them;
-- the panel's icons (`hooks/panel.ts`) and `lib/test_ui.py`'s `ModMirrorTest`.
+- the panel's icons (`hooks/panel.ts`) and `lib/test_ui.py`'s `TestModMirror`.
