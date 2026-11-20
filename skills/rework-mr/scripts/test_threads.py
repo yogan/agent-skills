@@ -3417,6 +3417,25 @@ class TestPushFix(unittest.TestCase):
         self.checks.autosquash.assert_called_once_with("/repo", "abc123", "T1")
         self.checks.push.assert_called_once()
 
+    def test_only_a_commit_a_push_made_itself_trusts_the_record(self):
+        """A commit found made (the person's, with `--no-verify`, say) never ran the real
+        pre-commit hook: the record's early run is not shown to stand for it."""
+        self.checks._out.side_effect = lambda root, *a: "T1" if a[-1] == "HEAD^{tree}" else "NEW"
+        self.push()
+        self.checks.trust.assert_not_called()
+        # The push made the commit and stopped; pressed again, it finds the commit made.
+        T.topic_for(self.state, "t1").pop("pushes")
+        self.checks._out.side_effect = lambda root, *a: "HEADTREE" if a[-1] == "HEAD^{tree}" else "NEW"
+        self.checks.push.side_effect = self.checks.Stop("rejected")
+        with self.assertRaises(T.Handoff):
+            self.push()
+        self.checks.trust.assert_not_called()
+        self.checks._out.side_effect = lambda root, *a: "T1" if a[-1] == "HEAD^{tree}" else "NEW"
+        self.checks.push.side_effect = None
+        self.push()
+        self.checks.trust.assert_called_once_with("/repo")
+        self.assertNotIn("push_committed", self.t1)
+
     def test_a_push_retried_checks_the_remote_against_the_branch_before_the_first_try(self):
         self.checks.push.side_effect = self.checks.Stop("rejected")
         with self.assertRaises(T.Handoff):

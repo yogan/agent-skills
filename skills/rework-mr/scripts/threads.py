@@ -2255,7 +2255,7 @@ def start_fix_round(t, keep_checks=False):
     on the new fix itself (a fix shown on a plan that was to reply only)."""
     if (t.get("outcome") or "fix") == "fix" and t.get("diff_url"):
         for k in ("diff_url", "fix", *(() if keep_checks else ("checked",)), "push_token",
-                  "push_from", "push_stopped", "handed_from", "reply_early", "post_differs",
+                  "push_from", "push_committed", "push_stopped", "handed_from", "reply_early", "post_differs",
                   "early_posted", "reply_posted", "fix_lost"):
             t.pop(k, None)
         if not t.get("reply_for"):
@@ -2471,7 +2471,8 @@ def drop_fix(state, iid, t, why, plan, outcome, new=(), aside=False):
         if committed and _git("reset", "--quiet", "--keep", start) is None:
             die(f"the fix is kept ({kept}), but the branch could not be put back to where the "
                 f"push started ({start[:8]}): `git status` says why")
-    for k in ("fix", "checked", "push_token", "push_from", "push_stopped", "handed_from", "kept",
+    for k in ("fix", "checked", "push_token", "push_from", "push_committed", "push_stopped",
+              "handed_from", "kept",
               *(() if aside else ("reply_early", "agreed_change", "change", "answer_now"))):
         t.pop(k, None)
     if not aside:
@@ -3192,7 +3193,7 @@ def pushed_base(vs, head):
 
 def took(t):
     """Drop what a push in progress kept on `t`: it is pushed."""
-    for k in ("push_from", "push_start", "handed_from", "start_sha", "push_stopped"):
+    for k in ("push_from", "push_start", "push_committed", "handed_from", "start_sha", "push_stopped"):
         t.pop(k, None)
 
 
@@ -3342,6 +3343,12 @@ def push_fix(ctx, iid, path, tid, committed=False, take_in=False):
                                   + ", ".join(f'"{x}"' for x in missing))
         elif not committed:
             checks.commit_fixup(root, rec, c, targets[0])
+            # Kept for a push cut short after it and pressed again, which finds the commit
+            # made and does not make it again.
+            with holding(path):
+                state = load(path)
+                topic_for(state, tid)["push_committed"] = True
+                save(path, state)
         if targets:
             oldest = targets[0] if len(targets) == 1 else checks._out(
                 root, "merge-base", "--octopus", *targets) or targets[0]
@@ -3383,9 +3390,10 @@ def push_fix(ctx, iid, path, tid, committed=False, take_in=False):
                           "commits they are and what they change, and leave taking them in to "
                           "that press; never rebase or push yourself.") from e
         raise Handoff(f"Pushing {tid}'s fix stopped: {e}") from e
-    if not handed:
+    if not handed and (t.get("push_committed") or topic_for(state, tid).get("push_committed")):
         # Only a push whose commit ran the real hooks here tells whether the record's early
-        # runs stand for them; the agent's commits may have skipped them.
+        # runs stand for them: the agent's commits may have skipped them, and so may a commit
+        # the person made before pressing (`--no-verify`), which this push found made.
         checks.trust(root)
     head = checks._out(root, "rev-parse", "HEAD")
     url = diff_url_for(ctx, iid, start, head) if start else None
