@@ -33,7 +33,8 @@ passed already and runs the rest. The same tree is the same code, and a scenario
 recording, so a pass stays a pass; any commit or amend that changes the tree starts over.
 
 It checks the committed tree, so it refuses to start with uncommitted changes: a pass would
-otherwise be recorded for something else than what gets pushed.
+otherwise be recorded for something else than what gets pushed. For the same reason it records
+nothing, not even a scenario's pass, once the checkout has changed under it during the run.
 
 Which scenarios a change reaches: a scenario reaches the skills whose slash command its steps
 type; a skill's scripts reach the `lib/` modules they import. The mod, the e2e harness and the
@@ -228,6 +229,15 @@ def dirty():
     return git("status", "--porcelain", "--untracked-files=normal")
 
 
+def moved(tree):
+    """Whether the checkout is no longer `tree`, committed and clean, as it was at the start.
+
+    Everything here runs against the working tree, so an edit, checkout or fold by another
+    session during the run means what passed is not `tree`; recording it would let the
+    pre-push hook through for code nobody tested. Asked again before every record."""
+    return tree_of("HEAD") != tree or bool(dirty())
+
+
 def run(step, argv):
     print(f"\n==> {step}: {' '.join(argv)}", flush=True)
     started = time.monotonic()
@@ -286,7 +296,7 @@ def main(argv):
         with noting:
             print(f"\n==> scenario {name}: {'ok' if r.returncode == 0 else 'FAILED'}\n"
                   + (r.stdout + r.stderr).rstrip(), flush=True)
-            if r.returncode == 0:
+            if r.returncode == 0 and not moved(tree):
                 record_scenario(tree, name)
         return r.returncode == 0
 
@@ -297,6 +307,10 @@ def main(argv):
               f"{jobs} at a time: {time.monotonic() - started:.0f}s", flush=True)
     if not ok:
         print("\ncheck_push: FAILED — nothing recorded")
+        return 1
+    if moved(tree):
+        print("\ncheck_push: the checkout changed while the checks ran, so what passed is not "
+              f"{head[:12]}'s tree — nothing recorded; run it again once nothing else is editing")
         return 1
     record_pass(tree, head, {"scenarios": picked, "since": why, "mode": mode})
     print(f"\ncheck_push: {head[:12]} passed; recorded, the pre-push hook will let it through")

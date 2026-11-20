@@ -283,6 +283,24 @@ def _cached_pass(fingerprint):
     return record
 
 
+def _record_pass(fingerprint, mode, files, tests):
+    """Record a passing whole run against `fingerprint`, taken before it started — unless the
+    files changed while it ran. The tests ran against whatever was on disk at the time, so
+    after an edit by another session the pass is a pass of neither state, and a record would
+    skip the next run of the edited files. Fingerprinting again costs well under a second."""
+    if _fingerprint(mode) != fingerprint:
+        print("not recorded: the files changed while the tests ran, so the next run of this "
+              "tree runs again")
+        return
+    try:
+        PASSED.write_text(json.dumps(
+            {"fingerprint": fingerprint, "day": time.strftime("%Y-%m-%d"),
+             "at": time.strftime("%H:%M"), "files": files, "tests": tests}),
+            encoding="utf-8")
+    except OSError:
+        pass                                      # a missing cache only costs one full run
+
+
 def record_timings(earlier, per_file):
     """The timings to keep: `earlier` with this run's files' seconds replacing theirs."""
     return {**earlier, **{r: round(a["seconds"], 2) for r, a in per_file.items()}}
@@ -664,8 +682,8 @@ def main():
     # reads and writes the record too: the hook's run after a full pass is then free.
     whole = not patterns and selected is None
     on_host = "--host" in args
-    fingerprint = _fingerprint(("slow" if include_slow else "fast") + ("-host" if on_host else "")) \
-        if whole else None
+    mode = ("slow" if include_slow else "fast") + ("-host" if on_host else "")
+    fingerprint = _fingerprint(mode) if whole else None
     if not force:
         record = _cached_pass(fingerprint)
         if record:
@@ -758,13 +776,7 @@ def main():
         return 1
 
     if fingerprint:
-        try:
-            PASSED.write_text(json.dumps(
-                {"fingerprint": fingerprint, "day": time.strftime("%Y-%m-%d"),
-                 "at": time.strftime("%H:%M"), "files": len(files), "tests": total_tests}),
-                encoding="utf-8")
-        except OSError:
-            pass                                  # a missing cache only costs one full run
+        _record_pass(fingerprint, mode, len(files), total_tests)
 
     print(f"OK: {len(files)} file(s), {total_tests} tests in {wall:.0f}s"
           + ("" if include_slow else " (fast only — see the docstring before you add --slow)"))

@@ -519,6 +519,19 @@ class TestFingerprint(unittest.TestCase):
         """A `--slow` pass is not a fast pass: the two must not share a cache entry."""
         self.assertNotEqual(rt._fingerprint("fast"), rt._fingerprint("slow"))
 
+    def test_a_pass_is_not_recorded_when_the_files_changed_during_the_run(self):
+        """The record is what lets the next run skip, so it must describe the files the tests
+        saw. An edit by another session mid-run used to be recorded under the starting
+        fingerprint, and undoing it afterwards then made an untested state count as tested."""
+        passed = self.repo / "passed.json"
+        with mock.patch.object(rt, "PASSED", passed), redirect_stdout(io.StringIO()):
+            before = self._fp()
+            (self.repo / "src.py").write_text("x = 4\n")          # edited while it ran
+            rt._record_pass(before, "fast", 1, 1)
+            self.assertFalse(passed.exists())
+            rt._record_pass(self._fp(), "fast", 1, 1)
+            self.assertTrue(passed.exists())
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

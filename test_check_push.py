@@ -5,11 +5,13 @@ run, so most cases here are about what must be picked.
 
 Run: `python3 test_check_push.py` (no scenario runs, no push).
 """
+import io
 import json
 import os
 import sys
 import tempfile
 import unittest
+from contextlib import redirect_stdout
 from pathlib import Path
 from unittest import mock
 
@@ -138,6 +140,41 @@ class TestTheRecord(unittest.TestCase):
 
     def test_deleting_a_branch_needs_no_pass(self):
         self.assertEqual(cp.verify(["0" * 40]), 0)
+
+    def _main_while_the_checkout_moves(self, argv, *, moved_after):
+        """`main` with every check passing, where `dirty` turns true after `moved_after` asks:
+        another session editing the checkout while the checks run."""
+        asked = []
+
+        def dirty():
+            asked.append(1)
+            return " M lib/x.py" if len(asked) > moved_after else ""
+
+        git = {("rev-parse", "HEAD"): "c" * 40,
+               ("rev-parse", "--abbrev-ref", "@{u}"): "origin/main"}
+        done = mock.Mock(returncode=0, stdout="", stderr="")
+        with mock.patch.object(cp, "dirty", dirty), \
+                mock.patch.object(cp, "tree_of", lambda rev: "T-start"), \
+                mock.patch.object(cp, "git", lambda *a: git.get(a, "")), \
+                mock.patch.object(cp, "scenarios", lambda: [("smoke", set(), [], None)]), \
+                mock.patch.object(cp, "run", lambda step, argv: True), \
+                mock.patch.object(cp.subprocess, "run", return_value=done), \
+                redirect_stdout(io.StringIO()):
+            return cp.main(argv)
+
+    def test_nothing_is_recorded_when_the_checkout_changed_during_the_run(self):
+        """What passed was the edited working tree, not the tree read at the start; recording
+        it let the pre-push hook through for a tree whose checks never ran."""
+        self.assertEqual(self._main_while_the_checkout_moves(["--scenarios", "none"],
+                                                             moved_after=1), 1)
+        self.assertEqual(cp.passed_trees(), set())
+        self.assertEqual(self._main_while_the_checkout_moves(["--scenarios", "none"],
+                                                             moved_after=99), 0)
+        self.assertEqual(cp.passed_trees(), {"T-start"})
+
+    def test_a_scenario_is_not_noted_when_the_checkout_changed_before_it_passed(self):
+        self._main_while_the_checkout_moves(["--scenarios", "all", "--jobs", "1"], moved_after=1)
+        self.assertEqual(cp.scenarios_passed("T-start"), set())
 
     def test_the_record_keeps_the_newest_passes(self):
         for i in range(cp.KEEP + 5):
