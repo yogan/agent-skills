@@ -170,8 +170,8 @@ areas are merged, keeping the verb when there is one and counting them when ther
 
 - **Write the detailed spec anyway.** The overview is derived from it, so you lose nothing by
   authoring the full thing and rendering it both ways. Offer the detail; lead with the overview.
-- **`--drop` the entry point that touches everything.** In that repo, `API routers` and
-  `Procrastinate tasks` were *half of all 38 edge ends* and neither is a service — dropping them
+- **`--drop` the entry point that touches everything.** In one measured diagram, `API routers`
+  and `queued tasks` were *half of all 38 edge ends* and neither is a service — dropping them
   took the overview from 19 edges to 10, and "every service is reachable from the API; lifecycle
   work runs as tasks" is a sentence you say in your summary. A node adjacent to most areas is
   costing you the whole layout to tell the reader one thing.

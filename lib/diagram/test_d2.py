@@ -299,10 +299,10 @@ class TestDetailWrapping(unittest.TestCase):
     """A detail sets the box's width, so left on one line it shoves every other lane sideways.
     Wrapping trades that width for height, which a sequence diagram has to spare."""
 
-    LONG = "Procrastinate worker: discover→ingest (creates Document)→extract→ocr→enrich"
+    LONG = "Queue worker: collect→intake (creates Parcel)→unpack→scan→annotate→file"
 
     def test_a_short_detail_stays_on_one_line(self):
-        self.assertEqual(d2.wrap_detail("Azure AI — OCR"), ["Azure AI — OCR"])
+        self.assertEqual(d2.wrap_detail("Text reader — scan"), ["Text reader — scan"])
 
     def test_a_long_detail_wraps_within_the_budget(self):
         lines = d2.wrap_detail(self.LONG)
