@@ -130,6 +130,17 @@ class TestEachCommitAlone(unittest.TestCase):
         with mock.patch("sys.stderr", io.StringIO()), redirect_stdout(io.StringIO()):
             self.assertNotEqual(C.main(["no-such-rev-for-this-test"]), 0)
 
+    def test_a_private_words_check_that_crashed_fails_the_commit_and_shows_why(self):
+        """Only stdout was read, so a traceback on stderr let the commit through unchecked."""
+        crashed = subprocess.CompletedProcess([], 1, "", "Traceback ...\nOSError: no list\n")
+        ok, report, _ = C.with_private_words((True, [], None), crashed)
+        self.assertFalse(ok)
+        self.assertIn("  OSError: no list", report)
+        silent = subprocess.CompletedProcess([], 2, "", "")
+        self.assertFalse(C.with_private_words((True, [], None), silent)[0])
+        clean = subprocess.CompletedProcess([], 0, "", "")
+        self.assertEqual(C.with_private_words((True, [], None), clean), (True, [], None))
+
     def test_the_ruff_it_runs_is_the_one_the_hook_pins(self):
         with open(os.path.join(C.HERE, ".githooks", "pre-commit")) as fh:
             self.assertIn(f"RUFF={C.ruff_version()}\n", fh.read())

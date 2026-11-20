@@ -43,13 +43,21 @@ HEADER = """\
 """
 
 
-def git(*args):
+def git(*args, unset_ok=False):
+    """Git's output. A failure exits 2 with git's own message: read as empty output, it was a
+    diff with no lines in it, so the check passed having checked nothing. `unset_ok` is for
+    `git config --get`, whose failure only means the key is not set."""
     r = subprocess.run(["git", *args], cwd=HERE, capture_output=True, text=True)
+    if r.returncode != 0 and not unset_ok:
+        print(f"private_terms: `git {' '.join(args)}` failed, nothing checked: "
+              f"{r.stderr.strip()}", file=sys.stderr)
+        sys.exit(2)
     return r.stdout if r.returncode == 0 else ""
 
 
 def list_path():
-    return os.path.expanduser(git("config", "--get", "agent-skills.private-terms").strip()
+    return os.path.expanduser(git("config", "--get", "agent-skills.private-terms",
+                                  unset_ok=True).strip()
                               or DEFAULT)
 
 
@@ -87,15 +95,33 @@ def pattern(term):
 
 
 def added_lines(diff):
-    """(file, line number, text) for every line `diff` adds."""
-    out, path, n = [], None, 0
+    """(file, line number, text) for every line `diff` adds.
+
+    Inside a hunk, its header's line counts say how many lines are left, so an added line
+    whose text starts with `++ ` is content, not the next file's `+++ ` header: read as one,
+    it went unchecked. A combined diff's `@@@` header is not counted and falls back to
+    reading the prefixes alone."""
+    out, path, n, old, new = [], None, 0, 0, 0
     for line in diff.splitlines():
+        if old > 0 or new > 0:
+            if line.startswith("+"):
+                if path:
+                    out.append((path, n, line[1:]))
+                n, new = n + 1, new - 1
+            elif line.startswith("-"):
+                old -= 1
+            elif not line.startswith("\\"):        # "\ No newline at end of file"
+                n, old, new = n + 1, old - 1, new - 1
+            continue
         if line.startswith("+++ "):
             path = line[4:].split("\t")[0]
             path = path[2:] if path.startswith("b/") else path
         elif line.startswith("@@"):
             m = re.search(r"\+(\d+)", line)
             n = int(m.group(1)) if m else 0
+            counts = re.match(r"@@ -\d+(?:,(\d+))? \+\d+(?:,(\d+))? @@", line)
+            if counts:
+                old, new = (int(c) if c is not None else 1 for c in counts.groups())
         elif line.startswith("+") and path:
             out.append((path, n, line[1:]))
             n += 1

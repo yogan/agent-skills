@@ -92,6 +92,21 @@ class TestLists(unittest.TestCase):
         diff = "+++ b/a.txt\n@@ -3,2 +10,2 @@\n context\n+added\n-removed\n"
         self.assertEqual(P.added_lines(diff), [("a.txt", 11, "added")])
 
+    def test_an_added_line_starting_with_plus_signs_is_checked_not_taken_for_a_header(self):
+        diff = ("+++ b/a.txt\n@@ -0,0 +1,3 @@\n+one\n+++ zorbix\n+three\n"
+                "+++ b/c.txt\n@@ -0,0 +1 @@\n+four\n")
+        self.assertEqual(P.added_lines(diff), [("a.txt", 1, "one"), ("a.txt", 2, "++ zorbix"),
+                                               ("a.txt", 3, "three"), ("c.txt", 1, "four")])
+
+    def test_a_revision_git_cannot_show_is_a_failure_not_a_clean_pass(self):
+        """`git()` read every failure as empty output: no lines, so nothing to find, exit 0."""
+        P.save({"block": ["zorbix"], "watch": []})
+        err = io.StringIO()
+        with mock.patch("sys.stderr", err), self.assertRaises(SystemExit) as stop:
+            P.check(["no-such-rev-for-this-test"])
+        self.assertEqual(stop.exception.code, 2)
+        self.assertIn("nothing checked", err.getvalue())
+
 
 if __name__ == "__main__":
     unittest.main()

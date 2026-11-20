@@ -210,6 +210,20 @@ def record_passes(commits, path=None):
         json.dump({"day": time.strftime("%Y-%m-%d"), "commits": sorted(keep)}, fh, indent=0)
 
 
+def with_private_words(result, r):
+    """A commit's (ok, report, log) with the private-words check's run `r` folded in.
+
+    A watch word passes, but its lines are still for a person to look at. A crash or a git
+    failure prints to stderr alone and is a failure: nothing was checked."""
+    said = r.stdout.strip() or (r.returncode != 0 and (
+        r.stderr.strip() or f"private_terms.py exited {r.returncode} saying nothing"))
+    if not said:
+        return result
+    ok, report, log = result
+    return (ok and r.returncode == 0,
+            report + ["private words:"] + [f"  {ln}" for ln in said.splitlines()], log)
+
+
 def main(argv):
     base = argv[0] if argv else (git("rev-parse", "--abbrev-ref", "@{u}") or "origin/main")
     listed = git("rev-list", "--reverse", f"{base}..HEAD")
@@ -240,13 +254,9 @@ def main(argv):
     # The owner's private words, in each commit's added lines and its message: the hooks
     # check the same, but a fold commits with them off.
     for i, commit in enumerate(commits):
-        r = subprocess.run([sys.executable, os.path.join(HERE, "private_terms.py"), "check",
-                            commit], cwd=HERE, capture_output=True, text=True)
-        if r.stdout.strip():
-            # A watch word passes, but its lines are still for a person to look at.
-            ok, report, log = results[i]
-            results[i] = (ok and r.returncode == 0, report + ["private words:"] +
-                          [f"  {ln}" for ln in r.stdout.splitlines()], log)
+        results[i] = with_private_words(results[i], subprocess.run(
+            [sys.executable, os.path.join(HERE, "private_terms.py"), "check", commit],
+            cwd=HERE, capture_output=True, text=True))
     failed = 0
     for commit, (ok, report, log) in zip(commits, results):
         print(f"{'ok  ' if ok else 'FAIL'}  {git('log', '-1', '--format=%h %s', commit)}")
