@@ -134,6 +134,12 @@ says none of them.
   reached from a test: test the pure function that decides instead (`buttonsFor`).
 - A JSX callback parameter named `h` shadows the element factory: the type check passes and
   the hook throws at render. Every `Markdown` key in one card must be unique.
+- The chat repaints a row under the pointer as the pointer moves over it, and that repaint
+  drops `dimColor` while it keeps every colour: dim text on a card lit up full white under
+  the pointer. So a card's dim text is the theme's grey as a colour (`DIM_COLOR`), and only
+  Markdown, which takes no colour and keeps its dim through the repaint, keeps `dimColor`
+  (`band.test.tsx` guards every part of a card). The sidebar, a pane, is not repainted so:
+  its `dimColor` stays dim under the pointer.
 - A key chord bound in the `Global` context takes over its first key everywhere (ctrl+x
   stopped deleting in the session overview); bind in `Chat`.
 - A pane is reachable from the keyboard only when opened with `focus: true`. Consecutive shell
