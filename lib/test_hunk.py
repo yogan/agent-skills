@@ -860,6 +860,16 @@ class KeptFilesCase(unittest.TestCase):
         stub = patch.object(hunk, "keep_dir", lambda: self.dir)
         stub.start()
         self.addCleanup(stub.stop)
+        # The machine's processes as the test says them: {pid: when it started}, none by
+        # default, so a pid that happens to be in use on the machine running the suite is not.
+        self.processes = {}
+        for name, fake in (("_alive", lambda pid: pid in self.processes),
+                           ("_process_start", lambda pid: self.processes.get(pid))):
+            stub = patch.object(hunk, name, fake)
+            stub.start()
+            self.addCleanup(stub.stop)
+
+    STARTED = hunk._seconds("2026-03-01T10:00:00.100Z")     # what `write` puts in a file
 
     def write(self, pid, notes, started="2026-03-01T10:00:00.100Z", repo=REPO, tag="me",
               review=None):
@@ -945,9 +955,27 @@ class TestKeepNotesFiles(KeptFilesCase):
     def test_with_no_daemon_a_file_is_closed_once_its_process_is_gone(self):
         gone = self.write(777, [self.kept("user:3")])
         self.write(501, [self.kept("user:4")])
-        with patch.object(hunk, "_run", lambda *a, **k: (1, "")), \
-                patch.object(hunk, "_alive", lambda pid: pid == 501):
+        self.processes[501] = self.STARTED
+        with patch.object(hunk, "_run", lambda *a, **k: (1, "")):
             self.assertEqual([p for p, _ in hunk.closed_viewer_notes(REPO, "me")], [gone])
+
+    def test_a_running_viewer_the_daemon_does_not_list_is_not_closed(self):
+        """Not registered yet, or not again after the daemon restarted: called closed, its
+        notes were handed over while they stayed in the viewer, and were reported twice."""
+        self.write(777, [self.kept("user:3")])
+        self.processes[777] = self.STARTED + 0.4
+        run, _ = self.run_with([])
+        with patch.object(hunk, "_run", run):
+            self.assertEqual(hunk.closed_viewer_notes(REPO, "me"), [])
+
+    def test_a_closed_viewers_pid_now_used_by_another_process_is_still_closed(self):
+        """A reused pid made the file look running, and its notes then counted nowhere."""
+        gone = self.write(777, [self.kept("user:3")])
+        self.processes[777] = self.STARTED + 3600
+        run, _ = self.run_with([])
+        for daemon in (run, lambda *a, **k: (1, "")):
+            with patch.object(hunk, "_run", daemon):
+                self.assertEqual([p for p, _ in hunk.closed_viewer_notes(REPO, "me")], [gone])
 
     AGENT = {"id": "mcp:9", "source": "agent", "author": "agent", "file": "hidden.py",
              "side": "new", "line": 4, "end": 4, "text": "because the cache is per user",

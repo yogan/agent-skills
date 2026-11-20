@@ -719,6 +719,33 @@ def _alive(pid):
     return True
 
 
+# How far apart the process start `ps` reports (to the second) and the file's `startedAt` (the
+# viewer's runtime start) may be and still be one process.
+_SAME_PROCESS_SECONDS = 5
+
+
+def _process_start(pid):
+    """When process `pid` started, in epoch seconds, or None when `ps` cannot say."""
+    try:
+        r = subprocess.run(["ps", "-o", "lstart=", "-p", str(int(pid))], capture_output=True,
+                           text=True, timeout=5, env={**os.environ, "LC_ALL": "C"})
+        return time.mktime(time.strptime(" ".join(r.stdout.split()), "%a %b %d %H:%M:%S %Y"))
+    except (OSError, ValueError, TypeError, OverflowError, subprocess.SubprocessError):
+        return None
+
+
+def _still_running(doc):
+    """Whether the viewer that wrote `doc` is running: its pid is alive and that process
+    started when the file says. Alive alone is not enough, since a pid is reused: a closed
+    viewer's file would look running for as long as the unrelated process lived, and its notes
+    would count nowhere, neither live nor closed. Where `ps` cannot say, alive decides."""
+    pid = doc.get("pid")
+    if not _alive(pid):
+        return False
+    began, said = _process_start(pid), _seconds(doc.get("startedAt") or "")
+    return began is None or said is None or abs(began - said) <= _SAME_PROCESS_SECONDS
+
+
 def closed_viewer_notes(repo, tag):
     """[(path, notes)] — what viewers that are no longer running left in their files, for
     `repo` and opened with `tag` (`spawn_session` tags with the owner), notes in
@@ -726,8 +753,11 @@ def closed_viewer_notes(repo, tag):
 
     The tag keeps a viewer the user opened by hand in the same repository out: those notes
     were never written to this agent, and would hold its push for as long as they lasted.
-    "No longer running" is "no session of the daemon's writes that file"; a daemon that does
-    not answer cannot say, so a file then counts as closed only once its process is gone.
+    "No longer running" is "no session of the daemon's writes that file, and the process
+    that wrote it is gone": a viewer missing from the daemon's list may only not have
+    registered yet, or not again after the daemon restarted, and calling it closed hands its
+    notes over while they stay in the viewer, to be reported a second time. A daemon that does
+    not answer cannot say, so the process alone then decides.
     """
     files = [(p, d) for p, d in _viewer_files()
              if repo and d.get("repoRoot") == repo and tag and d.get("tag") == tag]
@@ -737,9 +767,9 @@ def closed_viewer_notes(repo, tag):
     live = (data or {}).get("sessions") if isinstance(data, dict) else None
     if isinstance(live, list):
         running = {_file_of(s, files) for s in live}
-        closed = [(p, d) for p, d in files if p not in running]
+        closed = [(p, d) for p, d in files if p not in running and not _still_running(d)]
     else:
-        closed = [(p, d) for p, d in files if not _alive(d.get("pid"))]
+        closed = [(p, d) for p, d in files if not _still_running(d)]
     return [(p, [_kept_tuple(n) for n in d["notes"] if isinstance(n, dict) and _is_users(n)])
             for p, d in closed]
 
