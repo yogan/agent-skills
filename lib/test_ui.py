@@ -8,6 +8,7 @@ import os
 import shutil
 import sys
 import tempfile
+import time
 import unittest
 from unittest.mock import patch
 
@@ -71,6 +72,32 @@ class RecordTest(DrawnTest):
             ui.record({"topic": "t2"})
         with open(os.path.join(self.marks, "s1")) as fh:
             self.assertEqual(fh.read(), "")
+
+
+class ExpireTest(DrawnTest):
+    OLD, RECENT, OURS = ("0b2c4d6e-1111-4222-8333-944455556666", "0b2c4d6e-1111-4222-8333-944455557777",
+                         "0b2c4d6e-1111-4222-8333-944455558888")
+
+    def mark(self, name, days_ago):
+        path = os.path.join(self.marks, name)
+        open(path, "w").close()
+        at = time.time() - days_ago * 86400
+        os.utime(path, (at, at))
+
+    def test_a_view_removes_the_marks_left_unused_longer_than_a_resume_can_reach(self):
+        self.mark(self.OLD, ui.MARK_DAYS + 1)
+        self.mark(self.RECENT, 3)                       # a --resume after a weekend finds it
+        self.mark(self.OURS, ui.MARK_DAYS + 5)          # this session's own is written afresh
+        self.mark("notes.txt", ui.MARK_DAYS + 9)        # not named like a mark: not ours to remove
+        with self.env(CLAUDE_CODE_SESSION_ID=self.OURS):
+            ui.record({"topic": "t2"})
+        self.assertEqual(sorted(os.listdir(self.marks)), sorted(["notes.txt", self.RECENT, self.OURS]))
+
+    def test_no_view_recorded_removes_nothing(self):
+        self.mark(self.OLD, ui.MARK_DAYS + 1)
+        with self.env(CLAUDE_CODE_SESSION_ID=self.RECENT):     # no mark: the mod does not draw it
+            ui.record({"topic": "t2"})
+        self.assertEqual(os.listdir(self.marks), [self.OLD])
 
 
 class VocabularyTest(unittest.TestCase):

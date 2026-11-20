@@ -12,7 +12,8 @@ loaded it marks the session, and the views change for the person looking at the 
 **How a script knows.** The mod writes an empty file named after the session id into
 `MARKS` when the session starts, and Claude Code hands every shell it runs that id as
 `CLAUDE_CODE_SESSION_ID`. A view rendered in a marked session is drawn by the mod. Nothing
-else is consulted, so a session the mod never saw renders as before. `REVIEW_UI_DRAWN` (`1`
+else is consulted, so a session the mod never saw renders as before. A mark goes once no view
+was recorded in it for `MARK_DAYS`. `REVIEW_UI_DRAWN` (`1`
 or `0`) overrides the answer, for tests and unusual launchers.
 
 The icons are Nerd Fonts v3 Material Design glyphs, chosen by name and written here as their
@@ -24,6 +25,7 @@ import datetime
 import json
 import os
 import re
+import time
 
 MARKS = os.path.expanduser("~/.claude/review-ui/sessions")
 
@@ -60,6 +62,36 @@ def record(view):
             json.dump(view, fh)
     except OSError:
         pass
+    expire_marks()
+
+
+# Nothing tells the mod a session has ended for good, since `claude --resume` takes it up
+# again under the same id, so a mark is kept for as long as Claude Code keeps a session's
+# transcript by default (`cleanupPeriodDays`): a session that can still be resumed, after a
+# weekend or a holiday, still finds its mark. Counted from the last view recorded in it, or
+# from when the mod made it.
+MARK_DAYS = 30
+# How the mod names a mark: the session id. Nothing else in the folder is a mark of ours.
+SESSION_ID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
+
+
+def expire_marks(now=None):
+    """Remove every mark no view was recorded in for MARK_DAYS, each by its own name.
+
+    Runs with each recorded view: one listing of the folder, a few milliseconds for a
+    thousand marks. Never fatal: a mark another session removes first is already gone."""
+    cutoff = (time.time() if now is None else now) - MARK_DAYS * 86400
+    try:
+        old = [e.path for e in os.scandir(MARKS)
+               if SESSION_ID.fullmatch(e.name) and e.is_file(follow_symlinks=False)
+               and e.stat(follow_symlinks=False).st_mtime < cutoff]
+    except OSError:
+        return
+    for path in old:
+        try:
+            os.remove(path)
+        except OSError:
+            pass
 
 
 # One vocabulary for a topic's state in both skills, each word meaning one thing: whose
