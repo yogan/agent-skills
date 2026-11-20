@@ -1969,6 +1969,21 @@ const stepControls = async ($: EngineInterface, s: ReviewSession, r: ReviewState
   return { buttons, offered, press, isHosted, host }
 }
 
+// What only a running process can hold: a turn under way, a press, a check asking GitLab, the
+// mod's model call. Each is set and cleared around its own work, so a process that ended in
+// the middle of one (a quit during a press) never cleared it, and a flag left standing would
+// make every later update check stand aside for good. The mod's state is the host's, held
+// for the session in the running process (a restart, even `--resume` on the same session id,
+// starts it empty), so this matters wherever it does outlive the work: a reload of the mod,
+// which keeps it. One reloaded in the middle of a turn checks beside that turn until it ends,
+// a check that only waits on the state file behind the turn's own script calls.
+const clearRunning = async ($: EngineInterface) => {
+  await update($, working, () => false)
+  await update($, busy, () => null)
+  await update($, checks, c => (c.running ? { ...c, running: false } : c))
+  await update($, judging, j => (j.run ? { ...j, run: null, topics: [], own: [] } : j))
+}
+
 export const register: Register = on => {
   // The main loop's turns only: a subagent's run beside them (an explainer made in the
   // background) changes nothing the person works on.
@@ -2005,6 +2020,7 @@ export const register: Register = on => {
   })
 
   on('session.start', async ($, e, next) => {
+    await clearRunning($)
     await dropStray($)
     await markSession($)
     await recover($)

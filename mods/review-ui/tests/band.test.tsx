@@ -34,7 +34,8 @@ const BAND = {
   props: { hasSurvey: false, isCollapsed: false, isWorking: false, maxRows: 6, bodyColumns: 120, scroll: { offset: 0, bodyRows: 6 }, view: {} },
 } as const
 
-type Out = { stdout: string; exitCode?: number; stderr?: string }
+// `hang`: the script never answers, as one cut off by a quit in the middle of it.
+type Out = { stdout: string; exitCode?: number; stderr?: string; hang?: boolean }
 
 // Everything beneath the plugin, registered before the test's first call on `$` as the kit
 // requires: the script, as a list of states it moves through (each command that changes
@@ -63,6 +64,7 @@ const world = (on: On, states: string[], extra: Record<string, Out> = {}, store:
       return i > 0 ? extra[`${cmd} ${flag} ${e.argv[i + 1]}`] : undefined
     }
     const hit = picked('--file') ?? picked('--push') ?? extra[cmd]
+    if (hit?.hang) return new Promise(() => {}) as never
     if (hit) return answer(hit)
     at += 1
     return answer({ stdout: '' })
@@ -3958,4 +3960,82 @@ test('back after a restart, the newest card of the transcript hosts the buttons 
   const band = await $.ui.mount({ ...BAND, surface: 'terminal' })
   expect(await labels(band)).toEqual(['Show sidebar'])
   await band.unmount()
+})
+
+test("a session's start clears what only a running process held: a turn, a press and a check cut off leave the update check free", async ($, on) => {
+  const tick = heldClock(on)
+  on('tool.register' as never, (() => ({ value: undefined })) as never)
+  on('session.start' as never, ((_: unknown, e: object) => e) as never)
+  on('turn.start', ($, e) => ({ turnId: e.turnId }))
+  const done = stateOf(null, [topic('t1', 'open'), topic('t2', 'open')])
+  // GitLab never answers the sync pressed: the process ends in the middle of it.
+  const w = world(on, [done], { refresh: { stdout: done, hang: true } })
+  await startSession($)
+  await openReview($, w, view('t1'))
+  await $.turn.start({ text: 'what is left?', turnId: 'turn-1' })
+  const panel = await $.ui.mount({ ...PANEL, surface: 'terminal' })
+  void panel.press({ key: 'check-now' })
+  await settle()
+  expect(await panel.find({ type: 'Text', text: /Checking GitLab/ })).toBeDefined()
+  await panel.unmount()
+  const asked = () => w.ran.filter(r => r.argv[2] === 'refresh').length
+  await tick()
+  expect(asked()).toBe(1)                              // the turn and the press stand in its way
+  // Started again where the mod's state outlived them (a reload keeps it).
+  const again = startSession($)
+  await settle()
+  const after = await $.ui.mount({ ...PANEL, surface: 'terminal' })
+  expect(await after.find({ type: 'Text', text: /Checking GitLab/ })).toBeUndefined()
+  expect(await after.find({ type: 'Button', key: 'check-now' })).toBeDefined()
+  await after.unmount()
+  await again
+  await tick()
+  expect(asked()).toBe(2)
+})
+
+test('a fresh session opening a review that has state already asks GitLab at the first tick, its topics as they were', async ($, on) => {
+  const tick = heldClock(on)
+  on('tool.register' as never, (() => ({ value: undefined })) as never)
+  on('session.start' as never, ((_: unknown, e: object) => e) as never)
+  const story = reworkView('t1').replace('some view', 'some view\n\n09:12 \u{F012C} Miriam commented')
+  const kept = reworkState(null, [reworkTopic('t1', 'none', { state: 'waiting' }), reworkTopic('t2', 'none', { state: 'waiting' })], { in_round: false, inbox: inbox() })
+  const w = world(on, [kept], { refresh: { stdout: kept } })
+  await startSession($)
+  // Nothing ran before the person started the review: a fresh session takes up no old one.
+  expect(w.ran).toEqual([])
+  await openRework($, w, story)
+  await tick()
+  expect(w.ran.filter(r => r.argv[2] === 'refresh').length).toBe(1)
+  const panel = await $.ui.mount({ ...PANEL, surface: 'terminal' })
+  const texts = (await panel.findAll({ type: 'Text' })).map(t => String(t.text ?? '')).join('\n')
+  expect(texts).toContain('summary of t1')
+  expect(texts).toContain('summary of t2')
+  await panel.unmount()
+  const card = await $.ui.mount(cardRow('tu-open', story))
+  expect(JSON.stringify([...await card.findAll({ type: 'Text' }), ...await card.findAll({ type: 'Markdown' })])).toContain('Miriam')
+  await card.unmount()
+})
+
+test("back days later with the MR merged meanwhile: the scripts run from the session's folder, and the box says merged", async ($, on) => {
+  const tick = heldClock(on)
+  const gone = { ...REWORK, cwd: '/wt.reviews/mr-42' }
+  const mr = { state: 'opened', approved_by: ['Robin'], approvals_left: 0, merge_status: 'mergeable', can_merge: true }
+  const left = (more: object) => reworkState(null, [reworkTopic('t1', 'none', { state: 'done' })], { in_round: false, mr: { ...mr, ...more }, inbox: inbox() })
+  // The state file as the session left it; GitLab says it was merged since.
+  const w = world(on, [left({})], { refresh: { stdout: left({ state: 'merged', merged_at: '2026-11-08T09:00:00Z', merged_by: 'Robin' }) } })
+  w.clock.now = Date.parse('2026-11-09T08:00:00Z')
+  const head = `\u{f0182} **t1** \`src/cache.ts:17\``
+  const out = `${head}\n\nsome view\n\n<!-- paste-gate:critical\n${JSON.stringify({ first: head, critical: [], topic: 't1', focus: 't1', review: gone })}\n-->`
+  resumed(on, w, gone, [{ id: 'tu-last', out }])
+  await startSession($)
+  await tick()
+  const refreshed = w.ran.find(r => r.argv[2] === 'refresh')
+  expect(refreshed?.cwd).toBe('/wt')
+  const panel = await $.ui.mount({ ...PANEL, surface: 'terminal' })
+  expect((await panel.findAll({ type: 'Text' })).map(t => String(t.text ?? ''))).toContain('Merged')
+  expect(await panel.find({ type: 'Button', key: 'cleanup' })).toBeDefined()
+  await panel.unmount()
+  // Merged, GitLab is not asked again.
+  await tick()
+  expect(w.ran.filter(r => r.argv[2] === 'refresh').length).toBe(1)
 })
