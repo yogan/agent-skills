@@ -3336,14 +3336,14 @@ class TestSuggestionRepeat(unittest.TestCase):
             "    if (error) return HttpResponse.json({ message: error }, { status: 401 });\n"
             "    return HttpResponse.json(user);\n```")
 
-    def set_draft(self, body):
-        state = {"iid": 1, "threads": {}, "topics": [{"id": "t4", "thread_ids": [], "file": "auth.ts", "line": 2}]}
+    def set_draft(self, body, *argv, line=2):
+        state = {"iid": 1, "threads": {}, "topics": [{"id": "t4", "thread_ids": [], "file": "auth.ts", "line": line}]}
         with patch.dict(os.environ, {"REVIEW_UI_DRAWN": "1"}), \
                 patch.object(F, "resolve_state", return_value=(CTX, 1, "/s", state)), \
                 patch.object(F, "_suggestion_source", return_value=self.SRC), \
                 patch.object(F, "current_user"), patch.object(F, "sync"), patch.object(F, "fetch_threads"), \
                 patch.object(F, "save") as save, patch.object(F.ui, "record"), \
-                patch.object(sys, "argv", ["findings.py", "set", "t4", "--draft", body, "--iid", "1"]), \
+                patch.object(sys, "argv", ["findings.py", "set", "t4", "--draft", body, *argv, "--iid", "1"]), \
                 redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()) as err:
             try:
                 F.main()
@@ -3365,6 +3365,16 @@ class TestSuggestionRepeat(unittest.TestCase):
         code, _, draft, _ = self.set_draft(self.BODY.replace("```suggestion", "```suggestion:-0+1"))
         self.assertEqual(code, 0)
         self.assertIn("suggestion:-0+1", draft)
+
+    def test_an_anchor_moved_in_the_same_call_is_the_one_counted_from(self):
+        """`--line` with `--draft` checked the suggestion against the line it was leaving."""
+        code, _, draft, _ = self.set_draft(self.BODY, "--line", "1")
+        self.assertEqual(code, 0)
+        self.assertIsNotNone(draft)
+        code, err, draft, _ = self.set_draft(self.BODY, "--line", "2", line=1)
+        self.assertNotEqual(code, 0)
+        self.assertIsNone(draft)
+        self.assertIn("ends on line 3", err)
 
     def test_a_brace_repeated_is_no_reason(self):
         self.assertIsNone(F.suggestion_repeat("x = 1\n  }", "suggestion", 1, ["y = 1", "  }"]))

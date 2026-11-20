@@ -4447,7 +4447,11 @@ def main():
             t["state"] = args.state
             # Stamped so a later author note can be recognised as newer than the ack.
             t["acked_at"] = now_iso() if args.state == "acked" else None
-        refused = suggestion_repeat_refusal(state, t, args.draft) if args.draft is not None else None
+        # Counted from the anchor the draft is stored with: a `--line` or `--file` in the
+        # same call moves it.
+        moved = {k: getattr(args, k) for k in ("file", "line") if getattr(args, k) is not None}
+        refused = (suggestion_repeat_refusal(state, {**t, **moved}, args.draft)
+                   if args.draft is not None else None)
         if refused:
             die(refused)
         fld = {"start-sha": "start_sha"}
