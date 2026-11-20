@@ -24,7 +24,10 @@ if [ -n "${REVIEW_BRANCH_BASE:-}" ]; then
   BASE="$REVIEW_BRANCH_BASE"
 elif [ -n "${REVIEW_BRANCH_STANDALONE:-}" ]; then
   # Find the remote default branch (origin/main or origin/master)
-  MAIN_REF=$(git branch -r 2>/dev/null | grep -E '^\s*origin/(main|master)$' | head -1 | xargs)
+  # `|| true`: grep finding nothing fails the pipeline, and `set -e` would exit silently
+  # before the message below could say why.
+  MAIN_REF=$(git branch -r 2>/dev/null | { grep -E '^\s*origin/(main|master)$' || true; } \
+    | head -1 | xargs)
   if [ -z "$MAIN_REF" ]; then
     echo "ERROR: Cannot find origin/main or origin/master. Are you in a git repo with a remote?" >&2
     exit 1

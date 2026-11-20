@@ -50,6 +50,16 @@ class TestBranchRange(unittest.TestCase):
         sha = git(self.repo, "rev-parse", "--short=7", "HEAD")
         self.assertEqual(self.sourced(), [f"detached@{sha}", "1"])
 
+    def test_standalone_without_origin_main_says_why_it_stops(self):
+        """`set -e` exited on grep's empty match before the message, so it stopped silently."""
+        git(self.repo, "remote", "remove", "origin")
+        env = {**os.environ, "REVIEW_BRANCH_STANDALONE": "1"}
+        env.pop("REVIEW_BRANCH_BASE", None)
+        r = subprocess.run(["bash", SCRIPT], cwd=self.repo, env=env, capture_output=True,
+                           text=True)
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("Cannot find origin/main or origin/master", r.stderr)
+
 
 if __name__ == "__main__":
     unittest.main()
