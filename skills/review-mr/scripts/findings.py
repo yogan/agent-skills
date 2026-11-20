@@ -4327,7 +4327,6 @@ def main():
             save(path, state)
         print(base)
     elif cmd == "explainer" and (args.assess or args.recommend or args.choose):
-        state or die("no review state yet: run `set-head` first")
         if args.assess:
             wt = get_worktree(ctx["slug"], iid) or die("no review worktree for this MR")
             a = assess_diff(wt, state.get("diff_base") or mr_base(ctx, iid)) or die(
@@ -4349,7 +4348,7 @@ def main():
     elif cmd in ("explainer", "seed"):
         head = mr_head(ctx, iid)
         if args.set_path:
-            c = (state or {}).get("explainer_choice") if cmd == "explainer" else None
+            c = state.get("explainer_choice") if cmd == "explainer" else None
             if c and c.get("chosen") is None:
                 c["chosen"] = "generate"      # one was made: that was the answer
                 save(path, state)
@@ -4378,6 +4377,9 @@ def main():
         # On stdin, through a quoted heredoc in a shell call, the findings stay out of the
         # chat until the user's own review is in: the review-ui mod hides the scripts' quiet
         # calls whole, where a file written for them was shown by the tool that wrote it.
+        if args.file != "-" and not os.path.isfile(args.file or ""):
+            # `import "$(findings.py seed ...)"` with no seed recorded passes "".
+            die(f"no findings file to import at {args.file!r} (did `seed` print nothing?)")
         text = sys.stdin.read() if args.file == "-" else open(args.file).read()
         items = json.loads(text)
         if args.seed:

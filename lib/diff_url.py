@@ -17,9 +17,9 @@ Subcommands:
 
 Was skills/<name>/scripts/diff-url.py, byte-identical in both review-mr and
 rework-mr — no per-skill logic here at all, unlike findings.py/threads.py, so it
-moved here wholesale rather than being split by what's shared vs. duplicated. Each
-skill keeps a thin diff-url.py shim so `$SD/diff-url.py` still works as documented in
-its own SKILL.md.
+moved here wholesale rather than being split by what's shared vs. duplicated.
+rework-mr keeps a thin diff-url.py shim so `$SD/diff-url.py` still works as its
+skill documents; review-mr reads the author's pushes through findings.py and has none.
 """
 import argparse
 

@@ -1718,6 +1718,19 @@ class TestReviewBegun(unittest.TestCase):
             F.main()
         self.assertTrue(F.review_begun(state))
 
+    def test_no_file_to_import_is_said_not_a_traceback(self):
+        """`import "$(findings.py seed ...)"` with no seed recorded passes an empty path."""
+        state = new_state()
+        with patch.object(F, "resolve_state", return_value=({"slug": "x"}, 1, "/s", state)), \
+                patch.object(F, "save") as save, patch.object(F, "wrong_checkout_warning", return_value=None), \
+                patch.object(F, "current_user", return_value="ana"), \
+                patch.object(sys, "argv", ["findings.py", "import", "", "--iid", "1"]), \
+                redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()) as err, \
+                self.assertRaises(SystemExit):
+            F.main()
+        self.assertIn("did `seed` print nothing?", err.getvalue())
+        save.assert_not_called()
+
     def test_findings_on_stdin_are_imported_and_kept_as_the_seed(self):
         """Written to a file with the Write tool, the findings were on screen before the
         user's own review; on stdin they never are, and a re-run still finds its seed."""
