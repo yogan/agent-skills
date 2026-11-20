@@ -646,11 +646,12 @@ test('rework-mr\'s sidebar groups as review-mr\'s: to do in the topics\' own ord
   ])
 })
 
-test('rework-mr: the round in groups by what is left: to plan or planned, then to fix, to reply or to plan again', () => {
+test('rework-mr: the round in groups by what is left: to plan, planned or to reply, then to fix, to reply or to plan again', () => {
   const t = (id: string, step: string) => ({ id, status: 'open', state: 'new', summary: id, file: null, posted: true, draft: null, inbox: null, step })
   const r = { skill: 'rework-mr', iid: 1, title: 'x', current: 't3', round: ['t3', 't1', 't2'], pass: 'plan',
     topics: [t('t1', 'fix'), t('t2', 'reply'), t('t3', 'plan')] }
-  expect(sectionsOf(r as never).map(x => [x.title, x.rows.map(row => row.id)])).toEqual([['To plan', ['t3']], ['Planned', ['t1', 't2']]])
+  // A topic pushed before the plans are all made is to reply already, not planned.
+  expect(sectionsOf(r as never).map(x => [x.title, x.rows.map(row => row.id)])).toEqual([['To plan', ['t3']], ['Planned', ['t1']], ['To reply', ['t2']]])
   // The fix pass: a fix to make or push, or only the reply left, then what needs a plan
   // again (a reviewer reopened it with a question): to plan, never to fix.
   expect(sectionsOf({ ...r, pass: 'fix' } as never).map(x => [x.title, x.rows.map(row => row.id)])).toEqual([['To fix', ['t1']], ['To reply', ['t2']], ['To plan', ['t3']]])
