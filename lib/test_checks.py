@@ -327,8 +327,8 @@ class TestPush(Case):
         rec = self.r.record()
         stamp = self.fix(rec)
         theirs = self.suggest_on_the_remote()
-        with self.assertRaisesRegex(checks.Behind, r'(?s)has commits your branch does not:\n'
-                                    r'- \w+ "Apply suggestion" by R\n\nTake them in first'):
+        with self.assertRaisesRegex(checks.Behind, r'has commits your branch does not, so nothing is '
+                                    r'pushed:\n- \w+ "Apply suggestion" by R$'):
             self.push(rec, stamp)
         self.assertEqual(sh(self.r.root, "git", "rev-parse", "origin/main"), theirs)
 

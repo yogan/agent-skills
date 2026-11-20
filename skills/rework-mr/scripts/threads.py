@@ -2859,8 +2859,11 @@ def _fix_parts(state, t):
     stop = t.get("push_stopped")
     if stop:
         # Above all else: the fix is made, and its push is what is left to do.
+        # A stop on the remote's commits ends on their list, and the press below is what
+        # to do about them: said once, not by the stop as well.
+        why = stop.get("why", "").strip()
         out += [ui.heading_md(ui.DIFFERS_ICON, "Made, not pushed: the push stopped"), "",
-                f"{stop.get('why', '').strip().rstrip('.')}.", "",
+                why if stop.get("behind") else f"{why.rstrip('.')}.", "",
                 ("Take in and push puts them on top of the fix's commits, as they are on the "
                  "remote, and pushes." if stop.get("behind") else
                  "Ack and push tries the push again, from the commits already made."), ""]

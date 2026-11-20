@@ -591,9 +591,9 @@ def push(root, record, before, want=None):
     # the push replaces exactly that.
     if theirs and git(root, "merge-base", "--is-ancestor", theirs, before).returncode != 0 \
             and not only_rebased_copies(root, theirs, before):
-        raise Behind(f"{up} has commits your branch does not:\n"
-                     + "\n".join(f"- {x}" for x in lacking(root, theirs, before))
-                     + "\n\nTake them in first; nothing is pushed")
+        # What to do about them is the caller's to say: a card offers its press for it.
+        raise Behind(f"{up} has commits your branch does not, so nothing is pushed:\n"
+                     + "\n".join(f"- {x}" for x in lacking(root, theirs, before)))
     pre = hook_of(record, "pre-push")
     if pre and not (record.get("trusted") and ahead(pre)):
         url = _out(root, "remote", "get-url", "--push", remote) or remote

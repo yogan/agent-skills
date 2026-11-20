@@ -3439,7 +3439,8 @@ class TestPushFix(unittest.TestCase):
         """The card offered Ack and push again, which failed the same way every time: what
         gets the push through is taking the commit in, on the person's press."""
         self.checks.push.side_effect = self.checks.Behind(
-            "origin/b has commits your branch does not:\n- 26a9433 \"Apply suggestion\" by R")
+            "origin/b has commits your branch does not, so nothing is pushed:\n"
+            "- 26a9433 \"Apply suggestion\" by R")
         with self.assertRaisesRegex(T.Handoff, "(?s)Apply suggestion.*Take in and push"):
             self.push()
         self.working_diff.return_value = ""
@@ -3448,7 +3449,9 @@ class TestPushFix(unittest.TestCase):
                 mock.patch.object(T, "checks_of", return_value="passed"), \
                 mock.patch.object(T, "rebased_here", return_value=False):
             card = "\n".join(T._step_parts(self.state, self.t1))
-        self.assertIn("Take in and push puts them on top", card)
+        # The stop names the commits, and the press says what to do about them, once.
+        self.assertIn("so nothing is pushed:\n- 26a9433 \"Apply suggestion\" by R\n\n"
+                      "Take in and push puts them on top", card)
         self.assertNotIn("Ack and push tries the push again", card)
         # Pressed: the commits are taken in, and the push goes on from the remote's head,
         # where this push's own change starts.
