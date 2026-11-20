@@ -57,8 +57,12 @@ How it fits together:
 - In a review, the review scripts' calls that print no view are left out of the chat, as the
   views are drawn as cards; ctrl+o shows them.
 - Posting is the person's press alone. Post runs `findings.py post` with the version of the
-  draft its card showed, and the script refuses if the draft changed since. The mod refuses
-  the model's own Bash calls of `post`.
+  draft its card showed, and the script refuses if the draft changed since. So are resolving,
+  approving, merging, editing a posted note, cleaning up and pushing: each press runs its
+  script with a secret drawn for that press alone, which the script checks against a file
+  the mod left and spends (`lib/press.py`), so nothing the model can type passes for one.
+  The mod also refuses the model's own Bash calls of those commands, except a push a press
+  handed over.
 - The model shows a topic with the `show_topic` tool, which the mod answers with the card.
 - A panel beside the chat, the sidebar, is areas under the MR's heading, each under a line
   that carries its name and its own keys: the topics (`hooks/panel.ts`) in groups a click

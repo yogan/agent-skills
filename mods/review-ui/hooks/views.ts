@@ -31,9 +31,23 @@ const runs = (commands: string): RegExp => new RegExp(
 )
 const VIEW = runs(VIEW_COMMANDS)
 
-// The scripts' commands that post or resolve on GitLab, which are the person's press alone,
-// by the same rule: a note, a commit message or a heredoc that only names one runs nothing.
-const POST = runs(String.raw`(?:findings|threads)\.py${Q}\s+(?:post|resolve)\b`)
+// The scripts' commands that write to GitLab or end the review (post, resolve, approve,
+// merge, edit a posted note, clean up), which are the person's press alone, by the same rule:
+// a note, a commit message or a heredoc that only names one runs nothing. A push is not
+// among them: after a press hands its commits over, the model pushes them by the press's token.
+//
+// The scripts refuse these without a press on their own (lib/press.py); this answers the
+// model before anything runs, so it is wider than a view's rule: the script may also run
+// behind a wrapper (`env X=1`, `timeout 60`, `nice -n 5`, `command`, `exec`, `nohup`,
+// `time`, `uv run`, an interpreter's flags, a subshell).
+const WRAPPER = String.raw`(?:\w+=\S*|env(?:\s+-\S+)*|timeout(?:\s+-\S+)*\s+\S+|nice(?:\s+-n\s*\S+|\s+-\S+)*|nohup|command|exec|time|uv\s+run|(?:python[\d.]*|sh|bash|zsh)(?:\s+-\S+)*)`
+const POST = new RegExp(
+  String.raw`(?:^|[;&|({\n]|\$\()\s*(?:${WRAPPER}\s+)*${Q}[^\s'"#]*?(?:findings|threads)\.py${Q}\s+` +
+  String.raw`(?:(?:post|resolve|approve-mr|merge-mr|cleanup)(?![\w-])|posted\b[^\n;&|]*--apply)`,
+)
+// The variable a press runs under, named in a call of the scripts: only the mod sets it.
+const PRESS_VAR = /REVIEW_UI_PRESS/
+const SCRIPT = /(?:findings|threads)\.py/
 
 // The payload the scripts append to a view for the paste gate (lib/critical_manifest.py). It
 // ends the view; anything after it is another command's output, chained behind.
@@ -72,8 +86,15 @@ const expanded = (command: string): string => {
 export const isViewCommand = (command: unknown): command is string =>
   typeof command === 'string' && (VIEW.test(command) || VIEW.test(expanded(command)))
 
+// `--iid N` written before the subcommand, as lib/cli.py takes it (the way git and glab take
+// their global options): the same call as with it after.
+const IID_FIRST = new RegExp(String.raw`((?:findings|threads)\.py${Q})\s+--iid(?:=|\s+)\S+`, 'g')
+const iidLast = (command: string): string => command.replace(IID_FIRST, '$1')
+
 export const isPostCommand = (command: unknown): command is string =>
-  typeof command === 'string' && (POST.test(command) || POST.test(expanded(command)))
+  typeof command === 'string' && (
+    (PRESS_VAR.test(command) && SCRIPT.test(command))
+    || [command, expanded(command)].some(c => POST.test(c) || POST.test(iidLast(c))))
 
 const parseManifest = (stdout: string): { body: string; manifest?: Manifest } => {
   const m = [...stdout.matchAll(MANIFEST)].pop()

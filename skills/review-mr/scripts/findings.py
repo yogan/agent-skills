@@ -108,7 +108,7 @@ _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(
 if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
 
-from lib import code_view, critical_manifest, diffsize, fix_refs, focus, hunk, judge, posted, tab, ui  # noqa: E402
+from lib import code_view, critical_manifest, diffsize, fix_refs, focus, hunk, judge, posted, press, tab, ui  # noqa: E402
 from lib.fences import (LINK_ICON, SUGGESTION_INFO, YOU, block_lang, fence, suggestion_reach, suggestion_repeat,  # noqa: E402
                         diff_info, lang_for, note_md, quoted_fence, segments,
                         suggestion_diff, when_of)
@@ -2697,19 +2697,15 @@ def diff_position(ctx, iid, path, line):
     return None
 
 
-# Set by the review-ui mod for the commands it runs on a person's press. A drafted comment
-# is posted only that way: the model has no such press, and the mod refuses its Bash calls
-# of `post`, so what reaches GitLab is always text the person saw and chose to send.
-PRESS_ENV = "REVIEW_UI_PRESS"
-
-
+# A drafted comment is posted only on the person's press (lib/press.py), so what reaches
+# GitLab is always text they saw and chose to send.
 def post_draft(state, ctx, iid, tid, expect, resolve=False):
     """Post `tid`'s draft: a new thread at its line (or on the MR itself), or, for a topic
     already posted, a reply into its thread. `resolve`: the reply settles the point, so its
     threads are resolved with it and the topic is closed here (GitLab's "Reply and resolve
     thread"); only a reply can, as a new comment has nothing to settle yet. Returns the
     posted note's URL."""
-    if os.environ.get(PRESS_ENV) != "1":
+    if not press.claimed():
         die("posting is the user's press, on the Post button under a draft's card (Post + "
             "resolve where the reply settles its thread); nothing else posts. Show the draft "
             "and name the button to press.")
@@ -4593,7 +4589,7 @@ def main():
         print(json.dumps(state_json(state)))
     elif cmd == "approve-mr":
         # The Done box's Approve MR, once every topic is settled: the person's press alone.
-        if os.environ.get(PRESS_ENV) != "1":
+        if not press.claimed():
             die("approving is the user's press, on Approve MR in the sidebar's box; nothing else "
                 "approves. Leave it to them.")
         why = approve(ctx, iid)
@@ -4657,7 +4653,7 @@ def main():
         save(path, state)
         print(f"{tref(args.topic)}: {args.says}")
     elif cmd == "resolve":
-        if os.environ.get(PRESS_ENV) != "1":
+        if not press.claimed():
             die("resolving is the user's press, on the topic's card (Resolve, or Post + resolve "
                 "under a drafted reply); nothing else resolves. Show the card and name the "
                 "button to press.")
@@ -4688,7 +4684,7 @@ def main():
         t = topic_for(state, args.topic) or die(f"no topic {args.topic}")
         if args.apply:
             # Mirrors threads.py's `posted --apply`: the user's press, never the agent's move.
-            if os.environ.get(PRESS_ENV) != "1":
+            if not press.claimed():
                 die("editing a posted comment is the user's press, on its card; nothing else "
                     "edits it. Show the card and let them press it.")
             try:
@@ -4717,7 +4713,7 @@ def main():
                 t["draft"] = None            # the follow-up is on GitLab: no draft is left
                 t.pop("draft_on", None)
             nxt = CURRENT.get(state)
-            if nxt and os.environ.get(PRESS_ENV) != "1":
+            if nxt and not press.claimed():
                 # On to the next topic, its card as `quote --focus` prints it.
                 CURRENT.view(state, nxt, True, _jump_cmd(nxt, iid))
                 anchor_notes(state, [topic_for(state, nxt)])

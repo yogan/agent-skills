@@ -310,6 +310,20 @@ const runScript = async ($: EngineInterface, s: ReviewSession, args: string[], e
   }
 }
 
+// The environment a press's own run carries, which is what tells the scripts it is the
+// person's press (lib/press.py): a secret drawn for this press alone, and a file named after
+// its hash for the script to find and remove. The model can set any variable it likes on a
+// command of its own, but never this one's value, which is in no command line and no file.
+const hex = (bytes: Uint8Array): string => [...bytes].map(b => b.toString(16).padStart(2, '0')).join('')
+const pressEnv = async ($: EngineInterface): Promise<Record<string, string>> => {
+  const secret = hex(crypto.getRandomValues(new Uint8Array(32)))
+  const digest = hex(new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(secret))))
+  const home = await $.env.get('HOME')
+  // Without it the script refuses, and says why in the band, as for any refused press.
+  if (home) await $.fs.write(`${home}/.claude/review-ui/presses/${digest}`, '').catch(() => {})
+  return { REVIEW_UI_PRESS: secret }
+}
+
 // A push runs the hooks a new record of the repository's checks has not earned skipping yet,
 // which can take minutes: the longest a process may run. One cut short is pushed by the next
 // press (the script goes on from a fix already committed).
@@ -377,7 +391,7 @@ const pressEnd = async ($: EngineInterface, s: ReviewSession, b: BandButton) => 
   if (!args || (await read($, busy))) return
   await update($, busy, () => b.label)
   try {
-    const ran = await runScript($, s, args, { REVIEW_UI_PRESS: '1' })
+    const ran = await runScript($, s, args, await pressEnv($))
     if (ran.exitCode !== 0) {
       await update($, notice, () => ({ text: lastLine(ran.stderr) || `${b.label} failed`, isError: true }))
       return
@@ -1841,7 +1855,7 @@ const stepControls = async ($: EngineInterface, s: ReviewSession, r: ReviewState
         // in the script's words (exit 3).
         await update($, busy, () => b.label)
         try {
-          const ran = await runScript($, s, argsFor(b.press, t, null) ?? [], { REVIEW_UI_PRESS: '1' }, PUSH_MS)
+          const ran = await runScript($, s, argsFor(b.press, t, null) ?? [], await pressEnv($), PUSH_MS)
           if (ran.exitCode === 3) {
             await update($, notice, () => null)
             await $.prompt.submit({ text: ran.stdout.trim() })
@@ -1918,7 +1932,7 @@ const stepControls = async ($: EngineInterface, s: ReviewSession, r: ReviewState
       default: {
         const args = argsFor(b.press, t, await read($, card))
         if (!args) return
-        const env = ['post', 'resolve', 'apply-edit'].includes(b.press.kind) ? { REVIEW_UI_PRESS: '1' } : undefined
+        const env = ['post', 'resolve', 'apply-edit'].includes(b.press.kind) ? await pressEnv($) : undefined
         // An agreed plan the model goes on with on the same topic: a reply ahead of the fix,
         // or the reply a plan of replying is.
         const follow = b.press.kind === 'agree' ? (b.press.reply ? earlyPrompt(t) : b.press.draft ? replyPrompt(t) : null) : null
@@ -2066,7 +2080,7 @@ export const register: Register = on => {
   // Any call of the review's scripts may change it, so the band's state is read again after it.
   on('tool.call', { tool: 'Bash' }, async ($, e, next) => {
     if (isPostCommand(e.command)) {
-      return { deny: 'Posting and resolving are the user\'s press: the Post or Resolve thread button on the card. Leave it to them.' }
+      return { deny: 'Posting, resolving, approving, merging and cleaning up are the user\'s press: the buttons on the card and in the sidebar\'s box. Leave it to them.' }
     }
     if (REVIEW_SCRIPT.test(e.command)) await markSession($)
     // Only the main loop's calls arrive here: the engine runs no mod hook for a subagent's.

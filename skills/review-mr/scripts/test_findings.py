@@ -1965,7 +1965,7 @@ class TestPost(unittest.TestCase):
     def setUp(self):
         self.state = new_state(threads={})
         F.add_topic(self.state, summary="a", file="srv.ts", line=12, draft="Bitte fixen.")
-        patcher = patch.dict(os.environ, {F.PRESS_ENV: "1"})
+        patcher = patch.object(F.press, "claimed", return_value=True)
         patcher.start()
         self.addCleanup(patcher.stop)
 
@@ -2004,13 +2004,29 @@ class TestPost(unittest.TestCase):
             self.post()
 
     def test_only_a_press_posts(self):
-        with patch.dict(os.environ, {F.PRESS_ENV: ""}), self.assertRaises(SystemExit), \
+        with patch.object(F.press, "claimed", return_value=False), self.assertRaises(SystemExit), \
              redirect_stderr(io.StringIO()) as err:
             self.post()
         self.assertIn("press", err.getvalue())
 
     def test_only_a_press_approves(self):
-        with patch.dict(os.environ, {F.PRESS_ENV: ""}), \
+        with patch.object(F.press, "claimed", return_value=False), \
+                patch.object(F, "resolve_state", return_value=(CTX, 2, "/s", {"iid": 2, "topics": []})), \
+                patch.object(F, "current_user"), patch.object(F, "approve") as approve, \
+                patch.object(sys, "argv", ["findings.py", "approve-mr", "--iid", "2"]), \
+                redirect_stderr(io.StringIO()) as err, self.assertRaises(SystemExit):
+            F.main()
+        self.assertIn("press", err.getvalue())
+        approve.assert_not_called()
+
+
+class TestPressBySecret(unittest.TestCase):
+    def test_the_press_s_variable_set_by_hand_is_no_press(self):
+        """A press is a secret the mod made for it (lib/press.py): the variable it travels in,
+        set to anything the model could write, approves and posts nothing."""
+        with tempfile.TemporaryDirectory() as presses, \
+                patch.object(F.press, "PRESSES", presses), patch.dict(F.press._claimed, clear=True), \
+                patch.dict(os.environ, {F.press.ENV: "1"}), \
                 patch.object(F, "resolve_state", return_value=(CTX, 2, "/s", {"iid": 2, "topics": []})), \
                 patch.object(F, "current_user"), patch.object(F, "approve") as approve, \
                 patch.object(sys, "argv", ["findings.py", "approve-mr", "--iid", "2"]), \
@@ -3465,7 +3481,7 @@ class TestFollowUpReopens(unittest.TestCase):
     def test_a_follow_up_into_a_resolved_thread_reopens_it(self):
         state = {"iid": 2, "threads": {"d1": {"mine": True, "resolved": True, "notes": []}},
                  "topics": [{"id": "t2", "thread_ids": ["d1"], "draft": "Did you forget the ADR?"}]}
-        with patch.dict(os.environ, {F.PRESS_ENV: "1"}), \
+        with patch.object(F.press, "claimed", return_value=True), \
                 patch.object(F, "api_post", return_value={"id": 9}) as api, \
                 patch.object(F, "_reply_thread", return_value="d1"):
             F.post_draft(state, CTX, 2, "t2", None)
@@ -3484,7 +3500,7 @@ class TestPostAndResolve(unittest.TestCase):
                       "threads": {"d1": {"mine": True, "resolved": False, "awaiting": "you",
                                          "url": "http://gl/g/p/-/merge_requests/2#note_1", "notes": []}},
                       "topics": [{"id": "t2", "thread_ids": ["d1"], "draft": "Fine in a follow-up MR, thanks."}]}
-        patcher = patch.dict(os.environ, {F.PRESS_ENV: "1"})
+        patcher = patch.object(F.press, "claimed", return_value=True)
         patcher.start()
         self.addCleanup(patcher.stop)
 

@@ -6,17 +6,36 @@ import { boxRowsOf, inboxMark, plainTitle, reflow, rowOf, sectionsOf, urlLabel, 
 import { withEmoji } from '../hooks/views.ts'
 import { blocksOf, inlineOf, isPostCommand, NOTE, partsOf, sizeRunsOf, withOutcome, withoutDraft } from '../hooks/views.ts'
 
-test('only a command that runs post or resolve is the person\'s press; one that names it is not', () => {
+test('only a command that runs one of the scripts\' writes is the person\'s press; one that names it is not', () => {
   for (const ran of [
     'python3 $SD/findings.py post t1 --iid 4',
     'cd /wt && python3 "$SD/threads.py" resolve t2',
     'S=$SD/threads.py && python3 $S post t3',
+    // The other writes, and the forms a script runs behind.
+    'python3 $SD/findings.py approve-mr --iid 4',
+    'python3 $SD/threads.py merge-mr',
+    'python3 $SD/threads.py cleanup --iid 4',
+    'python3 $SD/threads.py posted t1 --apply',
+    'python3 $SD/findings.py --iid 5 post t1',
+    'python3 $SD/findings.py --iid=5 resolve t1',
+    'env X=1 python3 $SD/findings.py post t1',
+    'timeout 60 python3 $SD/findings.py post t1',
+    'nice -n 5 python3 $SD/findings.py post t1',
+    'python3 -u $SD/findings.py post t1',
+    '(python3 $SD/findings.py post t1)',
+    'echo ok; $(python3 $SD/threads.py resolve t1)',
+    // The press's variable, set by hand on any call of the scripts.
+    'REVIEW_UI_PRESS=1 python3 $SD/threads.py push t1',
   ]) expect(isPostCommand(ran)).toBe(true)
   for (const named of [
     "cat >> notes.md <<'EOF'\n- the guard blocks heredocs naming threads.py post\nEOF",
     'git commit -m "findings.py post refuses a changed draft"',
     'echo hi # findings.py post',
     'grep -n "threads.py resolve" SKILL.md',
+    // The model's own calls: a push a press handed over, and the worktree's cleanup.
+    'python3 $SD/threads.py push t1 --committed --token 4f2a',
+    'python3 $SD/threads.py cleanup-worktree',
+    'python3 $SD/findings.py posted t1 --differs "drops the reason"',
   ]) expect(isPostCommand(named)).toBe(false)
 })
 

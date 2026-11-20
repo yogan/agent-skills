@@ -70,7 +70,7 @@ _REPO_ROOT = os.path.dirname(
 if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
 
-from lib import change as change_of, checks, code_view, critical_manifest, diffsize, fix_refs, focus, hunk, judge, posted, tab, ui  # noqa: E402
+from lib import change as change_of, checks, code_view, critical_manifest, diffsize, fix_refs, focus, hunk, judge, posted, press, tab, ui  # noqa: E402
 from lib.ui import analysis_heading  # noqa: E402
 from lib.hunk import diff_stat  # noqa: E402
 from lib.cli import iid_option  # noqa: E402
@@ -2950,9 +2950,9 @@ def save(path, state):
 
 def post_reply(state, ctx, iid, tid, expect, fixed=False, resolve=False):
     """Post `tid`'s drafted reply into its thread (or `Fixed: <diff url>` with `fixed`), and
-    resolve its threads with `resolve`. The user's press alone: the mod sets the variable
-    a press runs under. Returns the posted comment's URL."""
-    if os.environ.get(PRESS_ENV) != "1":
+    resolve its threads with `resolve`. The user's press alone (lib/press.py). Returns the
+    posted comment's URL."""
+    if not press.claimed():
         die("posting is the user's press, on the Post button under a reply's card; nothing "
             "else posts. Offer the draft and let them press it.")
     t = topic_for(state, tid) or die(f"no topic {tid}")
@@ -3020,7 +3020,6 @@ def post_reply(state, ctx, iid, tid, expect, fixed=False, resolve=False):
     return url
 
 
-PRESS_ENV = "REVIEW_UI_PRESS"
 # Where this skill keeps what is its own in a repository (`lib/fix_refs.py`).
 SKILL = "rework-mr"
 
@@ -4015,7 +4014,7 @@ def main():
         t = topic_for(state, args.topic) or die(f"no topic {args.topic}")
         if args.apply:
             # Edits the user's own comment on GitLab: their press, never the agent's move.
-            if os.environ.get(PRESS_ENV) != "1":
+            if not press.claimed():
                 die("editing a posted reply is the user's press, on its card; nothing else "
                     "edits it. Show the card and let them press it.")
             try:
@@ -4106,7 +4105,7 @@ def main():
         if closing:
             print(f"closed: {closing}")
     elif cmd == "push":
-        pressed = os.environ.get(PRESS_ENV) == "1"
+        by_press = pressed = press.claimed()
         if ui.drawn() and not pressed:
             # The one push that is not a press itself: the agent's commits, going on from a
             # press that handed them over, by the token that press stored.
@@ -4127,7 +4126,7 @@ def main():
             sys.exit(3)
         print(f"pushed the fix for {tref(args.topic)}" + (f": {url}" if url else
               " (GitLab showed no new version yet: run `diff-url.py url` for the link)"))
-        if pressed and os.environ.get(PRESS_ENV) != "1":
+        if pressed and not by_press:
             # A press the model finished: what comes after the push (a "Fixed" reply, or a
             # longer one) is the user's to choose on the topic's card.
             print(f"{tref(args.topic)} is pushed, and its next card is the user's: end the "
@@ -4255,14 +4254,14 @@ def main():
     elif cmd == "cleanup-worktree":
         print(cleanup_worktree(ctx, iid))
     elif cmd == "merge-mr":               # the mod's Merge / Set to auto-merge: a press only
-        if os.environ.get(PRESS_ENV) != "1":
+        if not press.claimed():
             die("merging is the user's press, on the Merge button in the sidebar's box; nothing "
                 "else merges or sets auto-merge. Leave it to them.")
         merge_mr(state, ctx, iid)
         save(path, state)
         print(json.dumps(state_json(state)))
     elif cmd == "cleanup":                # the mod's Clean up locally: the state goes too
-        if os.environ.get(PRESS_ENV) != "1":
+        if not press.claimed():
             die("cleaning up is the user's press, on Clean up locally in the sidebar's box; "
                 "nothing else removes the branch, the worktree or this review's state.")
         print(clean_up_locally(ctx, iid, path))

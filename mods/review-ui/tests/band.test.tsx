@@ -113,6 +113,17 @@ const world = (on: On, states: string[], extra: Record<string, Out> = {}, store:
 type World = { move: () => void; clock: { now: number }; ran: { argv: readonly string[]; env?: Record<string, string>; cwd?: string; stdin?: string }[]; placed: string[]; prompts: string[]; filled: string[]; turns: { n: number }; tool: { stdout: string }; rows: ReturnType<typeof mock.session>; written: string[]; files: Record<string, string>; panes: string[]; opened: string[] }
 let lastWorld: World | undefined
 
+// Whether a run went with a press's proof (lib/press.py): a secret drawn for it, and a file
+// named after the secret's hash, written for the script to find. A constant would be one the
+// model could set itself.
+const isPress = async (w: World, env?: Record<string, string>): Promise<boolean> => {
+  const secret = env?.REVIEW_UI_PRESS
+  if (!secret || !/^[0-9a-f]{64}$/.test(secret)) return false
+  const digest = [...new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(secret)))]
+    .map(b => b.toString(16).padStart(2, '0')).join('')
+  return w.written.includes(`/home/me/.claude/review-ui/presses/${digest}`)
+}
+
 // The step's buttons as the person meets them: on the newest card in the chat (the view the
 // model opened with, or a card a press placed), and the band under it. One mount of each,
 // searched and pressed as one.
@@ -249,7 +260,7 @@ test('an answer the agent judged settled is accepted first: the thread resolved 
   await ui.unmount()
   const ran = w.ran.find(r => r.argv.includes('resolve'))
   expect(ran?.argv.slice(2).join(' ')).toBe('resolve t2 --iid 42')
-  expect(ran?.env?.REVIEW_UI_PRESS).toBe('1')
+  expect(await isPress(w, ran?.env)).toBe(true)
 })
 
 test("review-mr: the author's push that changed the topic's lines is shown in the diff viewer on a press", async ($, on) => {
@@ -388,7 +399,8 @@ test('Post posts the draft its card showed, as a press', async ($, on) => {
 
   const post = w.ran.find(r => r.argv[2] === 'post')
   expect(post?.argv.slice(2)).toEqual(['post', 't1', '--expect', 'v7', '--iid', '42'])
-  expect(post?.env).toEqual({ CLAUDE_CODE_SESSION_ID: 's-1', REVIEW_UI_MOD: '1', REVIEW_UI_PRESS: '1' })
+  expect(Object.keys(post?.env ?? {}).sort()).toEqual(['CLAUDE_CODE_SESSION_ID', 'REVIEW_UI_MOD', 'REVIEW_UI_PRESS'])
+  expect(await isPress(w, post?.env)).toBe(true)
   expect(JSON.stringify(w.rows.appended())).toContain('No topic needs the user now')
 })
 
@@ -2870,7 +2882,7 @@ test('rework-mr: Ack and push only pushes, with no model turn, and the next card
   await ui.unmount()
   const push = w.ran.find(r => r.argv[2] === 'push')
   expect(push?.argv.slice(2).join(' ')).toBe('push t1 --iid 42')
-  expect(push?.env?.REVIEW_UI_PRESS).toBe('1')
+  expect(await isPress(w, push?.env)).toBe(true)
   expect(w.prompts).toEqual([])
   expect(w.ran.map(r => r.argv.slice(2).join(' '))).toContain('quote t1 --iid 42')
 })
@@ -3109,7 +3121,7 @@ test('a drafted follow-up can be posted and its thread resolved in one press', a
   await ui.unmount()
   const post = w.ran.find(r => r.argv[2] === 'post')
   expect(post?.argv.slice(2).join(' ')).toBe('post t1 --expect v1 --resolve --iid 42')
-  expect(post?.env?.REVIEW_UI_PRESS).toBe('1')
+  expect(await isPress(w, post?.env)).toBe(true)
 })
 
 test('rework-mr: a card whose fix is not pushed has no ✕: the topic is finished first', async ($, on) => {
@@ -3165,7 +3177,7 @@ test('rework-mr: a drafted reply offers Post first, Post posts the version its c
   await ui.unmount()
   const post = w.ran.find(r => r.argv[2] === 'post')
   expect(post?.argv.slice(2).join(' ')).toBe('post t1 --expect v3 --resolve --iid 42')
-  expect(post?.env?.REVIEW_UI_PRESS).toBe('1')
+  expect(await isPress(w, post?.env)).toBe(true)
 })
 
 test("rework-mr: Post says what it did in the author's words, not the reviewer's", async ($, on) => {
@@ -3234,7 +3246,7 @@ test('a comment posted by hand that no longer holds: Apply edit first, as a pres
   await ui.unmount()
   const ran = w.ran.find(r => r.argv[2] === 'posted')
   expect(ran?.argv.slice(2).join(' ')).toBe('posted t3 --apply --iid 42')
-  expect(ran?.env?.REVIEW_UI_PRESS).toBe('1')
+  expect(await isPress(w, ran?.env)).toBe(true)
 })
 
 test('rework-mr: a reply posted by hand that no longer holds offers the same card', async ($, on) => {
@@ -3876,6 +3888,8 @@ test('rework-mr: Merge in the box runs the script with no model turn; Clean up l
   await panel.press({ key: 'merge-mr' })
   await panel.unmount()
   expect(w.ran.map(r => r.argv.slice(2).join(' '))).toContain('merge-mr --iid 42')
+  const merge = w.ran.find(r => r.argv[2] === 'merge-mr')
+  expect(await isPress(w, merge?.env)).toBe(true)
   expect(w.prompts).toEqual([])
   panel = await $.ui.mount({ ...PANEL, surface: 'terminal' })
   expect((await panel.findAll({ type: 'Text' })).map(t => String(t.text ?? ''))).toContain('Merged')
@@ -3883,6 +3897,10 @@ test('rework-mr: Merge in the box runs the script with no model turn; Clean up l
   await panel.press({ key: 'cleanup' })
   await panel.unmount()
   expect(w.ran.map(r => r.argv.slice(2).join(' '))).toContain('cleanup --iid 42')
+  // Each press its own secret: one spent proves nothing for the next.
+  const cleanup = w.ran.find(r => r.argv[2] === 'cleanup')
+  expect(await isPress(w, cleanup?.env)).toBe(true)
+  expect(cleanup?.env?.REVIEW_UI_PRESS).not.toBe(merge?.env?.REVIEW_UI_PRESS)
   panel = await $.ui.mount({ ...PANEL, surface: 'terminal' })
   expect((await panel.findAll({ type: 'Text' })).map(t => String(t.text ?? '')).join('\n')).toContain('All cleaned up. You can close this session.')
   expect(await panel.find({ type: 'Button', key: 'cleanup' })).toBeUndefined()

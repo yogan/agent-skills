@@ -1751,7 +1751,7 @@ class TestOnlyAPressEndsTheMR(unittest.TestCase):
 
     def test_merge_and_cleanup_refuse_without_a_press(self):
         for cmd, act in (("merge-mr", "merge_mr"), ("cleanup", "clean_up_locally")):
-            with self.subTest(cmd), mock.patch.dict(os.environ, {T.PRESS_ENV: ""}), \
+            with self.subTest(cmd), mock.patch.object(T.press, "claimed", return_value=False), \
                     mock.patch.object(T, "resolve_state", return_value=({}, 3, "/s", {})), \
                     mock.patch.object(T, "current_user", return_value="dev"), \
                     mock.patch.object(T, act) as acted, \
@@ -1760,6 +1760,23 @@ class TestOnlyAPressEndsTheMR(unittest.TestCase):
                 T.main()
             self.assertIn("press", err.getvalue())
             acted.assert_not_called()
+
+    def test_the_press_s_variable_set_by_hand_is_no_press(self):
+        """A press is a secret the mod made for it (lib/press.py): the variable it travels in,
+        set to anything the model could write, merges and cleans up nothing."""
+        with tempfile.TemporaryDirectory() as presses:
+            for cmd, act in (("merge-mr", "merge_mr"), ("cleanup", "clean_up_locally")):
+                with self.subTest(cmd), mock.patch.object(T.press, "PRESSES", presses), \
+                        mock.patch.dict(T.press._claimed, clear=True), \
+                        mock.patch.dict(os.environ, {T.press.ENV: "1"}), \
+                        mock.patch.object(T, "resolve_state", return_value=({}, 3, "/s", {})), \
+                        mock.patch.object(T, "current_user", return_value="dev"), \
+                        mock.patch.object(T, act) as acted, \
+                        mock.patch.object(sys, "argv", ["threads.py", cmd, "--iid", "3"]), \
+                        redirect_stderr(io.StringIO()) as err, self.assertRaises(SystemExit):
+                    T.main()
+                self.assertIn("press", err.getvalue())
+                acted.assert_not_called()
 
 
 class TestMergeTopics(unittest.TestCase):
@@ -1836,7 +1853,7 @@ class TestCleanUpLocally(unittest.TestCase):
             os.chdir(main)
             mr = {"state": "merged", "source_branch": "fix/x", "target_branch": "main", "sha": tip}
             # Through the command, as the mod's press runs it.
-            with mock.patch.dict(os.environ, {T.PRESS_ENV: "1"}), \
+            with mock.patch.object(T.press, "claimed", return_value=True), \
                     mock.patch.object(T, "mr_object", return_value=mr), \
                     mock.patch.object(T, "resolve_state", return_value=({}, 3, path, {})), \
                     mock.patch.object(T, "current_user", return_value="frank"), \
@@ -2330,7 +2347,8 @@ class TestHandedOverPush(unittest.TestCase):
 
     def run_push(self, t1, *argv, fresh=None):
         state = {"topics": [t1], "threads": {}}
-        patches = [mock.patch.dict(os.environ, {"REVIEW_UI_DRAWN": "1", T.PRESS_ENV: ""}),
+        patches = [mock.patch.dict(os.environ, {"REVIEW_UI_DRAWN": "1"}),
+                   mock.patch.object(T.press, "claimed", return_value=False),
                    mock.patch.object(T, "resolve_state", return_value=({}, 3, "/s", state)),
                    mock.patch.object(T, "push_fix", return_value=(state, "http://gl/diff")),
                    mock.patch.object(T, "post_reply", return_value="posted"),
@@ -2444,7 +2462,8 @@ class TestReplyAfterTheFix(unittest.TestCase):
     never resolves: the reviewer reads it and resolves the thread."""
 
     def setUp(self):
-        mock.patch.dict(os.environ, {"REVIEW_UI_DRAWN": "1", T.PRESS_ENV: "1"}).start()
+        mock.patch.dict(os.environ, {"REVIEW_UI_DRAWN": "1"}).start()
+        mock.patch.object(T.press, "claimed", return_value=True).start()
         self.addCleanup(mock.patch.stopall)
         T._WORKING.clear()
         self.addCleanup(T._WORKING.clear)
@@ -2522,7 +2541,8 @@ class TestADraftBelongsToItsRound(unittest.TestCase):
     CTX = {"enc": "g%2Fp", "web": "https://gl/g/p"}
 
     def setUp(self):
-        mock.patch.dict(os.environ, {"REVIEW_UI_DRAWN": "1", T.PRESS_ENV: "1"}).start()
+        mock.patch.dict(os.environ, {"REVIEW_UI_DRAWN": "1"}).start()
+        mock.patch.object(T.press, "claimed", return_value=True).start()
         self.addCleanup(mock.patch.stopall)
         T._WORKING.clear()
         self.addCleanup(T._WORKING.clear)
@@ -2677,7 +2697,8 @@ class TestPostedByHandDiffers(unittest.TestCase):
     a corrected version, shown as a card; the user's press alone edits the note on GitLab."""
 
     def setUp(self):
-        mock.patch.dict(os.environ, {"REVIEW_UI_DRAWN": "1", T.PRESS_ENV: ""}).start()
+        mock.patch.dict(os.environ, {"REVIEW_UI_DRAWN": "1"}).start()
+        mock.patch.object(T.press, "claimed", return_value=False).start()
         self.addCleanup(mock.patch.stopall)
         T._WORKING.clear()
         self.addCleanup(T._WORKING.clear)
@@ -2710,7 +2731,7 @@ class TestPostedByHandDiffers(unittest.TestCase):
 
     def test_a_correction_ends_once_its_draft_is_posted_from_the_card(self):
         self.run_posted("--differs", "v", "--fix", "-", stdin="Option B.\n")
-        os.environ[T.PRESS_ENV] = "1"
+        mock.patch.object(T.press, "claimed", return_value=True).start()
         with mock.patch.object(T, "working_diff", return_value=""):
             T.post_reply(self.state, {"enc": "g%2Fp", "web": "https://gl/g/p"}, 1, "t1", None)
         self.assertNotIn("post_differs", self.t1)
@@ -2729,7 +2750,7 @@ class TestPostedByHandDiffers(unittest.TestCase):
 
     def test_apply_edits_the_note_and_records_the_reply_posted(self):
         self.run_posted("--differs", "v", "--fix", "-", stdin="Option B.\n")
-        os.environ[T.PRESS_ENV] = "1"
+        mock.patch.object(T.press, "claimed", return_value=True).start()
         self.run_posted("--apply")
         self.api.assert_called_once_with("projects/g%2Fp/merge_requests/1/discussions/d1/notes/8",
                                          {"body": "Option B.\n"}, method="PUT")
@@ -2744,7 +2765,8 @@ class TestResolveOnlyWithAReplyThatSettles(unittest.TestCase):
     CTX = {"enc": "g%2Fp", "web": "https://gl/g/p"}
 
     def setUp(self):
-        mock.patch.dict(os.environ, {"REVIEW_UI_DRAWN": "1", T.PRESS_ENV: "1"}).start()
+        mock.patch.dict(os.environ, {"REVIEW_UI_DRAWN": "1"}).start()
+        mock.patch.object(T.press, "claimed", return_value=True).start()
         self.addCleanup(mock.patch.stopall)
         T._WORKING.clear()
         self.addCleanup(T._WORKING.clear)
@@ -2775,7 +2797,8 @@ class TestReplyAheadOfTheFix(unittest.TestCase):
     the plan stands, the topic stays the user's, and the round goes on."""
 
     def setUp(self):
-        mock.patch.dict(os.environ, {"REVIEW_UI_DRAWN": "1", T.PRESS_ENV: "1"}).start()
+        mock.patch.dict(os.environ, {"REVIEW_UI_DRAWN": "1"}).start()
+        mock.patch.object(T.press, "claimed", return_value=True).start()
         self.addCleanup(mock.patch.stopall)
         T._WORKING.clear()
         self.addCleanup(T._WORKING.clear)
@@ -3777,7 +3800,8 @@ class TestStateByWord(unittest.TestCase):
     move says where the topic stands after it, so one that changes nothing is noticed."""
 
     def setUp(self):
-        mock.patch.dict(os.environ, {"REVIEW_UI_DRAWN": "1", T.PRESS_ENV: "1"}).start()
+        mock.patch.dict(os.environ, {"REVIEW_UI_DRAWN": "1"}).start()
+        mock.patch.object(T.press, "claimed", return_value=True).start()
         self.addCleanup(mock.patch.stopall)
         T._WORKING.clear()
         self.addCleanup(T._WORKING.clear)
@@ -4121,7 +4145,8 @@ class TestDropFix(unittest.TestCase):
     def test_the_reviewer_s_answer_plans_again_and_a_new_fix_knows_the_kept_one(self):
         self.r.write("a.txt", "half a fix\n")
         T.drop_fix(self.state, 1, self.t1, "too big", "say it is too big for this MR", "reply")
-        with mock.patch.object(T, "api_post", return_value={"id": 9}), mock.patch.dict(os.environ, {T.PRESS_ENV: "1"}):
+        with mock.patch.object(T, "api_post", return_value={"id": 9}), \
+                mock.patch.object(T.press, "claimed", return_value=True):
             self.t1["reply"] = "Zu groß für diesen MR.\n"
             T.post_reply(self.state, {"enc": "g%2Fp", "web": "https://gl/g/p"}, 1, "t1", None)
         self.assertEqual(T.step_of(self.state, self.t1), "none")          # waits on the reviewer
