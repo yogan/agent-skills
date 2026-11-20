@@ -134,6 +134,24 @@ class TestSlugify(unittest.TestCase):
         self.assertEqual(V.slugify(""), "diagram")
 
 
+class TestOverviewName(unittest.TestCase):
+    """An overview is written beside its detailed diagram, and must not overwrite it."""
+
+    def test_a_slug_gets_the_suffix(self):
+        """`collapse` copies the slug unchanged, so both renders wrote the same file."""
+        spec = {"kind": "architecture", "slug": "svc"}
+        self.assertEqual(V.output_name(spec), "svc")
+        self.assertEqual(V.output_name(spec, overview=True), "svc-areas")
+
+    def test_a_long_title_keeps_the_suffix_through_the_cap(self):
+        """The cap cut " — areas" off a title of about 40 characters or more."""
+        spec = {"kind": "architecture", "title": "How the backend services work together here"}
+        detailed, areas = V.output_name(spec), V.output_name(spec, overview=True)
+        self.assertNotEqual(detailed, areas)
+        self.assertTrue(areas.endswith("-areas"))
+        self.assertLessEqual(len(areas), V.SLUG_MAX)
+
+
 class TestCssMode(unittest.TestCase):
     """`--format css` is a question about the library, answerable with no spec at all."""
 

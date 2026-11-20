@@ -64,6 +64,20 @@ def slugify(text):
     return slug or "diagram"
 
 
+AREAS = "-areas"
+
+
+def output_name(spec, overview=False):
+    """The name the diagram is written and namespaced under. An overview's name is its
+    detailed diagram's with `-areas` after the cap, so the two never share a file: copied
+    unchanged from a `slug`, or cut off by the cap from a long title, the suffix was lost and
+    the second render overwrote the first."""
+    name = slugify(spec.get("slug") or spec.get("title") or spec.get("kind"))
+    if not overview:
+        return name
+    return name[:SLUG_MAX - len(AREAS)].rstrip("-") + AREAS
+
+
 def load_spec(path):
     try:
         raw = sys.stdin.read() if str(path) == "-" else open(path, encoding="utf-8").read()
@@ -136,6 +150,7 @@ def main():
     except SpecError as exc:
         die(str(exc))
 
+    name = output_name(spec, overview=args.overview)
     if args.overview:
         try:
             spec = overview.collapse(spec, drop=tuple(args.drop))
@@ -144,7 +159,6 @@ def main():
     elif args.drop:
         die("--drop only applies with --overview")
 
-    name = slugify(spec.get("slug") or spec.get("title") or spec.get("kind"))
     target = "file" if args.format == "svg" else "embed"
     standalone = target == "file"
 
