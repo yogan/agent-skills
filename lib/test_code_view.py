@@ -130,7 +130,8 @@ class TestView(unittest.TestCase):
         thread = {"file": "t.md", "line": 3, "head_sha": before, "side": "new"}
         v = code_view.fix_view(repo, thread, files, None, before, after)
         self.assertEqual([r[0] + r[3] for r in v["rows"]], [" a", " b", "-c", "+C", " d", " e", " f"])
-        self.assertEqual((v["commented"], v["fix_files"], v["line"]), ("t.md", files, 3))
+        # The comment's file leads the list, whatever order the fix's files came in.
+        self.assertEqual((v["commented"], v["fix_files"], v["line"]), ("t.md", files[::-1], 3))
         # Another of the fix's files picked: shown with no comment on it.
         v = code_view.fix_view(repo, thread, files, "o.md", before, after)
         self.assertEqual((v["file"], v["line"], v["at"]), ("o.md", None, [1, 1]))

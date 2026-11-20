@@ -1326,6 +1326,17 @@ def fixes_of(t):
     return out
 
 
+def shared_push(state, t, n=None):
+    """Whether `t`'s `n`th push (1-based), else its latest, was another topic's too: one push
+    carrying both topics' fixes, recorded on each."""
+    fixes = fixes_of(t)
+    if not fixes or (n is not None and not 1 <= n <= len(fixes)):
+        return False
+    after = fixes[(n or len(fixes)) - 1].get("after")
+    return bool(after) and any(x is not t and any(p.get("after") == after for p in x.get("pushes") or [])
+                               for x in state["topics"])
+
+
 def kept_fixes(state, t, kept=None):
     """`fixes_of(t)`, each with `ends` added: its two commits as kept in git
     (`lib/fix_refs.py`), or None where they are not (no longer in git, or never fetched).
@@ -4133,11 +4144,21 @@ def main():
         else:
             ends = kept_fix(state, t, args.push)
             files = [[f, a, r] for f, a, r in fix_refs.stat(root, ends)] if ends else []
+            own = code_view.commented(root, x)
+            # A push that carried this topic's fix along with another topic's, and left the
+            # file its thread is on alone: that file still leads, opened as the MR changes
+            # it, and the push's files follow, the other topic's among them, one pick away.
+            # Opened on the push's first file instead, the topic showed another one's change.
+            carried = bool(files) and bool(own) and own not in [f for f, _a, _r in files] \
+                and shared_push(state, t, args.push)
+            if carried:
+                files = [[own, 0, 0], *files]
+                carried = args.file in (None, own)
             # The pushed fix's change, whichever of its files is shown: the one picked, the
             # comment's where the fix touched it, else the fix's first. A fix that left the
             # comment's file alone showed that file as the MR changes it, with the fix's
             # files listed under it and no change of the fix on screen until one was picked.
-            v = code_view.fix_view(root, x, files, args.file, *ends) if files else None
+            v = code_view.fix_view(root, x, files, args.file, *ends) if files and not carried else None
             if v:
                 v["mode"] = "pushed"          # the rows are the pushed fix's change
             else:

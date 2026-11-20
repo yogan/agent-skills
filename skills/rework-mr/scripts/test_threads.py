@@ -3181,7 +3181,7 @@ class TestFixInTheSidebar(unittest.TestCase):
     def test_the_comment_s_file_and_every_file_of_the_fix_sized(self):
         got, seen = self.run_code()
         self.assertEqual((seen["path"], seen["line"]), ("b.ts", 2))
-        self.assertEqual(got["fix_files"], [["a.ts", 4, 4], ["b.ts", 1, 1], ["c.ts", 12, 3]])
+        self.assertEqual(got["fix_files"], [["b.ts", 1, 1], ["a.ts", 4, 4], ["c.ts", 12, 3]])
         self.assertEqual((got["commented"], got["mode"]), ("b.ts", "fix"))
 
     def test_a_file_picked_from_the_list_is_shown_with_no_comment_on_it(self):
@@ -3196,10 +3196,14 @@ class TestPushedFixInTheSidebar(unittest.TestCase):
     """A pushed fix kept in git is what the sidebar opens on, whichever of its files: the
     comment's where the fix touched it, else the fix's first."""
 
-    def run_code(self, stat, *extra):
-        state = TestRounds.state(1)
+    def run_code(self, stat, *extra, shared=False):
+        state = TestRounds.state(2)
         state["threads"]["d1"].update(file="b.ts", line=2, head_sha="H")
         T.topic_for(state, "t1")["diff_url"] = "u"
+        if shared:
+            # One push that carried t1's fix with t2's, recorded on both.
+            for tid in ("t1", "t2"):
+                T.topic_for(state, tid)["pushes"] = [{"before": "A", "start": "A", "after": "B", "clean": True}]
         seen = {}
 
         def view(root, path, line, *a, **k):
@@ -3227,6 +3231,19 @@ class TestPushedFixInTheSidebar(unittest.TestCase):
         got, seen = self.run_code([("a.ts", 4, 4), ("c.ts", 1, 0)])
         self.assertEqual((got["mode"], seen["path"], seen["line"]), ("pushed", "a.ts", None))
         self.assertEqual((got["commented"], got["fix_files"]), ("b.ts", [["a.ts", 4, 4], ["c.ts", 1, 0]]))
+
+    def test_a_push_carrying_another_topic_s_fix_opens_on_the_topic_s_own_file(self):
+        """Carried by t2's push, which left t1's file alone, t1 opened on the push's first
+        file: another topic's change, as if it were t1's."""
+        got, seen = self.run_code([("a.ts", 4, 4), ("c.ts", 1, 0)], shared=True)
+        self.assertEqual((seen["path"], seen["line"], seen["commit"]), ("b.ts", 2, None))
+        self.assertNotEqual(got.get("mode"), "pushed")
+        self.assertEqual((got["commented"], got["fix_files"]),
+                         ("b.ts", [["b.ts", 0, 0], ["a.ts", 4, 4], ["c.ts", 1, 0]]))
+        # The push's other files are a pick away, as they changed in it.
+        got, seen = self.run_code([("a.ts", 4, 4), ("c.ts", 1, 0)], "--file", "c.ts", shared=True)
+        self.assertEqual((got["mode"], seen["path"], seen["commit"]), ("pushed", "c.ts", "B"))
+        self.assertEqual(got["fix_files"][0], ["b.ts", 0, 0])     # and the way back
 
 
 class TestChangeBlocks(unittest.TestCase):

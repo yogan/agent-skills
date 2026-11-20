@@ -530,8 +530,9 @@ def fix_view(repo, thread, files, pick=None, base="HEAD", commit=None):
     disk), the comment's lines carried through it where it is the comment's file; elsewhere
     the first changed row stands for where to look. None for a fix with no files.
 
-    Adds `fix_files` (all of `files`) and `commented` (the comment's file now), so the
-    sidebar lists the fix and marks the file the comment is on."""
+    Adds `fix_files` (all of `files`, the comment's file first where the fix touches it:
+    the one the topic is about leads the list it opens on) and `commented` (the comment's
+    file now), so the sidebar lists the fix and marks the file the comment is on."""
     names = [f for f, _a, _r in files]
     if not names:
         return None
@@ -548,5 +549,5 @@ def fix_view(repo, thread, files, pick=None, base="HEAD", commit=None):
     if v["at"] is None and v["rows"]:
         hit = next((i for i, r in enumerate(v["rows"], 1) if r[0] != " "), None)
         v["at"] = [hit, hit] if hit else None
-    v.update(fix_files=files, commented=now)
+    v.update(fix_files=sorted(files, key=lambda f: f[0] != now), commented=now)
     return v

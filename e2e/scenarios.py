@@ -402,6 +402,10 @@ REWORK_COMBINED = [
             # story has the push at its time.
             Expect(current("t2"), region="panel", wait=120),
             Expect(button('Reply…', '“Fixed”'), region="screen", wait=60),
+            # Its sidebar opens on its own file, where its thread is, though t1's push left
+            # it alone; the push's files follow it in the list.
+            Expect(r"─ src/features/discussions/api/updateDiscussion\.ts", region="panel", wait=30),
+            Expect(r"updateDiscussion\.ts[^\n]*\n[^\n]*createComment\.ts", region="panel"),
             Expect(button('Fix it'), region="screen", absent=True),
             Expect(pushed_line(r"t1 \+ rebase"), region="main"),
 ]
