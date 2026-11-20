@@ -191,7 +191,7 @@ REWORK_PIPELINE = [
             Expect(button('Set to auto-merge'), region="panel", wait=120),
             Expect(PIPELINE_RUNNING, region="panel"),
             press('Set to auto-merge', region="panel"),
-            Expect(r"Waits for the pipeline", region="panel", wait=60),
+            Expect(r"Auto-merge on · merges when the pipeline passes", region="panel", wait=60),
             # It passes, and GitLab merges it.
             Check(f"{NEWS} pipeline success", r"pipeline success"),
             Expect(r"You merged the MR", region="panel", wait=120),

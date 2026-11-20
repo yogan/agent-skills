@@ -3721,7 +3721,7 @@ test('rework-mr: the end of the MR offers Merge only once it is approved and Git
 test('rework-mr: the merge pressed is followed to its end, and a failure offers its analysis', () => {
   const at = '2026-11-14T12:00:00Z'
   expect(endText('rework-mr', { merge: { how: 'merge', at } })).toEqual(['Merging…', null])
-  expect(endText('rework-mr', { merge: { how: 'auto', at }, auto_merge: true, pipeline: { status: 'running' } })).toEqual(['Waits for the pipeline', null])
+  expect(endText('rework-mr', { merge: { how: 'auto', at }, auto_merge: true, pipeline: { status: 'running' } })).toEqual(['Auto-merge on · merges when the pipeline passes', null])
   expect(endText('rework-mr', { merge: { how: 'merge', at, error: 'Branch cannot be merged' } })).toEqual(['Merge failed: Branch cannot be merged', 'Analyze failed merge'])
   // Who merged it is the box's step line: the end line is the press alone.
   expect(endText('rework-mr', { state: 'merged' })).toEqual(['', 'Clean up locally'])
@@ -3825,6 +3825,20 @@ test('rework-mr: an approved MR\'s box and its merge press are dark green', asyn
   expect(chip).toContain('Set to auto-merge')
   expect(chip).toContain('"backgroundColor":"#3b6b45"')
   expect(chip).toContain('"color":"#c3e88d"')
+  await panel.unmount()
+})
+
+test('rework-mr: set to auto-merge, the box says so in plain words, led by the running pipeline\'s icon', async ($, on) => {
+  const mr = { state: 'opened', approved_by: ['Robin'], approvals_left: 0, merge_status: 'mergeable', can_merge: true,
+    auto_merge: true, merge: { how: 'auto', at: '2026-11-14T12:00:00Z' }, pipeline: { status: 'running' } }
+  const w = world(on, [reworkState(null, [reworkTopic('t1', 'none', { state: 'done' })], { in_round: false, mr, inbox: inbox() })])
+  await openRework($, w, reworkView('t1'))
+  const panel = await $.ui.mount({ ...PANEL, surface: 'terminal' })
+  const line = await panel.find({ type: 'Text', text: /Auto-merge on/ })
+  // The icon the title line has for a running pipeline, not the dots of a call under way.
+  expect(line?.text).toBe('\u{f0996} Auto-merge on · merges when the pipeline passes')
+  // A wait, no warning: no colour, and not dim either.
+  expect([line?.props.color, line?.props.dimColor]).toEqual([undefined, undefined])
   await panel.unmount()
 })
 

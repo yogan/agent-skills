@@ -3222,7 +3222,7 @@ export const register: Register = on => {
               <Box flexDirection="column" alignItems="center" marginTop={1}>
                 {end.text && (
                   <Text color={end.tone === 'needs' ? FAILURE : end.tone === 'good' ? SUCCESS : undefined} dimColor={end.tone === 'info' || undefined}>
-                    {end.tone === 'busy' ? `${INBOX_ICON.judging} ${end.text}` : end.text}
+                    {end.icon ? `${end.icon} ${end.text}` : end.tone === 'busy' ? `${INBOX_ICON.judging} ${end.text}` : end.text}
                   </Text>
                 )}
                 {end.button && (

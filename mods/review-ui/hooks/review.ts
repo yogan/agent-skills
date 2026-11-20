@@ -2,7 +2,7 @@
 // comes from `findings.py state`, and register.tsx runs what a press names.
 
 import type { ReviewCard, ReviewOutcome, ReviewState, ReviewTopic } from '../types'
-import { sectionsOf } from './panel.ts'
+import { INBOX_ICON, sectionsOf } from './panel.ts'
 import { sizeOf } from './views.ts'
 
 // What a press does. `ask` hands the model a turn, with a prompt the person sees as theirs;
@@ -773,7 +773,9 @@ export const waitingOf = (review: ReviewState | null): { count: number; who: str
 // missing, and the one press that takes it on where there is one. `tone`: `busy` while
 // GitLab works on it, `needs` where something failed (drawn red), `info` otherwise.
 // `good`: a good end reached (approved by you), drawn green: success looks like success.
-export type EndLine = { text: string; tone: 'info' | 'busy' | 'needs' | 'good'; button?: BandButton }
+// `icon`: the glyph before the text, where the line has one of its own; a `busy` line without
+// one is drawn with the dots of something under way.
+export type EndLine = { text: string; tone: 'info' | 'busy' | 'needs' | 'good'; icon?: string; button?: BandButton }
 
 // The prompts of the two analyses: each a turn of the model's, started by its press.
 export const CI_PROMPT = "The MR's pipeline failed. Find the failing job, read its log, say what broke and why, " +
@@ -832,7 +834,9 @@ export const endOf = (review: ReviewState | null, settled: boolean): EndLine | u
     return { text: 'Pipeline failed', tone: 'needs', button: { key: 'analyze-ci', label: 'Analyze CI failure', press: ask(CI_PROMPT), isPrimary: true } }
   }
   if (!settled) return undefined
-  if (mr.auto_merge) return { text: 'Waits for the pipeline', tone: 'busy' }
+  // Set to auto-merge: what was pressed is on, and what it waits for, with the running
+  // pipeline's icon the title line carries. A wait, no warning: plain, not dim.
+  if (mr.auto_merge) return { text: 'Auto-merge on · merges when the pipeline passes', tone: 'busy', icon: INBOX_ICON['pipeline-running'] }
   if (m?.how === 'merge') return { text: 'Merging…', tone: 'busy' }
   if (!isApproved(mr)) return { text: 'Waits for approval', tone: 'info' }
   if (mr.can_merge === false) return { text: 'You may not merge it', tone: 'info' }
