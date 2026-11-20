@@ -447,6 +447,27 @@ class TestPush(Case):
         self.assertEqual(sh(root, "git", "rev-parse", "HEAD^"), merged)
         self.assertEqual(sh(root, "git", "status", "--porcelain"), "")
 
+    def test_a_branch_tracking_another_than_the_mr_s_is_not_pushed_there(self):
+        # Made from main and pushed without -u, so it still tracks main: the press must not
+        # force its commits onto main.
+        root = self.r.root
+        sh(root, "git", "checkout", "-q", "-b", "feat", "--track", "origin/main")
+        sh(root, "git", "push", "-q", "--no-verify", "origin", "feat")
+        rec = self.r.record()
+        stamp = self.fix(rec)
+        before = sh(root, "git", "rev-parse", "HEAD")
+        checks.commit_fixup(root, rec, stamp, self.r.target)
+        checks.autosquash(root, self.r.target, stamp["tree"])
+        with self.assertRaisesRegex(checks.Stop, r"feat tracks origin/main, not the MR's branch "
+                                    r"feat.*--set-upstream-to=origin/feat"):
+            checks.push(root, rec, before, "feat")
+        with self.assertRaisesRegex(checks.Stop, "not the MR's branch"):
+            checks.take_in(root, before, "feat")
+        self.assertEqual(sh(root, "git", "rev-parse", "origin/main"), before)
+        sh(root, "git", "branch", "-q", "--set-upstream-to=origin/feat")
+        checks.push(root, rec, before, "feat")
+        self.assertEqual(sh(root, "git", "rev-parse", "origin/feat^{tree}"), stamp["tree"])
+
     def test_files_changed_since_the_checks_are_not_committed(self):
         rec = self.r.record()
         stamp = self.fix(rec)

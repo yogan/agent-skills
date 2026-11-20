@@ -3272,7 +3272,7 @@ class TestPushFix(unittest.TestCase):
     def setUp(self):
         T._WORKING.clear()
         self.addCleanup(T._WORKING.clear)
-        self.state = TestRounds.state(2)
+        self.state = {**TestRounds.state(2), "source_branch": "feat/x"}
         for tid in ("t1", "t2"):
             TestRounds.agree(self.state, tid)
         self.t1 = T.topic_for(self.state, "t1")
@@ -3313,6 +3313,8 @@ class TestPushFix(unittest.TestCase):
         self.assertEqual(self.checks.commit_fixup.call_args.args[3], "abc123")
         self.checks.autosquash.assert_called_once_with("/repo", "abc123", "T1")
         self.checks.push.assert_called_once()
+        # To the MR's branch, whatever the checkout tracks.
+        self.assertEqual(self.checks.push.call_args.args[3], "feat/x")
         self.checks.trust.assert_called_once_with("/repo")
         self.assertEqual(url, "https://gitlab.example/g/p/-/merge_requests/1/diffs?diff_id=7&start_sha=NEW")
         self.assertEqual(self.t1["diff_url"], url)
@@ -3457,7 +3459,7 @@ class TestPushFix(unittest.TestCase):
         self.checks.take_in.return_value = "THEIRS"
         self.checks._out.side_effect = lambda root, *a: "T1" if a[-1] == "HEAD^{tree}" else "NEW"
         self.push(take_in=True)
-        self.checks.take_in.assert_called_once_with("/repo", "HANDED")
+        self.checks.take_in.assert_called_once_with("/repo", "HANDED", "feat/x")
         self.assertNotIn("handed_from", self.t1)
         self.assertEqual(self.checks.push.call_args.args[2], "THEIRS")
         self.assertEqual((self.t1["pushes"][-1]["before"], self.t1["pushes"][-1]["start"]),

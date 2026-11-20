@@ -3306,6 +3306,8 @@ def push_fix(ctx, iid, path, tid, committed=False, take_in=False):
         topic_for(state, tid).update(push_from=before, push_start=start)
         save(path, state)
     taken = None
+    # The push goes to the MR's own branch or nowhere, whatever the checkout tracks.
+    mr_branch = state.get("source_branch")
     try:
         if handed:
             # The agent's commits skipped no check the record does not stand for, but their
@@ -3325,7 +3327,7 @@ def push_fix(ctx, iid, path, tid, committed=False, take_in=False):
         if take_in:
             # What the remote gained since the branch as it was before any of this push's
             # commits: the agent's, where a press handed them over, are not on the remote.
-            taken = checks.take_in(root, handed or before)
+            taken = checks.take_in(root, handed or before, mr_branch)
             # The push now goes on from the remote's head: what it holds is in the branch,
             # and GitLab's head is where this push's own change starts. The files are the
             # ones checked plus only commits already on the remote, which the push carries
@@ -3340,7 +3342,7 @@ def push_fix(ctx, iid, path, tid, committed=False, take_in=False):
             topic.pop("handed_from", None)
             save(path, state)
             before = start = taken
-        checks.push(root, rec, before)
+        checks.push(root, rec, before, mr_branch)
     except checks.Stop as e:
         # Kept with the topic: its card goes on saying the fix is made and why the push
         # stopped, until a push goes through or the fix goes. Commits on the remote the
