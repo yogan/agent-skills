@@ -42,6 +42,18 @@ class TestIdleAction(unittest.TestCase):
         self.assertEqual(rig.idle_action(float("inf"), "running", busy=False), "stop")
 
 
+class TestReachableFromThisMacOnly(unittest.TestCase):
+    def test_every_published_port_is_bound_to_loopback(self):
+        """Published on every interface, the rig with its public admin password answered
+        anyone on the same network."""
+        import re
+        compose = os.path.join(os.path.dirname(os.path.abspath(__file__)), "docker-compose.yml")
+        with open(compose, encoding="utf-8") as fh:
+            ports = re.findall(r'^\s*-\s*"([\d.:]+)"\s*$', fh.read(), re.M)
+        self.assertTrue(ports)
+        self.assertEqual([p for p in ports if not p.startswith("127.0.0.1:")], [])
+
+
 class TestOneStart(unittest.TestCase):
     def test_two_ups_at_once_start_the_vm_once(self):
         state = {"vm": False, "inside": 0, "most": 0, "starts": 0}
