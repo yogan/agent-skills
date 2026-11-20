@@ -48,6 +48,15 @@ class PanelTest(unittest.TestCase):
         s = screen(card + [""] * 16 + PROMPT)
         self.assertIsNone(drive.divider_column(s))
 
+    def test_cards_bordering_the_divider_on_most_rows_do_not_take_its_place(self):
+        # Their right border stands one column left of the divider; a sidebar cut there
+        # loses every row between two cards, and keeps the divider as its first column.
+        inner = SPLIT - 2
+        card = ["╭" + "─" * inner + "╮"] + ["│" + " " * inner + "│"] * 6 + ["╰" + "─" * inner + "╯", ""]
+        s = screen((card * 4)[:30], [f"row {i}" for i in range(30)])
+        self.assertEqual(drive.divider_column(s), SPLIT)
+        self.assertEqual(drive.region_of(s, "panel").split("\n")[:9], [f"row {i}" for i in range(9)])
+
     def test_the_prompt_box_sides_are_not_a_panel(self):
         boxed = ["│" + " " * (WIDTH - 2) + "│"] * 30
         self.assertIsNone(drive.divider_column("\n".join(boxed)))

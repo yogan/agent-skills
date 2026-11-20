@@ -347,6 +347,10 @@ def divider_column(screen, share=0.6):
     the screen at one column. A card in the transcript has rules too, but only over its own
     rows, and the prompt box's sides sit at the screen's edges, so the test is: a column away
     from both edges holding a rule on at least `share` of the rows.
+
+    Of several such columns, the one with the most rules: cards stacked down the transcript
+    can hold their right border on most rows, one column left of the divider, but a card's
+    corners and the rows between two cards break that column where the divider runs on.
     """
     lines = screen.rstrip("\n").split("\n")
     if not lines:
@@ -360,7 +364,7 @@ def divider_column(screen, share=0.6):
                 counts[col] = counts.get(col, 0) + 1
             col += cell_width(ch)
     best = [c for c, n in counts.items() if n >= share * len(lines) and 4 < c < width - 4]
-    return min(best) if best else None
+    return min(best, key=lambda c: (-counts[c], c)) if best else None
 
 
 def region_of(screen, region):
