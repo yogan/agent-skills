@@ -183,6 +183,30 @@ class TestResolveBranch(unittest.TestCase):
             out = RT.resolve_branch("feat/thing")
         self.assertEqual(out["HEAD_REF"], "feat/thing")
 
+    def test_a_fetch_that_fails_says_the_copy_here_is_explained(self):
+        err = io.StringIO()
+        with patch("subprocess.run", side_effect=dispatch([
+            ("branch -r", fake_result(stdout="origin/main\n")),
+            ("fetch", fake_result(returncode=128, stderr="fatal: could not read from remote\n")),
+            ("show-ref --verify --quiet refs/remotes/origin/feat/thing", fake_result()),
+            ("merge-base", fake_result(stdout="base123\n")),
+        ])), redirect_stderr(err):
+            out = RT.resolve_branch("feat/thing")
+        self.assertEqual(out["HEAD_REF"], "origin/feat/thing")
+        self.assertIn("could not fetch feat/thing from origin (fatal: could not read from remote)",
+                      err.getvalue())
+        self.assertIn("may be out of date", err.getvalue())
+
+    def test_no_commit_in_common_is_said_not_a_traceback(self):
+        err = io.StringIO()
+        with patch("subprocess.run", side_effect=dispatch([
+            ("branch -r", fake_result(stdout="origin/main\n")),
+            ("show-ref --verify --quiet refs/remotes/origin/feat/thing", fake_result()),
+            ("merge-base", fake_result(returncode=1)),
+        ])), redirect_stderr(err), self.assertRaises(SystemExit):
+            RT.resolve_branch("feat/thing")
+        self.assertIn("no commit in common", err.getvalue())
+
     def test_dies_when_branch_is_nowhere(self):
         with patch("subprocess.run", side_effect=dispatch([
             ("branch -r", fake_result(stdout="origin/main\n")),

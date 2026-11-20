@@ -45,7 +45,23 @@ def find_main_ref() -> str:
 
 
 def merge_base(head_ref: str, main_ref: str) -> str:
-    return run(["git", "merge-base", head_ref, main_ref])
+    r = subprocess.run(["git", "merge-base", head_ref, main_ref], capture_output=True, text=True)
+    if r.returncode != 0:
+        die(f"{head_ref} and {main_ref} have no commit in common to explain the change from: "
+            "a shallow clone (`git fetch --unshallow` fetches the rest), or unrelated histories.")
+    return r.stdout.strip()
+
+
+def fetch(*branches: str) -> None:
+    """Fetch `branches` from origin. A fetch that fails (offline, no access) is not fatal,
+    as the copy already here may do, but it is said: the explainer is then of that copy,
+    which may be behind what is on origin."""
+    r = subprocess.run(["git", "fetch", "origin", *branches, "--quiet"], capture_output=True, text=True)
+    if r.returncode != 0:
+        why = (r.stderr or r.stdout or "").strip().splitlines()
+        print(f"warning: could not fetch {' and '.join(branches)} from origin"
+              f"{f' ({why[-1]})' if why else ''}; explaining the copy already here, which may "
+              "be out of date.", file=sys.stderr)
 
 
 def resolve_blank(base: str = "") -> dict:
@@ -109,7 +125,7 @@ def resolve_branch(value: str) -> dict:
     if not main_ref:
         die("Cannot find origin/main or origin/master.")
 
-    subprocess.run(["git", "fetch", "origin", value, "--quiet"], capture_output=True)
+    fetch(value)
 
     if run_ok(["git", "show-ref", "--verify", "--quiet", f"refs/remotes/origin/{value}"]):
         head_ref = f"origin/{value}"
@@ -150,7 +166,7 @@ def resolve_mr(value: str) -> dict:
     if not src or not tgt:
         die(f"Could not parse source/target branch for MR !{num}.")
 
-    subprocess.run(["git", "fetch", "origin", src, tgt, "--quiet"], capture_output=True)
+    fetch(src, tgt)
     # A merged MR whose source branch was deleted, or one from a fork, has no branch here.
     for branch in (src, tgt):
         if not run_ok(["git", "show-ref", "--verify", "--quiet", f"refs/remotes/origin/{branch}"]):
