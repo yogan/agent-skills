@@ -463,9 +463,10 @@ REWORK_PUSHBACK = [
             Expect(button('Post'), region="screen", wait=60),
             Expect(button('Post + resolve'), region="screen", absent=True),
             Expect(button('“Fixed”'), region="screen", absent=True),
-            # The new push in its story after the push-back. (Two pushes of one topic with
-            # none of another's between them are one fix there: `fixes_of`.)
-            Expect(r"You agreed the plan: Push back[^╰]*You pushed a fix", region="main"),
+            # Both pushes in its story, each at its own time: the first before its "Fixed",
+            # the new one after the push-back.
+            Expect(r"You pushed a fix \(push 1\)[^╰]*You fixed and resolved it[^╰]*"
+                   r"You agreed the plan: Push back[^╰]*You pushed a fix \(push 2\)", region="main"),
             press('Post'),
             # Posted, ending on the new push's link alone: two pushes linked in the thread,
             # one in each of its replies.

@@ -1309,26 +1309,17 @@ def push_key(tid, n):
 
 
 def fixes_of(t):
-    """The topic's pushed fixes, oldest first, one per push (`t["pushes"]`), never with
-    another topic's change: consecutive pushes of it, with nothing pushed between them and
-    nothing but the fix in either, are one fix. Each is `{"pushes": [n, …], "before",
-    "after", "url", "mixed", "rebase"}`: `before` and `after` the commits its change lies
-    between, `url` GitLab's diff of it (the last push's version, from where the first one
-    started), `mixed` where that link may show more than the fix (a push recorded before
-    pushes were kept one by one, or one that carried a rebase or other commits along),
-    `rebase` where the push came with a rebase, `differs` how the fix differed from the plan
-    agreed, where the agent said it did."""
+    """The topic's pushed fixes, oldest first, one per push (`t["pushes"]`): each push is
+    an event of its own, told at its own time, even right after another of the topic's
+    (joined, the first one's line, and the reply that linked it, fell out of the story).
+    Each is `{"pushes": [n], "before", "after", "url", "mixed", "rebase"}`: `before` and
+    `after` the commits its change lies between, `url` GitLab's diff of it, `mixed` where
+    that link may show more than the fix (a push recorded before pushes were kept one by
+    one, or one that carried a rebase or other commits along), `rebase` where the push came
+    with a rebase, `differs` how the fix differed from the plan agreed, where the agent said
+    it did."""
     out = []
     for n, p in enumerate(t.get("pushes") or [], 1):
-        last = out[-1] if out else None
-        if last and not last["mixed"] and p.get("clean") and p.get("start") == last["after"]:
-            last["pushes"].append(n)
-            last["after"] = p["after"]
-            last["at"] = p.get("at")
-            last["url"] = (re.sub(r"start_sha=[^&#]+", f"start_sha={last['start']}", p["url"])
-                           if p.get("url") and last["url"] else None)
-            last["differs"] = " ".join(x for x in (last.get("differs"), p.get("differs")) if x) or None
-            continue
         out.append({"pushes": [n], "before": p["before"], "start": p.get("start"),
                     "after": p["after"], "url": p.get("url"), "mixed": not p.get("clean"),
                     "at": p.get("at"), "differs": p.get("differs"), "rebase": bool(p.get("rebase"))})
@@ -1361,19 +1352,17 @@ def kept_fix(state, t, n=None, kept=None):
 
 
 def fixed_links(state, t):
-    """The links a `Fixed:` reply gives: of the topic's fixes since the last one already
-    linked in its threads (a reply of the user's naming its version), each fix's own; every
-    fix where none is linked yet. A link spanning several fixes is never made: between them
-    lies another topic's push, or a rebase, which GitLab's diff would show too."""
+    """The links a `Fixed:` reply gives: of the topic's pushes since the last one already
+    linked in its threads (a reply of the user's naming its version), each push's own; every
+    push where none is linked yet. A link spanning several pushes is never made: between
+    them may lie another topic's push, or a rebase, which GitLab's diff would show too."""
     pushes = t.get("pushes") or []
     said = "\n".join(n.get("body") or "" for x in t["thread_ids"]
                       for n in (state["threads"].get(x) or {}).get("notes") or [] if n.get("mine"))
     ids = [re.search(r"diff_id=(\d+)", p.get("url") or "") for p in pushes]
     linked = [n for n, m in enumerate(ids, 1) if m and re.search(rf"diff_id={m.group(1)}\b", said)]
     since = linked[-1] if linked else 0
-    links = [f["url"] for f in fixes_of({"pushes": [p if n > since else {**p, "clean": False}
-                                                    for n, p in enumerate(pushes, 1)]})
-             if f["pushes"][0] > since and f["url"]]
+    links = [p["url"] for n, p in enumerate(pushes, 1) if n > since and p.get("url")]
     return links or ([t["diff_url"]] if t.get("diff_url") else [])
 
 

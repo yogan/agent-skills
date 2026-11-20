@@ -64,8 +64,8 @@ export type ReviewTopic = {
   // A pushed fix kept in git, which Show fix in hunk opens: rework-mr's own, review-mr's the
   // author's push that changed the topic's lines.
   fix_kept?: boolean
-  // rework-mr: how many fixes its pushes make (consecutive pushes of it are one), which
-  // the sidebar picks between where there are several.
+  // rework-mr: how many times its fix was pushed, which the sidebar picks between where
+  // there are several.
   pushes?: number
   // Its (first) thread on GitLab, where the box's line about it links.
   thread_url?: string | null

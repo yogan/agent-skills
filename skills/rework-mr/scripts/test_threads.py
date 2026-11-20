@@ -3597,11 +3597,15 @@ class TestFixPerPush(unittest.TestCase):
         notes = [{"body": "please", "mine": False}] + [{"body": b, "mine": True} for b in said]
         return {"topics": [t], "threads": {"d1": {"notes": notes}}}, t
 
-    def test_pushes_with_nothing_between_are_one_fix_and_one_link(self):
+    def test_pushes_with_nothing_between_are_each_their_own_fix(self):
+        """Joined into one, the first push's line fell out of the story, and with it the
+        reply that had linked it came before any push."""
         _, t = self.topic(self.push("A", "B", 2), self.push("B", "C", 3))
-        self.assertEqual(T.fixes_of(t), [{"pushes": [1, 2], "before": "A", "start": "A", "after": "C",
-                                          "url": "G/diffs?diff_id=3&start_sha=A", "mixed": False, "at": None,
-                                          "differs": None, "rebase": False}])
+        self.assertEqual(T.fixes_of(t), [
+            {"pushes": [1], "before": "A", "start": "A", "after": "B", "url": "G/diffs?diff_id=2&start_sha=A",
+             "mixed": False, "at": None, "differs": None, "rebase": False},
+            {"pushes": [2], "before": "B", "start": "B", "after": "C", "url": "G/diffs?diff_id=3&start_sha=B",
+             "mixed": False, "at": None, "differs": None, "rebase": False}])
 
     def test_how_a_fix_differed_from_its_plan_stays_in_the_story_after_the_push(self):
         """Before the push its card said "Differs from the plan you agreed"; after it only
@@ -3637,8 +3641,8 @@ class TestFixPerPush(unittest.TestCase):
                          "Fixed:\n- G/diffs?diff_id=2&start_sha=A\n- G/diffs?diff_id=4&start_sha=X\n")
 
     def test_one_fix_is_one_line(self):
-        state, t = self.topic(self.push("A", "B", 2), self.push("B", "C", 3))
-        self.assertEqual(T.fixed_body(state, t), "Fixed: G/diffs?diff_id=3&start_sha=A\n")
+        state, t = self.topic(self.push("A", "B", 2))
+        self.assertEqual(T.fixed_body(state, t), "Fixed: G/diffs?diff_id=2&start_sha=A\n")
 
     def test_an_earlier_link_in_the_thread_leaves_only_what_came_after(self):
         # Linked after its first push: the second, consecutive as it is, is its own link.
@@ -3647,7 +3651,8 @@ class TestFixPerPush(unittest.TestCase):
         self.assertEqual(T.fixed_body(state, t), "Fixed: G/diffs?diff_id=3&start_sha=B\n")
         # A reviewer quoting the link is not the user's having posted it.
         state["threads"]["d1"]["notes"][1]["mine"] = False
-        self.assertEqual(T.fixed_body(state, t), "Fixed: G/diffs?diff_id=3&start_sha=A\n")
+        self.assertEqual(T.fixed_body(state, t),
+                         "Fixed:\n- G/diffs?diff_id=2&start_sha=A\n- G/diffs?diff_id=3&start_sha=B\n")
 
     def test_the_card_says_each_fix_and_marks_what_may_be_mixed(self):
         state, t = self.topic(self.push("A", "B", 2), self.push("X", "C", 4, clean=False))
