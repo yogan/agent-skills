@@ -83,13 +83,13 @@ const expanded = (command: string): string => {
   return out
 }
 
-export const isViewCommand = (command: unknown): command is string =>
-  typeof command === 'string' && (VIEW.test(command) || VIEW.test(expanded(command)))
-
 // `--iid N` written before the subcommand, as lib/cli.py takes it (the way git and glab take
 // their global options): the same call as with it after.
 const IID_FIRST = new RegExp(String.raw`((?:findings|threads)\.py${Q})\s+--iid(?:=|\s+)\S+`, 'g')
 const iidLast = (command: string): string => command.replace(IID_FIRST, '$1')
+
+export const isViewCommand = (command: unknown): command is string =>
+  typeof command === 'string' && [command, expanded(command)].some(c => VIEW.test(c) || VIEW.test(iidLast(c)))
 
 export const isPostCommand = (command: unknown): command is string =>
   typeof command === 'string' && (

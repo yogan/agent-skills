@@ -406,6 +406,9 @@ _READERS = frozenset(
 _SEGMENTS_RE = re.compile(r"\|\||&&|[|;&\n]")
 _LEAD_WORD_RE = re.compile(r"^\s*(?:\w+=\S*\s+)*(?:sudo\s+|command\s+|time\s+)*([^\s;|&]+)")
 _QUOTES_RE = re.compile(r"[\"']")
+# `--iid N` before the subcommand, which the scripts take as git and glab take their global
+# options (lib/cli.py): moved out of the way, so the gates' `findings\.py\s+quote` match it.
+_IID_FIRST_RE = re.compile(r"((?:findings|threads)\.py)\s+--iid(?:=|\s+)\S+")
 
 
 def _invocation_text(cmd):
@@ -427,7 +430,7 @@ def _invocation_text(cmd):
         if not lead or lead.group(1).strip("'\"").rsplit("/", 1)[-1] in _READERS:
             continue
         kept.append(_program(seg[lead.start(1):]))
-    return _QUOTES_RE.sub("", "\n".join(k for k in kept if k))
+    return _IID_FIRST_RE.sub(r"\1", _QUOTES_RE.sub("", "\n".join(k for k in kept if k)))
 
 
 _INTERPRETERS = frozenset("python python3 sh bash zsh".split())

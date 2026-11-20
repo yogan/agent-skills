@@ -243,6 +243,19 @@ class TestGates(HookCase):
                            "which this hook strips before comparing anything."),
         ])
 
+    def test_the_mr_named_before_the_subcommand_still_gates(self):
+        """The scripts take `--iid` on either side of the subcommand (lib/cli.py); written
+        first, it stood between the script and the subcommand the gate looks for, and the
+        gate never fired."""
+        for cmd in ("python3 $SD/findings.py --iid 123 resume", "python3 $SD/findings.py --iid=123 resume"):
+            with self.subTest(cmd):
+                self.assertBlocked([
+                    user_prompt(),
+                    bash_call("u1", cmd),
+                    tool_result("u1", RESUME_OUT),
+                    assistant_text("Resumed: t1 is still open."),
+                ], contains="findings.py resume")
+
     def test_interleaved_paste_allows(self):
         """The skills ASK for interleaving (a summary sub-bullet per push), so the check is
         line-based, not one contiguous block. This was a real false positive."""

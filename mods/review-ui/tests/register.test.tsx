@@ -4,7 +4,7 @@ import { expect, test } from 'claude-code/testing'
 
 import { boxRowsOf, inboxMark, plainTitle, reflow, rowOf, sectionsOf, urlLabel, whenOf, personColor, PEOPLE_COLORS } from '../hooks/panel.ts'
 import { withEmoji } from '../hooks/views.ts'
-import { blocksOf, inlineOf, isPostCommand, NOTE, partsOf, sizeRunsOf, withOutcome, withoutDraft } from '../hooks/views.ts'
+import { blocksOf, inlineOf, isPostCommand, isViewCommand, NOTE, partsOf, sizeRunsOf, withOutcome, withoutDraft } from '../hooks/views.ts'
 
 test('only a command that runs one of the scripts\' writes is the person\'s press; one that names it is not', () => {
   for (const ran of [
@@ -37,6 +37,15 @@ test('only a command that runs one of the scripts\' writes is the person\'s pres
     'python3 $SD/threads.py cleanup-worktree',
     'python3 $SD/findings.py posted t1 --differs "drops the reason"',
   ]) expect(isPostCommand(named)).toBe(false)
+})
+
+test('a view with the MR named before its subcommand is a view all the same', () => {
+  for (const ran of [
+    'python3 $SD/findings.py --iid 5 quote t1',
+    'python3 "$SD/threads.py" --iid=5 present',
+    'S=$SD/findings.py && python3 $S --iid 5 todo',
+  ]) expect(isViewCommand(ran)).toBe(true)
+  expect(isViewCommand('python3 $SD/findings.py --iid 5 sync')).toBe(false)
 })
 
 // An invented view, shaped like the scripts' output: a table, an excerpt, a thread, a
