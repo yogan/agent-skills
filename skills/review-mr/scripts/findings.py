@@ -1134,6 +1134,8 @@ def _code_context(state, t):
 
 # Mirrors rework-mr's threads.py's `_comment_source`: the same side-aware pick of the
 # blob, read here from the review worktree, there from the repository being reworked.
+# There every comment is looked through for a suggestion; here only the first and the last,
+# as a thread's view here shows no other.
 def _comment_source(state, x):
     """The file as the comment saw it, as lines — what a ```suggestion's offsets count
     from — or None. Read only when the thread holds a suggestion, since it costs a call:
