@@ -282,7 +282,7 @@ commit's tree has no recorded pass of `check_push.py`. Enable both once per clon
 reaches; its docstring says how it decides.
 
 Ruff runs through `uvx` at the version pinned in the hook (`RUFF=`), falling back to an
-installed `ruff`. Run it the same way by hand, e.g. `uvx ruff@0.17.1 check .`. Check now and
+installed `ruff`. Run it the same way by hand, e.g. `uvx ruff@0.17.6 check .`. Check now and
 then whether a newer release is worth bumping to: run it over the repo, fix or accept what it
 reports, and commit the bump on its own.
 
