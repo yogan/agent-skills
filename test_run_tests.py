@@ -393,8 +393,13 @@ class TestDiscovery(unittest.TestCase):
     def test_a_run_of_some_files_keeps_the_other_files_timings(self):
         """A filtered run used to replace the record with its own few files, so the next whole
         run split nothing."""
-        kept = rt.record_timings({"a.py": 20.0, "b.py": 1.0}, {"b.py": {"seconds": 2.0}})
-        self.assertEqual(kept, {"a.py": 20.0, "b.py": 2.0})
+        a, b = "test_run_tests.py", "test_check_push.py"
+        kept = rt.record_timings({a: 20.0, b: 1.0}, {b: {"seconds": 2.0}})
+        self.assertEqual(kept, {a: 20.0, b: 2.0})
+
+    def test_a_file_that_is_gone_drops_out_of_the_timings(self):
+        kept = rt.record_timings({"gone/test_nothing_here.py": 3.0}, {})
+        self.assertEqual(kept, {})
 
     def test_a_pattern_filters_by_path_substring(self):
         picked = [p.name for p in rt.find_test_files(False, ["gates/"])]

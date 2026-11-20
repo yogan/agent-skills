@@ -302,8 +302,10 @@ def _record_pass(fingerprint, mode, files, tests):
 
 
 def record_timings(earlier, per_file):
-    """The timings to keep: `earlier` with this run's files' seconds replacing theirs."""
-    return {**earlier, **{r: round(a["seconds"], 2) for r, a in per_file.items()}}
+    """The timings to keep: `earlier` with this run's files' seconds replacing theirs, less
+    the files that no longer exist, which no lookup would ever match again."""
+    kept = {r: s for r, s in earlier.items() if (REPO_ROOT / r).is_file()}
+    return {**kept, **{r: round(a["seconds"], 2) for r, a in per_file.items()}}
 
 
 def _load_timings():
