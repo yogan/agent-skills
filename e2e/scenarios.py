@@ -425,6 +425,49 @@ REWORK_STOPPED = [
             SUGGESTION_ON_BRANCH,                      # nothing went up over it
 ]
 
+# A pushed fix the reviewer doubts, defended with a reply; then, before it is posted, the
+# code under it changes after all (a comment beside the rename). That change is a fix again,
+# pushed into its own commit, and the reply agreed is kept: posted after the push, ending on
+# the new push's link.
+T1_FIXED = next(i for i, x in enumerate(REWORK_FIX)
+                if isinstance(x, Check) and x.pattern == r"^True Fixed") + 1
+REWORK_PUSHBACK = [
+            *REWORK_FIX[:T1_FIXED],
+            Check(f"{NEWS} doubt", r"doubts the fix"),
+            Expect(r"\bt1\b", region="panel", wait=240),
+            Click(" t1 ", offset=1, region="panel"),
+            Expect(f"(?:{button('Agree plan')}|{button('Reply')})", region="screen", wait=240),
+            Prompt("t1: keep the rename and push back: aliasing on every import is what the rename "
+                   "saves. Draft the reply.", timeout=600),
+            Expect(button('Post'), region="screen", wait=60),
+            Expect(button('Post + resolve'), region="screen", absent=True),
+            Prompt("Before I post it: add a one-line comment above commentKeys saying it is named "
+                   "per feature so that a file using two features' keys needs no aliases.", timeout=900),
+            # The comment is a fix of t1's, shown to push; the reply waits for the push.
+            Expect(current("t1"), region="panel", wait=60),
+            Expect(button('Ack and push'), region="screen", wait=60),
+            Expect(button('Post'), region="screen", absent=True),
+            # In the one commit that made the file: the script's push alone.
+            press('Ack and push'),
+            # The reply agreed comes back to post, never to resolve: the reviewer doubted.
+            Expect(button('Post'), region="screen", wait=60),
+            Expect(button('Post + resolve'), region="screen", absent=True),
+            Expect(button('“Fixed”'), region="screen", absent=True),
+            # The new push in its story after the push-back. (Two pushes of one topic with
+            # none of another's between them are one fix there: `fixes_of`.)
+            Expect(r"You agreed the plan: Push back[^╰]*You pushed a fix", region="main"),
+            press('Post'),
+            # Posted, ending on the new push's link alone: two pushes linked in the thread,
+            # one in each of its replies.
+            Check(thread_on("comments/api/query-keys.ts",
+                            '(d["notes"][-1]["author"]["username"], d["notes"][-1]["body"].count("diff_id="), '
+                            'len(set(__import__("re").findall(r"diff_id=(\\d+)", " ".join(n["body"] for n in d["notes"])))))'),
+                  r"^\('frank', 1, 2\)$", wait=SOON),
+            Check("git fetch -q && git show @{u}:src/features/comments/api/query-keys.ts | grep -c '^ */[/*]'",
+                  r"^[1-9]"),
+            Check("git rev-list --count origin/main..@{u}", r"^2$"),   # folded into its commit
+]
+
 SCENARIOS = [
     Scenario(
         "smoke", "the driver itself: start claude, send a prompt, read the answer",
@@ -587,6 +630,10 @@ SCENARIOS = [
     Scenario(
         "rework-stopped", "MR !3: a push that would overwrite a suggestion applied on GitLab stops, and t1's card says so", WORK,
         needs_rig=True, mods=[MOD], fast_check=True, steps=[*REWORK_STOPPED]),
+
+    Scenario(
+        "rework-pushback", "MR !3: a doubted fix defended, then a comment added under it, pushed, and the reply posted on its link", WORK,
+        needs_rig=True, mods=[MOD], fast_check=True, steps=[*REWORK_PUSHBACK]),
 
     Scenario(
         "try-scrolling", "MR !4: every sidebar area with more than it shows, beside ones that fit, for a person to try (--keep)",
