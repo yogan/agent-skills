@@ -10,6 +10,12 @@ with the secret in `ENV`, in that one process's environment and never on a comma
 script hashes what it got and removes the file of that name: the file was there, so the
 secret came from the mod. Removed, it proves nothing a second time. The model sees neither the
 secret nor anything it could be computed from: the file names are hashes.
+
+**What it stops, and what not.** It keeps the model from posting, approving, merging or
+pushing by itself: with a constant it read in the source, by accident, or because an MR's
+text talked it into it. It is not a wall against a model set on forging a press: the model
+runs as the same user, so it could draw a secret of its own and write the matching file. The
+mod refuses its tool calls that name this folder, which raises that bar further and no more.
 """
 import hashlib
 import os

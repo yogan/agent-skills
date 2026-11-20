@@ -499,6 +499,20 @@ test('the model cannot post', async ($, on) => {
   expect(JSON.stringify(resolved)).toContain("user's press")
 })
 
+test('the model cannot write into the press folder, by shell or by a file tool', async ($, on) => {
+  const w = world(on, [])
+  w.tool.stdout = 'written'
+  const ran = await $.tool.call({ tool: 'Bash', command: 'touch ~/.claude/review-ui/presses/0a1b' })
+  expect(JSON.stringify(ran)).toContain('only the mod may touch it')
+  for (const tool of ['Write', 'Edit', 'NotebookEdit']) {
+    const key = tool === 'NotebookEdit' ? 'notebook_path' : 'file_path'
+    const out = await $.tool.call({ tool, [key]: '~/.claude/review-ui/presses/0a1b', content: '' } as never)
+    expect(JSON.stringify(out)).toContain('only the mod may touch it')
+  }
+  const elsewhere = await $.tool.call({ tool: 'Write', file_path: '/home/me/notes.md', content: '' } as never)
+  expect(JSON.stringify(elsewhere)).toContain('written')
+})
+
 const PANEL = {
   plugin: 'review-ui', component: 'Pane', requestId: 'review-ui-topics',
   props: { title: 'Review · MR !42', isFocused: true, bodyColumns: 60, placement: 'dock', scroll: { offset: 0, bodyRows: 30 }, view: {} },

@@ -10,7 +10,7 @@ import {
   boxRowsOf, fitTitle, plainTitle, INBOX_ICON, MR_COLOR, INBOX_WORD, inboxMark, kindSlot, legendFor, oneLineNote, reflow, sectionsOf, STATE_ICON,
   whenOf, personColor, YOU, YOU_COLOR, type BoxRow, type Row,
 } from './panel.ts'
-import { blocksOf, type DiffSize, type SizeRun, inlineOf, withEmoji, withOutcome, withoutDraft, isPostCommand, isViewCommand, partsOf, sizeOf, sizeRunsOf, withoutPasted, withSuggestions, manifestOf, titleOf, viewOf, withNote, withoutExcerpt, withoutExcerptLabel, withoutThread } from './views.ts'
+import { blocksOf, type DiffSize, type SizeRun, inPresses, inlineOf, namesPresses, withEmoji, withOutcome, withoutDraft, isPostCommand, isViewCommand, partsOf, sizeOf, sizeRunsOf, withoutPasted, withSuggestions, manifestOf, titleOf, viewOf, withNote, withoutExcerpt, withoutExcerptLabel, withoutThread } from './views.ts'
 import {
   askedFor, barPaint, cellsOf, changeKinds, clampOffset, codeArgsOf, codeWindow, currentOwn, firstOffset, phaseOf, pressOf, pushOf, stepOwn,
   type BarLook, type BarSpec, type CodeView,
@@ -312,8 +312,11 @@ const runScript = async ($: EngineInterface, s: ReviewSession, args: string[], e
 
 // The environment a press's own run carries, which is what tells the scripts it is the
 // person's press (lib/press.py): a secret drawn for this press alone, and a file named after
-// its hash for the script to find and remove. The model can set any variable it likes on a
-// command of its own, but never this one's value, which is in no command line and no file.
+// its hash for the script to find and remove. A constant would be one the model could read
+// in the source and set on a command of its own; this value is in no command line and no
+// file. It raises the bar and no more: the model runs as the same user, so one set on
+// forging a press could write a secret and its file itself. What it stops is a press made
+// by accident, from a value read in the source, or because an MR's text asked for one.
 const hex = (bytes: Uint8Array): string => [...bytes].map(b => b.toString(16).padStart(2, '0')).join('')
 const pressEnv = async ($: EngineInterface): Promise<Record<string, string>> => {
   const secret = hex(crypto.getRandomValues(new Uint8Array(32)))
@@ -323,6 +326,8 @@ const pressEnv = async ($: EngineInterface): Promise<Record<string, string>> => 
   if (home) await $.fs.write(`${home}/.claude/review-ui/presses/${digest}`, '').catch(() => {})
   return { REVIEW_UI_PRESS: secret }
 }
+
+const PRESSES_DENY = 'The review-ui/presses folder holds the proof of the user\'s button presses, and only the mod may touch it.'
 
 // A push runs the hooks a new record of the repository's checks has not earned skipping yet,
 // which can take minutes: the longest a process may run. One cut short is pushed by the next
@@ -2108,10 +2113,20 @@ export const register: Register = on => {
     return { result: withNote(r.stdout) }
   })
 
+  // The press folder holds the proof of the person's presses (lib/press.py): the model's file
+  // tools write nothing there either.
+  on('tool.call', { tool: /^(?:Write|Edit|NotebookEdit)$/ }, async ($, e, next) => {
+    const input = e as { file_path?: unknown; notebook_path?: unknown }
+    const home = (await $.env.get('HOME')) ?? ''
+    if (inPresses(input.file_path ?? input.notebook_path, home, await $.session.cwd())) return { deny: PRESSES_DENY }
+    return next(e)
+  })
+
   // A view the person gets as a card carries a line for the model, which the skills read
   // as "already shown". Research (another topic's view) gets no card, so no line either.
   // Any call of the review's scripts may change it, so the band's state is read again after it.
   on('tool.call', { tool: 'Bash' }, async ($, e, next) => {
+    if (namesPresses(e.command)) return { deny: PRESSES_DENY }
     if (isPostCommand(e.command)) {
       return { deny: 'Posting, resolving, approving, merging and cleaning up are the user\'s press: the buttons on the card and in the sidebar\'s box. Leave it to them.' }
     }

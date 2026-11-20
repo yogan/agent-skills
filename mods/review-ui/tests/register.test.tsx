@@ -4,7 +4,7 @@ import { expect, test } from 'claude-code/testing'
 
 import { boxRowsOf, inboxMark, plainTitle, reflow, rowOf, sectionsOf, urlLabel, whenOf, personColor, PEOPLE_COLORS } from '../hooks/panel.ts'
 import { withEmoji } from '../hooks/views.ts'
-import { blocksOf, inlineOf, isPostCommand, isViewCommand, NOTE, partsOf, sizeRunsOf, withOutcome, withoutDraft } from '../hooks/views.ts'
+import { blocksOf, inlineOf, inPresses, isPostCommand, isViewCommand, namesPresses, NOTE, partsOf, sizeRunsOf, withOutcome, withoutDraft } from '../hooks/views.ts'
 
 test('only a command that runs one of the scripts\' writes is the person\'s press; one that names it is not', () => {
   for (const ran of [
@@ -37,6 +37,38 @@ test('only a command that runs one of the scripts\' writes is the person\'s pres
     'python3 $SD/threads.py cleanup-worktree',
     'python3 $SD/findings.py posted t1 --differs "drops the reason"',
   ]) expect(isPostCommand(named)).toBe(false)
+})
+
+test('a shell command naming the press folder is refused, however it is quoted; one naming the word alone is not', () => {
+  for (const named of [
+    'touch ~/.claude/review-ui/presses/0a1b',
+    'mkdir -p "$HOME/.claude/review-ui/presses"',
+    "cp x ~/.claude/review-ui/'pre''sses'/0a1b",
+    'echo > ~/.claude/review-ui/pre\\sses/0a1b',
+    'mv /tmp/f ~/.claude//review-ui/presses',
+    'cd ~/.claude/review-ui && touch presses/0a1b',
+    'cd ~/.claude/review-ui; cd presses; touch 0a1b',
+    'ls ~/.claude/review-ui/presses',
+  ]) expect(namesPresses(named)).toBe(true)
+  for (const other of [
+    'git commit -m "a double click presses it once"',
+    'ls ~/.claude/review-ui/sessions',
+    'python3 $SD/findings.py post t1',
+  ]) expect(namesPresses(other)).toBe(false)
+})
+
+test('a file tool writing into the press folder is told so, by any spelling of the path', () => {
+  const home = '/home/me'
+  for (const path of [
+    '/home/me/.claude/review-ui/presses/0a1b',
+    '~/.claude/review-ui/presses/0a1b',
+    '$HOME/.claude/review-ui/presses/0a1b',
+    '/home/me/.claude/review-ui/sessions/../presses/0a1b',
+    '/home/me//.claude/./review-ui/presses/0a1b',
+    'presses/0a1b',
+  ]) expect(inPresses(path, home, '/home/me/.claude/review-ui')).toBe(true)
+  for (const path of ['/home/me/.claude/review-ui/sessions/x.json', 'presses/0a1b', '/srv/presses/0a1b'])
+    expect(inPresses(path, home, '/home/me/src')).toBe(false)
 })
 
 test('a view with the MR named before its subcommand is a view all the same', () => {

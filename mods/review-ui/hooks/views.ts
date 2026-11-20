@@ -99,6 +99,39 @@ export const isPostCommand = (command: unknown): command is string =>
     (PRESS_VAR.test(command) && SCRIPT.test(command))
     || [command, expanded(command)].some(c => POST.test(c) || POST.test(iidLast(c))))
 
+// The folder a press leaves its proof in (lib/press.py's PRESSES, under the home folder). A
+// file the model put there would pass for a press, so it writes nothing there.
+const PRESSES_DIR = '.claude/review-ui/presses'
+
+// A shell command that names the press folder, refused whole whether it writes or reads: a
+// shell can write through too many programs to tell them apart. Quotes and backslashes go
+// first, as the shell drops them too (`pre''sses`, `pre\sses`). Then any `presses` that is a
+// path's segment (a `/` on either side), or the word with `review-ui` elsewhere in the
+// command (`cd ~/.claude/review-ui && touch presses`). Not proof against a command built to
+// hide the name (a glob, a variable assembled in pieces): this keeps the model from writing
+// there by accident or on an MR's say-so, which is all the press's proof claims.
+const PRESSES_SEGMENT = /\/presses(?![\w.-])|(?<![\w.-])presses\//
+export const namesPresses = (command: unknown): boolean => {
+  if (typeof command !== 'string') return false
+  const plain = command.replace(/['"\\]/g, '')
+  return PRESSES_SEGMENT.test(plain) || (/review-ui/.test(plain) && /(?<![\w.-])presses(?![\w.-])/.test(plain))
+}
+
+// Whether a file tool's path lands in the press folder: `~` and `$HOME` read as `home`, a
+// relative path taken from `cwd`, and `.`, `..` and doubled slashes resolved as the tool will.
+export const inPresses = (path: unknown, home: string, cwd: string): boolean => {
+  if (typeof path !== 'string' || !path || !home) return false
+  const spelled = path.replace(/^(?:~|\$HOME|\$\{HOME\})(?=\/|$)/, home)
+  const parts: string[] = []
+  for (const part of (spelled.startsWith('/') ? spelled : `${cwd}/${spelled}`).split('/')) {
+    if (part === '..') parts.pop()
+    else if (part && part !== '.') parts.push(part)
+  }
+  const dir = `${home.replace(/\/+$/, '')}/${PRESSES_DIR}`
+  const full = `/${parts.join('/')}`
+  return full === dir || full.startsWith(`${dir}/`)
+}
+
 const parseManifest = (stdout: string): { body: string; manifest?: Manifest } => {
   const m = [...stdout.matchAll(MANIFEST)].pop()
   if (!m) return { body: stdout }

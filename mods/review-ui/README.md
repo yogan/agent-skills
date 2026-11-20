@@ -60,9 +60,12 @@ How it fits together:
   draft its card showed, and the script refuses if the draft changed since. So are resolving,
   approving, merging, editing a posted note, cleaning up and pushing: each press runs its
   script with a secret drawn for that press alone, which the script checks against a file
-  the mod left and spends (`lib/press.py`), so nothing the model can type passes for one.
-  The mod also refuses the model's own Bash calls of those commands, except a push a press
-  handed over.
+  the mod left and spends (`lib/press.py`), so a constant the model read in the source does
+  not pass for one. The mod also refuses the model's own Bash calls of those commands, except
+  a push a press handed over, and any of its tool calls that names the press folder. This
+  keeps the model from acting by accident or on an MR's say-so; it is not a wall against one
+  set on forging a press, since the model runs as the same user and could write a secret and
+  its file itself.
 - The model shows a topic with the `show_topic` tool, which the mod answers with the card.
 - A panel beside the chat, the sidebar, is areas under the MR's heading, each under a line
   that carries its name and its own keys: the topics (`hooks/panel.ts`) in groups a click
