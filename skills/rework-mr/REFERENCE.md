@@ -81,7 +81,8 @@ push's `Fixed:` link.
    URL (this push alone, never another topic's change; never a commit URL, which force-push
    rots), the change kept in git for the viewer, and closes the viewer window. A topic pushed
    again later keeps each push; its `Fixed:` reply links only what no earlier reply of yours
-   linked. Exit 3 means it stopped and printed what to do instead: verify again
+   linked, pushes that follow on each other as one link from the first one's start (another
+   topic's push between them starts a second link). Exit 3 means it stopped and printed what to do instead: verify again
    after a change, answer notes in the viewer, or, for a fix that goes into several commits
    or makes a new one, the commits it lists and then `push <t> --committed --token <token>`.
 7. Reply — thread + draft + URL are shown via **one** command so none can be dropped:

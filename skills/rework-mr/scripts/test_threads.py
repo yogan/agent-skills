@@ -3757,12 +3757,34 @@ class TestFixPerPush(unittest.TestCase):
         self.assertEqual(T.fixed_body(state, t), "Fixed: G/diffs?diff_id=2&start_sha=A\n")
 
     def test_an_earlier_link_in_the_thread_leaves_only_what_came_after(self):
-        # Linked after its first push: the second, consecutive as it is, is its own link.
+        # Linked after its first push: the second, consecutive as it is, is linked alone.
         state, t = self.topic(self.push("A", "B", 2), self.push("B", "C", 3),
                               said=["Fixed: G/diffs?diff_id=2&start_sha=A"])
         self.assertEqual(T.fixed_body(state, t), "Fixed: G/diffs?diff_id=3&start_sha=B\n")
         # A reviewer quoting the link is not the user's having posted it.
         state["threads"]["d1"]["notes"][1]["mine"] = False
+        self.assertEqual(T.fixed_body(state, t), "Fixed: G/diffs?diff_id=3&start_sha=A\n")
+
+    def test_consecutive_pushes_share_one_link_in_the_reply(self):
+        """Each push is its own story line, but the reviewer reviews them in one click: one
+        link from where the first started to the last one's version."""
+        state, t = self.topic(self.push("A", "B", 2), self.push("B", "C", 3))
+        self.assertEqual(T.fixed_body(state, t), "Fixed: G/diffs?diff_id=3&start_sha=A\n")
+        self.assertEqual(len(T.fixes_of(t)), 2)
+
+    def test_another_topic_s_push_between_starts_a_new_link(self):
+        # Its first two pushes run on; another topic's push (C to X) lies before the third.
+        state, t = self.topic(self.push("A", "B", 2), self.push("B", "C", 3), self.push("X", "D", 5))
+        self.assertEqual(T.fixed_body(state, t),
+                         "Fixed:\n- G/diffs?diff_id=3&start_sha=A\n- G/diffs?diff_id=5&start_sha=X\n")
+
+    def test_pushes_already_linked_stay_out_of_the_span(self):
+        state, t = self.topic(self.push("A", "B", 2), self.push("B", "C", 3), self.push("C", "D", 4),
+                              said=["Fixed: G/diffs?diff_id=2&start_sha=A"])
+        self.assertEqual(T.fixed_body(state, t), "Fixed: G/diffs?diff_id=4&start_sha=B\n")
+
+    def test_a_push_that_carried_more_starts_a_link_of_its_own(self):
+        state, t = self.topic(self.push("A", "B", 2), self.push("B", "C", 3, clean=False))
         self.assertEqual(T.fixed_body(state, t),
                          "Fixed:\n- G/diffs?diff_id=2&start_sha=A\n- G/diffs?diff_id=3&start_sha=B\n")
 

@@ -1366,17 +1366,32 @@ def kept_fix(state, t, n=None, kept=None):
 
 
 def fixed_links(state, t):
-    """The links a `Fixed:` reply gives: of the topic's pushes since the last one already
-    linked in its threads (a reply of the user's naming its version), each push's own; every
-    push where none is linked yet. A link spanning several pushes is never made: between
-    them may lie another topic's push, or a rebase, which GitLab's diff would show too."""
+    """The links a `Fixed:` reply gives, for the topic's pushes since the last one already
+    linked in its threads (a reply of the user's naming its version), every push where none
+    is linked yet: as few links as can be, so the reviewer sees the fix in one click. Pushes
+    that follow on each other (each starts where the one before ended, none carrying a
+    rebase or other commits along) share one link, GitLab's diff from the first one's start
+    to the last one's version. Another topic's push, or a rebase, between two of them would
+    show in that diff too, so there a new link begins. The story and the sidebar still tell
+    each push on its own (`fixes_of`); only the reply joins them."""
     pushes = t.get("pushes") or []
     said = "\n".join(n.get("body") or "" for x in t["thread_ids"]
                       for n in (state["threads"].get(x) or {}).get("notes") or [] if n.get("mine"))
     ids = [re.search(r"diff_id=(\d+)", p.get("url") or "") for p in pushes]
     linked = [n for n, m in enumerate(ids, 1) if m and re.search(rf"diff_id={m.group(1)}\b", said)]
     since = linked[-1] if linked else 0
-    links = [p["url"] for n, p in enumerate(pushes, 1) if n > since and p.get("url")]
+    runs = []
+    for p in pushes[since:]:
+        if not p.get("url"):
+            continue
+        last = runs[-1] if runs else None
+        if last and last["clean"] and last["start"] and p.get("clean") and p.get("start") == last["after"]:
+            last.update(after=p["after"],
+                        url=re.sub(r"start_sha=[^&#]+", f"start_sha={last['start']}", p["url"]))
+        else:
+            runs.append({"start": p.get("start"), "after": p["after"], "url": p["url"],
+                         "clean": bool(p.get("clean"))})
+    links = [r["url"] for r in runs]
     return links or ([t["diff_url"]] if t.get("diff_url") else [])
 
 
