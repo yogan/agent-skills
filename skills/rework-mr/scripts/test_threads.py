@@ -2593,6 +2593,20 @@ class TestADraftBelongsToItsRound(unittest.TestCase):
         T.post_reply(self.state, self.CTX, 1, "t1", None, fixed=True)
         self.assertNotIn("reply", self.t1)
 
+    def test_a_second_fixed_for_the_same_push_posts_nothing(self):
+        """"Fixed" is made from the push's link each time, so a double click posted it twice;
+        a later push has its own."""
+        self.plan("fix")
+        self.t1["diff_url"] = "https://gl/g/p/-/merge_requests/1/diffs?diff_id=2"
+        T.post_reply(self.state, self.CTX, 1, "t1", None, fixed=True)
+        with mock.patch("sys.stderr", new_callable=io.StringIO) as err, self.assertRaises(SystemExit):
+            T.post_reply(self.state, self.CTX, 1, "t1", None, fixed=True)
+        self.assertIn("has its reply already", err.getvalue())
+        self.assertEqual(self.post.call_count, 1)
+        self.t1["diff_url"] = "https://gl/g/p/-/merge_requests/1/diffs?diff_id=3"
+        T.post_reply(self.state, self.CTX, 1, "t1", None, fixed=True)
+        self.assertEqual(self.post.call_count, 2)
+
     def test_a_reviewer_s_new_comment_ends_it(self):
         self.plan("push-back", "--reply", "-", stdin="Bewusst so.\n")
         self.reviewer_writes()

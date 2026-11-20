@@ -433,6 +433,15 @@ test('a Post whose comment went up while resolving its thread failed is posted, 
   expect(JSON.stringify(w.rows.appended())).toContain('resolving its thread failed')
 })
 
+test('a double click on a button presses it once', async ($, on) => {
+  const w = world(on, [stateOf('t1', [topic('t1', 'draft', 'v7')]), stateOf(null, [topic('t1', 'open')])])
+  await openReview($, w, view('t1', 'v7'))
+  const ui = await mountStep($, 'terminal')
+  await Promise.all([ui.press({ key: 'post' }), ui.press({ key: 'post' })])
+  await ui.unmount()
+  expect(w.ran.filter(r => r.argv[2] === 'post').length).toBe(1)
+})
+
 test('a button that needs thought hands the model a turn', async ($, on) => {
   const w = world(on, [stateOf('t1', [topic('t1', 'draft')])])
   await openReview($, w, view('t1'))

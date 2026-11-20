@@ -2258,7 +2258,7 @@ def start_fix_round(t, keep_checks=False):
     if (t.get("outcome") or "fix") == "fix" and t.get("diff_url"):
         for k in ("diff_url", "fix", *(() if keep_checks else ("checked",)), "push_token",
                   "push_from", "push_committed", "push_stopped", "handed_from", "reply_early", "post_differs",
-                  "early_posted", "reply_posted", "fix_lost"):
+                  "early_posted", "reply_posted", "reply_posted_for", "fix_lost"):
             t.pop(k, None)
         if not t.get("reply_for"):
             # Stored before drafts carried their round, it would count under any plan.
@@ -2967,6 +2967,11 @@ def post_reply(state, ctx, iid, tid, expect, fixed=False, resolve=False, failed=
         die(f"{tref(tid)} has no thread to reply in")
     if fixed:
         t.get("diff_url") or die(f"{tref(tid)} has no diff URL yet: push the fix first")
+        # Its body is made from the push's link anew each time, so nothing else stops a
+        # second press (a double click) from posting the same "Fixed" twice.
+        if t.get("reply_posted") and t.get("reply_posted_for") == t["diff_url"]:
+            die(f"the fix of {tref(tid)} has its reply already: {t['reply_posted']}; "
+                "nothing was posted")
         body = fixed_body(state, t)
     else:
         body = draft_of(state, t) or die(
@@ -3010,6 +3015,7 @@ def post_reply(state, ctx, iid, tid, expect, fixed=False, resolve=False, failed=
     t.pop("waiting_on", None)
     if t.get("diff_url"):
         t["reply_posted"] = url          # the pushed fix's card links it
+        t["reply_posted_for"] = t["diff_url"]
     # Posted, a draft is spent, and so is one passed over for the short "Fixed": kept, it
     # came back as the next round's draft, offered for posting under a fix it knew nothing of.
     for k in ("reply", "reply_for"):

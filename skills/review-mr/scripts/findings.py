@@ -424,7 +424,7 @@ def ui_state(state, t, status=None):
     if t.get("follow_up") == "offer":           # your move, and nobody answered anything
         return "draft" if t.get("draft") else "new"
     if s == "draft":
-        return "draft" if (t.get("draft") or t.get("note")) else "new"
+        return "draft" if draft_text(t) else "new"
     return {"open": "waiting", "needs_ack": "answered", "acked": "done"}.get(s, s)
 
 
@@ -1247,7 +1247,7 @@ def _render_quote(state, tid, refine=False):
     and says why. So `refine` is always safe to pass when re-showing.
     """
     t = topic_for(state, tid) or die(f"no topic {tid}")
-    if refine and not (t.get("draft") or t.get("note")):
+    if refine and not draft_text(t):
         die(f"--refine re-shows a reworded DRAFT and {tref(tid)} has none — everything it "
             f"renders is context. Use plain `quote {tid}`")
     # Where the mod draws, every view of a topic is its whole card: the older cards of the
@@ -1285,8 +1285,8 @@ def _render_quote(state, tid, refine=False):
             # on, and a card a press brings up has no model turn to write it in.
             if t.get("why"):
                 out += analysis_md(t["why"])
-        if t.get("draft") or t.get("note"):
-            out += _draft_block(state, t, t.get("draft") or t.get("note"))
+        if draft_text(t):
+            out += _draft_block(state, t, draft_text(t))
         else:
             # Header + code and silence read as a complete presentation — reported
             # live as title, code fragment, "nothing else", with no sign a comment
@@ -1540,12 +1540,20 @@ def render_answered(state, t, summ, v):
     return "\n".join(out).strip()
 
 
+def draft_text(t):
+    """The comment drafted for `t`, or None. `note` is the draft's older name, kept by imported
+    and seeded topics: it stands for the draft only until the topic is posted, since a posted
+    comment spends its draft, and a `note` left behind then was offered and posted again as
+    a reply into the topic's own thread."""
+    return t.get("draft") or (None if t.get("thread_ids") else t.get("note"))
+
+
 def draft_body(state, tid):
     """The raw comment text for a draft topic — body only, no meta header (that
     would otherwise land in the posted GitLab comment). This is the payload to
     pipe into clip.sh or post via glab; `quote <t>` is the human-facing display."""
     t = topic_for(state, tid) or die(f"no topic {tid}")
-    body = t.get("draft") or t.get("note")
+    body = draft_text(t)
     if not body:
         die(f"topic {tid} has no draft yet — set one with "
             f"`set {tid} --draft '…'`")
@@ -2216,7 +2224,7 @@ def view_context(state, topic=None):
     extra = {"review": {"skill": "review-mr", "script": os.path.abspath(__file__),
                         "cwd": os.getcwd(), "iid": state.get("iid")}}
     t = topic_for(state, topic) if topic else None
-    body = t and (t.get("draft") or t.get("note"))
+    body = t and draft_text(t)
     if body:
         extra["draft"] = draft_version(body)
     # Where the mod draws, the opener leaves the table to the panel; the model still needs
@@ -2254,7 +2262,7 @@ def card_face(state, t):
         t.get("summary"), topic_status(state, t), said, resolved,
         [v.get(k) for k in ("says", "case", "text", "did", "on")], t.get("asked"),
         [[f.get("before"), f.get("after"), bool(f.get("near"))] for f in fixes_of(t)],
-        t.get("draft") or t.get("note"), t.get("closed"), t.get("why"),
+        draft_text(t), t.get("closed"), t.get("why"),
         (peer_view_of(state, t) or {}) if peer_waiting(state, t) else None,
     ], sort_keys=True, default=str).encode()).hexdigest()[:12]
 
@@ -2568,7 +2576,7 @@ def state_json(state):
     wt = get_worktree(state.get("slug") or "", state.get("iid"))
     kept = fix_refs.kept(wt, SKILL, state.get("iid")) if wt and os.path.isdir(wt) else {}
     for t in state["topics"]:
-        body = t.get("draft") or t.get("note")
+        body = draft_text(t)
         kinds, news_at = news_of(state, t)
         topics.append({
             "inbox": inbox_of(state, t), "news": kinds, "news_at": news_at,
@@ -2629,7 +2637,7 @@ def state_json(state):
             "thread_new": thread_new(state, cur) if cur else 0,
             # The current topic's draft while it is not on GitLab yet: the sidebar shows it
             # under the lines it will be posted on, as GitLab shows a pending comment.
-            "draft_text": (cur.get("draft") or cur.get("note")) if cur and not cur["thread_ids"] else None,
+            "draft_text": draft_text(cur) if cur and not cur["thread_ids"] else None,
             "skill": "review-mr", "iid": state.get("iid"), "title": state.get("title"),
             "url": state.get("mr_web_url"), "lang": state.get("lang") or DEFAULT_LANG,
             "mr": mr_json(state.get("mr_status")),

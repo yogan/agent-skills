@@ -760,6 +760,18 @@ const once = async (move: () => Promise<void>) => {
   try { await move() } finally { isMoving = false }
 }
 
+// One press at a time, as `once` holds the row clicks: a double click on a button arrives
+// while the first press is still starting, before it marks the band busy and its buttons go,
+// and would run the press twice (a second "Fixed" reply under the first). False for a press
+// dropped so.
+let isPressing = false
+const onePress = async (run: () => Promise<void>): Promise<boolean> => {
+  if (isPressing) return false
+  isPressing = true
+  try { await run() } finally { isPressing = false }
+  return true
+}
+
 const showTopic = async ($: EngineInterface, s: ReviewSession, tid: string) => {
   await once(() => moveTo($, s, tid))
   await askPlan($)
@@ -1827,7 +1839,7 @@ const stepControls = async ($: EngineInterface, s: ReviewSession, r: ReviewState
   // in place) leaves that card the step's host: only a step moved behind its back (by the
   // model's turn) needs a new card (`cardForCurrent`).
   const press = (b: BandButton) => async (ev: { surface?: string }) => {
-    await pressOn(b, ev)
+    if (!(await onePress(() => pressOn(b, ev)))) return
     const after = await read($, review)
     const now = currentTopic(after)
     await update($, hostCard, h => (h?.step && now && h.topic === now.id ? { ...h, step: now.step ?? null, face: after?.face ?? null } : h))
@@ -3303,7 +3315,7 @@ export const register: Register = on => {
                 )}
                 {end.button && (
                   <Box flexDirection="row" justifyContent="center" marginTop={end.text ? 1 : 0}>
-                    {drawChip({ Box, Button, Text }, end.button, () => { void pressEnd($, s, end.button as BandButton) })}
+                    {drawChip({ Box, Button, Text }, end.button, () => { void onePress(() => pressEnd($, s, end.button as BandButton)) })}
                   </Box>
                 )}
               </Box>

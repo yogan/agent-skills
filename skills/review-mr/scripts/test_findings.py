@@ -1986,6 +1986,19 @@ class TestPost(unittest.TestCase):
         self.assertEqual(self.state["topics"][0]["thread_ids"], ["d1"])
         self.assertTrue(url.endswith("#note_7"))
 
+    def test_a_note_beside_the_draft_is_spent_with_it(self):
+        """`note`, the draft's older name, stood in for the draft once the draft was posted:
+        the topic still offered Post, and a second press posted the note into its thread."""
+        self.state["topics"][0]["note"] = "Context for the author."
+        self.post()
+        self.state["threads"]["d1"] = {"mine": True, "resolved": False, "awaiting": "author", "notes": []}
+        self.assertIsNone(F.state_json(self.state)["topics"][0]["draft"])
+        with self.assertRaises(SystemExit), redirect_stderr(io.StringIO()) as err, \
+                patch.object(F, "api_post") as again:
+            F.post_draft(self.state, CTX, 1, "t1", None)
+        self.assertIn("no draft", err.getvalue())
+        again.assert_not_called()
+
     def test_a_posted_topic_gets_a_reply_in_its_thread(self):
         t = self.state["topics"][0]
         t["thread_ids"] = ["d9"]
