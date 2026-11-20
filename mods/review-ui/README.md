@@ -165,7 +165,11 @@ says none of them.
 A change here that moves one of these moves the other in the same commit:
 
 - the view commands (`VIEW_COMMANDS`, `hooks/views.ts`) and the gate specs
-  (`skills/*/scripts/paste-gates.json`);
+  (`skills/*/scripts/paste-gates.json`): every gated command is a view here, so a gate
+  added or renamed moves the list. The list holds more than the gates, though: a few
+  commands (`verdict`, `explainer --recommend`, `proposal`, `own-review`, `posted --differs`)
+  print a view only where the mod draws one, and print nothing to paste without it, so they
+  have no gate;
 - the chips' caps (`CHIP_CAPS`, `hooks/register.tsx`) and the e2e scenarios' `CAP`
   (`e2e/scenarios.py`), which find buttons by them;
 - the panel's icons (`hooks/panel.ts`) and `lib/test_ui.py`'s `ModMirrorTest`.

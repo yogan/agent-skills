@@ -1,7 +1,10 @@
 // Which tool calls print a view the person must see, and what of their output is the view.
 //
 // Pure, no `$`: the hooks module draws, this decides. Kept in step with the gate specs
-// (skills/*/scripts/paste-gates.json): a command listed there is a view here.
+// (skills/*/scripts/paste-gates.json): a command listed there is a view here. Not the other
+// way round: the list also holds commands that print a view only where the mod draws one
+// and nothing to paste without it (a verdict, the explainer question, the own-review
+// matching, a posted comment that no longer holds), which no gate has.
 
 // The subcommands that print a view, by script. `Q` is the quote a script's path may carry
 // (`python3 "$SD/threads.py" present` is as common as the bare form).
