@@ -1408,6 +1408,21 @@ class TestPruneWorktrees(Throwaway, unittest.TestCase):
         self.assertEqual(removed, [])
         self.assertTrue(os.path.isdir(wt))
 
+    def test_the_author_s_fixes_kept_for_a_pruned_mr_go_with_its_worktree(self):
+        """Kept in the common git folder, they stayed for good once nobody opened the
+        merged MR again, holding force-pushed-away commits back from `git gc`."""
+        slug = "acme-repo"
+        self._with_worktree(slug, 42)
+        self._with_worktree(slug, 43)
+        for iid in (42, 43):
+            self._git("-C", self.main, "update-ref", f"refs/review-mr/mr{iid}/t1/push1/after", "HEAD")
+        states = {42: "merged", 43: "opened"}
+        with patch.object(F, "mr_object", side_effect=lambda _c, iid: {"state": states[iid]}):
+            self.assertEqual(len(F.prune_worktrees(self._ctx(slug))), 1)
+        refs = subprocess.run(["git", "-C", self.main, "for-each-ref", "--format=%(refname)",
+                               "refs/review-mr/"], capture_output=True, text=True).stdout.split()
+        self.assertEqual(refs, ["refs/review-mr/mr43/t1/push1/after"])
+
     def test_a_worktree_another_mr_still_uses_is_left_and_only_the_record_goes(self):
         """Two MRs recorded the same worktree: the merged one's prune removed it from under
         the other's open review."""

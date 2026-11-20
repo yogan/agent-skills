@@ -3743,6 +3743,10 @@ def prune_worktrees(ctx, skip_iid=None):
             idle = KEEP_WORKTREE_S
         if idle < KEEP_WORKTREE_S:
             continue
+        # The author's fixes kept for it go too: they live in the repository's common git
+        # folder, which removing a worktree leaves, and an MR nobody opens again after its
+        # merge never drops them itself (`keep_author_fixes`).
+        fix_refs.drop(wt if os.path.isdir(wt) else ".", SKILL, iid)
         if any(p == os.path.realpath(wt) for i, p in recorded.items() if i != iid):
             # Another MR's review reads its code from there: only this MR's record goes.
             os.remove(worktree_path(ctx["slug"], iid))

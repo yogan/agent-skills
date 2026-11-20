@@ -138,7 +138,8 @@ unless swept, so before touching this MR's own worktree, clean up any *other* on
 python3 $SD/findings.py prune --iid <n>   # removes an OTHER merged/closed MR's worktree for this repo
 ```
 
-This only ever deletes the git worktree, never a findings/state file, and only for an MR
+This only ever deletes the git worktree and the author's fixes kept in git for that MR, never
+a findings/state file, and only for an MR
 GitLab reports merged or closed whose review has lain idle for a day (another session may
 still be on it), and never one another MR's review still has recorded — `--iid <n>` exempts this run's own MR even if it happens to already qualify. It's silent when it finds nothing; if it prints a line, mention it in passing.
 
