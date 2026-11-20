@@ -490,7 +490,15 @@ def check_messages(root, base):
 def autosquash(root, target, tree):
     """Squash the fixups into their commits. The tree must come out as `tree`."""
     base = f"{target}^" if _out(root, "rev-parse", "--verify", "--quiet", f"{target}^") else "--root"
-    env = {**_clean_env(), "GIT_SEQUENCE_EDITOR": "true", "GIT_EDITOR": "true"}
+    # A rebase replays a merge's commits as copies of their own: a branch that merged its
+    # target would carry the target's commits as its own, with the files unchanged, so the
+    # check on the tree below cannot tell.
+    if _out(root, "rev-list", "--merges", "HEAD" if base == "--root" else f"{base}..HEAD"):
+        raise Stop(f"the branch has merge commits after \"{_subject(root, target)}\", and "
+                   "squashing the fixup in would flatten them into copies; the fixup commit is "
+                   "made, nothing is pushed: squash it in by hand (`git rebase -i --autosquash "
+                   "--rebase-merges`) and push yourself, or rebase the branch instead of merging")
+    env ={**_clean_env(), "GIT_SEQUENCE_EDITOR": "true", "GIT_EDITOR": "true"}
     r = git(root, "rebase", "-i", "--autosquash", base, env=env)
     if r.returncode != 0:
         git(root, "rebase", "--abort")

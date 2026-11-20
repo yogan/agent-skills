@@ -429,6 +429,24 @@ class TestPush(Case):
         self.assertEqual(sh(other, "git", "rev-parse", "HEAD"),
                          sh(self.r.root, "git", "rev-parse", "origin/main"))
 
+    def test_a_branch_with_a_merge_after_the_fix_s_commit_is_not_flattened(self):
+        root = self.r.root
+        sh(root, "git", "checkout", "-q", "-b", "side", "HEAD^")
+        self.r.write("d.txt", "docs\n")
+        sh(root, "git", "add", "d.txt")
+        sh(root, "git", "commit", "-q", "--no-verify", "-m", "docs: d")
+        sh(root, "git", "checkout", "-q", "main")
+        sh(root, "git", "merge", "-q", "--no-verify", "--no-edit", "side")
+        rec = self.r.record()
+        stamp = self.fix(rec)
+        checks.commit_fixup(root, rec, stamp, self.r.target)
+        merged = sh(root, "git", "rev-parse", "HEAD^")
+        with self.assertRaisesRegex(checks.Stop, "merge commits"):
+            checks.autosquash(root, self.r.target, stamp["tree"])
+        # Left as it was: the merge, and the fixup on top of it.
+        self.assertEqual(sh(root, "git", "rev-parse", "HEAD^"), merged)
+        self.assertEqual(sh(root, "git", "status", "--porcelain"), "")
+
     def test_files_changed_since_the_checks_are_not_committed(self):
         rec = self.r.record()
         stamp = self.fix(rec)
