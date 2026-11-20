@@ -4195,5 +4195,22 @@ class TestIidEitherSide(unittest.TestCase):
         self.assertEqual(self.parsed("--iid", "3", "check-handles"), ("check-handles", 3))
 
 
+class TestStateRootFromTheEnvironment(unittest.TestCase):
+    """A scenario run (e2e/drive.py) names its own state folder, so that it never writes into
+    the person's real reviews under ~/.claude."""
+
+    def root(self, **env):
+        clean = {k: v for k, v in os.environ.items() if k != "MR_SKILLS_STATE"}
+        r = subprocess.run([sys.executable, "-c", "import threads; print(threads.STATE_ROOT)"], cwd=HERE,
+                           env={**clean, **env}, capture_output=True, text=True, check=True)
+        return r.stdout.strip()
+
+    def test_a_run_that_names_a_state_folder_keeps_its_state_there(self):
+        self.assertEqual(self.root(MR_SKILLS_STATE="/run/state"), "/run/state/rework-mr")
+
+    def test_otherwise_it_is_kept_under_claudes_own_folder(self):
+        self.assertEqual(self.root(), os.path.expanduser("~/.claude/rework-mr"))
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

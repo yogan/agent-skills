@@ -283,6 +283,18 @@ def loc_md(loc):
     return f"`{loc}`" if loc else f"_{MR_LEVEL}_"
 
 
+# Names a folder that takes the place of `~/.claude` for both skills' state. A scenario run
+# (e2e/drive.py) sets it, so a test session keeps its state beside its own copy of the rig
+# and never writes into the person's real reviews.
+STATE_ENV = "MR_SKILLS_STATE"
+
+
+def state_root(skill):
+    """The folder `skill` keeps its state in: `~/.claude/<skill>`, or under $MR_SKILLS_STATE.
+    Read once, when a script starts, since a run's whole state belongs in one place."""
+    return os.path.join(os.path.expanduser(os.environ.get(STATE_ENV) or "~/.claude"), skill)
+
+
 def state_file(root, slug, iid, filename, make=True):
     """`root/<slug>--mr<iid>/<filename>`, creating the directory if needed. `root` and
     `filename` are per-skill (different state roots, different file names); the shape

@@ -52,6 +52,7 @@ if _REPO_ROOT not in sys.path:
 
 from lib import checks  # noqa: E402
 from lib.cli import die  # noqa: E402
+from lib.mr_common import state_root  # noqa: E402
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import rig  # noqa: E402
@@ -703,8 +704,13 @@ def review_worktree(branch, iid):
     return path
 
 
+# This checkout's own, like the scenarios' sessions (drive.py's `skills_plugin`): a reset run
+# from a worktree seeds state the way that worktree's scripts keep and read it.
+FINDINGS = os.path.join(_REPO_ROOT, "skills", "review-mr", "scripts", "findings.py")
+
+
 def findings(worktree, *args):
-    sd = os.path.expanduser("~/.claude/skills/review-mr/scripts/findings.py")
+    sd = FINDINGS
     r = subprocess.run(["python3", sd, *args], cwd=worktree,
                        capture_output=True, text=True)
     if r.returncode != 0:
@@ -726,7 +732,7 @@ def seed_mr2(iid):
     """
     step("MR !2 — seeding the review conversation")
     # Repo-wide draft language. Must happen after the state wipe, which removes the
-    # whole ~/.claude/review-mr/<slug>/ directory including this file.
+    # skill's whole <slug>/ state folder including this file.
     wt0 = review_worktree(MR2_BRANCH, iid)
     findings(wt0, "lang", "--set", "en")
     info("draft language set to en")
@@ -792,7 +798,7 @@ def title_peer_topic(wt, iid):
     handle is parsed rather than assumed to be t5: the adopted topic's number depends
     on how many were imported before it. Same reason `seed_mr2` parses `import`'s
     output instead of counting."""
-    sd = os.path.expanduser("~/.claude/skills/review-mr/scripts/findings.py")
+    sd = FINDINGS
     r = subprocess.run(["python3", sd, "sync", "--iid", str(iid)], cwd=wt,
                        capture_output=True, text=True)
     m = re.search(r"needs summary: (t\d+)", r.stderr)
@@ -1078,11 +1084,12 @@ def wipe_skill_state(iid=None):
     mid-review, and the stored worktree pointer would dangle at a deleted path.
 
     `iid`: that merge request's state alone; what the skills keep for the whole project
-    (the draft language) stays."""
+    (the draft language) stays. Where $MR_SKILLS_STATE names a place, the skills keep
+    their state there (lib/mr_common.py), and so this wipes it there."""
     step("wiping local skill state" + (f" of MR !{iid}" if iid else ""))
     slug = E["E2E_PROJECT"].replace("/", "-").replace(".", "-")
     for root in ("review-mr", "rework-mr"):
-        base = os.path.expanduser(f"~/.claude/{root}")
+        base = state_root(root)
         if not os.path.isdir(base):
             continue
         for name in sorted(os.listdir(base)):
@@ -1090,7 +1097,7 @@ def wipe_skill_state(iid=None):
                 name == slug or name.startswith(f"{slug}--mr")
             if mine:
                 shutil.rmtree(os.path.join(base, name))
-                info(f"removed ~/.claude/{root}/{name}")
+                info(f"removed {os.path.join(base, name)}")
 
 
 # ---------------------------------------------------------------- one MR alone
@@ -1265,7 +1272,7 @@ def main():
         wipe_skill_state()
     if "mr2" in want:
         seed_mr2(2)
-    # Last, and after the state wipe: the wipe removes ~/.claude/review-mr/<slug>--mr1/
+    # Last, and after the state wipe: the wipe removes review-mr's <slug>--mr1/ state folder
     # wholesale, so anything registered before it would be thrown away again.
     if "prepared" in want:
         register_mr1_inputs()

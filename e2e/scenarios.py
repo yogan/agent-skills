@@ -84,9 +84,10 @@ SCROLL = "~/src/agent-skills-demo-scroll"     # MR !4's checkout (fixture.py's M
 # A scrollbar's thumb as the sidebar draws it: a full cell, or one filled from the bottom.
 THUMB = Expect(r"[█▁▂▃▄▅▆▇]", region="panel", wait=30)
 # How many of MR !4's topics are judged (a proposal, or found to need the person), asked until
-# all are or 14 minutes have passed.
+# all are or 14 minutes have passed. The skills' state is where the run keeps it (drive.py's
+# `state_of`), the person's own only in a showcase.
 EVERY_JUDGED = ("python3 -c \"import json,os,time\n"
-                "p=os.path.expanduser('~/.claude/rework-mr/$SLUG--mr4/topics.json')\n"
+                "p='${MR_SKILLS_STATE:-$HOME/.claude}/rework-mr/$SLUG--mr4/topics.json'\n"
                 "for _ in range(168):\n"
                 " ts=json.load(open(p))['topics']; n=sum(1 for t in ts if t.get('proposal') or t.get('triage'))\n"
                 " if n==len(ts): break\n"

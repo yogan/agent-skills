@@ -27,6 +27,7 @@ class WipeTest(unittest.TestCase):
                       mock.patch.object(fixture, "step"), mock.patch.object(fixture, "info")):
             patch.start()
             self.addCleanup(patch.stop)
+        os.environ.pop("MR_SKILLS_STATE", None)     # a run's own state folder: put back on stop
         for d in (f"review-mr/{SLUG}", f"review-mr/{SLUG}--mr1", f"review-mr/{SLUG}--mr2",
                   f"review-mr/{SLUG}--mr12", "review-mr/someone-else--mr1",
                   f"rework-mr/{SLUG}--mr3", f"rework-mr/{SLUG}--mr1"):
@@ -45,6 +46,14 @@ class WipeTest(unittest.TestCase):
     def test_a_full_reset_takes_the_projects_state_and_every_merge_requests(self):
         fixture.wipe_skill_state()
         self.assertEqual(self.left(), ["review-mr/someone-else--mr1"])
+
+    def test_a_scenario_runs_state_is_wiped_where_the_run_keeps_it(self):
+        own = os.path.join(self.home, "copy", "state")
+        os.makedirs(os.path.join(own, "review-mr", f"{SLUG}--mr1"))
+        with mock.patch.dict(os.environ, {"MR_SKILLS_STATE": own}):
+            fixture.wipe_skill_state(1)
+        self.assertEqual(os.listdir(os.path.join(own, "review-mr")), [])
+        self.assertIn(f"review-mr/{SLUG}--mr1", self.left())     # the person's own is untouched
 
 
 class CopyTest(unittest.TestCase):

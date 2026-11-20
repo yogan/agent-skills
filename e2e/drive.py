@@ -580,12 +580,27 @@ def copy_of(sc):
     return f"{GROUP}/e2e-{sc.name}", f"{SRC}/agent-skills-e2e/{sc.name}"
 
 
-def rig_env(project=DEMO_PROJECT, src=SRC):
+# Where the skills keep their state in place of `~/.claude` (lib/mr_common.py's STATE_ENV).
+STATE_ENV = "MR_SKILLS_STATE"
+
+
+def state_of(sc, out):
+    """The folder a verify run's skills keep their state in, never the person's `~/.claude`:
+    on the rig, beside the copy's checkouts, since the reset seeds it and makes it again with
+    the copy (and removing the copy's folder removes it too); else the run's own folder."""
+    return os.path.join(expand(copy_of(sc)[1]), "state") if sc.needs_rig else str(out / "state")
+
+
+def rig_env(project=DEMO_PROJECT, src=SRC, state=None):
     """What reaches a rig, the demo's or a copy: for fixture.py and news.py (E2E_PROJECT,
     E2E_SRC), and for a step's own shell command (`$P`, the project as the API takes it;
-    `$SLUG`, as the skills name their state folders after it)."""
-    return {"E2E_PROJECT": project, "E2E_SRC": src, "P": project.replace("/", "%2F"),
-            "SLUG": project.replace("/", "-").replace(".", "-")}
+    `$SLUG`, as the skills name their state folders after it; `$MR_SKILLS_STATE`, where
+    they keep them when `state` names a place)."""
+    env = {"E2E_PROJECT": project, "E2E_SRC": src, "P": project.replace("/", "%2F"),
+           "SLUG": project.replace("/", "-").replace(".", "-")}
+    if state:
+        env[STATE_ENV] = state
+    return env
 
 
 def workdir(sc, src=SRC):
@@ -618,9 +633,10 @@ def skills_plugin(out):
     return d
 
 
-def claude_command(sc, model, verify, plugins=(), mock=None, calls=None):
+def claude_command(sc, model, verify, plugins=(), mock=None, calls=None, state=None):
     """`mock`: (its environment, the tools the recording uses) for a run on a recording.
-    `calls`: a file the mod keeps its own model calls in, for a recording of the run."""
+    `calls`: a file the mod keeps its own model calls in, for a recording of the run.
+    `state`: the folder the skills keep their state in (`state_of`)."""
     argv = ["claude"]
     # A showcase runs on what the person has installed: their mods are already loaded, and
     # the same one loaded twice would draw every card twice.
@@ -645,6 +661,8 @@ def claude_command(sc, model, verify, plugins=(), mock=None, calls=None):
         env["REVIEW_UI_TICK_MS"] = "2000"      # see Scenario.fast_check
     if calls:
         env["REVIEW_UI_CALLS"] = calls         # see mock_model.py
+    if state:
+        env[STATE_ENV] = state
     prefix = "env " + " ".join(f"{k}={shlex.quote(v)}" for k, v in env.items()) + " " if env else ""
     return prefix + shlex.join(argv)
 
@@ -870,7 +888,7 @@ def reset_rig(out, mr=None, env=None):
 def verify(sc, model, out_root, keep, reset, record=False):
     out = out_root / f"{datetime.datetime.now():%Y%m%d-%H%M%S}-{sc.name}"
     out.mkdir(parents=True)
-    env = rig_env(*copy_of(sc)) if sc.needs_rig else rig_env()
+    env = rig_env(*(copy_of(sc) if sc.needs_rig else (DEMO_PROJECT, SRC)), state=state_of(sc, out))
     mock_model.CHECKOUTS = expand(env["E2E_SRC"]) if sc.needs_rig else None
     mock_model.SCRATCH = str(out / "scratchpad")    # kept with the run's captures
     mock = None
@@ -898,7 +916,7 @@ def verify(sc, model, out_root, keep, reset, record=False):
     cwd, cleanup = workdir(sc, env["E2E_SRC"])
     command = claude_command(sc, model, verify=True, plugins=[skills_plugin(out)],
                              mock=mock.command if mock else None,
-                             calls=None if mock else str(out / "calls.json"))
+                             calls=None if mock else str(out / "calls.json"), state=env[STATE_ENV])
     tmux("new-session", "-d", "-s", session, "-x", str(w), "-y", str(h), "-c", cwd, command)
     pane = Pane(session, cwd=cwd, env=env)
     print(f"── {sc.name}: {sc.about}" + ("" if mock else f"  (real model: {model})"))

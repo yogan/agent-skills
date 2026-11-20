@@ -121,7 +121,9 @@ from lib.mr_common import (DEFAULT_LANG, LANG_GIVEAWAYS, MR_LEVEL, first_name, i
 from lib.mr_common import save as _save                          # noqa: E402
 from lib.snippet import MAX_BACKTRACK, open_construct            # noqa: E402
 
-STATE_ROOT = os.path.expanduser("~/.claude/review-mr")
+from lib.mr_common import state_root  # noqa: E402
+
+STATE_ROOT = state_root("review-mr")
 # Where this skill keeps what is its own in a repository (`lib/fix_refs.py`).
 SKILL = "review-mr"
 GLYPH = {"draft": "✎", "open": "○", "needs_ack": "◐", "acked": "●",

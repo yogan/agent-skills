@@ -424,6 +424,20 @@ class CopyTest(unittest.TestCase):
                 if isinstance(step, drive.Check):
                     self.assertNotIn("bulletproof-react", step.command, sc.name)
 
+    def test_a_verify_runs_skills_keep_their_state_in_the_runs_own_place(self):
+        # Never in ~/.claude, where every scenario run once left a folder per merge request.
+        sys.path.insert(0, str(drive.E2E.parent))
+        from lib.mr_common import STATE_ENV
+        self.assertEqual(drive.STATE_ENV, STATE_ENV)
+        sc, out = self.scenario("rework-fix"), drive.Path("/run/x")
+        state = drive.state_of(sc, out)
+        self.assertEqual(state, os.path.expanduser("~/src/agent-skills-e2e/rework-fix/state"))
+        self.assertEqual(drive.state_of(drive.Scenario("smoke", "x", cwd=None, steps=[]), out), "/run/x/state")
+        env = drive.rig_env(*drive.copy_of(sc), state=state)
+        self.assertEqual(env[STATE_ENV], state)                 # for the reset and a step's command
+        self.assertIn(f"{STATE_ENV}={state}", drive.claude_command(sc, "mock", verify=True, state=state))
+        self.assertNotIn(STATE_ENV, drive.rig_env())            # the demo's is the person's own
+
     def test_the_reset_builds_the_scenarios_copy_not_the_demo(self):
         ran = mock.Mock(return_value=mock.Mock(returncode=0, stdout="", stderr=""))
         env = drive.rig_env(*drive.copy_of(self.scenario("rework-fix")))

@@ -129,8 +129,11 @@ says why and runs everything. `drive.py verify` asks for it before every rig sce
 `drive.py verify` never runs on the demo's project. Each scenario on the rig has a copy of
 the rig that is its alone: a project of its own beside the demo's (`demo/e2e-rework-fix`),
 built by the same `fixture.py` with the same four merge requests under the same numbers, and
-its checkouts under `~/src/agent-skills-e2e/<scenario>/`. The first run of a scenario builds
-its copy whole (~30 s); every run after that makes the scenario's merge request again (~6 s).
+its checkouts under `~/src/agent-skills-e2e/<scenario>/`, with the skills' state beside them
+in `state/` rather than in your `~/.claude` (`MR_SKILLS_STATE`, which takes the place of
+`~/.claude` for both skills; a scenario without the rig keeps it in its run's folder). The
+first run of a scenario builds its copy whole (~30 s); every run after that makes the
+scenario's merge request again (~6 s).
 
 Two scenarios therefore share nothing, which is what lets `check_push.py` run three at a
 time; and a test run can no longer reset the demo under an open demo session, or find the
@@ -141,10 +144,11 @@ A scenario's shell checks reach their project as `$P`.
 By hand, the environment says which rig is meant:
 
 ```sh
-E2E_PROJECT=demo/e2e-rework-fix E2E_SRC=~/src/agent-skills-e2e/rework-fix python3 fixture.py --mr 3
+E2E_PROJECT=demo/e2e-rework-fix E2E_SRC=~/src/agent-skills-e2e/rework-fix \
+  MR_SKILLS_STATE=~/src/agent-skills-e2e/rework-fix/state python3 fixture.py --mr 3
 ```
 
-A copy is a project and three small checkouts; removing one is deleting its project in
+A copy is a project and three small checkouts with their state; removing one is deleting its project in
 GitLab and its folder, and the next run builds it again.
 
 On talk day use `./tmux-demo.sh` instead — it runs this only if the state does not verify.

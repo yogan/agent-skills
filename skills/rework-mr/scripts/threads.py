@@ -135,7 +135,9 @@ from lib.snippet import MAX_BACKTRACK, open_construct  # noqa: E402
 find_handles = topic_handles
 
 
-STATE_ROOT = os.path.expanduser("~/.claude/rework-mr")
+from lib.mr_common import state_root  # noqa: E402
+
+STATE_ROOT = state_root("rework-mr")
 # Single source for the three per-status lookups below — this diff previously
 # needed to touch three separate dicts (plus the `keep` sets in `_rows`) just to
 # add one status; keying off one table keeps that to one place.
