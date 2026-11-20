@@ -3917,3 +3917,45 @@ test('show_topic called without its topic says how to call it, and runs nothing'
   expect(got.deny).toContain('{"topic": "t3"}')
   expect(w.ran.slice(before).some(r => r.argv.includes('quote'))).toBe(false)
 })
+
+// A session started again on a conversation that had a review: `claude --resume` in a new
+// process, with none of the mod's state, and the transcript bringing back every card under
+// the view call that printed it.
+const resumed = (on: On, w: World, review: object, calls: { id: string; out: string; after?: string }[]) => {
+  on('tool.register' as never, (() => ({ value: undefined })) as never)
+  on('session.start' as never, ((_: unknown, e: object) => e) as never)
+  w.files['/home/me/.claude/review-ui/sessions/s-1'] = JSON.stringify({ review, topic: 't1', focus: 't1', draft: null })
+  w.turns.n = 3
+  const skill = (review as { skill: string }).skill
+  const script = skill === 'rework-mr' ? 'threads.py' : 'findings.py'
+  on('session.messages', () => ({ value: [
+    { role: 'user', text: `<command-name>/${skill}</command-name><command-args>!42</command-args>`, toolUses: [] },
+    ...calls.flatMap(c => [
+      { role: 'assistant', text: '', toolUses: [{ tool_use_id: c.id, tool: 'Bash', input: { command: `python3 $SD/${script} quote t1 --iid 42` }, result: { stdout: c.out, stderr: '', interrupted: false }, text: c.out }] },
+      { role: 'user', text: '', toolUses: [], toolResults: [{ tool_use_id: c.id, text: c.out }] },
+      ...(c.after ? [{ role: 'assistant', text: c.after, toolUses: [] }] : []),
+    ]),
+  ] as never }))
+}
+const startSession = ($: Engine) => (($ as unknown as { session: { start: (e: object) => Promise<unknown> } }).session.start({ source: 'resume', cwd: '/wt' }))
+
+test('back after a restart, the newest card of the transcript hosts the buttons again, and the older one of its topic is its title line', async ($, on) => {
+  const head = '\u{f0182} **t1** **summary of t1** · `src/cache.ts:17`'
+  const out = `${head}\n\nsome view\n\n<!-- paste-gate:critical\n` + JSON.stringify({ first: head, critical: [], topic: 't1', focus: 't1', review: REVIEW }) + '\n-->'
+  const w = world(on, [stateOf('t1', [topic('t1', 'draft')])])
+  heldClock(on)
+  resumed(on, w, REVIEW, [{ id: 'tu-first', out }, { id: 'tu-last', out, after: 'I recommend a comment.' }])
+  await startSession($)
+  const newest = await $.ui.mount(cardRow('tu-last', out))
+  expect((await labels(newest)).filter(l => /\w/.test(String(l)))).toEqual(['Comment', 'Drop', 'Explain', 'Next'])
+  expect(JSON.stringify(await newest.findAll({ type: 'Markdown' }))).toContain('some view')
+  await newest.unmount()
+  const older = await $.ui.mount(cardRow('tu-first', out))
+  expect(await older.find({ type: 'Button' })).toBeUndefined()
+  expect(JSON.stringify(await older.findAll({ type: 'Markdown' }))).not.toContain('some view')
+  await older.unmount()
+  // The band keeps the rest, as before the restart: not the card's buttons a second time.
+  const band = await $.ui.mount({ ...BAND, surface: 'terminal' })
+  expect(await labels(band)).toEqual(['Show sidebar'])
+  await band.unmount()
+})

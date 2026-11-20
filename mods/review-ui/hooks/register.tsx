@@ -1130,6 +1130,44 @@ const recover = async ($: EngineInterface) => {
   await markSession($)
   await update($, session, () => m)
   await refresh($, m)
+  await recountCards($)
+}
+
+// The cards of a conversation this process did not see come up: one carried on after a
+// restart (`claude --resume`), whose mod state is gone with the process that held it while
+// the transcript still draws every card under its view call. Noted again from the view calls
+// in the transcript, in order, as `shownCard` noted them: the newest hosts the step's buttons,
+// and the older cards of a topic fold to their title line. A card a press placed is not in
+// the transcript, and a resume does not bring it back, so it is not counted either.
+const recountCards = async ($: EngineInterface) => {
+  if ((await read($, cards)).n > 0) return
+  let messages: Awaited<ReturnType<EngineInterface['session']['messages']>>
+  try {
+    messages = await $.session.messages()
+  } catch {
+    return
+  }
+  let host: { id: string; view: NonNullable<ReturnType<typeof viewOf>>; at: number } | undefined
+  for (const [at, m] of messages.entries()) {
+    for (const u of m.toolUses) {
+      if (u.isError || !isViewCall(u.tool, u.input)) continue
+      const view = viewOf(stdoutOf(u.result) ?? u.text)
+      if (!view) continue
+      await noteCard($, u.tool_use_id, view.topic, view.text)
+      host = { id: u.tool_use_id, view, at }
+    }
+  }
+  if (!host) return
+  const { id, view } = host
+  await update($, hostCard, () => ({ id, topic: view.topic ?? null, step: view.step ?? null, face: view.face ?? null }))
+  // Still where the chat ends unless the person wrote since: news for its topic is drawn
+  // into it then, as into a card no turn has followed (`cardForNews`).
+  const isFollowed = messages.slice(host.at + 1).some(m => m.role === 'user' && !(m.toolResults?.length))
+  const n = await read($, turns)
+  await update($, cardTurn, t => ({ ...t, [id]: isFollowed ? -1 : n }))
+  // The draft a press posts is the one the last view showed, as `noteView` takes it.
+  const r = await recorded($)
+  if (r?.topic && (r.focus === undefined || r.focus === r.topic)) await update($, card, () => ({ topic: r.topic as string, draft: r.draft ?? null }))
 }
 
 // A view's explainer line, split off from the rest of the view.
