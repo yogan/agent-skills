@@ -416,6 +416,23 @@ test('a refused press says why in the band', async ($, on) => {
   expect(w.placed.length).toBe(0)
 })
 
+test('a Post whose comment went up while resolving its thread failed is posted, with a warning', async ($, on) => {
+  const but = 'posted ◈ t1: https://gl/g/p/-/merge_requests/42#note_9; but resolving its thread failed: 403 Forbidden'
+  const w = world(on, [stateOf('t1', [topic('t1', 'draft', 'v7')])], {
+    post: { exitCode: 4, stdout: 'posted ◈ t1: https://gl/g/p/-/merge_requests/42#note_9\n', stderr: `${but}\n` },
+  })
+  await openReview($, w, view('t1', 'v7'))
+  const ui = await mountStep($, 'terminal')
+  await ui.press({ key: 'post' })
+  const said = await ui.find({ type: 'Text', text: /resolving its thread failed/ })
+  await ui.unmount()
+  expect(said?.props.color).toBe('yellow')
+  // Done all the same: the state is read again after it, and the model hears what failed.
+  const at = w.ran.findIndex(r => r.argv[2] === 'post')
+  expect(w.ran.slice(at + 1).some(r => r.argv[2] === 'state')).toBe(true)
+  expect(JSON.stringify(w.rows.appended())).toContain('resolving its thread failed')
+})
+
 test('a button that needs thought hands the model a turn', async ($, on) => {
   const w = world(on, [stateOf('t1', [topic('t1', 'draft')])])
   await openReview($, w, view('t1'))

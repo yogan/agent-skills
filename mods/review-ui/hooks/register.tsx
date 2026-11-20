@@ -329,6 +329,9 @@ const pressEnv = async ($: EngineInterface): Promise<Record<string, string>> => 
 // press (the script goes on from a fix already committed).
 const PUSH_MS = 600_000
 
+// The scripts' exit status for a comment posted whose follow-up failed (lib/gitlab.py).
+const POSTED_BUT = 4
+
 // The scripts' state, read again after anything that may have changed it. `refresh` asks
 // GitLab first (the update check's); `state` reads the state file alone.
 const refresh = async ($: EngineInterface, s: ReviewSession, how: 'state' | 'refresh' = 'state'): Promise<ReviewState | null> => {
@@ -1794,20 +1797,25 @@ const stepControls = async ($: EngineInterface, s: ReviewSession, r: ReviewState
     try {
       const before = r.current
       const ran = await runScript($, s, args, env)
-      if (ran.exitCode !== 0) {
+      // A comment that went up while what was to follow it failed (resolving its thread,
+      // reading the threads back): posted, and the band says what did not follow, in yellow.
+      const but = ran.exitCode === POSTED_BUT ? lastLine(ran.stderr) : ''
+      if (ran.exitCode !== 0 && !but) {
         await update($, notice, () => ({ text: lastLine(ran.stderr) || `${label} failed`, isError: true }))
         return false
       }
       if (pressed) await finish(pressed, ran.stdout)
       const now = await refresh($, s)
       const after = now?.current ?? null
-      await update($, notice, () => ({ text: did, isError: false, topic: before, moment: momentOf(now, before) }))
+      await update($, notice, () => but
+        ? { text: but, isError: false, isWarning: true, topic: before }
+        : { text: did, isError: false, topic: before, moment: momentOf(now, before) })
       // The round moves on: the next topic's card, or a comment of the person's own whose
       // match waits.
       const isMoved = after !== before
       if (isMoved && !isStaying) await showStep($, s, now)
       await $.session.append({
-        message: { type: 'user', content: [{ type: 'text', text: noteForModel(did, before, after) }] },
+        message: { type: 'user', content: [{ type: 'text', text: noteForModel(but ? `${did} (${but})` : did, before, after) }] },
       })
       return true
     } finally {

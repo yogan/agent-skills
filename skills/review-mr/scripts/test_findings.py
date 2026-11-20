@@ -23,6 +23,7 @@ sys.path.insert(0, HERE)
 
 import findings as F                                  # noqa: E402
 from lib import critical_manifest                      # noqa: E402
+from lib.gitlab import POSTED_BUT                      # noqa: E402
 
 # lib/tab.py: code under test never names the window the tests run in, nor asks the model.
 os.environ.setdefault("AGENT_TAB_OFF", "1")
@@ -3553,6 +3554,60 @@ class TestPostAndResolve(unittest.TestCase):
             F.post_draft(self.state, CTX, 2, "t2", None, resolve=True)
         api.assert_not_called()
         self.assertIn("not posted yet", err.getvalue())
+
+
+class TestPostThatFailsAfterItsNote(unittest.TestCase):
+    """A Post press whose note is on GitLab while what follows it fails (resolving the thread,
+    reading the threads back) records the note as posted all the same: dying there left the
+    draft offered, and the next press posted it a second time."""
+
+    def setUp(self):
+        self.state = {"iid": 2, "author": "Alex Kim", "author_username": "alex",
+                      "threads": {"d1": {"mine": True, "resolved": False, "awaiting": "you", "notes": []}},
+                      "topics": [{"id": "t2", "thread_ids": ["d1"], "draft": "Fine in a follow-up MR, thanks."}]}
+        self.calls = []
+        for p in (patch.object(F.press, "claimed", return_value=True),
+                  patch.object(F, "api_post", side_effect=self.api_post),
+                  patch.object(F, "_reply_thread", return_value="d1"),
+                  patch.object(F, "resolve_state", return_value=(CTX, 2, "/s", self.state)),
+                  patch.object(F, "current_user", return_value="me"),
+                  patch.object(F, "fetch_threads", side_effect=lambda *a: F.die("glab api discussions failed: 502")),
+                  patch.object(F, "save")):
+            p.start()
+        self.addCleanup(patch.stopall)
+
+    def api_post(self, endpoint, body, method="POST"):
+        self.calls.append((method, endpoint))
+        if method == "PUT":
+            F.die("glab api PUT failed: 403 Forbidden")
+        return {"id": 9}
+
+    def press(self):
+        out, err = io.StringIO(), io.StringIO()
+        with patch.object(sys, "argv", ["findings.py", "post", "t2", "--resolve", "--iid", "2"]), \
+                redirect_stdout(out), redirect_stderr(err), self.assertRaises(SystemExit) as ended:
+            F.main()
+        return ended.exception.code, out.getvalue(), err.getvalue()
+
+    def test_the_note_is_recorded_posted_and_the_press_says_what_did_not_follow(self):
+        code, out, err = self.press()
+        self.assertEqual(code, POSTED_BUT)
+        self.assertIn("#note_9", out)
+        self.assertIn("resolving its thread failed: glab api PUT failed: 403 Forbidden", err.splitlines()[-1])
+        self.assertIn("reading the threads back failed", err.splitlines()[-1])
+        t = self.state["topics"][0]
+        self.assertIsNone(t["draft"])
+        F.save.assert_called_once()
+        # Still open on GitLab, so not closed here either.
+        self.assertNotIn("closed", t)
+        self.assertFalse(self.state["threads"]["d1"]["resolved"])
+
+    def test_a_second_press_posts_nothing_again(self):
+        self.press()
+        code, _, err = self.press()
+        self.assertEqual(code, 1)
+        self.assertIn("no draft", err)
+        self.assertEqual(sum(1 for m, _ in self.calls if m == "POST"), 1)
 
 
 class TestPostedCommentCard(unittest.TestCase):

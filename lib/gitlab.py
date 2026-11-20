@@ -6,10 +6,13 @@ duplicated per skill as `_gl.py` — genuinely identical apart from docstring fr
 used. Folded into lib/ wholesale rather than split, since a "talk to GitLab" module is
 one cohesive concern, not two — see CLAUDE.md's "Sharing vs. duplication".
 """
+import contextlib
 import functools
+import io
 import json
 import re
 import subprocess
+import sys
 from urllib.parse import quote
 
 from lib.cli import die
@@ -172,6 +175,35 @@ def api_try(endpoint, body, method="POST"):
         return None, refusal_of(r)
     out = r.stdout.strip()
     return (json.loads(out) if out else {}), None
+
+
+# The exit status of a Post press whose comment is on GitLab while something meant to follow
+# it (resolving its thread, reading the threads back) failed: done, with a warning to show.
+POSTED_BUT = 4
+
+
+def after_posting(failed, what, call, *args, **kwargs):
+    """`call(*args, **kwargs)`, a step after a comment that is already on GitLab, never fatal.
+
+    A step that died here would leave the state saying the comment was never posted, and the
+    person's natural next press would post it a second time. So a failure is kept in `failed`
+    as "<what> failed: <reason>" and the answer is None; the caller records the comment as
+    posted all the same and says what did not follow it."""
+    err = io.StringIO()
+    try:
+        with contextlib.redirect_stderr(err):
+            return call(*args, **kwargs)
+    except SystemExit:
+        reason = err.getvalue().strip().removeprefix("error: ") or "no reason given"
+        failed.append(f"{what} failed: {reason}")
+        return None
+
+
+def posted_but(line, failed):
+    """Ends a press whose comment went up and whose follow-up did not, once its own output is
+    printed: `line` says what was posted, then what failed, as the last line its band shows."""
+    print(f"{line}; but {'; '.join(failed)}", file=sys.stderr)
+    sys.exit(POSTED_BUT)
 
 
 # A pipeline's status on GitLab, as the sidebar tells it: running (and everything before it

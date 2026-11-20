@@ -113,8 +113,8 @@ from lib.fences import (LINK_ICON, SUGGESTION_INFO, YOU, block_lang, fence, sugg
                         diff_info, lang_for, note_md, quoted_fence, segments,
                         suggestion_diff, when_of)
 from lib.cli import iid_option  # noqa: E402
-from lib.gitlab import (api, api_post, approve, context, current_user, die, file_at, mr_base, remember_user,  # noqa: E402
-                        mr_head, mr_object, mr_status, mr_view, versions, web_base)
+from lib.gitlab import (after_posting, api, api_post, approve, context, current_user, die, file_at, mr_base,  # noqa: E402
+                        remember_user, mr_head, mr_object, mr_status, mr_view, posted_but, versions, web_base)
 from lib.mr_common import (DEFAULT_LANG, LANG_GIVEAWAYS, MR_LEVEL, first_name, instant, people,  # noqa: E402
                            hold, load, mr_json, mr_news, topic_handles, loc_md, num, plain_text, reads_as,
                            short_summary, state_file, topic_for, tref)
@@ -2699,12 +2699,16 @@ def diff_position(ctx, iid, path, line):
 
 # A drafted comment is posted only on the person's press (lib/press.py), so what reaches
 # GitLab is always text they saw and chose to send.
-def post_draft(state, ctx, iid, tid, expect, resolve=False):
+def post_draft(state, ctx, iid, tid, expect, resolve=False, failed=None):
     """Post `tid`'s draft: a new thread at its line (or on the MR itself), or, for a topic
     already posted, a reply into its thread. `resolve`: the reply settles the point, so its
     threads are resolved with it and the topic is closed here (GitLab's "Reply and resolve
     thread"); only a reply can, as a new comment has nothing to settle yet. Returns the
-    posted note's URL."""
+    posted note's URL.
+
+    Once the note is on GitLab nothing here dies: the draft is spent at once, and what
+    follows it is `after_posting`, which notes a failure in `failed` instead."""
+    failed = [] if failed is None else failed
     if not press.claimed():
         die("posting is the user's press, on the Post button under a draft's card (Post + "
             "resolve where the reply settles its thread); nothing else posts. Show the draft "
@@ -2725,16 +2729,22 @@ def post_draft(state, ctx, iid, tid, expect, resolve=False):
     if t["thread_ids"]:
         pick = _reply_thread(state, t)
         note = api_post(f"{disc}/{pick}/notes", {"body": body})
+        t["draft"] = None
+        t.pop("follow_up", None)
         # A follow-up into a thread its author resolved reopens it: the reply asks something
         # of them still, and a resolved thread hides it from their list of open ones.
         th = state["threads"].get(pick) or {}
         url = f"{ctx['web']}/-/merge_requests/{iid}#note_{note.get('id')}"
         if resolve:
+            before = len(failed)
             for x in t["thread_ids"]:
                 other = state["threads"].get(x) or {}
                 if not other.get("resolved") and not other.get("gone"):
-                    api_post(f"{disc}/{x}?resolved=true", {}, method="PUT")
-                    other["resolved"] = True
+                    if after_posting(failed, "resolving its thread", api_post,
+                                     f"{disc}/{x}?resolved=true", {}, method="PUT") is not None:
+                        other["resolved"] = True
+            if len(failed) > before:
+                return url              # still open on GitLab: not closed here either
             t["state"] = "acked"
             t["acked_at"] = now_iso()
             # How the user closed it, for the line its card ends on (`closing_line`), and
@@ -2743,10 +2753,9 @@ def post_draft(state, ctx, iid, tid, expect, resolve=False):
             t["closed"] = {"how": "replied", "at": t["acked_at"], "note": ui.note_key(url)}
             t.setdefault("closed_with", {})[ui.note_key(url) or url] = "replied"
         elif th.get("resolved"):
-            api_post(f"{disc}/{pick}?resolved=false", {}, method="PUT")
-            th["resolved"] = False
-        t["draft"] = None
-        t.pop("follow_up", None)
+            if after_posting(failed, "reopening its thread", api_post,
+                             f"{disc}/{pick}?resolved=false", {}, method="PUT") is not None:
+                th["resolved"] = False
         return url
     fields = {"body": body}
     if t.get("file") and t.get("line"):
@@ -2757,7 +2766,9 @@ def post_draft(state, ctx, iid, tid, expect, resolve=False):
                 "or move the topic to a changed line.")
         fields["position"] = pos
     d = api_post(disc, fields)
-    attach_thread(state, t, d["id"], ctx, iid)
+    # attach_thread links the thread and spends the draft before it asks GitLab for the
+    # MR's head, so a failure there leaves the comment posted; the next sync takes the head.
+    after_posting(failed, "reading the MR's head", attach_thread, state, t, d["id"], ctx, iid)
     first = (d.get("notes") or [{}])[0]
     return f"{ctx['web']}/-/merge_requests/{iid}#note_{first.get('id')}"
 
@@ -4671,15 +4682,19 @@ def main():
         print(f"resolved and acked {tref(args.topic)}")
         print(f"closed: {closing_line(state, t)}")
     elif cmd == "post":
-        url = post_draft(state, ctx, iid, args.topic, args.expect, args.resolve)
+        failed = []
+        url = post_draft(state, ctx, iid, args.topic, args.expect, args.resolve, failed)
         # Synced at once, so the topic reads as posted (and the current topic moves on)
         # for whatever asks next, rather than at the next sync.
-        sync(state, fetch_threads(ctx, iid, me, author), ctx, iid)
+        after_posting(failed, "reading the threads back",
+                      lambda: sync(state, fetch_threads(ctx, iid, me, author), ctx, iid))
         save(path, state)
         print(f"posted {tref(args.topic)}: {url}")
         closing = args.resolve and closing_line(state, topic_for(state, args.topic))
         if closing:
             print(f"closed: {closing}")
+        if failed:
+            posted_but(f"posted {tref(args.topic)}: {url}", failed)
     elif cmd == "posted":
         t = topic_for(state, args.topic) or die(f"no topic {args.topic}")
         if args.apply:

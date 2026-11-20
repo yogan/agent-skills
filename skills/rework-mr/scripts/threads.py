@@ -75,6 +75,7 @@ from lib.ui import analysis_heading  # noqa: E402
 from lib.hunk import diff_stat  # noqa: E402
 from lib.cli import iid_option  # noqa: E402
 from lib.gitlab import (
+    after_posting,
     api,
     api_post,
     context,
@@ -87,6 +88,7 @@ from lib.gitlab import (
     merge,
     mr_status,
     mr_view,  # noqa: E402
+    posted_but,
     project_slug,
     run,
     versions,
@@ -2948,10 +2950,15 @@ def save(path, state):
     _save(path, state)
 
 
-def post_reply(state, ctx, iid, tid, expect, fixed=False, resolve=False):
+def post_reply(state, ctx, iid, tid, expect, fixed=False, resolve=False, failed=None):
     """Post `tid`'s drafted reply into its thread (or `Fixed: <diff url>` with `fixed`), and
     resolve its threads with `resolve`. The user's press alone (lib/press.py). Returns the
-    posted comment's URL."""
+    posted comment's URL.
+
+    Mirrors findings.py's `post_draft`: once the note is on GitLab nothing here dies. The
+    reply is recorded as posted first, and resolving is `after_posting`, which notes a
+    failure in `failed` instead."""
+    failed = [] if failed is None else failed
     if not press.claimed():
         die("posting is the user's press, on the Post button under a reply's card; nothing "
             "else posts. Offer the draft and let them press it.")
@@ -2999,16 +3006,6 @@ def post_reply(state, ctx, iid, tid, expect, fixed=False, resolve=False):
             t.pop(k, None)
         t["early_posted"] = url
         return url
-    if resolve:
-        for x in t["thread_ids"]:
-            if not (state["threads"].get(x) or {}).get("resolved"):
-                api_post(f"{disc}/{x}?resolved=true", {}, method="PUT")
-        # How the user closed it, for the line its card ends on (`closing_line`).
-        # And which comment closed it, which its story tells as that for good: a thread the
-        # reviewer reopens later still had this comment fix and resolve it.
-        t["closed"] = {"how": "fixed" if fixed else "replied", "at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
-                       "note": ui.note_key(url)}
-        t.setdefault("closed_with", {})[ui.note_key(url) or url] = t["closed"]["how"]
     t["state"] = "waiting"
     t.pop("waiting_on", None)
     if t.get("diff_url"):
@@ -3017,6 +3014,20 @@ def post_reply(state, ctx, iid, tid, expect, fixed=False, resolve=False):
     # came back as the next round's draft, offered for posting under a fix it knew nothing of.
     for k in ("reply", "reply_for"):
         t.pop(k, None)
+    if resolve:
+        before = len(failed)
+        for x in t["thread_ids"]:
+            if not (state["threads"].get(x) or {}).get("resolved"):
+                after_posting(failed, "resolving its thread", api_post,
+                              f"{disc}/{x}?resolved=true", {}, method="PUT")
+        if len(failed) > before:
+            return url                   # still open on GitLab: not closed here either
+        # How the user closed it, for the line its card ends on (`closing_line`).
+        # And which comment closed it, which its story tells as that for good: a thread the
+        # reviewer reopens later still had this comment fix and resolve it.
+        t["closed"] = {"how": "fixed" if fixed else "replied", "at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+                       "note": ui.note_key(url)}
+        t.setdefault("closed_with", {})[ui.note_key(url) or url] = t["closed"]["how"]
     return url
 
 
@@ -4095,15 +4106,18 @@ def main():
         print(json.dumps(done))
     elif cmd == "post":
         early = early_reply(topic_for(state, args.topic) or {}) and not args.fixed
-        url = post_reply(state, ctx, iid, args.topic, args.expect, args.fixed, args.resolve)
+        failed = []
+        url = post_reply(state, ctx, iid, args.topic, args.expect, args.fixed, args.resolve, failed)
         if early and current_topic(state) == args.topic:
             CURRENT.leave(state)               # said; the round goes on, the fix comes later
-        resync(state, ctx, iid)
+        after_posting(failed, "reading the threads back", resync, state, ctx, iid)
         save(path, state)
         print(f"posted {tref(args.topic)}: {url}")
         closing = args.resolve and closing_line(state, topic_for(state, args.topic))
         if closing:
             print(f"closed: {closing}")
+        if failed:
+            posted_but(f"posted {tref(args.topic)}: {url}", failed)
     elif cmd == "push":
         by_press = pressed = press.claimed()
         if ui.drawn() and not pressed:

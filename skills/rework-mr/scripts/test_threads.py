@@ -2791,6 +2791,24 @@ class TestResolveOnlyWithAReplyThatSettles(unittest.TestCase):
         T.post_reply(self.state, self.CTX, 1, "t1", None, resolve=True)
         self.assertEqual(self.post.call_count, 2)                     # the note, the resolve
 
+    def test_a_resolve_that_fails_leaves_the_reply_posted_and_never_posts_it_twice(self):
+        """The note is on GitLab once its POST answered: a resolve refused after it is said,
+        and the reply is spent all the same, or the next press posted it a second time."""
+        TestRounds.agree(self.state, "t1", outcome="reply")
+        self.t1["reply"] = "Kommt in einem eigenen MR.\n"
+        self.post.side_effect = lambda ep, body, method="POST": (
+            T.die("glab api PUT failed: 403 Forbidden") if method == "PUT" else {"id": 9})
+        failed = []
+        url = T.post_reply(self.state, self.CTX, 1, "t1", None, resolve=True, failed=failed)
+        self.assertTrue(url.endswith("#note_9"))
+        self.assertEqual(failed, ["resolving its thread failed: glab api PUT failed: 403 Forbidden"])
+        self.assertNotIn("reply", self.t1)
+        self.assertNotIn("closed", self.t1)                           # still open on GitLab
+        with mock.patch("sys.stderr", new_callable=io.StringIO) as err, self.assertRaises(SystemExit):
+            T.post_reply(self.state, self.CTX, 1, "t1", None, resolve=True)
+        self.assertIn("no draft reply", err.getvalue())
+        self.assertEqual([c.kwargs.get("method", "POST") for c in self.post.call_args_list], ["POST", "PUT"])
+
 
 class TestReplyAheadOfTheFix(unittest.TestCase):
     """A reply posted before the fix (which option the plan took, that the fix follows):
