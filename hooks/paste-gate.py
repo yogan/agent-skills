@@ -44,10 +44,9 @@ Two tiers of rule:
   because neither is about either skill's vocabulary: one
   guards the manifest mechanism this engine itself relies on, the other guards plain
   Markdown hygiene. New engine-level checks belong here, not as one more per-spec
-  `forbidden` entry duplicated into every skill's JSON. Like everything else here they are
-  off in a session where the review-ui mod draws the views as cards: the model pastes no
-  view there for a manifest to leak through, and nearly every turn there has a manifest in
-  a result, so the leak check's wait would delay almost every stop.
+  `forbidden` entry duplicated into every skill's JSON. A view the review-ui mod drew as a
+  card is no reason to wait for a leak: nothing asked for its paste, and nearly every turn
+  of a session with cards has one, so such a turn is checked once, as it stands.
 
 Contract (Claude Code Stop hook):
   stdin  — JSON with `transcript_path` and `stop_hook_active`.
@@ -358,25 +357,18 @@ def _manifest_meta(result):
 
 # The line the review-ui mod (mods/review-ui) puts at the end of a view's output once the
 # user has that view as a card under the tool call. Where it is loaded, the skills tell the
-# model a card is a paste already made, so this gate demanding the paste would fight the
-# card: the session's gates stand down. It must END a tool result, so grepping the mod's
-# source or this file is never mistaken for a card. Mirrors mods/review-ui/hooks/views.ts's
-# NOTE.
+# model a card is a paste already made, so the gate demanding that view's paste would fight
+# the card: that call's gate stands down. Only that call's: a line in some earlier result
+# (a session resumed without the mod, a command that happened to print it) says nothing
+# about a view printed since, which nobody has seen. It must END the call's result, so
+# grepping the mod's source or this file is never mistaken for a card. Mirrors
+# mods/review-ui/hooks/views.ts's NOTE.
 CARD_LINE = "[review-ui] Shown to the user as a card."
 
 
-def _cards_drawn(rows):
-    """Whether the mod drew a view as a card anywhere in this session."""
-    for r in rows:
-        content = (r.get("message") or {}).get("content") if isinstance(r, dict) else None
-        if not isinstance(content, list):
-            continue
-        for b in content:
-            if isinstance(b, dict) and b.get("type") == "tool_result":
-                text = _strip_tool_noise(_result_text(b.get("content", "")))
-                if text.rstrip().endswith(CARD_LINE):
-                    return True
-    return False
+def _is_card(result):
+    """Whether this tool result is a view the mod drew as a card."""
+    return _strip_tool_noise(result).rstrip().endswith(CARD_LINE)
 
 
 def _load(path):
@@ -613,9 +605,11 @@ def _leaked_manifest(path):
 
 
 def _turn_could_leak(path):
-    """True if some tool result THIS turn carries a manifest at all. Unlike `shown`
-    (the assistant's text, generated after the tool result and prone to lagging its
-    own flush), a tool result exists before the model even starts writing — so this is
+    """"view" if some tool result THIS turn carries a manifest and is no card, "card" if
+    only views drawn as cards do (nothing asked for their paste: worth a look, not a
+    wait), None if none does. Unlike `shown` (the assistant's text, generated after the
+    tool result and prone to lagging its own flush), a tool result exists before the
+    model even starts writing — so this is
     safe to check once, no retry needed, and lets `main()` skip the leak-retry wait on
     every turn (nearly all of them) that has nothing to leak in the first place.
 
@@ -625,9 +619,12 @@ def _turn_could_leak(path):
     exactly the moment this needs to see past."""
     rows = _load(path)
     if rows is None:
-        return False
+        return None
     _, result_by_id, _ = _scan_turn(rows, [])
-    return any(MANIFEST_MARKER in v for v in result_by_id.values())
+    carrying = [v for v in result_by_id.values() if MANIFEST_MARKER in v]
+    if not carrying:
+        return None
+    return "card" if all(_is_card(v) for v in carrying) else "view"
 
 
 _BROKEN_BACKTICK_ESCAPE_RE = re.compile(r"(?:\\`){2,}")
@@ -761,6 +758,9 @@ def violation(path, specs):
     reason = None
     for (gate_key, topic), (uid, meta) in last_per_key.items():
         gate = matched[uid]
+        if _is_card(result_by_id.get(uid, "")):
+            fired.add(gate_key)           # shown to the user as a card: pasted already
+            continue
         result = _strip_tool_noise(result_by_id.get(uid, ""))
         visible, critical = _split_manifest(result)
         if not all(s in visible for s in gate["signature"]):
@@ -832,11 +832,6 @@ def main(argv):
     if not path:
         _allow()
 
-    rows = _load(path)
-    if rows and _cards_drawn(rows):        # the mod shows the views: nothing to paste, so
-        # nothing to check either, the two engine-level checks below included (docstring)
-        _allow()
-
     # These two run BEFORE the stop_hook_active gate below, and without requiring any
     # spec to have loaded — they are engine-level conventions, not tied to a specific
     # skill. See `_leaked_manifest`'s docstring for why this must not wait for a fresh
@@ -849,8 +844,14 @@ def main(argv):
     # opposite of every other check here, since an unflushed leak can still arrive but
     # a confirmed one won't un-happen. The garble check needs no such gate or wait: it's
     # cheap, and nothing async has to land before it means anything either way.
-    if _turn_could_leak(path):
-        leak = _retry_until(lambda: _leaked_manifest(path), lambda found: not found)
+    #
+    # A view drawn as a card carries a manifest too, but nothing asked for its paste, and
+    # nearly every turn of a session with cards has one: such a turn is checked once, as it
+    # stands, rather than made to wait at every stop.
+    could = _turn_could_leak(path)
+    if could:
+        leak = (_retry_until(lambda: _leaked_manifest(path), lambda found: not found)
+                if could == "view" else _leaked_manifest(path))
         if leak:
             _block(leak)
 

@@ -62,11 +62,12 @@ the hook loads.
 
 ## How it behaves
 
-- **Off where the review-ui mod draws the views:** once a tool result in the session ends
-  with `[review-ui] Shown to the user as a card.`, the mod
-  ([`mods/review-ui`](../mods/review-ui/README.md)) has shown that view to the user and the
-  skills treat the card as the paste, so the hook allows every stop of that session. The
-  line has to end a result: reading the mod's source or this file is never taken for a card.
+- **Off for a view the review-ui mod draws:** a call whose own result ends with
+  `[review-ui] Shown to the user as a card.` has had its view shown to the user by the mod
+  ([`mods/review-ui`](../mods/review-ui/README.md)), and the skills treat the card as the
+  paste, so that call's gate asks for nothing. Only that call's: every other view is gated
+  as anywhere else, and so is a session resumed without the mod. The line has to end the
+  result: reading the mod's source or this file is never taken for a card.
 - **Scoped:** only acts on a turn where a gated command actually ran and produced real
   output, or where a `forbidden`/`required` pattern hits. Every other turn — and every
   session that never touches these skills — passes straight through.
@@ -94,7 +95,7 @@ the hook loads.
   source — SKILL.md and these specs mention every gated command by name — does not trip
   it. The tool result itself does carry one addition: a trailing, non-visible manifest
   (see below) that must never survive into your reply — enforced whatever the specs say,
-  not something a spec can opt out of (off only where the mod draws cards, below).
+  not something a spec can opt out of.
 - **Specific:** a block carries the evidence for itself — the lines of the command's
   output that were absent from the message, or that ended up run together with other
   text, quoted and capped at three. A gate's own `reason` only says what to do; without
@@ -162,7 +163,6 @@ skill *copied* into `~/.claude` once would otherwise go from protected to silent
 unprotected the moment the engine was updated on its own.
 
 The marker must never appear in your reply — checked independently of any gate or spec,
-everywhere but a session whose views the mod draws as cards (no view is pasted there) —
 since it exists purely for this hook to read.
 
 ## Gate specs

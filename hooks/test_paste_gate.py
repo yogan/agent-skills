@@ -441,8 +441,10 @@ CARD_LINE = "[review-ui] Shown to the user as a card."
 
 
 class TestCardsStandTheGateDown(HookCase):
-    """Where the review-ui mod draws a view as a card, it ends the view's output with
-    CARD_LINE, and the skills say a card is a paste already made: nothing to enforce."""
+    """Where the review-ui mod draws a view as a card, it ends that call's output with
+    CARD_LINE, and the skills say a card is a paste already made: that call's gate has
+    nothing to enforce. Only that call's: a card line anywhere else in the session stood
+    every gate down for good, a session resumed without the mod included."""
 
     def test_an_unpasted_view_drawn_as_a_card_allows(self):
         self.assertAllowed([
@@ -452,8 +454,8 @@ class TestCardsStandTheGateDown(HookCase):
             assistant_text("t1 is a real bug. I'd draft it."),
         ])
 
-    def test_a_card_earlier_in_the_session_still_counts(self):
-        self.assertAllowed([
+    def test_a_card_earlier_in_the_session_stands_down_no_later_view(self):
+        self.assertBlocked([
             user_prompt(),
             bash_call("u0", "python3 $SD/findings.py present --iid 123"),
             tool_result("u0", RESUME_OUT + "\n\n" + CARD_LINE + "\nShell cwd was reset to /x"),
@@ -462,14 +464,33 @@ class TestCardsStandTheGateDown(HookCase):
             bash_call("u1", "python3 $SD/threads.py quote t7"),
             tool_result("u1", with_manifest(REWORK_QUOTE_OUT, [])),
             assistant_text("t7: agreed."),
-        ])
+        ], contains="threads.py quote")
+
+    def test_the_line_printed_by_another_command_stands_down_nothing(self):
+        self.assertBlocked([
+            user_prompt(),
+            bash_call("u0", "echo '" + CARD_LINE + "'"),
+            tool_result("u0", CARD_LINE + "\n"),
+            bash_call("u1", "python3 $SD/threads.py quote t7"),
+            tool_result("u1", with_manifest(REWORK_QUOTE_OUT, [])),
+            assistant_text("t7: agreed."),
+        ], contains="threads.py quote")
+
+    def test_a_manifest_leaked_beside_a_card_still_blocks(self):
+        """The engine-level checks run where cards are drawn too."""
+        out = with_manifest(RESUME_OUT, RESUME_CRITICAL)
+        self.assertBlocked([
+            user_prompt(),
+            bash_call("u1", "python3 $SD/findings.py resume --iid 123"),
+            tool_result("u1", out + "\n\n" + CARD_LINE + "\n"),
+            assistant_text(out),
+        ], contains="paste-gate:critical")
 
     def test_the_line_inside_a_result_is_not_a_card(self):
         # Reading the mod's source puts the line in a result, but never at its end.
         hook = _load_hook()
-        rows = [tool_result("u1", f"views.ts:77: export const NOTE = '{CARD_LINE}'\nviews.ts:78: ...")]
-        self.assertFalse(hook._cards_drawn(rows))
-        self.assertTrue(hook._cards_drawn([tool_result("u1", "view\n\n" + CARD_LINE)]))
+        self.assertFalse(hook._is_card(f"views.ts:77: export const NOTE = '{CARD_LINE}'\nviews.ts:78: ..."))
+        self.assertTrue(hook._is_card("view\n\n" + CARD_LINE))
 
 
 class TestCardLineAgrees(unittest.TestCase):
