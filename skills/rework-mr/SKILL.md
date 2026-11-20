@@ -339,7 +339,10 @@ propose a plan…`): research it with the code at hand, store the proposal and s
 - **Pushing is the user's press** on the fix's card: the script commits, squashes and pushes,
   and does nothing else. What it cannot finish comes back to you as a prompt that says what to
   do. Never offer to push ("say ack and I'll push"): once the user's notes from the diff
-  viewer are answered, show the fix again and leave the push to its card.
+  viewer are answered, show the fix again and leave the push to its card. A push that stops
+  on commits the remote holds and the branch lacks (a suggestion applied on GitLab) is the
+  card's too: Take in and push puts them on top of the fix's and pushes. Say in a line whose
+  they are and what they change; never rebase onto them or push yourself.
 - **After the push** the card offers a short `Fixed: <link>` or a longer reply. Asked for the
   longer one, draft what the reviewer needs to know (how the fix differs from what they
   asked, the answer to their question). Never write the `Fixed:` line yourself: the card and

@@ -2743,6 +2743,17 @@ test('rework-mr: a fix offers Ack and push, and the diff viewer; nothing to put 
   expect(w.ran.map(r => r.argv.slice(2).join(' '))).toContain('hunk-show t1 --iid 42')
 })
 
+test('rework-mr: a push stopped on commits the remote holds offers taking them in, not the same push again', async ($, on) => {
+  // Real run: Ack and push stayed on the card and failed the same way on every press.
+  const w = world(on, [reworkState('t1', [reworkTopic('t1', 'fixed', { checks: 'passed', push_behind: true })])])
+  await openRework($, w, reworkView('t1'))
+  const ui = await mountStep($, 'terminal')
+  expect(await labels(ui)).toEqual(['Take in and push', 'Review in hunk', 'Show sidebar'])
+  await ui.press({ key: 'take-in' })
+  await ui.unmount()
+  expect(w.ran.map(r => r.argv.slice(2).join(' '))).toContain('push t1 --take-in --iid 42')
+})
+
 test('rework-mr: a fix made while another topic was current can be put aside, with no model turn', async ($, on) => {
   const fixed = reworkTopic('t1', 'fixed', { checks: 'passed', made_on: 't3' })
   const w = world(on, [reworkState('t1', [fixed, reworkTopic('t3', 'fix')]),

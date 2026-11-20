@@ -3276,6 +3276,7 @@ class TestPushFix(unittest.TestCase):
         self.checks.snapshot.return_value = "T1"
         self.checks._out.side_effect = lambda root, *a: "HEADTREE" if a[-1] == "HEAD^{tree}" else "NEW"
         self.checks.Stop = type("Stop", (Exception,), {})
+        self.checks.Behind = type("Behind", (self.checks.Stop,), {})
         mock.patch.object(T.hunk, "installed", return_value=False).start()
         # The copy of the viewer's notes is kept in a folder of this test's own.
         self._notes = tempfile.TemporaryDirectory()
@@ -3286,8 +3287,8 @@ class TestPushFix(unittest.TestCase):
         mock.patch.object(T.time, "sleep").start()
         self.ctx = {"web": "https://gitlab.example/g/p"}
 
-    def push(self, tid="t1", committed=False):
-        return T.push_fix(self.ctx, 1, "/state", tid, committed)
+    def push(self, tid="t1", committed=False, take_in=False):
+        return T.push_fix(self.ctx, 1, "/state", tid, committed, take_in)
 
     def test_a_checked_fix_is_committed_squashed_pushed_and_linked(self):
         _, url = self.push()
@@ -3414,6 +3415,42 @@ class TestPushFix(unittest.TestCase):
         self.push()
         self.assertNotIn("push_stopped", self.t1)
         self.assertEqual(T.step_of(self.state, self.t1), "reply")
+
+    def test_a_push_stopped_on_a_reviewer_s_commit_offers_taking_it_in_and_does_it(self):
+        """The card offered Ack and push again, which failed the same way every time: what
+        gets the push through is taking the commit in, on the person's press."""
+        self.checks.push.side_effect = self.checks.Behind(
+            "origin/b has commits your branch does not:\n- 26a9433 \"Apply suggestion\" by R")
+        with self.assertRaisesRegex(T.Handoff, "(?s)Apply suggestion.*Take in and push"):
+            self.push()
+        self.working_diff.return_value = ""
+        T._WORKING.clear()
+        with mock.patch.dict(os.environ, {"REVIEW_UI_DRAWN": "1"}), \
+                mock.patch.object(T, "checks_of", return_value="passed"), \
+                mock.patch.object(T, "rebased_here", return_value=False):
+            card = "\n".join(T._step_parts(self.state, self.t1))
+        self.assertIn("Take in and push puts them on top", card)
+        self.assertNotIn("Ack and push tries the push again", card)
+        # Pressed: the commits are taken in, and the push goes on from the remote's head,
+        # where this push's own change starts.
+        # Its commits were the agent's, from the press that handed them over: what the remote
+        # gained is counted from where they started, which the remote has.
+        self.t1["handed_from"] = "HANDED"
+        self.checks.push.side_effect = None
+        self.checks.take_in.return_value = "THEIRS"
+        self.checks._out.side_effect = lambda root, *a: "T1" if a[-1] == "HEAD^{tree}" else "NEW"
+        self.push(take_in=True)
+        self.checks.take_in.assert_called_once_with("/repo", "HANDED")
+        self.assertNotIn("handed_from", self.t1)
+        self.assertEqual(self.checks.push.call_args.args[2], "THEIRS")
+        self.assertEqual((self.t1["pushes"][-1]["before"], self.t1["pushes"][-1]["start"]),
+                         ("THEIRS", "THEIRS"))
+        self.assertNotIn("push_stopped", self.t1)
+
+    def test_taking_in_is_refused_where_the_push_did_not_stop_on_the_remote_s_commits(self):
+        with self.assertRaisesRegex(T.Handoff, "nothing to take in"):
+            self.push(take_in=True)
+        self.checks.take_in.assert_not_called()
 
     def test_a_stop_while_pushing_goes_back_to_the_agent_in_its_words(self):
         self.checks.autosquash.side_effect = self.checks.Stop("squashing conflicts")

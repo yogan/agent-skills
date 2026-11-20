@@ -47,6 +47,12 @@ class Stop(Exception):
     """A push or a check that cannot go on; the message says why and what to do."""
 
 
+class Behind(Stop):
+    """The push's guard: the branch on the remote holds commits the branch rewritten has
+    not (a reviewer's suggestion applied on GitLab), so pushing would overwrite them. What
+    gets the push through is taking them in (`take_in`), never pushing again."""
+
+
 def git(root, *args, env=None, stdin=None):
     return subprocess.run(["git", "-C", root, *args], capture_output=True, text=True,
                           env=env, input=stdin)
@@ -507,10 +513,12 @@ def only_rebased_copies(root, theirs, before):
     return merges.returncode == 0 and not merges.stdout.strip()
 
 
-def push(root, record, before):
-    """Force-push the branch to its upstream, `before` the commit it was rewritten from. The
-    pre-push hook runs here only where the record is not trusted yet or has no early run for
-    it. Raises Stop."""
+def upstream(root):
+    """(branch, "remote/branch", remote, its branch there) of the branch checked out, its
+    tracking ref fetched first: a guard that compares against what the remote held at the
+    last fetch lets a reviewer's later commit through to the push, which git then refuses
+    with its own words. A fetch that fails leaves the ref as it was; the push's lease still
+    protects the remote. Raises Stop."""
     branch = _out(root, "symbolic-ref", "--short", "HEAD")
     if not branch:
         raise Stop("HEAD is detached: check out the MR's branch to push")
@@ -518,14 +526,54 @@ def push(root, record, before):
     if not up or "/" not in up:
         raise Stop(f"{branch} has no upstream to push to")
     remote, rbranch = up.split("/", 1)
+    git(root, "fetch", "--quiet", remote, f"+refs/heads/{rbranch}:refs/remotes/{up}", env=_clean_env())
+    return branch, up, remote, rbranch
+
+
+def lacking(root, theirs, before):
+    """The commits `theirs` holds whose change `before` lacks (a copy a rebase replaced is
+    not one), one line each: hash, subject, author."""
+    return (_out(root, "log", "--format=%h \"%s\" by %an", "--right-only", "--cherry-pick",
+                 f"{before}...{theirs}") or "").splitlines()
+
+
+def take_in(root, before):
+    """Put the commits the upstream gained on `before` (the branch as it was before the
+    push rewrote it: a reviewer's suggestion applied on GitLab, say) on top of the branch
+    rewritten, as they are, author and message kept: the push then carries them instead of
+    overwriting them. Returns the upstream's head they came from. Raises Stop where the
+    upstream was not only added to, or a commit does not apply; the branch is as it was."""
+    _branch, up, _remote, _rbranch = upstream(root)
+    theirs = _out(root, "rev-parse", "@{u}")
+    if not theirs or git(root, "merge-base", "--is-ancestor", before, theirs).returncode != 0:
+        raise Stop(f"{up} was rewritten, not only added to: take in what it holds by hand; "
+                   "nothing is pushed")
+    if not lacking(root, theirs, before):
+        return theirs
+    head = _out(root, "rev-parse", "HEAD")
+    r = git(root, "cherry-pick", "--allow-empty", f"{before}..{theirs}", env=_clean_env())
+    if r.returncode != 0:
+        git(root, "cherry-pick", "--abort")
+        git(root, "reset", "--quiet", "--hard", head)
+        raise Stop(f"{up}'s commits do not apply on top of the fix's; nothing is pushed:\n"
+                   f"{(r.stdout + r.stderr).strip()[-2000:]}")
+    return theirs
+
+
+def push(root, record, before):
+    """Force-push the branch to its upstream, `before` the commit it was rewritten from. The
+    pre-push hook runs here only where the record is not trusted yet or has no early run for
+    it. Raises Stop, Behind where the upstream holds commits `before` lacks."""
+    branch, up, remote, rbranch = upstream(root)
     theirs = _out(root, "rev-parse", "@{u}")
     # What --force-if-includes stands for, without the reflogs it reads: what the branch on
     # the remote holds (a reviewer's applied suggestion, say) is in the branch rewritten, and
     # the push replaces exactly that.
     if theirs and git(root, "merge-base", "--is-ancestor", theirs, before).returncode != 0 \
             and not only_rebased_copies(root, theirs, before):
-        raise Stop(f"{up} has commits your branch does not (an applied suggestion?): fetch "
-                   "and take them in first; nothing is pushed")
+        raise Behind(f"{up} has commits your branch does not:\n"
+                     + "\n".join(f"- {x}" for x in lacking(root, theirs, before))
+                     + "\n\nTake them in first; nothing is pushed")
     pre = hook_of(record, "pre-push")
     if pre and not (record.get("trusted") and ahead(pre)):
         url = _out(root, "remote", "get-url", "--push", remote) or remote

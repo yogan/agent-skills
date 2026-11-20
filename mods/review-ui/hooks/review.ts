@@ -35,7 +35,9 @@ export type Press =
   | { kind: 'hunk-pushed'; push?: number }
   // rework-mr: the checked fix committed as a fixup, squashed and force-pushed by the
   // script, with no model turn. Only that: what is said in the thread is the next card's.
-  | { kind: 'push' }
+  // `take_in`: a push that stopped on commits the remote holds and the branch lacks (a
+  // suggestion applied on GitLab) puts them on top of the fix's first.
+  | { kind: 'push'; take_in?: true }
   // rework-mr: a fix made while another topic was current, kept in git and taken out of the
   // working tree, the plan as agreed, and back to that topic; the fix returns with its own.
   | { kind: 'aside' }
@@ -175,7 +177,7 @@ const ICON: Record<string, string> = {
   'Read hunk notes': '\u{F0A3D}', // md-comment_search_outline
   'Redo…': '\u{F099B}', // md-restore
   'Run the checks': '\u{F0096}', 'Fix the checks': '\u{F0096}', // md-flask_outline
-  'Push': '\u{F0552}', 'Push and resolve': '\u{F0552}', 'Ack and push': '\u{F0552}', // md-upload
+  'Push': '\u{F0552}', 'Push and resolve': '\u{F0552}', 'Ack and push': '\u{F0552}', 'Take in and push': '\u{F0552}', // md-upload
   'Put aside': '\u{F125A}', // md-archive_arrow_down_outline
   'Drop': '\u{F0A7A}', // md-trash_can_outline
   'Summarize': '\u{F0279}', // md-format_list_bulleted
@@ -520,7 +522,11 @@ const reworkButtons = (review: ReviewState): BandButton[] => {
       } else {
         // "Ack": the person approves the change; the press pushes it and does nothing else.
         const isReviewFirst = hasNotes || (topic.differs === true && !isOpen)
-        bs = [{ key: 'push', label: 'Ack and push', press: { kind: 'push' }, ...(isReviewFirst ? {} : { isPrimary: true as const }) }, hunk]
+        // A push that stopped on commits the remote holds would stop the same way again:
+        // taking them in is what gets it through, and the person's yes to it.
+        bs = [topic.push_behind
+          ? { key: 'take-in', label: 'Take in and push', press: { kind: 'push', take_in: true }, ...(isReviewFirst ? {} : { isPrimary: true as const }) }
+          : { key: 'push', label: 'Ack and push', press: { kind: 'push' }, ...(isReviewFirst ? {} : { isPrimary: true as const }) }, hunk]
       }
       // Made while another topic was current: keeping it is Ack and push, and this the other way.
       if (topic.made_on) bs = [...bs, { key: 'aside', label: 'Put aside', press: { kind: 'aside' } }]
@@ -591,7 +597,7 @@ export const argsFor = (press: Press, topic: string, card: ReviewCard | null): s
     case 'hunk-pushed':
       return ['hunk-show', topic, '--pushed', ...(press.push ? ['--push', String(press.push)] : [])]
     case 'push':
-      return ['push', topic]
+      return ['push', topic, ...(press.take_in ? ['--take-in'] : [])]
     case 'aside':
       return ['drop-fix', topic, '--aside', '--why', 'made while another topic was current; put aside for later']
     case 'drop':
@@ -722,7 +728,7 @@ export const didText = (press: Press, topic: string, into?: string): string => {
   if (press.kind === 'post' && press.early) return `${topic}: posted the reply ahead of its fix; the fix follows`
   if (press.kind === 'hunk') return `${topic}: opened the fix in the diff viewer`
   if (press.kind === 'hunk-pushed') return `${topic}: opened the pushed fix in the diff viewer`
-  if (press.kind === 'push') return `${topic}: pushed the fix`
+  if (press.kind === 'push') return `${topic}: ${press.take_in ? 'took in the commits the remote held, on top of the fix, and pushed' : 'pushed the fix'}`
   if (press.kind === 'aside') return `${topic}: put its fix aside (kept in git, the working tree as before), to come back when ${topic} is next; the plan stands`
   if (press.kind === 'post' && press.fixed) return `${topic}: posted “Fixed” with the diff link${press.resolve ? ' and resolved the thread' : ''}`
   if (press.kind === 'post' && press.resolve) return `${topic}: posted the reply and resolved the thread`

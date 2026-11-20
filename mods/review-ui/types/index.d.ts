@@ -81,6 +81,9 @@ export type ReviewTopic = {
   differs?: boolean
   // rework-mr: a fix made while another topic was current: that topic, to go back to on Put aside.
   made_on?: string | null
+  // rework-mr: the fix's push stopped on commits the remote holds and the branch lacks:
+  // taking them in gets it through, not pushing again.
+  push_behind?: boolean
   // A comment posted by hand that the agent found no longer holds: a corrected version waits.
   post_differs?: boolean
   answer_now?: boolean

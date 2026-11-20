@@ -1912,6 +1912,9 @@ def state_json(state):
             # A fix made while another topic was current: the one it was made from, to go
             # back to on Put aside.
             "made_on": f.get("made_on") if step_of(state, t) == "fixed" else None,
+            # A push of the fix that stopped on commits the remote holds and the branch
+            # lacks: taking them in is what gets it through, not pushing again.
+            "push_behind": step_of(state, t) == "fixed" and bool((t.get("push_stopped") or {}).get("behind")),
             # Whether the plan agreed answers the reviewer: a reply then says what was chosen.
             "answer_now": bool(t.get("answer_now")),
             "checks": checks_of(t) if step_of(state, t) == "fixed" else None,
@@ -2858,7 +2861,9 @@ def _fix_parts(state, t):
         # Above all else: the fix is made, and its push is what is left to do.
         out += [ui.heading_md(ui.DIFFERS_ICON, "Made, not pushed: the push stopped"), "",
                 f"{stop.get('why', '').strip().rstrip('.')}.", "",
-                "Ack and push tries the push again, from the commits already made.", ""]
+                ("Take in and push puts them on top of the fix's commits, as they are on the "
+                 "remote, and pushes." if stop.get("behind") else
+                 "Ack and push tries the push again, from the commits already made."), ""]
     # What changed, in short: the plan is above it and the thread in the sidebar, so neither
     # is told again; the checks only where they did not pass, as passing is what a shown
     # fix means.
@@ -3236,12 +3241,17 @@ def handoff_brief(tid, fix, token, skip_hooks):
             f"{token}` yourself, in this turn. The token is the press's, good for this one push.")
 
 
-def push_fix(ctx, iid, path, tid, committed=False):
+def push_fix(ctx, iid, path, tid, committed=False, take_in=False):
     """`push`: commit `tid`'s checked fix as a fixup of its commit, squash it in, and
     force-push, with no check run again where the files are the ones checked. Stores the
-    diff link. Raises Handoff for what needs the agent."""
+    diff link. `take_in`: a push that stopped on commits the remote holds and the branch
+    lacks puts them on top of the fix's first (Take in and push). Raises Handoff for what
+    needs the agent."""
     state = load(path)
     t = topic_for(state, tid) or die(f"no topic {tid}")
+    if take_in and not (t.get("push_stopped") or {}).get("behind"):
+        raise Handoff(f"{tid}'s push did not stop on commits the remote holds: nothing to take "
+                      "in, and Ack and push on its card pushes it.")
     root = repo_root()
     c = t.get("checked") or {}
     if not c.get("ok"):
@@ -3295,6 +3305,7 @@ def push_fix(ctx, iid, path, tid, committed=False):
         state = load(path)
         topic_for(state, tid).update(push_from=before, push_start=start)
         save(path, state)
+    taken = None
     try:
         if handed:
             # The agent's commits skipped no check the record does not stand for, but their
@@ -3311,15 +3322,42 @@ def push_fix(ctx, iid, path, tid, committed=False):
             oldest = targets[0] if len(targets) == 1 else checks._out(
                 root, "merge-base", "--octopus", *targets) or targets[0]
             checks.autosquash(root, oldest, c["tree"])
+        if take_in:
+            # What the remote gained since the branch as it was before any of this push's
+            # commits: the agent's, where a press handed them over, are not on the remote.
+            taken = checks.take_in(root, handed or before)
+            # The push now goes on from the remote's head: what it holds is in the branch,
+            # and GitLab's head is where this push's own change starts. The files are the
+            # ones checked plus only commits already on the remote, which the push carries
+            # and does not add: the tree is recorded as checked, so a push stopped again
+            # goes on from here, as one cut short after its commits (the agent's messages
+            # are checked above; the reviewer's are not the agent's to check).
+            hold(path)
+            state = load(path)
+            topic = topic_for(state, tid)
+            topic.update(push_from=taken, push_start=taken,
+                         checked={**c, "tree": checks._out(root, "rev-parse", "HEAD^{tree}"), "taken_in": taken})
+            topic.pop("handed_from", None)
+            save(path, state)
+            before = start = taken
         checks.push(root, rec, before)
     except checks.Stop as e:
         # Kept with the topic: its card goes on saying the fix is made and why the push
-        # stopped, until a push goes through or the fix goes.
+        # stopped, until a push goes through or the fix goes. Commits on the remote the
+        # branch lacks are the card's to take in, on the person's press.
+        behind = isinstance(e, checks.Behind)
         hold(path)
         state = load(path)
         topic_for(state, tid)["push_stopped"] = {
-            "why": str(e), "at": datetime.datetime.now(datetime.timezone.utc).isoformat()}
+            "why": str(e), "behind": behind,
+            "at": datetime.datetime.now(datetime.timezone.utc).isoformat()}
         save(path, state)
+        if behind:
+            raise Handoff(f"Pushing {tid}'s fix stopped: {e}\n\nThe fix's commits are made. Its "
+                          "card now offers Take in and push, which puts those commits on top of "
+                          "the fix's, as they are, and pushes: tell the user in a line whose "
+                          "commits they are and what they change, and leave taking them in to "
+                          "that press; never rebase or push yourself.") from e
         raise Handoff(f"Pushing {tid}'s fix stopped: {e}") from e
     if not handed:
         # Only a push whose commit ran the real hooks here tells whether the record's early
@@ -3331,7 +3369,7 @@ def push_fix(ctx, iid, path, tid, committed=False):
     # commits start from where the press handed them over) to the head it made. Where the
     # branch held more than GitLab's head (a rebase, commits not pushed yet), the link from
     # that head shows those too: the push is not clean, and joins no other into one fix.
-    frm = handed or before
+    frm = taken or handed or before
 
     def tree(sha):
         return checks._out(root, "rev-parse", f"{sha}^{{tree}}") if sha else None
@@ -3682,6 +3720,8 @@ def main():
     pph.add_argument("--committed", action="store_true",
                      help="the fixup commits are made already")
     pph.add_argument("--token", help="with --committed: the one a press's hand-off named")
+    pph.add_argument("--take-in", action="store_true",
+                     help="a push stopped on commits the remote holds: put them on top first")
     pm = sub.add_parser("merge")
     pm.add_argument("into")
     pm.add_argument("others", nargs="+")
@@ -4045,7 +4085,7 @@ def main():
             pressed = True
             save(path, state)
         try:
-            state, url = push_fix(ctx, iid, path, args.topic, args.committed)
+            state, url = push_fix(ctx, iid, path, args.topic, args.committed, args.take_in)
         except Handoff as e:
             print(e)
             sys.exit(3)

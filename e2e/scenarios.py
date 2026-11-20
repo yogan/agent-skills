@@ -408,7 +408,8 @@ REWORK_COMBINED = [
 
 # A push that would overwrite a commit on GitLab the checkout lacks (a suggestion applied
 # there) stops before anything goes up: t1's card says the fix is made, not pushed, and why,
-# and offers the push again.
+# naming the commit, and offers taking it in, not the same push again. Pressed, the commit
+# goes up on top of the fix, as the reviewer made it.
 SUGGESTION_ON_BRANCH = Check('glab api "projects/$P/repository/branches/feat%2Fquery-key-factories"'
                              " | python3 -c 'import json,sys; print(json.load(sys.stdin)[\"commit\"][\"title\"])'",
                              r"^Apply 1 suggestion")
@@ -419,10 +420,19 @@ REWORK_STOPPED = [
             Check(f"{NEWS} suggest", r"reviewer-bot pushed"),
             press('Ack and push', turn=True, timeout=600),
             Expect(r"Made, not pushed: the push stopped", region="screen", wait=60),
-            Expect(r"stale info|commits your branch does not", region="screen"),
-            Expect(button('Ack and push'), region="screen"),
+            Expect(r"has commits your branch does not", region="screen"),
+            Expect(r'"Apply 1 suggestion', region="screen"),
+            Expect(button('Take in and push'), region="screen"),
+            Expect(button('Ack and push'), region="screen", absent=True),
             Expect(button('“Fixed” + resolve'), region="screen", absent=True),
             SUGGESTION_ON_BRANCH,                      # nothing went up over it
+            press('Take in and push', timeout=600),
+            Expect(button('“Fixed” + resolve'), region="screen", wait=120),
+            SUGGESTION_ON_BRANCH,                      # on top, as she made it
+            # The fix under it, and the branch here what went up.
+            Check("git fetch -q && git rev-parse HEAD @{u} | uniq | wc -l && "
+                  "git show @{u}~1:src/features/comments/api/query-keys.ts | grep -c commentKeys",
+                  r"^\s*1\n[1-9]"),
 ]
 
 # A pushed fix the reviewer doubts, defended with a reply; then, before it is posted, the

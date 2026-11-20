@@ -311,6 +311,56 @@ class TestPush(Case):
         self.assertEqual(sh(other, "git", "rev-parse", "HEAD"),
                          sh(self.r.root, "git", "rev-parse", "origin/main"))
 
+    def suggest_on_the_remote(self):
+        """A reviewer's commit on the remote's branch, which this checkout has not fetched."""
+        other = os.path.join(self.r.d, "other")
+        sh(self.r.d, "git", "clone", "-q", os.path.join(self.r.d, "remote.git"), other)
+        with open(os.path.join(other, "b.txt"), "a") as fh:
+            fh.write("suggested\n")
+        sh(other, "git", "-c", "user.name=R", "-c", "user.email=r@example.invalid", "commit",
+           "-qam", "Apply suggestion")
+        sh(other, "git", "push", "-q")
+        return sh(other, "git", "rev-parse", "HEAD")
+
+    def test_a_commit_the_checkout_never_fetched_stops_the_push_with_its_own_words(self):
+        # Not git's "stale info": the guard sees the commit, and names it.
+        rec = self.r.record()
+        stamp = self.fix(rec)
+        theirs = self.suggest_on_the_remote()
+        with self.assertRaisesRegex(checks.Behind, r'(?s)has commits your branch does not:\n'
+                                    r'- \w+ "Apply suggestion" by R\n\nTake them in first'):
+            self.push(rec, stamp)
+        self.assertEqual(sh(self.r.root, "git", "rev-parse", "origin/main"), theirs)
+
+    def test_a_commit_taken_in_goes_up_on_top_of_the_fix(self):
+        rec = self.r.record()
+        stamp = self.fix(rec)
+        theirs = self.suggest_on_the_remote()
+        before = sh(self.r.root, "git", "rev-parse", "HEAD")
+        with self.assertRaises(checks.Behind):
+            self.push(rec, stamp)
+        self.assertEqual(checks.take_in(self.r.root, before), theirs)
+        checks.push(self.r.root, rec, theirs)
+        # Her commit on top, as she made it, and the fix squashed under it: nothing lost.
+        self.assertEqual(sh(self.r.root, "git", "log", "--format=%s %an", "origin/main"),
+                         "Apply suggestion R\nfeat: c Test\nfeat: a and b Test")
+        self.assertEqual(self.r.read("a.txt"), "one fixed\n")
+        self.assertEqual(self.r.read("b.txt"), "two\nsuggested\n")
+
+    def test_a_commit_that_does_not_apply_leaves_the_branch_as_it_was(self):
+        rec = self.r.record()
+        self.r.write("b.txt", "two\nmine\n")
+        stamp = checks.run(self.r.root, rec)
+        before = sh(self.r.root, "git", "rev-parse", "HEAD")
+        self.suggest_on_the_remote()
+        with self.assertRaises(checks.Behind):
+            self.push(rec, stamp)
+        head = sh(self.r.root, "git", "rev-parse", "HEAD")
+        with self.assertRaisesRegex(checks.Stop, "do not apply"):
+            checks.take_in(self.r.root, before)
+        self.assertEqual(sh(self.r.root, "git", "rev-parse", "HEAD"), head)
+        self.assertEqual(sh(self.r.root, "git", "status", "--porcelain"), "")
+
     def rebase_onto_a_moved_target(self):
         """The target branch moved by one commit and the branch is rebased onto it: the
         remote still holds the copies of the branch's own commit the rebase replaced."""
