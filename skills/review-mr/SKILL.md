@@ -140,7 +140,7 @@ python3 $SD/findings.py prune --iid <n>   # removes an OTHER merged/closed MR's 
 
 This only ever deletes the git worktree, never a findings/state file, and only for an MR
 GitLab reports merged or closed whose review has lain idle for a day (another session may
-still be on it) — `--iid <n>` exempts this run's own MR even if it happens to already qualify. It's silent when it finds nothing; if it prints a line, mention it in passing.
+still be on it), and never one another MR's review still has recorded — `--iid <n>` exempts this run's own MR even if it happens to already qualify. It's silent when it finds nothing; if it prints a line, mention it in passing.
 
 Then find (or create) **this MR's own** worktree:
 
@@ -159,8 +159,8 @@ worktree's `origin`, so you never name it by hand. **Do NOT guess the repo** (no
 `--iid`, never `-R`.
 
 **Now check it out — every run, no exceptions, however the path was obtained.** A stored
-worktree path says *where* the checkout is, never *what is in it*: the worktree is shared
-between this repo's MRs and left detached on whichever one was reviewed last. Skip this and
+worktree path says *where* the checkout is, never *what is in it*: the worktree is left
+detached on whichever commit was reviewed in it last. Skip this and
 you review the previous MR's code while every command still succeeds and every table still
 renders. The review worktree is **disposable**, so hard-reset it onto the MR tip. Check out
 **detached** — nothing here reads the local branch name (sync/detection run off `--iid` + the

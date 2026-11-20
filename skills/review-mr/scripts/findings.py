@@ -3713,9 +3713,13 @@ def prune_worktrees(ctx, skip_iid=None):
         return []
     prefix = f"{ctx['slug']}--mr"
     removed = []
-    for name in sorted(os.listdir(STATE_ROOT)):
-        if not name.startswith(prefix) or not name[len(prefix):].isdigit():
-            continue
+    names = [n for n in sorted(os.listdir(STATE_ROOT))
+             if n.startswith(prefix) and n[len(prefix):].isdigit()]
+    # Every MR's recorded path, to tell a worktree two MRs were reviewed in (one taken from
+    # `git worktree list` for each) from one only the pruned MR used.
+    recorded = {int(n[len(prefix):]): get_worktree(ctx["slug"], int(n[len(prefix):])) for n in names}
+    recorded = {i: os.path.realpath(p) for i, p in recorded.items() if p}
+    for name in names:
         iid = int(name[len(prefix):])
         if iid == skip_iid:
             continue
@@ -3739,6 +3743,11 @@ def prune_worktrees(ctx, skip_iid=None):
             idle = KEEP_WORKTREE_S
         if idle < KEEP_WORKTREE_S:
             continue
+        if any(p == os.path.realpath(wt) for i, p in recorded.items() if i != iid):
+            # Another MR's review reads its code from there: only this MR's record goes.
+            os.remove(worktree_path(ctx["slug"], iid))
+            recorded.pop(iid, None)
+            continue
         r = subprocess.run(["git", "worktree", "remove", "--force", wt],
                            capture_output=True, text=True)
         if r.returncode != 0 and os.path.exists(wt):
@@ -3749,6 +3758,7 @@ def prune_worktrees(ctx, skip_iid=None):
                 continue
             shutil.rmtree(wt, ignore_errors=True)
         os.remove(worktree_path(ctx["slug"], iid))
+        recorded.pop(iid, None)
         removed.append(f"MR !{iid} ({state}): removed its review worktree at {wt}")
     return removed
 

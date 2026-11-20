@@ -1408,6 +1408,33 @@ class TestPruneWorktrees(Throwaway, unittest.TestCase):
         self.assertEqual(removed, [])
         self.assertTrue(os.path.isdir(wt))
 
+    def test_a_worktree_another_mr_still_uses_is_left_and_only_the_record_goes(self):
+        """Two MRs recorded the same worktree: the merged one's prune removed it from under
+        the other's open review."""
+        slug = "acme-repo"
+        wt = self._with_worktree(slug, 5)
+        F.set_worktree(slug, 7, wt)
+        states = {5: "merged", 7: "opened"}
+        with patch.object(F, "mr_object", side_effect=lambda _c, iid: {"state": states[iid]}):
+            self.assertEqual(F.prune_worktrees(self._ctx(slug)), [])
+        self.assertTrue(os.path.isdir(wt))
+        self.assertIsNone(F.get_worktree(slug, 5))
+        self.assertEqual(F.get_worktree(slug, 7), wt)
+        # Once the other is merged too, it goes.
+        states[7] = "merged"
+        with patch.object(F, "mr_object", side_effect=lambda _c, iid: {"state": states[iid]}):
+            self.assertEqual(len(F.prune_worktrees(self._ctx(slug))), 1)
+        self.assertFalse(os.path.isdir(wt))
+
+    def test_both_mrs_sharing_a_merged_worktree_leave_nothing_behind(self):
+        slug = "acme-repo"
+        wt = self._with_worktree(slug, 5)
+        F.set_worktree(slug, 6, wt)
+        with patch.object(F, "mr_object", return_value={"state": "merged"}):
+            self.assertEqual(len(F.prune_worktrees(self._ctx(slug))), 1)
+        self.assertFalse(os.path.isdir(wt))
+        self.assertEqual((F.get_worktree(slug, 5), F.get_worktree(slug, 6)), (None, None))
+
     def test_another_repos_worktree_is_never_touched(self):
         mine, theirs = "acme-repo", "other-repo"
         self._with_worktree(mine, 1)
