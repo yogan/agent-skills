@@ -608,7 +608,16 @@ export const withoutDraft = (text: string): string => {
   const at = lines.findIndex(l => DRAFT_HEAD.test(l.trim()))
   if (at < 0) return text
   let end = at + 1
-  // Up to the next part's heading, or the end: the aside, the quote and blank lines.
-  while (end < lines.length && !/^\*\*[^*]+\*\*$/.test((lines[end] as string).trim())) end += 1
+  // The heading's own lines: where it goes (an italic aside), the quoted draft and the blank
+  // lines between. What follows is the card's again: the topic's story, which a draft stands
+  // above with no heading of its own between, and which taking everything up to the next
+  // heading had cut off with it.
+  let isQuoted = false
+  while (end < lines.length) {
+    const line = (lines[end] as string).trim()
+    if (line.startsWith('>')) isQuoted = true
+    else if (line && !(!isQuoted && /^_.+_$/.test(line))) break
+    end += 1
+  }
   return [...lines.slice(0, at), ...lines.slice(end)].join('\n').replace(/\n{3,}/g, '\n\n').trim()
 }

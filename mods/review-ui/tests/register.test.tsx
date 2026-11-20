@@ -4,7 +4,7 @@ import { expect, test } from 'claude-code/testing'
 
 import { boxRowsOf, inboxMark, plainTitle, reflow, rowOf, sectionsOf, urlLabel, whenOf, personColor, PEOPLE_COLORS } from '../hooks/panel.ts'
 import { withEmoji } from '../hooks/views.ts'
-import { blocksOf, inlineOf, isPostCommand, NOTE, partsOf, sizeRunsOf, withOutcome } from '../hooks/views.ts'
+import { blocksOf, inlineOf, isPostCommand, NOTE, partsOf, sizeRunsOf, withOutcome, withoutDraft } from '../hooks/views.ts'
 
 test('only a command that runs post or resolve is the person\'s press; one that names it is not', () => {
   for (const ran of [
@@ -732,6 +732,19 @@ test("a push's small print is its own run, and a name with underscores is not on
     { kind: 'plain', text: ' ' }, { kind: 'aside', text: '(includes t2 + rebase)' },
   ])
   expect(inlineOf('Robin renamed my_var_name').map(r => r.kind)).toEqual(['plain'])
+})
+
+test("a posted draft leaves its card, and the story under it stays", () => {
+  // Posted, the card ended on "You replied" alone: taking the draft out took everything up
+  // to the next heading, the comment, the plan and the push with it.
+  const card = ['**\u{F0AAA} Recommendation**', '', 'Add it.', '',
+    '**\u{F12C4} Draft reply**', '', '> Done, see below.', '>', '> Fixed: [diff](u)', '',
+    '09:18 \u{F09E1} Miriam commented', '09:32 \u{F0552} You pushed a fix', ''].join('\n')
+  expect(withoutDraft(card)).toBe(['**\u{F0AAA} Recommendation**', '', 'Add it.', '',
+    '09:18 \u{F09E1} Miriam commented', '09:32 \u{F0552} You pushed a fix'].join('\n'))
+  // review-mr's says where it goes, in italics, above the quote.
+  expect(withoutDraft('**\u{F12C4} Draft comment**\n_As a new thread on `a.ts:3`:_\n\n> Hallo\n\n13:55 \u{F012C} You agreed it'))
+    .toBe('13:55 \u{F012C} You agreed it')
 })
 
 test("a press's line goes on under the card's steps, and stands apart from anything else", () => {
