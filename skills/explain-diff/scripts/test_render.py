@@ -15,6 +15,7 @@ import os
 import shutil
 import sys
 import unittest
+import unittest.mock
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
@@ -526,6 +527,30 @@ class TestPrepareDiagrams(unittest.TestCase):
         R.prepare_diagrams(self._spec("<p>{{diagram:flow}}</p>", "<p>{{diagram:tables}}</p>"))
         self.assertEqual(len(self.calls), 1)
         self.assertEqual(self.calls[0][0], ["flow", "tables"])
+
+    def test_the_command_draws_the_whole_document_in_one_call(self):
+        """`main` assembled the page first, and assembling draws each diagram not drawn yet
+        on its own, so the one call for the whole set came after and had nothing left."""
+        import json
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            spec = os.path.join(tmp, "spec.json")
+            with open(spec, "w", encoding="utf-8") as fh:
+                json.dump(self._spec("<p>{{diagram:flow}}</p>", "<p>{{diagram:tables}}</p>"), fh)
+            argv = ["render.py", spec, "-o", os.path.join(tmp, "out.html")]
+            with unittest.mock.patch.object(sys, "argv", argv), \
+                    contextlib.redirect_stdout(io.StringIO()):
+                R.main()
+        self.assertEqual([names for names, _ in self.calls], [["flow", "tables"]])
+
+    def test_a_diagram_without_a_kind_is_refused_before_anything_is_drawn(self):
+        """Checked up front, the author still gets the message that says what to write."""
+        spec = self._spec("{{diagram:flow}}", "{{diagram:legacy}}")
+        spec["diagrams"] = {**self.DIAGRAMS, "legacy": {"nodes": [{"id": "a"}]}}
+        with self.assertRaises(KeyError) as caught:
+            R.prepare_diagrams(spec)
+        self.assertIn("Graphviz path has been removed", str(caught.exception))
+        self.assertEqual(self.calls, [])
 
     def test_a_diagram_the_document_never_references_is_not_drawn(self):
         """A spec may carry one it ended up not using, and placing a callout costs seconds."""

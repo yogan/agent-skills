@@ -794,9 +794,10 @@ _DIAGRAM_ADVICE: list = []
 def prepare_diagrams(spec: dict) -> None:
     """Draw every diagram the document actually references, in one pass.
 
-    Up front rather than per token, because `lib.diagram.figure.draw` batches its browser work
-    across the whole call — one Chrome launch for the article instead of one per figure — and
-    it can only do that if it is handed the whole set. Only what a `{{diagram:key}}` token
+    Up front rather than per token, because `lib.diagram.figure.draw` works on the whole set
+    it is handed at once, the diagrams side by side rather than one after another, and it can
+    only do that if it is handed the whole set. That starts more browsers than drawing them in
+    turn (which reuses one) and still finishes sooner. Only what a `{{diagram:key}}` token
     actually references is drawn: a spec is free to carry a diagram it ended up not using, and
     placing one costs seconds.
 
@@ -810,6 +811,8 @@ def prepare_diagrams(spec: dict) -> None:
               if (key, json.dumps(diagrams[key], sort_keys=True)) not in _DIAGRAM_CACHE}
     if not wanted:
         return
+    for key, diagram in wanted.items():
+        _require_kind(diagram, key)
     for drawn in _diagram_figure.draw(wanted, target="embed"):
         _DIAGRAM_CACHE[(drawn.name,
                         json.dumps(diagrams[drawn.name], sort_keys=True))] = drawn.svg
@@ -841,12 +844,19 @@ def render_diagram(diagram: dict, name: str = "diagram") -> str:
     sequence, ER or class diagram at all, and keeping both meant two visual languages, two
     theming maps and no single source of visual truth — a document mixing them looked mixed.
     """
+    _require_kind(diagram, name)
+    return render_d2_diagram(diagram, name)
+
+
+def _require_kind(diagram: dict, name: str) -> None:
+    """Refuse a spec with no "kind", naming what to write instead. Checked before anything is
+    drawn, by `prepare_diagrams` as by `render_diagram`, so the author gets this message rather
+    than whatever the engine would make of the spec."""
     if "kind" not in diagram:
         raise KeyError(
             f"diagram '{name}' has no \"kind\". The Graphviz path has been removed; write a "
             "lib/diagram spec instead (kind: architecture|sequence|er|class|state — see "
             "skills/visualize/REFERENCE.md)")
-    return render_d2_diagram(diagram, name)
 
 
 _DIAGRAM_TOKEN_RE = re.compile(r"\{\{diagram:([a-zA-Z0-9_-]+)\}\}")
@@ -1260,10 +1270,10 @@ def main():
     check_plain_text_fields(spec)
     if not args.allow_length_bias:
         check_length_bias(collect_all_quiz_questions(spec))
-    out_html = render(spec)
-
-    # Every referenced diagram, drawn and gated in one pass before the page is assembled.
+    # Every referenced diagram, drawn and gated in one pass BEFORE the page is assembled:
+    # assembling draws whatever is not drawn yet, one diagram and one browser at a time.
     prepare_diagrams(spec)
+    out_html = render(spec)
 
     if args.output:
         out_path = args.output
