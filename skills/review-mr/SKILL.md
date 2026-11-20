@@ -685,9 +685,9 @@ comment): it is then no longer the topic's. Another reviewer's thread is theirs 
 `peer <t> fyi|needs --why '…'` (with `--summary '…'` for a new one). `fyi` is the usual answer;
 `needs` only when the user has something to add (a question to them: `--advice reply`; a point
 that repeats one of their topics: `--advice merge --into <t>`), its `--why` ending on a
-`**Recommendation:**` sentence. Nothing the user does there resolves it. The user's buttons follow the verdict, its own answer first: settled → `Accept &
-resolve` (resolves the GitLab thread and closes the topic; theirs to press) / `Not good
-enough…` (their reply, which you draft) / `Analyse more`; more → `Send follow-up` / `Wait for
+`**Recommendation:**` sentence. Nothing the user does there resolves it. The user's buttons follow the verdict, its own answer first: settled → `Accept +
+resolve` (resolves the GitLab thread and closes the topic; theirs to press; just `Accept`
+where the thread is resolved already) / `Not enough…` (their reply, which you draft) / `Analyse more`; more → `Send follow-up` / `Wait for
 author` / `Resolve` / `Analyse more`. On `Analyse more`, a verdict you change
 prints a card of the change itself: leave the topic unshown, your reply carries the details. A verdict lasts until a new answer arrives, and so
 does a follow-up draft: a newer answer, or `wait`, drops it.

@@ -124,6 +124,21 @@ class TestModMirror(unittest.TestCase):
             for icon in table.values():
                 self.assertIn(f"\\u{{{ord(icon):x}}}", ts)
 
+    def test_the_buttons_review_mr_names_after_a_verdict_are_the_mods(self):
+        """SKILL.md named "Accept & resolve" and "Not good enough…", which are not on screen:
+        the model then told the user to press a button that does not exist."""
+        import re
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        with open(os.path.join(root, "skills", "review-mr", "SKILL.md")) as fh:
+            skill = " ".join(fh.read().split())
+        with open(os.path.join(root, "mods", "review-ui", "hooks", "review.ts")) as fh:
+            ts = fh.read()
+        named = re.search(r"The user's buttons follow the verdict(.*?)On `Analyse more`", skill)
+        self.assertIsNotNone(named, "the sentence naming the buttons moved: update this test")
+        labels = re.findall(r"`([A-Z][^`]*)`", named.group(1))
+        self.assertGreater(len(labels), 5)
+        self.assertEqual([lb for lb in labels if f"'{lb}'" not in ts], [])
+
 
 class TestRecommendationMidParagraph(unittest.TestCase):
     def test_one_at_the_end_of_a_paragraph_becomes_its_own_part(self):
