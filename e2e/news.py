@@ -29,6 +29,8 @@ MR !3, your own; Miriam (reviewer-bot) reviews it:
     python3 e2e/news.py pipeline running|success|failed   # a pipeline on its head
     python3 e2e/news.py more        # Miriam reopens the naming thread and asks for more
     python3 e2e/news.py doubt       # Miriam reopens it and doubts the pushed rename
+    python3 e2e/news.py suggest     # Miriam applies a suggestion of hers on GitLab: a commit
+                                    # on !3's branch that your checkout does not have
     python3 e2e/news.py merge       # you merge it
 
 Which commands exclude each other:
@@ -38,6 +40,8 @@ Which commands exclude each other:
 - `rebase-fix` needs `main` first: without it there is nothing to rebase onto.
 - `approve` refuses where Miriam approved already (`settle` approves too).
 - `more` and `doubt` go in either order; after `merge`, nothing on !3 does.
+- `suggest` changes a file no topic of !3 is about, so a fix pushed before or after it is
+  still the fix; a push made after it stops until the commit is taken in.
 - Everything else goes in any order: `both` touches nothing the others do.
 
 Every command checks everything first and only then changes anything, so a refused command
@@ -437,6 +441,18 @@ def plan_more(text, cmd):
              f"on {MORE_ON}", post)]
 
 
+# A suggestion applied on GitLab: a commit on the branch the checkout does not have, which a
+# push from the checkout must not overwrite. On a file none of !3's topics is about.
+SUGGEST_ON = "src/features/discussions/api/deleteDiscussion.ts"
+SUGGESTED = ("        title: 'Discussion Deleted',\n", "        title: 'Discussion deleted',\n")
+
+
+def plan_suggest():
+    open_mr3("suggest")
+    return change(REWORK_IID, fx.MR3_BRANCH, "reviewer-bot", {SUGGEST_ON: SUGGESTED},
+                  "Apply 1 suggestion(s) to 1 file(s)", "suggest")
+
+
 # ---------------------------------------------------------------- the commands
 
 COMMANDS = {
@@ -444,6 +460,7 @@ COMMANDS = {
     "main": plan_main, "rebase-fix": plan_rebase_fix,
     "approve": plan_approve, "settle": plan_settle, "merge": plan_merge,
     "more": lambda: plan_more(MORE, "more"), "doubt": lambda: plan_more(DOUBT, "doubt"),
+    "suggest": plan_suggest,
 }
 
 

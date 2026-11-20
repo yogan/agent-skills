@@ -406,6 +406,25 @@ REWORK_COMBINED = [
             Expect(pushed_line(r"t1 \+ rebase"), region="main"),
 ]
 
+# A push that would overwrite a commit on GitLab the checkout lacks (a suggestion applied
+# there) stops before anything goes up: t1's card says the fix is made, not pushed, and why,
+# and offers the push again.
+SUGGESTION_ON_BRANCH = Check('glab api "projects/$P/repository/branches/feat%2Fquery-key-factories"'
+                             " | python3 -c 'import json,sys; print(json.load(sys.stdin)[\"commit\"][\"title\"])'",
+                             r"^Apply 1 suggestion")
+REWORK_STOPPED = [
+            *PLANNED,
+            press('Fix it', turn=True, timeout=600),
+            Expect(button('Ack and push'), region="screen"),
+            Check(f"{NEWS} suggest", r"reviewer-bot pushed"),
+            press('Ack and push', turn=True, timeout=600),
+            Expect(r"Made, not pushed: the push stopped", region="screen", wait=60),
+            Expect(r"stale info|commits your branch does not", region="screen"),
+            Expect(button('Ack and push'), region="screen"),
+            Expect(button('“Fixed” + resolve'), region="screen", absent=True),
+            SUGGESTION_ON_BRANCH,                      # nothing went up over it
+]
+
 SCENARIOS = [
     Scenario(
         "smoke", "the driver itself: start claude, send a prompt, read the answer",
@@ -564,6 +583,10 @@ SCENARIOS = [
     Scenario(
         "rework-combined", "MR !3, main moved: t1's and t2's fixes and a rebase in one push, recorded on both", WORK,
         needs_rig=True, mods=[MOD], fast_check=True, steps=[*REWORK_COMBINED]),
+
+    Scenario(
+        "rework-stopped", "MR !3: a push that would overwrite a suggestion applied on GitLab stops, and t1's card says so", WORK,
+        needs_rig=True, mods=[MOD], fast_check=True, steps=[*REWORK_STOPPED]),
 
     Scenario(
         "try-scrolling", "MR !4: every sidebar area with more than it shows, beside ones that fit, for a person to try (--keep)",

@@ -61,6 +61,8 @@ class Rig:
     def api(self, path, method="GET", body=None, user="root", **_kw):
         if path.endswith("/discussions?per_page=100"):
             return self.threads
+        if path.endswith("/merge_requests/3"):
+            return {"state": "opened"}
         raise AssertionError(f"unexpected call: {method} {path}")
 
     def post_thread(self, iid, user, path, needle, body):
@@ -83,7 +85,8 @@ class NewsTest(unittest.TestCase):
                    for name in ("git", "api", "post_thread", "reply")]
         patches += [mock.patch.object(fixture, "BUILD", self.build),
                     mock.patch.object(fixture, "env", lambda: {"E2E_PROJECT": "demo/x", "E2E_GITLAB_HOST": "h",
-                                                               "E2E_TOKEN_ROOT": "t", "E2E_TOKEN_AUTHOR_BOT": "t"}),
+                                                               "E2E_TOKEN_ROOT": "t", "E2E_TOKEN_AUTHOR_BOT": "t",
+                                                               "E2E_TOKEN_REVIEWER_BOT": "t"}),
                     mock.patch.object(sys, "argv", ["news.py", *argv])]
         for p in patches:
             p.start()
@@ -162,6 +165,18 @@ class NewsTest(unittest.TestCase):
                                              thread("T2", "frank", PROTECTED, "What happens when the prefetch fails?")])
         self.assertEqual(self.run_news(rig, "rebase-fix")[0], 0)
         self.assertEqual(rig.done, ["rebase", "commit", "push", ("reply", "T2")])
+
+    def test_suggest_commits_on_mr3s_branch_once(self):
+        rig = Rig(self.build, self.files(**{news.SUGGEST_ON: news.SUGGESTED[0]}))
+        self.assertEqual(self.run_news(rig, "suggest")[0], 0)
+        self.assertEqual(rig.done, ["commit", "push"])
+        with open(os.path.join(self.build, news.SUGGEST_ON)) as f:
+            self.assertEqual(f.read(), news.SUGGESTED[1])
+        again = Rig(self.build, self.files(**{news.SUGGEST_ON: news.SUGGESTED[1]}))
+        code, out = self.run_news(again, "suggest")
+        self.assertNotEqual(code, 0)
+        self.assertEqual(again.done, [])
+        self.assertIn("`suggest` ran before", out)
 
     def test_help_says_which_commands_exclude_each_other(self):
         code, out = self.run_news(Rig(self.build, {}), "help")
