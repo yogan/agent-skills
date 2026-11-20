@@ -365,6 +365,47 @@ REWORK_MIND = [
             Check("git rev-list --count origin/main..@{u}", r"^2$"),   # the TODO folded in too
 ]
 
+# The same MR, main moved on meanwhile: t1's and t2's fixes made as one, with a rebase onto
+# main, at the person's word. One push carries both and the rebase, and is each topic's own.
+PLANNED = [
+            Prompt("/rework-mr !3", timeout=600),
+            *REWORK_FIX[1:7],                         # t1's and t2's plans agreed
+            *REPLY_INSTEAD,                           # t3 answered instead
+            Expect(current("t1"), region="panel", wait=30),
+            Expect(button('Fix it'), region="screen"),
+]
+
+
+def pushed_line(also):
+    """A pushed fix's line in a topic's story: at its time, saying what else the push held."""
+    return rf"\d\d:\d\d\s+\S+\s+You pushed a fix[^\n]*\(includes {also}\)"
+
+
+REWORK_COMBINED = [
+            *PLANNED,
+            Check(f"{NEWS} main", r"main moved"),
+            Prompt("Fix t1 and t2 together in one push, and rebase onto main with it.", timeout=900),
+            # One fix on t1's card, which names what else goes out with it.
+            Expect(current("t1"), region="panel", wait=60),
+            Expect(button('Ack and push'), region="screen", wait=60),
+            Expect(r"includes t2 \+ a rebase", region="screen"),
+            # Its commits rewritten and the rebase pushed with it: the model's, from the press.
+            press('Ack and push', turn=True, timeout=600),
+            Expect(button('“Fixed” + resolve'), region="screen", wait=60),
+            Expect(pushed_line(r"t2 \+ rebase"), region="main"),
+            Check("git fetch -q && git merge-base --is-ancestor origin/main @{u} && git rev-parse HEAD @{u} | uniq | wc -l",
+                  r"^\s*1$"),
+            Check("git rev-list --count origin/main..@{u}", r"^2$"),   # squashed, no fixup left
+            press('“Fixed” + resolve'),
+            T1_RESOLVED,
+            # t2's fix went out in that push: its card is past the fix, to its reply, and its
+            # story has the push at its time.
+            Expect(current("t2"), region="panel", wait=120),
+            Expect(button('Reply…', '“Fixed”'), region="screen", wait=60),
+            Expect(button('Fix it'), region="screen", absent=True),
+            Expect(pushed_line(r"t1 \+ rebase"), region="main"),
+]
+
 SCENARIOS = [
     Scenario(
         "smoke", "the driver itself: start claude, send a prompt, read the answer",
@@ -519,6 +560,10 @@ SCENARIOS = [
     Scenario(
         "rework-ahead", "MR !3: t1's fix made while t3 was current, put aside, back by itself after t3's push", WORK,
         needs_rig=True, mods=[MOD], fast_check=True, steps=[*REWORK_AHEAD]),
+
+    Scenario(
+        "rework-combined", "MR !3, main moved: t1's and t2's fixes and a rebase in one push, recorded on both", WORK,
+        needs_rig=True, mods=[MOD], fast_check=True, steps=[*REWORK_COMBINED]),
 
     Scenario(
         "try-scrolling", "MR !4: every sidebar area with more than it shows, beside ones that fit, for a person to try (--keep)",
