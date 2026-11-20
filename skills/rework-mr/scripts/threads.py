@@ -103,6 +103,7 @@ from lib.mr_common import (
     first_name,  # noqa: E402
     people,
     hold,
+    held as holding,
     load,
     loc_md,
     num,
@@ -3310,11 +3311,11 @@ def push_fix(ctx, iid, path, tid, committed=False, take_in=False):
             # The push goes on from the agent's commits as this press's: a token of it, good
             # for one push, and dropped by a new fix or new checks.
             token = secrets.token_hex(4)
-            hold(path)
-            state = load(path)
-            topic_for(state, tid).update(push_token=token,
-                                         handed_from=checks._out(root, "rev-parse", "HEAD"))
-            save(path, state)
+            with holding(path):
+                state = load(path)
+                topic_for(state, tid).update(push_token=token,
+                                             handed_from=checks._out(root, "rev-parse", "HEAD"))
+                save(path, state)
             raise Handoff(handoff_brief(tid, fix, token, checks.skips_commit_hooks(rec)))
     # The branch as it was before this push rewrote it, and the MR's head on GitLab then,
     # both kept across a push cut short: what the remote holds must be in the first, and the
@@ -3322,10 +3323,10 @@ def push_fix(ctx, iid, path, tid, committed=False, take_in=False):
     before = t.get("push_from") or checks._out(root, "rev-parse", "HEAD")
     start = t.get("push_start") or (versions(ctx, iid) or [{}])[0].get("head_commit_sha")
     if not t.get("push_from"):
-        hold(path)
-        state = load(path)
-        topic_for(state, tid).update(push_from=before, push_start=start)
-        save(path, state)
+        with holding(path):
+            state = load(path)
+            topic_for(state, tid).update(push_from=before, push_start=start)
+            save(path, state)
     taken = None
     # The push goes to the MR's own branch or nowhere, whatever the checkout tracks.
     mr_branch = state.get("source_branch")
@@ -3355,13 +3356,13 @@ def push_fix(ctx, iid, path, tid, committed=False, take_in=False):
             # and does not add: the tree is recorded as checked, so a push stopped again
             # goes on from here, as one cut short after its commits (the agent's messages
             # are checked above; the reviewer's are not the agent's to check).
-            hold(path)
-            state = load(path)
-            topic = topic_for(state, tid)
-            topic.update(push_from=taken, push_start=taken,
-                         checked={**c, "tree": checks._out(root, "rev-parse", "HEAD^{tree}"), "taken_in": taken})
-            topic.pop("handed_from", None)
-            save(path, state)
+            with holding(path):
+                state = load(path)
+                topic = topic_for(state, tid)
+                topic.update(push_from=taken, push_start=taken,
+                             checked={**c, "tree": checks._out(root, "rev-parse", "HEAD^{tree}"), "taken_in": taken})
+                topic.pop("handed_from", None)
+                save(path, state)
             before = start = taken
         checks.push(root, rec, before, mr_branch)
     except checks.Stop as e:
@@ -3369,12 +3370,12 @@ def push_fix(ctx, iid, path, tid, committed=False, take_in=False):
         # stopped, until a push goes through or the fix goes. Commits on the remote the
         # branch lacks are the card's to take in, on the person's press.
         behind = isinstance(e, checks.Behind)
-        hold(path)
-        state = load(path)
-        topic_for(state, tid)["push_stopped"] = {
-            "why": str(e), "behind": behind,
-            "at": datetime.datetime.now(datetime.timezone.utc).isoformat()}
-        save(path, state)
+        with holding(path):
+            state = load(path)
+            topic_for(state, tid)["push_stopped"] = {
+                "why": str(e), "behind": behind,
+                "at": datetime.datetime.now(datetime.timezone.utc).isoformat()}
+            save(path, state)
         if behind:
             raise Handoff(f"Pushing {tid}'s fix stopped: {e}\n\nThe fix's commits are made. Its "
                           "card now offers Take in and push, which puts those commits on top of "
@@ -3402,26 +3403,26 @@ def push_fix(ctx, iid, path, tid, committed=False, take_in=False):
     # Whether it came with a rebase is GitLab's to say: the version it made stands on
     # another base than the one before it (as review-mr reads the author's pushes).
     base, rebase = pushed_base(versions(ctx, iid), head)
-    hold(path)
-    state = load(path)
-    t = topic_for(state, tid)
-    push = {"before": frm, "start": start, "after": head, "url": url, "clean": clean,
-            "rebase": rebase, "at": datetime.datetime.now(datetime.timezone.utc).isoformat()}
-    # How it differed from the plan agreed, kept with the push: its card's story says so
-    # after the push too. This topic's plan, not the plans of the topics it carries.
-    t.setdefault("pushes", []).append(
-        {**push, "differs": ((t.get("fix") or {}).get("compare") or {}).get("differs")})
-    keys = [push_key(tid, len(t["pushes"]))]
-    took(t)
-    if url:
-        t["diff_url"] = url
-    # The fix of every topic the user asked to fix along with this one is in this push too:
-    # each records it as its own, and its card and `Fixed:` reply go on from there.
-    for c in (t.get("fix") or {}).get("carries") or []:
-        other = topic_for(state, c)
-        if other and other is not t and carry_push(other, push):
-            keys.append(push_key(c, len(other["pushes"])))
-    save(path, state)
+    with holding(path):
+        state = load(path)
+        t = topic_for(state, tid)
+        push = {"before": frm, "start": start, "after": head, "url": url, "clean": clean,
+                "rebase": rebase, "at": datetime.datetime.now(datetime.timezone.utc).isoformat()}
+        # How it differed from the plan agreed, kept with the push: its card's story says so
+        # after the push too. This topic's plan, not the plans of the topics it carries.
+        t.setdefault("pushes", []).append(
+            {**push, "differs": ((t.get("fix") or {}).get("compare") or {}).get("differs")})
+        keys = [push_key(tid, len(t["pushes"]))]
+        took(t)
+        if url:
+            t["diff_url"] = url
+        # The fix of every topic the user asked to fix along with this one is in this push
+        # too: each records it as its own, and its card and `Fixed:` reply go on from there.
+        for c in (t.get("fix") or {}).get("carries") or []:
+            other = topic_for(state, c)
+            if other and other is not t and carry_push(other, push):
+                keys.append(push_key(c, len(other["pushes"])))
+        save(path, state)
     # The fix as pushed, for the diff viewer after the push, held in git against the force
     # push that leaves both commits on no branch. Where it starts on GitLab's head from
     # before a rebase, from that head rebased onto the version's base: what the rebase
@@ -4101,12 +4102,16 @@ def main():
         if ui.drawn() and not pressed:
             # The one push that is not a press itself: the agent's commits, going on from a
             # press that handed them over, by the token that press stored.
-            t = topic_for(state, args.topic) or die(f"no topic {args.topic}")
-            if not (args.committed and args.token and args.token == t.get("push_token")):
-                die("pushing is the user's press, on the fix's card; nothing else pushes.")
-            t.pop("push_token")
+            # Spent under the lock, on the state as it is now: `push` runs unheld, and a
+            # write made since this run read it would otherwise be lost.
+            with holding(path):
+                state = load(path)
+                t = topic_for(state, args.topic) or die(f"no topic {args.topic}")
+                if not (args.committed and args.token and args.token == t.get("push_token")):
+                    die("pushing is the user's press, on the fix's card; nothing else pushes.")
+                t.pop("push_token")
+                save(path, state)
             pressed = True
-            save(path, state)
         try:
             state, url = push_fix(ctx, iid, path, args.topic, args.committed, args.take_in)
         except Handoff as e:

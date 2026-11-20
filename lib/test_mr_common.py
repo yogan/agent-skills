@@ -103,6 +103,41 @@ class TestHold(unittest.TestCase):
                                  timeout=10)
             self.assertEqual(run.stdout.strip(), "held twice")
 
+    def test_a_block_holds_it_only_while_it_runs(self):
+        import subprocess
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "state.json")
+            code = (f"import sys; sys.path.insert(0, {root!r}); from lib.mr_common import held\n"
+                    f"with held({path!r}):\n    print('in', flush=True); sys.stdin.readline()\n"
+                    "print('out', flush=True); sys.stdin.readline()")
+            first = subprocess.Popen([sys.executable, "-c", code], stdin=subprocess.PIPE,
+                                     stdout=subprocess.PIPE, text=True)
+            self.assertEqual(first.stdout.readline().strip(), "in")
+            second = subprocess.Popen([sys.executable, "-c", self.RUN.format(root=root, path=path)],
+                                      stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True)
+            with self.assertRaises(subprocess.TimeoutExpired):
+                second.wait(timeout=0.5)              # waits on the block
+            first.stdin.write("\n")
+            first.stdin.flush()
+            self.assertEqual(first.stdout.readline().strip(), "out")
+            # The first run goes on, and the second has the state meanwhile.
+            self.assertEqual(second.stdout.readline().strip(), "held")
+            second.communicate("\n")
+            first.communicate("\n")
+
+    def test_a_block_inside_a_run_that_holds_it_keeps_it_held(self):
+        from lib import mr_common
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "state.json")
+            key = os.path.realpath(path)
+            self.addCleanup(lambda: mr_common._held.pop(key, None) and None)
+            mr_common.hold(path)
+            with mr_common.held(path):
+                pass
+            self.assertIn(key, mr_common._held)
+            mr_common._held.pop(key).close()
+
     def test_save_replaces_the_file_whole(self):
         with tempfile.TemporaryDirectory() as d:
             path = os.path.join(d, "state.json")

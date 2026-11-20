@@ -2,6 +2,7 @@
 rework-mr's threads.py — genuinely identical apart from a trivial parameter, unlike the
 two skills' state machines and rendering logic, which differ for real domain reasons
 and stay duplicated (see CLAUDE.md's "Sharing vs. duplication")."""
+import contextlib
 import datetime
 import json
 import os
@@ -195,6 +196,25 @@ def hold(path):
         _held[key] = fd
     except (ImportError, OSError):
         pass
+
+
+@contextlib.contextmanager
+def held(path):
+    """`hold` for the length of a `with` block only, for a run that takes minutes (a push
+    with its hooks) and writes the state now and then: a press or an update check waits out
+    one short write, not the whole run. Inside a run that holds the state already, it stays
+    held: the block is the run's own."""
+    key = os.path.realpath(path)
+    if key in _held:
+        yield
+        return
+    hold(path)
+    try:
+        yield
+    finally:
+        fd = _held.pop(key, None)
+        if fd:
+            fd.close()                  # closing the descriptor releases its lock
 
 
 def topic_for(state, tid):

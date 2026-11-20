@@ -17,7 +17,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
-from contextlib import redirect_stderr, redirect_stdout
+from contextlib import nullcontext, redirect_stderr, redirect_stdout
 from unittest import mock
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -2328,14 +2328,15 @@ class TestCardFace(unittest.TestCase):
 class TestHandedOverPush(unittest.TestCase):
     """The model's `push --committed` finishing a press that handed it the commits."""
 
-    def run_push(self, t1, *argv):
+    def run_push(self, t1, *argv, fresh=None):
         state = {"topics": [t1], "threads": {}}
         patches = [mock.patch.dict(os.environ, {"REVIEW_UI_DRAWN": "1", T.PRESS_ENV: ""}),
                    mock.patch.object(T, "resolve_state", return_value=({}, 3, "/s", state)),
                    mock.patch.object(T, "push_fix", return_value=(state, "http://gl/diff")),
                    mock.patch.object(T, "post_reply", return_value="posted"),
-                   mock.patch.object(T, "load", return_value=state),
+                   mock.patch.object(T, "load", return_value=fresh or state),
                    mock.patch.object(T, "save"), mock.patch.object(T, "hold"),
+                   mock.patch.object(T, "holding", side_effect=lambda p: nullcontext()),
                    mock.patch.object(T, "sync"), mock.patch.object(T, "fetch_threads"),
                    mock.patch.object(T, "current_user"),
                    mock.patch.object(sys, "argv", ["threads.py", "push", "t1", *argv])]
@@ -2353,6 +2354,17 @@ class TestHandedOverPush(unittest.TestCase):
         post.assert_not_called()
         self.assertIn("end the turn here", self.out.getvalue())
         self.assertIn("never post or resolve", self.out.getvalue())
+
+    def test_the_token_is_spent_on_the_state_as_it_is_now(self):
+        """`push` runs unheld: the token was popped from the state this run read at its
+        start and that state saved whole, losing a write made in between."""
+        fresh = {"topics": [{"id": "t1", "push_token": "abcd1234", "reply": "written meanwhile"}],
+                 "threads": {}}
+        self.run_push({"id": "t1", "push_token": "abcd1234"}, "--committed", "--token", "abcd1234",
+                      fresh=fresh)
+        T.holding.assert_called_with("/s")
+        saved = T.save.call_args.args[1]
+        self.assertEqual(saved["topics"][0], {"id": "t1", "reply": "written meanwhile"})
 
     def test_push_takes_no_resolve(self):
         with mock.patch("sys.stderr", new_callable=io.StringIO), self.assertRaises(SystemExit):
@@ -3280,6 +3292,7 @@ class TestPushFix(unittest.TestCase):
         self.t1["checked"] = {"ok": True, "tree": "T1", "record": "R", "ran": ["frontend checks"], "new": []}
         for target, kw in (("load", {"side_effect": lambda p: self.state}),
                            ("save", {}), ("hold", {}),
+                           ("holding", {"side_effect": lambda p: nullcontext()}),
                            ("repo_root", {"return_value": "/repo"}),
                            ("versions", {"return_value": [{"id": 7, "head_commit_sha": "NEW"}]}),
                            ("working_diff", {"return_value": "diff"})):
@@ -3309,6 +3322,9 @@ class TestPushFix(unittest.TestCase):
 
     def test_a_checked_fix_is_committed_squashed_pushed_and_linked(self):
         _, url = self.push()
+        # The state is held around each write, never for the whole push with its hooks.
+        self.hold.assert_not_called()
+        self.assertTrue(self.holding.called)
         self.checks.commit_fixup.assert_called_once()
         self.assertEqual(self.checks.commit_fixup.call_args.args[3], "abc123")
         self.checks.autosquash.assert_called_once_with("/repo", "abc123", "T1")
@@ -4131,6 +4147,7 @@ class TestPushFixGit(unittest.TestCase):
         TestRounds.agree(self.state, "t1")
         self.t1 = T.topic_for(self.state, "t1")
         for target, kw in (("load", {"side_effect": lambda p: self.state}), ("save", {}), ("hold", {}),
+                           ("holding", {"side_effect": lambda p: nullcontext()}),
                            ("repo_root", {"return_value": self.r.root}),
                            ("versions", {"return_value": [{"id": 7, "head_commit_sha": "S"}]}),
                            ("diff_url_for", {"return_value": "URL"})):
