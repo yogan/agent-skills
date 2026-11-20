@@ -289,11 +289,25 @@ T3_FIXED = [
                   r"^2 frank$", wait=SOON),
 ]
 T1_RESOLVED = Check(thread_on("comments/api/query-keys.ts", 'd["notes"][0]["resolved"]'), r"^True$", wait=SOON)
+# The same, its reply asked for in words: a real model drafts the decline either when the plan
+# is agreed (Post comes up after the push) or after the push (Reply… does), and a prompt
+# reaches both.
+T3_FIXED_TYPED = [
+            *T3_FIXED[:2],
+            Expect(r"You pushed a fix", region="screen", wait=60),
+            Prompt("t3: the reply declines it as out of scope here; the TODO marks it for a "
+                   "follow-up. Draft it and show it.", timeout=600),
+            *T3_FIXED[5:],
+]
 
 REWORK_AHEAD = [
             *MIND_START,
-            # t1's fix made while t3 was current: shown as t1's, ready to push, its card saying
-            # which topic the person was on, with the choice to keep it for later.
+            # On t3, its plan agreed, the person asks for t1's fix first: the fix is made while
+            # t3 is current, and shown as t1's, ready to push, its card saying which topic the
+            # person was on, with the choice to keep it for later.
+            Expect(current("t3"), region="panel", wait=60),
+            Expect(button('Fix it'), region="screen", wait=120),
+            Prompt("Before t3, fix t1 now.", timeout=900),
             Expect(current("t1"), region="panel", wait=60),
             Expect(button('Ack and push'), region="screen", wait=60),
             Expect(r"Made while you were on t3", region="screen"),
@@ -303,7 +317,7 @@ REWORK_AHEAD = [
             Expect(button('Fix it'), region="screen", wait=60),
             Check("git status --porcelain | wc -l", r"^\s*0$"),
             Check(DROPPED, r"refs/rework-mr/mr3/t1/dropped1/after"),
-            *T3_FIXED,
+            *T3_FIXED_TYPED,
             # t1 next: its fix back in the working tree, by itself. t3's push moved the files
             # on, so its checks run again before it is pushed.
             Expect(current("t1"), region="panel", wait=60),
@@ -635,7 +649,7 @@ SCENARIOS = [
         needs_rig=True, mods=[MOD], fast_check=True, steps=[*REWORK_MIND]),
 
     Scenario(
-        "rework-ahead", "MR !3: t1's fix made while t3 was current, put aside, back by itself after t3's push", WORK,
+        "rework-ahead", "MR !3: t1's fix asked for while t3 was current, put aside, back by itself after t3's push", WORK,
         needs_rig=True, mods=[MOD], fast_check=True, steps=[*REWORK_AHEAD]),
 
     Scenario(
