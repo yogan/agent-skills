@@ -158,8 +158,15 @@ class TestHostCss(unittest.TestCase):
     def test_callout_fill_opacity_stays_at_or_above_the_measured_floor(self):
         """The contrast gate measures the solid colour, so heavier transparency drifts."""
         import re
-        for value in re.findall(r"fill-opacity:\.(\d+)", render.HOST_CSS):
-            self.assertGreaterEqual(float(f"0.{value}"), 0.94)
+        rules = {"the page's light rule": render.HOST_CSS,
+                 "the page's dark rule": render.callout_dark_css(),
+                 **{f"the standalone {theme} image": css
+                    for theme, css in render.STANDALONE_CALLOUT.items()}}
+        for where, css in rules.items():
+            values = re.findall(r"fill-opacity:\s*([\d.]+)", css)
+            self.assertTrue(values, f"no fill-opacity in {where}")
+            for value in values:
+                self.assertGreaterEqual(float(value), 0.94, where)
 
     def test_page_css_bundles_the_vars_and_the_host_rules(self):
         css = render.page_css()
