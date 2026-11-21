@@ -13,6 +13,7 @@ import sys
 import threading
 import time
 import unittest
+from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -57,7 +58,18 @@ class TestEach(unittest.TestCase):
             parallel.each(boom, range(6))
 
     def test_the_pool_is_never_wider_than_the_work(self):
-        parallel.each(lambda n: n, range(2), workers=64)   # would raise if 0/negative
+        """By the width the pool is asked for: the executor never runs more calls at once than
+        there are items, however wide it is, so counting the calls could not tell."""
+        widths = []
+
+        class Recording(parallel.ThreadPoolExecutor):
+            def __init__(self, max_workers=None, **kwargs):
+                widths.append(max_workers)
+                super().__init__(max_workers=max_workers, **kwargs)
+
+        with mock.patch.object(parallel, "ThreadPoolExecutor", Recording):
+            self.assertEqual(parallel.each(lambda n: n, range(2), workers=64), [0, 1])
+        self.assertEqual(widths, [2])
 
     def test_workers_is_at_least_one(self):
         self.assertGreaterEqual(parallel.WORKERS, 1)
