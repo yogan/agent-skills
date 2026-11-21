@@ -200,12 +200,13 @@ def remap(hunks, start, end):
     if not hit:
         line = moved(end)
         return line, "same" if line == end else "shifted"
-    covered = sum(b for _, b, _, _ in hit)
-    if all(d == 0 for _, _, _, d in hit) and covered >= end - start + 1:
-        return max(hit[0][2], 1), "deleted"
-    last = max(c + d - 1 if d else c for _, _, c, d in hit)
+    # The noted lines no hunk touches: they survive, so the code is not gone however much a
+    # hunk deleted around them.
     tail = [line for line in range(start, end + 1)
             if not any(a <= line <= a + b - 1 for a, b, _, _ in hit)]
+    if all(d == 0 for _, _, _, d in hit) and not tail:
+        return max(hit[0][2], 1), "deleted"
+    last = max(c + d - 1 if d else c for _, _, c, d in hit)
     return max([last] + [moved(line) for line in tail]), "rewritten"
 
 

@@ -392,6 +392,10 @@ class TestRemap(unittest.TestCase):
     def test_deleting_the_first_lines_of_a_file_keeps_the_note_on_line_one(self):
         self.assertEqual(S.remap([(1, 2, 0, 0)], 1, 2), (1, "deleted"))
 
+    def test_a_deletion_that_leaves_some_noted_lines_is_no_deletion(self):
+        """Lines 1-5 deleted under a note on 5-6: line 6 survives, now line 1."""
+        self.assertEqual(S.remap([(1, 5, 0, 0)], 5, 6), (1, "rewritten"))
+
 
 class TestFromASubfolder(Repo):
     def test_a_command_run_in_a_subfolder_sees_the_whole_change_by_its_repository_paths(self):
