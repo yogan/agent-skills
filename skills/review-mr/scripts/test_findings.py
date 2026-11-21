@@ -1023,9 +1023,17 @@ class TestSettledThreads(unittest.TestCase):
 
 class TestSync(unittest.TestCase):
     def test_local_fields_survive_a_fetch(self):
-        state = new_state(threads={"d1": {"gone": True, "awaiting": "you"}})
+        state = new_state(threads={"d1": {"kept": True, "awaiting": "you"}})
+        with patch.object(F, "LOCAL_THREAD_FIELDS", ("kept",)):
+            F.sync(state, {"d1": {"awaiting": "them"}}, None, None)
+        self.assertEqual(state["threads"]["d1"], {"awaiting": "them", "kept": True})
+
+    def test_a_thread_listed_again_is_no_longer_gone(self):
+        """One fetch that came back empty marked every thread gone, and it stuck."""
+        state = new_state(threads={"d1": {"awaiting": "you"}})
+        F.sync(state, {}, None, None)
         F.sync(state, {"d1": {"awaiting": "them"}}, None, None)
-        self.assertEqual(state["threads"]["d1"], {"awaiting": "them", "gone": True})
+        self.assertNotIn("gone", state["threads"]["d1"])
 
     def test_a_thread_missing_from_live_is_marked_resolved_and_gone(self):
         state = new_state(threads={"d1": {"awaiting": "you", "resolved": False}})

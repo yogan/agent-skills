@@ -453,7 +453,11 @@ def kind_icon(t):
 # fetched fields means adding a field to fetch_threads() cannot silently fail to
 # propagate onto threads that already exist locally (which is exactly what happened
 # when `last_at` was introduced).
-LOCAL_THREAD_FIELDS = ("gone",)
+#
+# `gone` is not one: it is set again on every sync for each thread the fetch no longer
+# lists, and a thread listed again is not deleted. Kept across a fetch, one fetch that came
+# back empty left every thread gone for good, out of adoption and skipped by `resolve`.
+LOCAL_THREAD_FIELDS = ()
 
 
 def sync(state, live, ctx, iid):
