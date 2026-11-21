@@ -850,15 +850,19 @@ def why_block(current, baseline, reported, machine_costs):
     if told:
         parts.append(f'<div class="note">{html.escape(told)}</div>')
 
-    # What the counts prove, independent of anything the author claimed.
-    grew = [r for r in reported
-            if r["counts"]["compiles"][1] is not None
-            and r["counts"]["compiles"][0] != r["counts"]["compiles"][1]]
-    if grew:
+    # What the counts prove, independent of anything the author claimed. All three: a change
+    # that leaves the candidates alone can still double the inspections or the browser starts,
+    # and calling that "the same work" credits the whole time change to speed.
+    names = {"compiles": "layout candidates", "pages": "inspections via browser",
+             "launches": "browser starts"}
+    moved = [label for name, label in names.items()
+             if any(r["counts"][name][1] is not None
+                    and r["counts"][name][0] != r["counts"][name][1] for r in reported)]
+    if moved:
         parts.append(
             '<p class="lead">The engine is doing a <b>different amount of work</b> than when '
-            'the baseline was recorded — the layout candidates above changed. A slower time is '
-            'expected when the work grew, and is not a regression.</p>')
+            f'the baseline was recorded — the {html.escape(" and ".join(moved))} above changed. '
+            'A slower time is expected when the work grew, and is not a regression.</p>')
     else:
         parts.append(
             '<p class="lead">The engine did <b>exactly the same work</b> as when the baseline '

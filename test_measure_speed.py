@@ -383,6 +383,13 @@ class TestReport(unittest.TestCase):
         self.assertIn("different amount of work", html)
         self.assertIn("not a regression", html)
 
+    def test_more_inspections_with_the_same_candidates_is_different_work(self):
+        current = record(corpus=run(90.0, pages=400))
+        baseline = record(corpus=run(72.0, pages=200))
+        html = self.section(speed.build(current, baseline, []), "why")
+        self.assertNotIn("exactly the same work", html)
+        self.assertIn("the inspections via browser above changed", html)
+
     def test_identical_work_says_so(self):
         html = self.section(speed.build(record(corpus=40.0), record(corpus=80.0), []), "why")
         self.assertIn("exactly the same work", html)
