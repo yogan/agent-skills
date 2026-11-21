@@ -248,8 +248,10 @@ def _measure_candidates(spec, name, combos, theme, standalone=False, layout=None
         # has grown the drawing and shrunk every letter in it. Measured from the SVG rather
         # than in the browser because the size gate already knows how — and it is the same
         # number the layout search ranks on, so the two agree about what "smaller" means.
+        # At the scale the image is shown at: a standalone one is not shrunk into a column,
+        # so its extra width costs no letter any size.
         try:
-            metrics = size_gate.analyse(svg)
+            metrics = size_gate.analyse(svg, standalone=standalone)
             small = (metrics["fmin"], metrics["rend_h"])
         except GateError:
             small = (None, None)

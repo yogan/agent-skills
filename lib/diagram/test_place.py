@@ -594,6 +594,37 @@ class TestOneDrawingForTheWholeSearch(unittest.TestCase):
                          {repr({"standalone": True, "layout": None, "layers": 30})})
 
 
+class TestTextSizeAtTheScaleItIsShown(unittest.TestCase):
+    """A standalone image is shown at its natural size, so its candidates' text is not shrunk
+    for width. Measured as if scaled into the explainer's 832px of drawing room, a wider
+    candidate was charged smaller text it never had, and that outranks covering a landmark."""
+
+    WIDE = ('<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="200" '
+            'viewBox="0 0 1200 200"><text font-size="13">x</text></svg>')
+
+    def setUp(self):
+        self.real = (place.render_mod.standalone, place.render_mod.render,
+                     place.render_mod.harness_html, place.browser_mod.measure)
+        place.render_mod.standalone = place.render_mod.render = lambda *a, **k: self.WIDE
+        place.render_mod.harness_html = lambda svg, **k: svg
+        place.browser_mod.measure = lambda jobs: [{} for _ in jobs]
+
+    def tearDown(self):
+        (place.render_mod.standalone, place.render_mod.render,
+         place.render_mod.harness_html, place.browser_mod.measure) = self.real
+
+    def fmin(self, standalone):
+        [(_anchors, measured)] = place._measure_candidates(
+            STATE, "t", [()], "dark", standalone=standalone)
+        return measured["fmin"]
+
+    def test_a_standalone_candidates_text_is_its_natural_size(self):
+        self.assertEqual(self.fmin(standalone=True), 13.0)
+
+    def test_an_embedded_candidates_text_is_scaled_into_the_column(self):
+        self.assertLess(self.fmin(standalone=False), 13.0)
+
+
 class TestUnplaceable(unittest.TestCase):
     def test_a_clip_free_report_has_no_unplaceable_entries(self):
         self.assertEqual(place.unplaceable([{"clip": 0, "index": 0}]), [])
