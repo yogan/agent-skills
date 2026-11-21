@@ -199,12 +199,13 @@ class TestRecording(unittest.TestCase):
         ran.assert_not_called()
 
     def test_every_scenario_that_runs_unattended_has_a_recording(self):
+        """Looked up the way `verify` looks it up: a scenario that plays another's recording
+        needs that one, and a missing recording would otherwise surface only at the push level."""
         import scenarios
         missing = [sc.name for sc in scenarios.SCENARIOS
                    if not any(isinstance(s, drive.Handover) for s in sc.steps)
-                   and not os.path.isfile(drive.mock_model.recording_path(sc.name))]
-        if missing:
-            self.skipTest(f"not recorded yet: {', '.join(missing)}")
+                   and not os.path.isfile(drive.mock_model.recording_path(sc.recording or sc.name))]
+        self.assertEqual(missing, [])
 
     def test_a_command_is_split_where_the_shell_splits_it(self):
         self.assertEqual(drive.segments(
