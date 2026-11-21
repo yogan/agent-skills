@@ -61,6 +61,20 @@ class TestRefusesToGuess(unittest.TestCase):
         with self.assertRaisesRegex(GateError, "no font-size"):
             size.analyse('<svg width="10" height="10" viewBox="0 0 10 10"><g/></svg>')
 
+    def test_a_standalone_images_inlined_css_is_not_text(self):
+        """The rule for a legend's words is inlined into every standalone image, legend or
+        not; its size counted, no standalone image could ever have no text found."""
+        from lib.diagram import render
+        bare = '<svg width="10" height="10" viewBox="0 0 10 10"><g/></svg>'
+        with self.assertRaisesRegex(GateError, "no font-size"):
+            size.analyse(render._inline_style(bare, render.STANDALONE_CSS), standalone=True)
+
+    def test_that_rule_does_not_join_the_drawings_own_sizes(self):
+        from lib.diagram import render
+        m = size.analyse(render._inline_style(svg(400, 300, fonts=(14,)),
+                                              render.STANDALONE_CSS), standalone=True)
+        self.assertEqual(m["fmin"], 14.0)
+
     def test_a_degenerate_size_raises(self):
         with self.assertRaisesRegex(GateError, "degenerate"):
             size.analyse('<svg width="0" height="0" viewBox="0 0 0 0">'

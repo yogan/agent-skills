@@ -99,6 +99,9 @@ ANNOTATION_PX = 13
 
 _FONT_ATTR = re.compile(r'font-size="([\d.]+)')
 _FONT_CSS = re.compile(r"font-size:\s*([\d.]+)px")
+# A CSS rule styling a legend's words (`foreignObject .md p{…}`), whose size is counted per
+# paragraph instead; see `analyse`.
+_ANNOTATION_RULE = re.compile(r"foreignObject\b[^{}<>]*\{[^}]*\}")
 # A subtitle span, tagged by compact.style_detail_lines so the two floors can be told apart.
 _DETAIL_SPAN = re.compile(r'<tspan class="d2-detail"[^>]*font-size:\s*([\d.]+)px')
 # An edge label: d2's own class for one, which the post-processing leaves in place.
@@ -142,8 +145,12 @@ def analyse(svg, avail_w=AVAIL_W, standalone=False):
 
     scale = 1.0 if standalone else min(1.0, avail_w / nat_w)
 
-    fonts = [float(x) for x in _FONT_ATTR.findall(svg)]
-    fonts += [float(x) for x in _FONT_CSS.findall(svg)]
+    # Not a rule for a legend's words: those are counted below, once per paragraph actually
+    # drawn. The rule a standalone image inlines for them would otherwise join the pool on
+    # every such image, legend or not, and keep the refusal below from ever firing there.
+    drawn = _ANNOTATION_RULE.sub("", svg)
+    fonts = [float(x) for x in _FONT_ATTR.findall(drawn)]
+    fonts += [float(x) for x in _FONT_CSS.findall(drawn)]
     fonts = [f for f in fonts if f > 0]
     if not fonts:
         # A diagram with no declared font size is either empty or the parse missed
