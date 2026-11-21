@@ -2865,6 +2865,7 @@ class TestAnswersInCode(unittest.TestCase):
         files = [{"new_path": "a.ts", "old_path": "a.ts", "diff": diff}]
         with patch.object(F, "mr_head", return_value=head), \
                 patch.object(F, "_compare", return_value=files), \
+                patch.object(F, "versions", return_value=[]), \
                 patch.object(F, "_gl_compare", return_value={"stat": "`+2/−1` · 1 file"}):
             F.check_pushes(self.state, None, 1, "b0")
 
@@ -2916,11 +2917,52 @@ class TestAnswersInCode(unittest.TestCase):
         # news again, though the check never noted it as a push of its own.
         self.state["seen_head"] = "c1"
         self.t["code_seen"] = {"sha": "c1", "mark": F.decision_mark(self.state, self.t)}
-        self.state["threads"]["d1"]["last_at"] = "2026-11-05T10:00:00Z"     # their reply
+        self.state["threads"]["d1"].update(last_at="2026-11-05T10:00:00Z",     # their reply
+                                           notes=[{"mine": True, "at": "2026-11-05T10:00:00Z"}])
         self.push(TouchedDiff.REWRITE)
         self.assertEqual(F.topic_status(self.state, self.t), "open")
         self.assertEqual(self.t["watch"]["sha"], "c1")
         self.assertNotIn("pushed", self.t)
+
+    def test_another_reviewer_s_note_does_not_answer_a_push(self):
+        """A peer's "+1" in the user's thread left the thread waiting on the author, and took
+        the push with it: the author's answer in code was never put to the user."""
+        mine = {"mine": True, "at": "2026-11-04T10:00:00Z"}
+        self.state["threads"]["d1"]["notes"] = [mine]
+        self.push(TouchedDiff.REWRITE)
+        self.state["threads"]["d1"].update(
+            last_at="2026-11-05T10:00:00Z", awaiting="author",
+            notes=[mine, {"mine": False, "at": "2026-11-05T10:00:00Z"}])
+        self.push(TouchedDiff.REWRITE)
+        self.assertEqual(F.topic_status(self.state, self.t), "needs_ack")
+        self.assertEqual(self.t["pushed"]["to"], "c1")
+
+    def test_the_author_resolving_does_not_answer_a_push(self):
+        self.push(TouchedDiff.REWRITE)
+        self.state["threads"]["d1"].update(resolved=True, resolved_mine=False)
+        self.assertIsNotNone(F.pushed_of(self.state, self.t))
+        self.state["threads"]["d1"]["resolved_mine"] = True
+        self.assertIsNone(F.pushed_of(self.state, self.t))
+
+    def test_a_push_marked_by_an_older_rule_waits_until_the_user_acts(self):
+        """A push noted before the mark's rule changed carried a mark the new rule never
+        makes, so the first check after counted it as answered: it left "waiting for your
+        look" though the user had done nothing."""
+        self.push(TouchedDiff.REWRITE)
+        self.t["pushed"]["mark"] = "0123456789ab"            # as the older rule stored it
+        self.push(TouchedDiff.REWRITE)
+        self.assertEqual(F.topic_status(self.state, self.t), "needs_ack")
+        self.assertEqual(self.t["pushed"]["mark"], F.decision_mark(self.state, self.t))
+        self.state["threads"]["d1"]["notes"] = [{"mine": True, "at": "2026-11-05T10:00:00Z"}]
+        self.push(TouchedDiff.REWRITE)
+        self.assertNotIn("pushed", self.t)
+
+    def test_code_a_round_showed_under_an_older_rule_is_not_an_answer(self):
+        self.state["seen_head"] = "c1"
+        self.t["code_seen"] = {"sha": "c1", "mark": "0123456789ab"}
+        self.push(TouchedDiff.REWRITE, head="c2")
+        self.assertEqual(self.t["code_seen"]["mark"], F.decision_mark(self.state, self.t))
+        self.assertEqual(self.t["pushed"]["to"], "c2")
 
     def test_a_comment_gitlab_moved_on_is_watched_from_where_it_was_written(self):
         """GitLab moves a comment's position onto every push that leaves its line as it was,

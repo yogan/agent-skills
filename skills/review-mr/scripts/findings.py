@@ -1920,20 +1920,48 @@ def answer_mark(state, t):
 # push that changed them makes the topic the user's to look at, like a reply would.
 
 
+# The rule `decision_mark` computes by, carried in every mark it makes. A mark is only ever
+# compared with one made now, so a change to the rule would make every stored mark differ
+# and every waiting push count as answered though the user did nothing. A mark from an
+# older rule (one without this prefix: the rule before it counted anybody's note) is
+# remade by the next update check instead (`_remark`). Bump it whenever the rule changes.
+MARK_RULE = "2:"
+
+
 def decision_mark(state, t):
-    """What the user last did on `t`, as a fingerprint: its threads' newest notes and
-    resolutions, and its ack. A push noted against one of these is answered once it moves."""
-    marks = [(x, (state["threads"].get(x) or {}).get("last_at"),
-              bool((state["threads"].get(x) or {}).get("resolved"))) for x in t["thread_ids"]]
-    return hashlib.sha1(json.dumps([marks, t.get("state"), t.get("acked_at")]).encode()
-                        ).hexdigest()[:12]
+    """What the user last did on `t`, as a fingerprint: their own newest note in each of its
+    threads, the threads they resolved, and the topic's ack. A push noted against one of these
+    is answered once it moves. Only the user's own doing: another reviewer's "+1", or the
+    author resolving, answers nothing the user was asked to look at."""
+    marks = []
+    for x in t["thread_ids"]:
+        thr = state["threads"].get(x) or {}
+        mine = [n.get("at") for n in thr.get("notes") or [] if n.get("mine") and n.get("at")]
+        marks.append((x, max(mine) if mine else None,
+                      bool(thr.get("resolved") and thr.get("resolved_mine"))))
+    return MARK_RULE + hashlib.sha1(json.dumps([marks, t.get("state"), t.get("acked_at")]).encode()
+                                    ).hexdigest()[:12]
+
+
+def _old_rule(mark):
+    return bool(mark) and not mark.startswith(MARK_RULE)
+
+
+def _remark(state, t):
+    """Remake the marks on `t` that an older rule made: no answer, just the same moment in
+    today's terms, so what the user does from here on is compared like with like."""
+    for rec in (t.get("pushed"), t.get("code_seen")):
+        if rec and _old_rule(rec.get("mark")):
+            rec["mark"] = decision_mark(state, t)
 
 
 def pushed_of(state, t):
     """The push that changed `t`'s lines and that the user has not answered yet, or None:
     `{"from", "to", "at"}`, the code before and after."""
     p = t.get("pushed")
-    return p if p and ui.drawn() and p.get("mark") == decision_mark(state, t) else None
+    # A mark from an older rule still waits: the next check remakes it (`_remark`).
+    return (p if p and ui.drawn() and (p.get("mark") == decision_mark(state, t)
+                                       or _old_rule(p.get("mark"))) else None)
 
 
 def watch_of(t, x, origin=None):
@@ -2038,6 +2066,7 @@ def check_pushes(state, ctx, iid, base):
     for t in state["topics"]:
         if not t["thread_ids"]:
             continue
+        _remark(state, t)
         x = state["threads"].get(t["thread_ids"][0])
         w = watch_of(t, x, lambda x=x: origin(x))
         if not w:
