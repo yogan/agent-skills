@@ -243,6 +243,20 @@ class TestACalloutRestingOnALine(unittest.TestCase):
     def test_it_will_not_push_the_run_through_a_shape(self):
         self.assertIsNone(self.cleared(obstacles=[arrows.Box((300, 205, 400, 215))]))
 
+    def test_a_run_too_short_to_keep_its_arrowhead_straight_is_left_alone(self):
+        """The two turns take their room from the start of the run. On a short one the line
+        ran on past its tip and back, arrowhead reversed, or met it on a bend."""
+        for length in (14, 20):
+            short = f"M 100.000000 200.000000 L {100 + length}.000000 200.000000"
+            resting = arrows.Box((100, 150, 100 + length, 199))
+            self.assertIsNone(route._clear(short, [resting], [], self.BIG, []), length)
+
+    def test_a_short_run_that_keeps_its_arrowhead_straight_is_still_stepped(self):
+        moved = route._clear("M 100.000000 200.000000 L 130.000000 200.000000",
+                             [arrows.Box((100, 150, 130, 199))], [], self.BIG, [])
+        last = arrows.points(moved)[-2:]
+        self.assertGreaterEqual(last[1][0] - last[0][0], arrows.APPROACH)
+
     def test_a_route_with_more_than_one_run_is_left_alone(self):
         """The single-run shape is the one where stepping out needs no corner rebuilt at the
         far end. Anything else is refused rather than guessed at."""

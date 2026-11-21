@@ -323,6 +323,11 @@ def _clear(d, callouts, others, canvas, obstacles):
         return None                      # too shallow to draw as two turns at all
     elbow = start[index] + way * (reach + arrows.MIN_RUN)
     turn, out = elbow + way * reach, elbow + way * reach * 2
+    if (end[index] - out) * way < arrows.APPROACH:
+        # The two turns use up the run: past the second, the line would end on a bend, or
+        # run BACK to its tip and point its arrowhead away from what it points at. Neither
+        # `terminals` nor `crosses` below notices, as the line still ends at the same spot.
+        return None
     moved = _emit([
         ("M", [start]),
         ("L", [_at(start, index, elbow)]),
