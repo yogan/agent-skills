@@ -190,7 +190,7 @@ def mr_author_username(mr):
 
 def new_state(ctx, mr):
     """Mirrors rework-mr's threads.py's `new_state` in shape, not content — this state
-    carries fields (`author`, `seq`, `ignored`, ...) that reflect reviewing someone
+    carries fields (`author`, `seq`, ...) that reflect reviewing someone
     else's MR, which threads.py's own state has no use for. Stays duplicated rather
     than shared: see CLAUDE.md's "Sharing vs. duplication"."""
     return {
@@ -199,7 +199,7 @@ def new_state(ctx, mr):
         "author": mr_author(mr), "author_username": mr_author_username(mr),
         "lang": get_lang(ctx["slug"]),
         "last_reviewed_head": None, "seq": 0,
-        "threads": {}, "topics": [], "ignored": [],
+        "threads": {}, "topics": [],
     }
 
 
@@ -511,7 +511,6 @@ def adopt_inbound(state, ctx, iid):
     to a live read at render time exactly like before this function froze anything.
     """
     linked = {th for t in state["topics"] for th in t["thread_ids"]}
-    ignored = set(state.get("ignored") or [])       # dropped inbound → stay dropped
     # A thread YOU opened is normally left to candidates/link, because it may be the
     # posted form of a ✎ draft — auto-adopting it would duplicate that topic. But that
     # only applies to a draft about the SAME FILE. Keying on "any draft pending" made
@@ -527,7 +526,7 @@ def adopt_inbound(state, ctx, iid):
     baseline = state.get("last_reviewed_head")
     baseline_ready = baseline is not None
     for tid, x in state["threads"].items():
-        if tid in linked or tid in ignored or x.get("gone"):
+        if tid in linked or x.get("gone"):
             continue
         # Someone else's thread that is already resolved the first time sync sees it was
         # settled without you — before your review began, or between two syncs. Adopting
