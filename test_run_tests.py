@@ -357,13 +357,36 @@ class TestDiscovery(unittest.TestCase):
         self.assertEqual(every - fast,
                          {"test_place_slow.py", "test_paste_gate_slow.py"})
 
-    def test_sharding_only_names_classes_unittest_will_accept(self):
-        """A shard runs as `python3 <file> <ClassName>`, so a plain helper class picked up
-        here would fail the shard outright."""
-        for path in rt.find_test_files(True, []):
-            for name in rt._classes(path):
-                with self.subTest(path=path.name, klass=name):
-                    self.assertTrue(name.startswith("Test"))
+    # Counts what unittest itself finds in a file, in all and class by class, in a process of
+    # its own: test files put their own folders on sys.path and import modules by short names.
+    COUNT = """if True:
+        import importlib.util, os, sys, unittest
+        path = sys.argv[1]
+        sys.path.insert(0, os.path.dirname(path))
+        spec = importlib.util.spec_from_file_location("counted", path)
+        module = importlib.util.module_from_spec(spec)
+        sys.modules["counted"] = module
+        spec.loader.exec_module(module)
+        load = unittest.defaultTestLoader
+        print(load.loadTestsFromModule(module).countTestCases())
+        print(sum(load.loadTestsFromName(name, module).countTestCases() for name in sys.argv[2:]))
+    """
+
+    def test_a_split_file_s_shards_run_exactly_its_tests(self):
+        """A shard runs as `python3 <file> <ClassName>`: a helper class picked up as one fails
+        it outright, a base class counted as one runs its tests twice, and a TestCase not
+        named `Test*` would be silently dropped. The files split today, by the box's list
+        and by being slow (`test_visualize.py` is the one that is)."""
+        split = set(rt.testbox.SPLIT) | {"skills/visualize/scripts/test_visualize.py"}
+        for rel in sorted(split):
+            path = rt.REPO_ROOT / rel
+            with self.subTest(rel):
+                out = subprocess.run([sys.executable, "-c", self.COUNT, str(path),
+                                      *rt._classes(path)],
+                                     capture_output=True, text=True, timeout=120)
+                self.assertEqual(out.returncode, 0, out.stderr[-2000:])
+                whole, shards = out.stdout.split()
+                self.assertEqual(shards, whole)
 
     def test_only_files_slow_enough_to_earn_it_are_split(self):
         files = list(rt.find_test_files(False, []))
