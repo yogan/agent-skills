@@ -2102,6 +2102,22 @@ class TestMergeTopics(unittest.TestCase):
         self.assertEqual([(t["id"], t["thread_ids"], t["source"]) for t in state["topics"]],
                          [("t2", ["d2", "d1"], "both")])
 
+    def test_what_pointed_at_a_merged_away_topic_points_at_the_one_kept(self):
+        """A proposal left on t1 showed no match, and settling it died on "no topic t1"."""
+        state = {"iid": 2, "threads": {}, "topics": [
+            {"id": "t1", "thread_ids": ["d1"], "source": "agent"},
+            {"id": "t2", "thread_ids": ["d2"], "source": "agent",
+             "peer_view": {"says": "needs", "advice": "merge", "into": "t1"}},
+            {"id": "t3", "thread_ids": ["d3"], "source": "peer",
+             "peer_view": {"says": "needs", "advice": "merge", "into": "t1"}}],
+            "proposals": [{"thread": "d9", "into": "t1"}]}
+        with patch.object(F, "resolve_state", return_value=(CTX, 2, "/s", state)), \
+                patch.object(F, "current_user"), patch.object(F, "save"), \
+                patch.object(sys, "argv", ["findings.py", "merge", "t2", "t1", "--iid", "2"]):
+            F.main()
+        self.assertEqual(state["proposals"][0]["into"], "t2")
+        self.assertEqual([t["peer_view"]["into"] for t in state["topics"]], [None, "t2"])
+
     def finding(self, tid, source, thread=None, draft=None):
         return {"id": tid, "source": source, "summary": f"{source} words", "severity": source,
                 "draft": draft, "thread_ids": [thread] if thread else []}

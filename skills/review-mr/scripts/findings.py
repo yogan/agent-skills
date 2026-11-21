@@ -4578,6 +4578,17 @@ def main():
         others = [o for o in others if o is not into]
         merge_findings(into, others)
         state["topics"] = [t for t in state["topics"] if not any(t is o for o in others)]
+        # What still points at a merged-away topic points at the one it went into: a proposal
+        # left on it showed no match and could not be settled ("no topic tN"). A peer view
+        # that would now advise merging a topic into itself advises nothing.
+        gone = {o["id"] for o in others}
+        for p in state.get("proposals") or []:
+            if p.get("into") in gone:
+                p["into"] = into["id"]
+        for t in state["topics"]:
+            v = t.get("peer_view")
+            if v and v.get("into") in gone:
+                v["into"] = None if t is into else into["id"]
         save(path, state)
     elif cmd == "own-review":
         if args.step == "done":
