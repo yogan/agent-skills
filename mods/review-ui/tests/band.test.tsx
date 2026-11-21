@@ -46,6 +46,7 @@ const world = (on: On, states: string[], extra: Record<string, Out> = {}, store:
   const placed: string[] = []
   const prompts: string[] = []
   const tool = { stdout: '' }
+  const held: Promise<void>[] = []
   let at = 0
   const answer = (o: Out) => ({
     value: { exitCode: o.exitCode ?? 0, stdout: o.stdout, stderr: o.stderr ?? '', isStdoutTruncated: false, isStderrTruncated: false },
@@ -53,7 +54,13 @@ const world = (on: On, states: string[], extra: Record<string, Out> = {}, store:
   on('process.run', ($, e) => {
     ran.push({ argv: e.argv, env: e.init?.env, cwd: e.init?.cwd, stdin: e.init?.stdin })
     const cmd = e.argv[2] ?? ''
-    if (cmd === 'state') return answer({ stdout: states[Math.min(at, states.length - 1)] ?? '' })
+    if (cmd === 'state') {
+      // Read as the script starts, answered once the test lets it (`w.held`): a read that
+      // is slow to come back, with whatever happened meanwhile not in it.
+      const read = answer({ stdout: states[Math.min(at, states.length - 1)] ?? '' })
+      const until = held.shift()
+      return until ? until.then(() => read) as never : read
+    }
     // `quote moves`: a view that moves its topic on as it is shown, to the next state.
     if (cmd === 'quote' && extra['quote moves']) { at += 1; return answer(extra['quote moves']) }
     if (cmd === 'quote') return answer(extra.quote ?? { stdout: view(e.argv[3] ?? '') })
@@ -105,12 +112,12 @@ const world = (on: On, states: string[], extra: Record<string, Out> = {}, store:
   on('ui.close', ($, e) => { panes.splice(panes.indexOf(e.id), 1); return undefined as never })
   on('ui.panes', () => ({ value: panes.map(id => ({ id, title: 'x', isShown: true, isFocused: false, isPlaced: true })) }))
   // `move`: the script's state moves on by something the mod did not run (the model's call).
-  const w = { ran, placed, prompts, filled, turns, tool, rows, written, files, panes, opened, clock, move: () => { at += 1 } }
+  const w = { ran, placed, prompts, filled, turns, tool, rows, written, files, panes, opened, clock, held, move: () => { at += 1 } }
   lastWorld = w
   return w
 }
 
-type World = { move: () => void; clock: { now: number }; ran: { argv: readonly string[]; env?: Record<string, string>; cwd?: string; stdin?: string }[]; placed: string[]; prompts: string[]; filled: string[]; turns: { n: number }; tool: { stdout: string }; rows: ReturnType<typeof mock.session>; written: string[]; files: Record<string, string>; panes: string[]; opened: string[] }
+type World = { move: () => void; held: Promise<void>[]; clock: { now: number }; ran: { argv: readonly string[]; env?: Record<string, string>; cwd?: string; stdin?: string }[]; placed: string[]; prompts: string[]; filled: string[]; turns: { n: number }; tool: { stdout: string }; rows: ReturnType<typeof mock.session>; written: string[]; files: Record<string, string>; panes: string[]; opened: string[] }
 let lastWorld: World | undefined
 
 // Whether a run went with a press's proof (lib/press.py): a secret drawn for it, and a file
@@ -2293,6 +2300,43 @@ test('rework-mr: a topic opened before the call judged it gets its plan from the
   await tick()
   await settle()
   expect(w.prompts).toEqual([proposePrompt('t2')])
+})
+
+// Opened from the sidebar while the call's judgment is being read back: that read started
+// before the move and comes back during it, still at the topic before. Neither may drop the
+// plan the card that came up wants.
+test('rework-mr: a topic opened while the judgment is read back gets its plan once the move is through', async ($, on) => {
+  const tick = heldClock(on)
+  on('tool.register' as never, (() => ({ value: undefined })) as never)
+  on('session.start' as never, ((_: unknown, e: object) => e) as never)
+  const t1 = reworkTopic('t1', 'plan', { plan_due: 'm1' })
+  const t2 = reworkTopic('t2', 'fix')
+  const ask = { prompt: 'Sort t1.', items: { t1: 'm1' }, topics: ['t1'], own: [], max_tokens: 1700 }
+  const states = [reworkState('t2', [t1, t2], { in_round: true })]
+  const w = world(on, states, {
+    refresh: { stdout: reworkState('t2', [t1, t2], { in_round: true, judge: { topics: ['t1'], own: [] } }) },
+    'judge-prompt': { stdout: JSON.stringify(ask) },
+    'judge-store': { stdout: JSON.stringify({ stored: ['t1'], stale: [], unjudged: [] }) },
+    quote: { stdout: reworkView('t1', undefined, 'plan') },
+  })
+  modelCall(on, { isAnswered: true, text: '{"t1": {"says": "needs"}}' })
+  await (($ as unknown as { session: { start: (e: object) => Promise<unknown> } }).session.start({ source: 'startup', cwd: '/wt' }))
+  await openRework($, w, reworkView('t2'))
+  let backAfterJudging = () => {}
+  let backAfterMove = () => {}
+  w.held.push(new Promise(done => { backAfterJudging = done }), new Promise(done => { backAfterMove = done }))
+  await tick()                                         // judged and stored; its read back is slow
+  states[0] = reworkState('t1', [t1, t2], { in_round: true })
+  const pane = await $.ui.mount({ ...PANEL, surface: 'terminal' })
+  const moving = pane.press({ key: 'row-t1' })         // the card is up; the move reads the state
+  await settle()
+  backAfterJudging()                                   // the read from before the move lands
+  await settle()
+  backAfterMove()
+  await moving
+  await settle()
+  await pane.unmount()
+  expect(w.prompts).toEqual([proposePrompt('t1')])
 })
 
 test('rework-mr: a topic still being judged as it comes up waits for the judgment, with nothing asked', async ($, on) => {

@@ -751,8 +751,13 @@ const placeTopic = async ($: EngineInterface, s: ReviewSession, tid: string, foc
 // repository at hand: the mod asks as a press of Propose a plan would. Once per topic and
 // what the reviewers said, and only once the press or move that brought the card up is
 // through (`askPlan`, at the end of each), never while a turn runs: that turn has it in hand.
+// A move or press still under way is not through: it asks at its own end, once it has read
+// the state its card came from. Asked from elsewhere meanwhile (the model call's judgment read
+// back), the state at hand can still be the one from before the move, and the plan would be
+// dropped as one for a topic no longer current.
 let planWanted: string | null = null
 const askPlan = async ($: EngineInterface) => {
+  if (isMoving || isPressing) return
   const tid = planWanted
   planWanted = null
   const r = await read($, review)
@@ -3343,7 +3348,7 @@ export const register: Register = on => {
                 )}
                 {end.button && (
                   <Box flexDirection="row" justifyContent="center" marginTop={end.text ? 1 : 0}>
-                    {drawChip({ Box, Button, Text }, end.button, () => { void onePress(() => pressEnd($, s, end.button as BandButton)) })}
+                    {drawChip({ Box, Button, Text }, end.button, () => { void onePress(() => pressEnd($, s, end.button as BandButton)).then(() => askPlan($)) })}
                   </Box>
                 )}
               </Box>
