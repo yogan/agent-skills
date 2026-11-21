@@ -8,7 +8,9 @@
     python3 measure_speed.py --from /tmp/diagram-speed.json    # rebuild the report, measure nothing
 
 Takes about **4 minutes**, or 6 on a slow tree. `--quick` roughly halves it and must not be used
-to update the baseline: it skips the repeat that catches a contaminated run.
+to update the baseline: it skips the repeat that catches a contaminated run. When that repeat
+does catch one (the counts differed between repeats), `--update` keeps the old baseline unless
+`--force` is given.
 
 ## Why this exists rather than a note in a handoff
 
@@ -1050,7 +1052,8 @@ def main(argv=None):
     parser.add_argument("--update", action="store_true",
                         help=f"rewrite {os.path.basename(BASELINE)} from this run")
     parser.add_argument("--force", action="store_true",
-                        help="allow --update when the machine differs from the baseline's")
+                        help="allow --update when the machine differs from the baseline's, or "
+                             "when the counts differed between repeats")
     parser.add_argument("--from", dest="reuse", metavar="RUN.json",
                         help=f"rebuild the report from a saved run (default {RUN_OUT}) "
                              "instead of measuring again")
@@ -1103,17 +1106,26 @@ def main(argv=None):
         current = measure(quick=args.quick, summary=args.summary, why=args.why)
         write_json(current, RUN_OUT)
 
-    for key, result in current["scenarios"].items():
-        if isinstance(result, dict) and result.get("unstable"):
-            print(f"  ! {key}: counts differed between repeats: {result['unstable']}")
+    unstable = [key for key, result in current["scenarios"].items()
+                if isinstance(result, dict) and result.get("unstable")]
+    for key in unstable:
+        print(f"  ! {key}: counts differed between repeats: {current['scenarios'][key]['unstable']}")
 
-    if args.update:
+    # The repeat that --quick skips caught a contaminated run: the report says its timings
+    # cannot be trusted, so they do not become what every later run is compared against.
+    # Only known once measured, so the report is still written and the run kept in RUN_OUT.
+    refused = bool(args.update and unstable and not args.force)
+    if refused:
+        print(f"baseline NOT updated: the counts differed between repeats ({', '.join(unstable)}); "
+              "measure again, or pass --force if you really mean to record this run",
+              file=sys.stderr)
+    elif args.update:
         print(f"baseline updated: {save_baseline(current)}")
 
     print(write(build(current, baseline, drifted, demo=args.demo)))
     if sys.platform == "darwin" and not args.no_open:
         subprocess.run(["open", OUT], check=False)
-    return 0
+    return 1 if refused else 0
 
 
 if __name__ == "__main__":

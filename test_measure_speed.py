@@ -605,6 +605,36 @@ class TestCli(unittest.TestCase):
                 setattr(speed, name, real)
         self.assertEqual(saved, [spec])
 
+    def update(self, *flags):
+        """`main` with `--update` on a run whose counts differed between repeats: what was
+        saved as the baseline, and the exit code."""
+        saved = []
+        spec = record(corpus=run(40.0, unstable=["(1, 2, 3)", "(1, 2, 4)"]))
+        stubs = {"load_baseline": lambda *a, **k: None,
+                 "measure": lambda **k: spec,
+                 "save_baseline": lambda current, *a, **k: saved.append(current) or "baseline",
+                 "write_json": lambda *a, **k: "run.json",
+                 "write": lambda *a, **k: "report"}
+        original = {name: getattr(speed, name) for name in stubs}
+        for name, stub in stubs.items():
+            setattr(speed, name, stub)
+        try:
+            with contextlib.redirect_stdout(io.StringIO()), \
+                    contextlib.redirect_stderr(io.StringIO()):
+                code = speed.main(["--update", "--no-open", *flags])
+        finally:
+            for name, real in original.items():
+                setattr(speed, name, real)
+        return saved, code
+
+    def test_update_refuses_a_run_whose_counts_differed(self):
+        """The report calls its timings untrustworthy; they must not become the baseline."""
+        self.assertEqual(self.update(), ([], 1))
+
+    def test_force_records_it_all_the_same(self):
+        saved, code = self.update("--force")
+        self.assertEqual((len(saved), code), (1, 0))
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
