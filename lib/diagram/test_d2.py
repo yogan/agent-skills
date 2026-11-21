@@ -33,6 +33,14 @@ class TestPrelude(unittest.TestCase):
             self.assertIn(f"  {role}: {{ style:", source)
 
 
+# A `$` in an id, a label, a note and an edge label: the four places a spec's text reaches the
+# d2 source. test_reference.py compiles the same text.
+DOLLARS = {"kind": "architecture",
+           "nodes": [{"id": "a$x", "label": "costs $5 and ${x}", "note": "reads ${HOME}"},
+                     {"id": "b"}],
+           "edges": [{"from": "a$x", "to": "b", "label": "uses $PATH"}]}
+
+
 class TestQuoting(unittest.TestCase):
     def test_labels_with_a_colon_survive(self):
         spec = {"kind": "state",
@@ -46,6 +54,13 @@ class TestQuoting(unittest.TestCase):
                 "states": [{"id": "a", "label": 'say "hi"'}, {"id": "b"}],
                 "transitions": [{"from": "a", "to": "b"}]}
         self.assertIn(r'"a": "say \"hi\""', d2.emit(spec))
+
+    def test_a_dollar_is_escaped_everywhere_the_emitter_quotes(self):
+        """d2 reads any `$` in a quoted string as a variable; test_reference.py compiles it."""
+        source = d2.emit(DOLLARS)
+        self.assertIn(r'"a\$x": "costs \$5 and \${x}"', source)
+        self.assertIn(r'tooltip: "reads \${HOME}"', source)
+        self.assertIn(r'"a\$x" -> "b": "uses \$PATH"', source)
 
     def test_dotted_paths_quote_each_segment(self):
         source = d2.emit(ARCHITECTURE)

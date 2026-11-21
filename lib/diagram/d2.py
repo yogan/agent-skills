@@ -250,9 +250,13 @@ def _q(text):
     A newline has to become the two-character escape: d2 rejects a real line break inside a
     quoted string outright ("double quoted strings must be terminated"), so a multi-line label
     is a compile error rather than something that renders oddly.
+
+    A `$` has to be escaped too: d2 reads every `$` inside a double-quoted string as the start
+    of a variable substitution, so a label quoting a shell variable or a price (`$PATH`,
+    `${id}`, `$5`) fails to compile at all. `\\$` renders as a literal `$`.
     """
     return ('"' + str(text).replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n")
-            + '"')
+            .replace("$", "\\$") + '"')
 
 
 def _path(ref):

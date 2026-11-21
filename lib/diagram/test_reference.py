@@ -18,7 +18,7 @@ import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
-from lib.diagram import callout, compact, figure, palette, place, render
+from lib.diagram import callout, compact, d2, figure, palette, place, render
 from lib.diagram import spec as spec_mod
 from lib.diagram.examples import CLASS_PREFERRED, REFERENCE
 from lib.diagram.gates import contrast, size, theming
@@ -382,6 +382,21 @@ class TestReferenceCorpus(unittest.TestCase):
                 self.assertRegex(
                     svg, r'stroke="var\(--d-accent\)"[^>]*stroke-width:4',
                     f"{name}'s accent is not the heavier border a reader can pick out")
+
+
+@unittest.skipUnless(HAVE_D2, "d2 is not installed (brew install d2)")
+class TestDollarSigns(unittest.TestCase):
+    def test_a_dollar_in_any_text_compiles_and_draws_literally(self):
+        """d2 reads every `$` in a quoted string as a variable, so unescaped, a label quoting
+        `$PATH` or a price got no diagram at all."""
+        import html
+        spec = {"kind": "architecture",
+                "nodes": [{"id": "a$x", "label": "costs $5 and ${x}", "note": "reads ${HOME}"},
+                          {"id": "b"}],
+                "edges": [{"from": "a$x", "to": "b", "label": "uses $PATH"}]}
+        svg = html.unescape(render.compile_source(d2.emit(spec)))
+        for text in ("costs $5 and ${x}", "uses $PATH", "reads ${HOME}"):
+            self.assertIn(text, svg)
 
 
 @unittest.skipUnless(HAVE_D2, "d2 is not installed (brew install d2)")
