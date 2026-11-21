@@ -2085,11 +2085,14 @@ def check_pushes(state, ctx, iid, base):
             continue
         p = t.get("pushed")
         sc = t.get("code_seen")
-        if (not p and sc and sc.get("sha") not in (None, w["sha"])
-                and sc.get("mark") != decision_mark(state, t)):
+        if sc and sc.get("mark") != decision_mark(state, t):
             # The user acted on the topic after a round showed them this code: whatever a
-            # push did to its lines up to there is answered, as a noted push is below.
-            p = {"to": sc["sha"]}
+            # push did to its lines up to there is answered, as a noted push is below. One
+            # decision, spent here: kept, it would set the watch back to this code once a
+            # later push had moved it on, and an acked push would come back as news.
+            t.pop("code_seen")
+            if not p and sc.get("sha") not in (None, w["sha"]):
+                p = {"to": sc["sha"]}
         if p and not pushed_of(state, t):
             # Answered since (an ack, a reply): from here on the code is checked from the
             # push the user saw, the comment's lines carried through it.

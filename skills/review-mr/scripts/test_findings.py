@@ -2924,6 +2924,25 @@ class TestAnswersInCode(unittest.TestCase):
         self.assertEqual(self.t["watch"]["sha"], "c1")
         self.assertNotIn("pushed", self.t)
 
+    def test_an_acked_push_does_not_come_back_once_the_author_writes(self):
+        """The code a round showed stayed on the topic after it had answered: once the ack
+        moved the watch past it, each check set the watch back to it, and the author's next
+        note brought the acked push back as news."""
+        self.state["threads"]["d1"].update(head_sha="c1")
+        self.state["seen_head"] = "c1"
+        self.t["code_seen"] = {"sha": "c1", "mark": F.decision_mark(self.state, self.t)}
+        self.state["threads"]["d1"]["notes"] = [{"mine": True, "at": "2026-11-04T11:00:00Z"}]
+        self.push(TouchedDiff.REWRITE, head="c2")
+        self.assertEqual(self.t["pushed"]["to"], "c2")
+        self.t.update(state="acked", acked_at="2026-11-05T00:00:00Z")
+        self.push(TouchedDiff.REWRITE, head="c2")
+        self.push(TouchedDiff.REWRITE, head="c2")
+        self.assertEqual(self.t["watch"]["sha"], "c2")
+        self.state["threads"]["d1"].update(last_at="2026-11-06T00:00:00Z", awaiting="you")
+        self.push(TouchedDiff.REWRITE, head="c2")
+        self.assertNotIn("pushed", self.t)
+        self.assertEqual(self.t["watch"]["sha"], "c2")
+
     def test_another_reviewer_s_note_does_not_answer_a_push(self):
         """A peer's "+1" in the user's thread left the thread waiting on the author, and took
         the push with it: the author's answer in code was never put to the user."""
