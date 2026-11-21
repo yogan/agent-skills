@@ -1645,7 +1645,7 @@ def round_order(state):
 def later_proposals(state):
     """Comments the user posted once the topics ran, matched by the agent and waiting for
     their answer: a step of the round, between two topics."""
-    return state.get("own_review") in ("done", "skipped") and bool(state.get("proposals"))
+    return own_review_closed(state) and bool(state.get("proposals"))
 
 
 def next_up(state):
@@ -1797,6 +1797,18 @@ def review_begun(state):
     review, and a later run that took it for one resumed into nothing at all."""
     return bool(state and (state.get("imported") or state.get("topics") or state.get("threads")
                            or state.get("own_review")))
+
+
+def own_review_closed(state):
+    """Whether the user's own review is behind them, so a comment they post from here on is
+    matched to the topics. A review imported where the mod did not draw, or saved before
+    the own review existed, never had one: once its topics are in, it counts as done, or the
+    user's own comments in it would be adopted by nothing (`adopt_inbound` leaves them to the
+    matching wherever the mod draws)."""
+    how = state.get("own_review")
+    if how is None:
+        return bool(state.get("imported") or state.get("topics"))
+    return how in ("done", "skipped")
 
 
 def own_review_open(state):
@@ -2362,7 +2374,7 @@ def inbox_json(state, topics):
         return [x["id"] for x in fresh if kind in x["news"]]
     pushes = [p for p in state.get("pushes") or [] if flagged & set(push_topics(state, p))]
     proposals = [{"thread": p["thread"], "into": p["into"]} for p in state.get("proposals") or []]
-    own = unsettled_own(state) if state.get("own_review") in ("done", "skipped") else []
+    own = unsettled_own(state) if own_review_closed(state) else []
     times = ([x["news_at"] for x in fresh if x["news_at"]] + [p["at"] for p in pushes]
              + [m["at"] for m in state.get("mr_news") or [] if m.get("at")])
     first = round_pick(state)
@@ -2405,7 +2417,7 @@ def judge_list(state):
     """What the mod has judged by one model call (`judge_prompt`): the topics whose answer has
     no verdict yet, and the user's own comments not matched to a topic yet."""
     return {"topics": needs_verdict(state),
-            "own": unsettled_own(state) if state.get("own_review") in ("done", "skipped") else []}
+            "own": unsettled_own(state) if own_review_closed(state) else []}
 
 
 def _said_by(state, n):

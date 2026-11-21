@@ -3249,6 +3249,23 @@ class TestOwnThreads(unittest.TestCase):
         own = {x["id"]: x for x in F.own_threads(state)}
         self.assertEqual((own["d1"]["proposal"], own["d2"]["topic"]), ("t1", "t1"))
 
+    def test_a_review_imported_without_the_mod_matches_comments_once_resumed_with_it(self):
+        """Its own review never started, so it never ended: a comment the user posted by hand
+        was neither adopted (the mod leaves that to the matching) nor put to the matching."""
+        state = new_state(last_reviewed_head="c0")
+        F.add_topic(state, summary="x", file="b.ts", line=3)
+        live = {"d9": {"file": "a.ts", "line": 5, "side": "new", "mine": True, "resolved": False,
+                       "body": "my comment", "awaiting": "author",
+                       "notes": [{"mine": True, "at": "2026-11-04T10:00:00Z"}]}}
+        with patch.dict(os.environ, {"REVIEW_UI_DRAWN": "1"}):
+            F.sync(state, live, None, None)
+            self.assertEqual(F.judge_list(state)["own"], ["d9"])
+            self.assertEqual(F.inbox_json(state, [])["matching"], 1)
+
+    def test_a_review_not_imported_yet_matches_nothing(self):
+        state = new_state(threads={"d1": {"mine": True, "file": "a.ts", "line": 3, "body": "x"}})
+        self.assertEqual(F.judge_list(state)["own"], [])
+
 
 class TestProposalCard(unittest.TestCase):
     def test_the_card_shows_the_comment_the_topic_the_reason_and_the_advice(self):
