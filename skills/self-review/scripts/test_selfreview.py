@@ -683,6 +683,11 @@ class TestGuards(unittest.TestCase):
         with self.assertRaises(SystemExit):
             self.run_with(S.close, notes=self.OPEN)
 
+    def test_a_viewer_that_does_not_answer_is_not_closed(self):
+        """Its notes could not be read, so whether one still waits is unknown."""
+        with self.assertRaises(SystemExit):
+            self.run_with(S.close, notes_ok=False)
+
     def test_hidden_files_refuse_reading_acking_and_closing(self):
         for fn in (S.notes, S.ack, S.close):
             with self.subTest(fn.__name__), self.assertRaises(SystemExit):

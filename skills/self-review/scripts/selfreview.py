@@ -559,7 +559,11 @@ def close(cwd=None):
     sid = own_session(cwd)
     require_all_shown(sid, cwd)
     got = hunk.notes(sid)
-    if got and open_threads(got):
+    if got is None:
+        # Unread is not empty: closed on no answer, the window would take any note still
+        # waiting with it.
+        die("the Hunk window did not answer; it stays open")
+    if open_threads(got):
         die("diff notes still await an answer; run `notes` first")
     if not hunk.close_session(sid, hunk.owner_id()):
         die("the window could not be closed")
