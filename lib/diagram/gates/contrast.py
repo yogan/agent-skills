@@ -202,20 +202,30 @@ def texts(svg, html_size=ANNOTATION_PX):
     of which are in the file; its SIZE may not be, since `.md p` lives in the host page's css
     for an embedded figure — so `html_size` says what the repo sets it to, defaulting to
     exactly that.
+
+    Positions are where the text is DRAWN: every open `<g>`'s `translate(…)` is added to them.
+    `edgelabel.reposition` moves a label by wrapping it in one, and a label moved onto a dark
+    container was otherwise judged against the light page at the spot it had left.
     """
-    stack = []
+    stack, shifts = [], []
     for m in _NODES.finditer(svg):
         token = m.group(0)
         if token.startswith("</g"):
             if stack:
                 stack.pop()
+                shifts.pop()
             continue
         if token.startswith("<g"):
             c = re.search(r'\sclass="([^"]*)"', token)
             stack.append(c.group(1).split() if c else [])
+            t = re.search(r'\stransform="translate\(\s*([-\d.eE]+)(?:[\s,]+([-\d.eE]+))?\s*\)"',
+                          token)
+            shifts.append((float(t.group(1)), float(t.group(2) or 0)) if t else (0.0, 0.0))
             continue
+        dx, dy = sum(s[0] for s in shifts), sum(s[1] for s in shifts)
         if token.startswith("<foreignObject"):
-            yield from _annotation_texts(m.start(), token, stack, html_size)
+            for pos, x, y, *rest in _annotation_texts(m.start(), token, stack, html_size):
+                yield (pos, x + dx, y + dy, *rest)
             continue
         inner = re.match(r"<text\b([^>]*)>(.*?)</text>", token, re.S)
         if not inner:
@@ -244,7 +254,7 @@ def texts(svg, html_size=ANNOTATION_PX):
             fill = g.group(1) if g else None
         own = (attr("class") or "").split()
         ancestors = [c for level in stack for c in level]
-        yield (m.start(), x, y, float(re.sub(r"[^\d.]", "", size) or 14), fill,
+        yield (m.start(), x + dx, y + dy, float(re.sub(r"[^\d.]", "", size) or 14), fill,
                own + ancestors, content)
 
 

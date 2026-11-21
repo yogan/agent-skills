@@ -108,6 +108,19 @@ class TestBackdropResolution(unittest.TestCase):
                '<text x="50" y="50" font-size="13" fill="#000000">x</text></svg>')
         self.assertGreater(contrast.worst_in_theme(svg, "light")[0], 15)
 
+    def test_a_moved_label_is_measured_where_it_is_drawn(self):
+        """`edgelabel.reposition` moves a label with a translate on a wrapping `<g>`; read
+        from its own x/y, grey text moved onto a dark box was judged on the light page."""
+        rect = '<rect x="200" y="0" width="100" height="100" fill="#222222"/>'
+        label = '<text x="20" y="50" font-size="13" fill="#555555">x</text>'
+        svg = ('<svg width="300" height="100" viewBox="0 0 300 100">' + rect
+               + '<g class="moved"><g transform="translate(150.000000,0.000000)">'
+               + '<g transform="translate(50,0)">' + label + '</g></g></g></svg>')
+        drawn_there = svg.replace('x="20"', 'x="220"').replace("translate", "skip")
+        self.assertAlmostEqual(contrast.worst_in_theme(svg, "light")[0],
+                               contrast.worst_in_theme(drawn_there, "light")[0], places=2)
+        self.assertLess(contrast.worst_in_theme(svg, "light")[0], 3)
+
     def test_a_class_scoped_fill_is_resolved(self):
         svg = ('<svg width="100" height="100" viewBox="0 0 100 100">'
                '<style>.t{fill:#000000}</style>'
