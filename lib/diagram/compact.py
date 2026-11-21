@@ -292,8 +292,9 @@ def add_legend(svg, entries, font, pad=D2_PAD):
     the size to set the words at, which the caller takes from what the emitter gives the
     drawing's own labels. The legend is primary text and faces the same floor once the page
     has scaled the figure, so matching the labels around it is type that has already been
-    shown to clear it — and unlike a callout's words, whose size lives in the PAGE's CSS and
-    is therefore invisible to `gates/size`, this size is written into the SVG and checked.
+    shown to clear it — and unlike the default in the page's `foreignObject .md p` rule, which
+    an embedded SVG does not carry and `gates/size` cannot see, this size is written into the
+    SVG and checked.
 
     The words are HTML in a `<foreignObject>`, and that is not a stylistic choice. d2 embeds
     its font as a SUBSET of the glyphs the drawing happens to use — 3.4KB a face — so any letter the legend introduces is missing from it and the

@@ -32,9 +32,11 @@ from . import GateError, Result
 
 LARGE_PX = 18.66
 
-# The size annotation text is set at when the file does not say. A callout's `.md p` rule
-# lives in the HOST PAGE's css, so for an embedded figure that size is simply not in the SVG
-# — and a gate must not treat "unknown" as "fine". `test_contrast` pins this against the css.
+# The size a legend's words are set at when the file does not say. They are HTML in a
+# `<foreignObject>`, sized by a `foreignObject .md p` rule that lives in the HOST PAGE's css, so
+# for an embedded figure that size is simply not in the SVG — and a gate must not treat
+# "unknown" as "fine". A callout's note needs no default: it is SVG text whose size
+# `callout.fit` writes into the file. `test_contrast` pins this against the css.
 ANNOTATION_PX = 13
 
 _NAMED = {"white": (255, 255, 255), "black": (0, 0, 0), "grey": (128, 128, 128),

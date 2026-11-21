@@ -440,8 +440,8 @@ class TestContainerLabels(unittest.TestCase):
 
 class TestDirectionPerTarget(unittest.TestCase):
     """One case per cell of `d2.DIRECTION`. The two targets want opposite layouts: embedded
-    is scaled into a content column until its text breaks the 11px floor, standalone is
-    opened full-screen. test_reference.py checks the geometry that follows from this."""
+    is scaled into a content column until its text breaks the 10px floor for primary text,
+    standalone is opened full-screen. test_reference.py checks the geometry that follows from this."""
 
     def test_er_class_and_state_go_wide_standalone_and_down_embedded(self):
         for name, spec in (("er", ER), ("class", CLASS), ("state", STATE)):

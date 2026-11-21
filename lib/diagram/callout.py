@@ -115,10 +115,11 @@ def _escape(text):
 
 
 def _page(texts):
-    """A page that lays each note out under the real callout CSS and nothing else.
+    """A page that lays each legend label out under the real legend CSS and nothing else.
 
-    The `<foreignObject>` wrapper is not decoration: `HOST_CSS` selects `.diagram foreignObject
-    .md p`, so a `<p>` measured outside one would be measured in the page's serif body font at
+    Only a legend's words are measured here: a callout's note is SVG text that `fit` sizes
+    without a browser. The `<foreignObject>` wrapper is not decoration: `HOST_CSS` selects
+    `.diagram foreignObject .md p`, so a `<p>` measured outside one would be measured in the page's serif body font at
     the browser's default size — a number with no relationship to the row it is for.
     """
     from . import render as render_mod    # local: render imports this module

@@ -153,8 +153,8 @@ rather than guessing.** The short version:
 
 Two channels of feedback, both on stderr, neither fatal:
 
-- **problems** - the gates, measured on the drawn SVG: fits a viewport, no glyph below ~11px or
-  above an h2, WCAG AA in both themes, nothing clipped, every colour themeable.
+- **problems** - the gates, measured on the drawn SVG: fits a viewport, no box label below 10px
+  (an edge label 9px, a subtitle 7.5px) or above an h2, WCAG AA in both themes, nothing clipped, every colour themeable.
 - **advisories** - `lib.diagram.spec.content_warnings`, read off the spec as authored: a bare ER
   ratio, an eighth sequence message, an ASCII `->` in a label, transitions per state, groups
   barely connected enough to be worth two diagrams, an over-long "detail".

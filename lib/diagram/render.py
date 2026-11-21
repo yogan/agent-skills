@@ -568,11 +568,11 @@ def _afford(svg, name, spill, standalone=False):
 
     Spoilt first, and absolutely. The wider rung buys straight line in front of every arrowhead
     and spends 40 to 100px of the page for it, which most figures can pay — and what a figure
-    that cannot pay runs out of is WIDTH. The reference architecture's arrowheads want 24px of
-    spacing between an edge and the box it points at, where it is 1079px wide; the 832px of
-    drawing room inside a card scales that to 0.77 and its smallest text lands at 10.0px, exactly
-    on the 10px floor for primary text, and 25px of spacing is 1091px wide and 9.9px. Its height
-    does not move at any spacing. A drawing nobody can read is not an improvement on an
+    that cannot pay runs out of is WIDTH. The spacings tried between an edge and the box it
+    points at are 15px and 25px. The reference architecture is 1057px wide at 15px, which the
+    832px of drawing room inside a card scales to 0.79, putting its smallest text at 10.2px; at
+    25px it is 1172px wide, scaled to 0.71, and its text is 9.2px, under the 10px floor for
+    primary text. Its height does not move at either spacing. A drawing nobody can read is not an improvement on an
     arrowhead sitting on a curve.
 
     Most of those arrowheads no longer reach here at all — `route.py` moves the step instead,

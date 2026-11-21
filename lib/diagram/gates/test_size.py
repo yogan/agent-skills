@@ -305,10 +305,11 @@ class TestTheRescueBudget(unittest.TestCase):
 
 
 class TestAnnotationText(unittest.TestCase):
-    """A callout's note and a legend's labels are HTML in a `<foreignObject>`, and their size
-    is in the file only when they state one — a callout's comes from the host page's `.md p`
-    rule. So this pool never contained them, and a callout's words rendered at 9.7px on a
-    figure scaled to 0.78 with every glyph check passing."""
+    """A legend's labels are HTML in a `<foreignObject>`, and their size is in the file only
+    when they state one — otherwise it comes from the host page's `foreignObject .md p` rule.
+    So this pool once never contained them, and a callout's words, HTML too at the time,
+    rendered at 9.7px on a figure scaled to 0.78 with every glyph check passing. A callout's
+    note is SVG text now, sized in the file, and counted like any label."""
 
     def svg(self, extra="", width=400):
         return (f'<svg width="{width}" height="200" viewBox="0 0 {width} 200">'
@@ -320,15 +321,15 @@ class TestAnnotationText(unittest.TestCase):
     def test_the_repos_own_size_is_assumed_when_the_element_states_none(self):
         m = size.analyse(self.svg())
         self.assertEqual(m["fmin"], size.ANNOTATION_PX,
-                         "a callout's words are the smallest text in this drawing")
+                         "a legend's words are the smallest text in this drawing")
 
     def test_a_stated_size_is_used_instead(self):
         m = size.analyse(self.svg(extra=' style="font-size:16px"'))
         self.assertEqual(m["fmin"], 14.0, "16px annotation, 14px label — the label is least")
 
     def test_annotation_words_face_the_primary_floor(self):
-        """A note is prose the reader has to read, not a subtitle, so it gets the same floor
-        as a node label rather than the lower one.
+        """A legend's words are text the reader has to read, not a subtitle, so they get the
+        same floor as a node label rather than the lower one.
 
         The width is derived, not written down: annotation words go under the floor once the
         column has to scale the drawing past `ANNOTATION_PX / MIN_READABLE`, so a fixture

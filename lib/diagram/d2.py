@@ -212,7 +212,8 @@ ELK_SPACING_LADDER = (15, 30, 40)
 # but fills the run it would slide along — so this stays, as the fallback for exactly that.
 #
 # 20 is not a rung because it fixes nothing: measured, the corpus still has all eleven, and the
-# reference architecture flips to a 1006px-wide landscape whose text fails the 11px floor.
+# reference architecture comes out 1102px wide, which the 832px of drawing room inside a card
+# scales until its smallest text is 9.8px, under the 10px floor for primary text.
 #
 # Escalated rather than raised, because it costs 40 to 100px of page per figure, and one figure
 # cannot pay: `render._afford` keeps a rung only while the size gate still passes.

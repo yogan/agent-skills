@@ -173,11 +173,12 @@ says the two constraints are the same size on this kind of edge, which is the re
 lever for it at all.
 
 **What a figure cannot pay is width, not height** — the reference architecture is the one that
-showed it, and the margin is now one step rather than none. Its two arrowheads wanted 24px of
-spacing between an edge and the box it points at, where the drawing comes out 1079px wide; the
-832px of drawing room inside a card scales that to 0.77 and its smallest text lands at 10.0px,
-exactly on the floor. One step further, 25px of spacing, is 1091px wide and 9.9px — refused.
-Height never moves at any step.
+showed it. The spacings tried between an edge and the box it points at are 15px and 25px. At
+15px the drawing comes out 1057px wide; the 832px of drawing room inside a card scales that to
+0.79 and its smallest text lands at 10.2px. At 25px, which its two arrowheads would need, it is
+1172px wide, scaled to 0.71, and 9.2px against the 10px floor for primary text — refused, and
+`route.py` straightens those two arrowheads at 15px instead. Height never moves at either
+spacing.
 
 Two earlier readings of this same figure are worth knowing about, because both were wrong in a way
 that read as a finding. One said it was 958px tall against the ceiling, measured against a ceiling
@@ -269,8 +270,9 @@ visible in the code, which is why they are written down.
   floor lower than 10px under primary text. The floors are a legibility result, not a budget:
   derived by showing both corpora in the real column against the real body prose, 14px down to 8px.
   The lightbox is not an argument against them — needing the click means the inline figure already
-  failed. Figures that come up short miss by very little (24px of edge spacing wanted against 20
-  affordable, twice), which is two outliers, not a wall.
+  failed. Figures that come up short miss by very little (the reference architecture at 25px of
+  spacing between an edge and the box it points at is 8% too wide for its text to clear the
+  10px floor), which is an outlier, not a wall.
 - **Asking ELK for a particular arrangement of the boxes.** `repo/er`'s four tables would read best
   as a 2x2, `note`/`edges` above `spec`/`nodes`. `layered` puts every box in a layer such that
   every edge crosses to the next — columns under `direction: right`, rows under `down` — and that

@@ -290,8 +290,8 @@ class TestRoleLegend(unittest.TestCase):
                       "a dark render has to get the dark ink")
 
     def test_the_words_are_set_in_the_size_they_are_given(self):
-        """Overriding the size the callout class carries, because that one lives in the
-        PAGE's css where `gates/size` cannot see it — while this one is written into the SVG
+        """Overriding the size the page's `foreignObject .md p` rule carries, because that
+        one lives in the PAGE's css where `gates/size` cannot see it — while this one is written into the SVG
         and checked like any other label."""
         self.assertIn("font-size:14px", compact.add_legend(self.svg(), self.ENTRIES, 14))
         self.assertIn("font-size:13px", compact.add_legend(self.svg(), self.ENTRIES, 13))
