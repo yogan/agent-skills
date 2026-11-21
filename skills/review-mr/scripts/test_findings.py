@@ -1137,6 +1137,19 @@ class TestAdoptInboundBaseline(unittest.TestCase):
         self.assertIsNone(F.topic_for(state, "t1")["start_sha"])
 
 
+class TestNewVersions(unittest.TestCase):
+    VS = [{"head_commit_sha": "c3"}, {"head_commit_sha": "c2"}, {"head_commit_sha": "c1"}]
+
+    def test_the_versions_after_the_baseline_oldest_first(self):
+        state = new_state(last_reviewed_head="c1")
+        self.assertEqual(F.new_versions(state, self.VS), self.VS[1::-1])
+
+    def test_a_baseline_that_is_no_version_s_head_reports_none(self):
+        """Every version since the MR was opened read as pushed since the last review."""
+        state = new_state(last_reviewed_head="c0")
+        self.assertEqual(F.new_versions(state, self.VS), [])
+
+
 class TestRenderUpdatesRebaseContentCheck(unittest.TestCase):
     """`_rebase_kind`'s commit-message comparison misses exactly the common case of a
     folded-in fixup: `git commit --amend --no-edit` (or an interactive-rebase `fixup!`)

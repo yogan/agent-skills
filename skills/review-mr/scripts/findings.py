@@ -2928,16 +2928,18 @@ def render_candidates(state, me):
 
 def new_versions(state, vs):
     """Versions pushed since your reviewed baseline, oldest→newest. Empty if the
-    baseline is the current tip (no push) or unset."""
+    baseline is the current tip (no push) or unset, and if it is no version's head
+    (set from a brand-new MR's branch tip before GitLab recorded a version of it):
+    with nothing to stop at, every version since the MR was opened would count."""
     last = state.get("last_reviewed_head")
     if not last:
         return []
     out = []
     for v in vs:                                 # newest first
         if v.get("head_commit_sha") == last:
-            break
+            return list(reversed(out))
         out.append(v)
-    return list(reversed(out))
+    return []
 
 
 def _mr_web(state, ctx, iid):
