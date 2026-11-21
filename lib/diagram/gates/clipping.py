@@ -32,9 +32,10 @@ TOLERANCE_PX = 1.0
 
 
 def check_many(svgs, theme="light", standalone=False):
-    """Check several diagrams in one browser launch. `svgs` maps name -> SVG text.
+    """Check several diagrams as one batch of pages on one browser. `svgs` maps name -> SVG text.
 
-    Batched because launching Chrome costs far more than measuring one more page.
+    Batched because a request to a browser, and starting one when the pool has none idle,
+    costs far more than measuring one more page.
     `standalone=True` measures against the SVG's own canvas instead of a page card — see
     render.harness_html.
     """

@@ -75,10 +75,12 @@ class Figure(namedtuple("Figure", "name svg results placement problems advice bl
 def draw(specs, target="embed", theme="dark", place_callouts=True, gates=True, binary="d2"):
     """Render every spec in `specs` (a `{name: spec}` mapping) and return a list of `Figure`.
 
-    Takes a mapping rather than one spec because the browser work batches across a document:
-    the clipping gate measures every figure in a single Chrome launch, so a six-figure article
-    pays for one instead of six. A caller with one diagram passes a mapping of one and loses
-    nothing.
+    Takes a mapping rather than one spec because the work spans a document: the diagrams are
+    drawn side by side, and the clipping gate measures every figure as one batch of pages on
+    one browser. Drawing side by side starts a browser for each diagram in flight where drawing
+    them in turn would reuse one, and still finishes sooner; the browsers stay in the pool
+    (see browser.py), so a later call starts none. A caller with one diagram passes a mapping
+    of one and loses nothing.
 
     Raises `SpecError` for a spec that is not valid, because that is the caller's mistake and
     there is no picture to hand back. Everything else — an unplaceable callout, a failed gate,

@@ -648,8 +648,9 @@ def write(spec, out=OUT):
 def main():
     measured = []
     for corpus, specs in CORPORA.items():
-        # One call per corpus, not per figure: `figure.draw` batches its browser work across
-        # everything it is handed, so this is one Chrome launch instead of five.
+        # One call per corpus, not per figure: `figure.draw` draws everything it is handed side
+        # by side and gates it in one batch. The browsers the first corpus starts stay in the
+        # pool, so the next one starts none.
         for fig in figure.draw(specs, target="embed"):
             measured.append((f"{corpus}/{fig.name}", fig.svg))
             problems = fig.problems + fig.blocked
