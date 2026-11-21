@@ -7,8 +7,10 @@ turn), in order, with the time.
                               [--full]
 
 A folder means the newest session that ran there (Claude Code keeps a session's transcript
-under ~/.claude/projects/, in a folder named after the session's working directory). `--since`
-starts at that time of day; `--full` prints results whole instead of their first lines.
+under ~/.claude/projects/, in a folder named after the session's working directory). Times are
+local, though the transcript keeps them in UTC. `--since` starts at that time today, or at a
+date and time given as `YYYY-MM-DDTHH:MM`; `--full` prints results whole instead of their first
+lines.
 `drive.py` writes it beside a failed run's captures.
 
 Every session that diagnosed a driven run used to write a parser for this anew, a dozen in
@@ -18,6 +20,7 @@ import json
 import os
 import re
 import sys
+from datetime import datetime
 
 PROJECTS = os.path.expanduser("~/.claude/projects")
 HEAD = 300          # characters of a tool result shown without --full
@@ -49,8 +52,30 @@ def _text(content):
     return "\n".join(b.get("text", "") for b in content or [] if isinstance(b, dict))
 
 
+def instant(stamp):
+    """A transcript's timestamp (UTC, `…T09:28:50.321Z`) as a local, aware datetime; None for
+    one that is missing or unreadable."""
+    try:
+        return datetime.fromisoformat(stamp.replace("Z", "+00:00")).astimezone()
+    except (AttributeError, ValueError):
+        return None
+
+
+def since_of(text, now=None):
+    """`--since`'s value as a local, aware datetime: `HH:MM` is that time today, and a full
+    `YYYY-MM-DDTHH:MM` is itself. Raises ValueError for anything else."""
+    if re.fullmatch(r"\d{1,2}:\d{2}", text):
+        h, m = (int(n) for n in text.split(":"))
+        return (now or datetime.now().astimezone()).replace(hour=h, minute=m, second=0,
+                                                            microsecond=0)
+    at = datetime.fromisoformat(text)
+    return at if at.tzinfo else at.astimezone()
+
+
 def lines(path, since=None, full=False):
-    """The session at `path`, one line per event, oldest first."""
+    """The session at `path`, one line per event, oldest first, from `since` on (an aware
+    datetime, `since_of`'s; the transcript's own times are UTC, so a time of day compared as
+    text would be off by the offset and match every day's events alike)."""
     out = []
     with open(path, encoding="utf-8", errors="replace") as fh:
         for raw in fh:
@@ -58,9 +83,10 @@ def lines(path, since=None, full=False):
                 e = json.loads(raw)
             except ValueError:
                 continue
-            at = (e.get("timestamp") or "")[11:16]
-            if since and at and at < since:
+            when = instant(e.get("timestamp"))
+            if since and when and when < since:
                 continue
+            at = when.strftime("%H:%M") if when else ""
             who = "  agent " if e.get("isSidechain") else ""
             kind = e.get("type")
             if kind == "system":
@@ -103,7 +129,11 @@ def main(argv):
     if not argv or argv[0].startswith("-"):
         print(__doc__.strip().splitlines()[3].strip(), file=sys.stderr)
         return 2
-    since = argv[argv.index("--since") + 1] if "--since" in argv else None
+    try:
+        since = since_of(argv[argv.index("--since") + 1]) if "--since" in argv else None
+    except ValueError:
+        print("--since takes HH:MM or YYYY-MM-DDTHH:MM", file=sys.stderr)
+        return 2
     path = session_file(argv[0])
     if not path:
         print(f"no session ran in {argv[0]}", file=sys.stderr)

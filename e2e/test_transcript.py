@@ -4,7 +4,10 @@ import json
 import os
 import sys
 import tempfile
+import time
 import unittest
+from datetime import datetime
+from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
@@ -27,8 +30,18 @@ ROWS = [
 ]
 
 
+def in_zone(test, zone):
+    """Local time is `zone` for the rest of `test`."""
+    env = mock.patch.dict(os.environ, {"TZ": zone})
+    env.start()
+    time.tzset()
+    test.addCleanup(time.tzset)
+    test.addCleanup(env.stop)
+
+
 class TestLines(unittest.TestCase):
     def setUp(self):
+        in_zone(self, "UTC")
         self._tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self._tmp.cleanup)
         self.path = os.path.join(self._tmp.name, "s.jsonl")
@@ -46,8 +59,21 @@ class TestLines(unittest.TestCase):
         ])
 
     def test_since_starts_at_that_time(self):
-        self.assertEqual(transcript.lines(self.path, since="10:05"),
+        since = transcript.since_of("10:05", now=datetime.fromisoformat("2026-01-01T15:00+00:00"))
+        self.assertEqual(transcript.lines(self.path, since=since),
                          ["[10:05] NOTE  Prompt dropped by a hook: x"])
+
+    def test_times_are_local_and_since_is_a_local_time_on_its_day(self):
+        """The transcript is in UTC: at 10:31 in Berlin the newest event printed as 09:29, and
+        `--since 10:00` kept every earlier day's events after 10:00 UTC."""
+        in_zone(self, "Europe/Berlin")
+        self.assertEqual(transcript.lines(self.path)[-1], "[11:05] NOTE  Prompt dropped by a hook: x")
+        since = transcript.since_of("11:05", now=datetime.fromisoformat("2026-01-01T15:00+01:00"))
+        self.assertEqual(len(transcript.lines(self.path, since=since)), 1)
+        next_day = transcript.since_of("09:00", now=datetime.fromisoformat("2026-01-02T15:00+01:00"))
+        self.assertEqual(transcript.lines(self.path, since=next_day), [])
+        self.assertEqual(len(transcript.lines(self.path, since=transcript.since_of(
+            "2026-01-01T11:00"))), 6)
 
     def test_a_folder_no_session_ran_in_has_none(self):
         self.assertIsNone(transcript.session_file(self._tmp.name))
