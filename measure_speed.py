@@ -1055,7 +1055,7 @@ def main(argv=None):
                         help="allow --update when the machine differs from the baseline's, or "
                              "when the counts differed between repeats")
     parser.add_argument("--from", dest="reuse", metavar="RUN.json",
-                        help=f"rebuild the report from a saved run (default {RUN_OUT}) "
+                        help=f"rebuild the report from a saved run (every run is saved to {RUN_OUT}) "
                              "instead of measuring again")
     parser.add_argument("--summary", metavar="TEXT",
                         help="a short paragraph opening the report: what changed, or that "

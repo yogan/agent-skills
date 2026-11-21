@@ -14,8 +14,8 @@ second one.
 
 A capture is a directory of SVGs under `/tmp/diagram-compare/<tag>/`, rendered through
 `figure.draw` — the real pipeline, callout placement included — so what you compare is what a
-skill would ship. Captures are cheap to keep and cost about 25s for both corpora; keep the one
-from before a session's first edit and you can compare against it all day.
+skill would ship. Captures are cheap to keep, one render of each sample set asked for; keep the
+one from before a session's first edit and you can compare against it all day.
 
 `notes.json` is what makes the sheet worth reading a week later. Without it the reader gets two
 pictures and has to spot the difference; with it, each side says what it is:
@@ -312,7 +312,9 @@ def main(argv=None):
 
     grab = sub.add_parser("capture", help="render a corpus into a named snapshot")
     grab.add_argument("tag")
-    grab.add_argument("--corpus", choices=sorted(CORPORA) + ["both"], default="both")
+    # `both` is what `all` was called while there were two sample sets.
+    grab.add_argument("--corpus", choices=sorted(CORPORA) + ["all", "both"], default="all",
+                      help="one sample set, or all of them")
     grab.add_argument("--only", nargs="*", default=[], metavar="NAME",
                       help="figure names, e.g. arch er")
     grab.add_argument("--target", choices=("embed", "file"), default="embed",
@@ -331,7 +333,7 @@ def main(argv=None):
 
     args = parser.parse_args(argv)
     if args.command == "capture":
-        corpora = sorted(CORPORA) if args.corpus == "both" else [args.corpus]
+        corpora = sorted(CORPORA) if args.corpus in ("all", "both") else [args.corpus]
         print(capture(args.tag, corpora, set(args.only), args.target, args.theme))
         return 0
     notes = {}

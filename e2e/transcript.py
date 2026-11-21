@@ -125,13 +125,18 @@ def lines(path, since=None, full=False):
     return out
 
 
+def usage():
+    """The docstring's usage block: its second paragraph, the command as one types it."""
+    return "\n".join(ln.strip() for ln in __doc__.strip().split("\n\n")[1].splitlines())
+
+
 def main(argv):
     if not argv or argv[0].startswith("-"):
-        print(__doc__.strip().splitlines()[3].strip(), file=sys.stderr)
+        print(usage(), file=sys.stderr)
         return 2
     try:
         since = since_of(argv[argv.index("--since") + 1]) if "--since" in argv else None
-    except ValueError:
+    except (IndexError, ValueError):
         print("--since takes HH:MM or YYYY-MM-DDTHH:MM", file=sys.stderr)
         return 2
     path = session_file(argv[0])

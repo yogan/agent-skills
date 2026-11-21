@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
 """e2e/transcript.py on a transcript of its own: one line per event, in order."""
+import contextlib
+import io
 import json
 import os
 import sys
@@ -74,6 +76,19 @@ class TestLines(unittest.TestCase):
         self.assertEqual(transcript.lines(self.path, since=next_day), [])
         self.assertEqual(len(transcript.lines(self.path, since=transcript.since_of(
             "2026-01-01T11:00"))), 6)
+
+    def test_no_arguments_prints_the_usage(self):
+        """It printed the docstring's blank line."""
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            self.assertEqual(transcript.main([]), 2)
+        self.assertIn("python3 e2e/transcript.py <session .jsonl", err.getvalue())
+
+    def test_since_with_no_time_says_what_it_takes(self):
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            self.assertEqual(transcript.main([self.path, "--since"]), 2)
+        self.assertIn("--since takes HH:MM", err.getvalue())
 
     def test_a_folder_no_session_ran_in_has_none(self):
         self.assertIsNone(transcript.session_file(self._tmp.name))

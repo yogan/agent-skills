@@ -195,5 +195,20 @@ class TestChrome(unittest.TestCase):
             self.assertEqual(len(values), 5, theme)
 
 
+class TestCaptureCli(unittest.TestCase):
+    def corpora(self, *flags):
+        with mock.patch.object(cf, "capture", return_value="") as grab, \
+                redirect_stdout(io.StringIO()):
+            cf.main(["capture", "x", *flags])
+        return grab.call_args.args[1]
+
+    def test_every_sample_set_is_captured_by_default_and_by_all(self):
+        """`both` named every one of them once there were three."""
+        self.assertEqual(self.corpora(), sorted(cf.CORPORA))
+        self.assertEqual(self.corpora("--corpus", "all"), sorted(cf.CORPORA))
+        self.assertEqual(self.corpora("--corpus", "both"), sorted(cf.CORPORA))
+        self.assertEqual(self.corpora("--corpus", "repo"), ["repo"])
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
