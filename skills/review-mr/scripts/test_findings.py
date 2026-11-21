@@ -3078,6 +3078,17 @@ class TestAnswersInCode(unittest.TestCase):
         self.assertEqual(self.state["pushes"][0], {**self.state["pushes"][0], "rebase": True, "topics": [],
                                                     "onto": "main"})
 
+    def test_a_rebase_a_sync_saw_first_is_still_a_rebase(self):
+        """`sync` and `base` keep the sidebar's base current; the check compared against that
+        one, so a rebase they saw before it counted as the author's own push."""
+        self.push("", head="c0")                          # the check saw base b0
+        self.state["diff_base"] = "b1"                    # a `sync` saw the rebase first
+        with patch.object(F, "mr_head", return_value="c1"), patch.object(F, "_compare", return_value=[]), \
+                patch.object(F, "_gl_compare", return_value=None), \
+                patch.object(F, "mr_object", return_value={"target_branch": "main"}):
+            F.check_pushes(self.state, None, 1, "b1")
+        self.assertTrue(self.state["pushes"][-1]["rebase"])
+
     def test_a_rebase_that_came_with_a_change_to_the_file_names_its_topic(self):
         """Alex rebased onto main and fixed two topics in the same push: News said "rebased ·
         changes 2 of its files" and named no topic, and the topic whose file changed beside

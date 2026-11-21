@@ -2052,7 +2052,12 @@ def check_pushes(state, ctx, iid, base):
     # word of the author's. So after a rebase a file counts only where the MR's OWN change to
     # it differs between the two pushes (each push's base to its head, hunk headers aside),
     # as `_author_touch` does for the `updates` report.
-    old_base = state.get("diff_base")
+    # The base this check saw last, kept apart from `diff_base`: `sync` and `base` move that
+    # one for the sidebar, and a rebase they saw first would be no rebase here. A state from
+    # before it was kept starts from `diff_base`.
+    old_base = state.get("pushes_base") or state.get("diff_base")
+    if base:
+        state["pushes_base"] = base
     rebased = bool(seen and seen != head and base and old_base and base != old_base)
     authored = None
     if rebased:
