@@ -3500,9 +3500,11 @@ def clear_notes_before_load(ctx, iid, args, text):
     left on one topic's diff would land on unrelated code in the next: every note goes. The
     user's are kept first (`kept_notes_path`, with the topic they were written on), because
     a load is often a person's press, whose output never reaches the model; the kept copy
-    is then the only way their notes still do. Loading the same again moves nothing, and
-    every note stays. A load the window cannot take closes it (`hunk.show_view`), which
-    is why the notes are kept first whatever comes next.
+    is then the only way their notes still do. A note `notes` printed already has reached
+    the model, and is not kept: kept, it came back as unanswered once the window had moved
+    on, its answer given long before. Loading the same again moves nothing, and every note
+    stays. A load the window cannot take closes it (`hunk.show_view`), which is why the
+    notes are kept first whatever comes next.
 
     Raises `NotesNotCleared` where the viewer cannot say which notes it holds, or cannot clear
     them: the window is then left as it is, and nothing is to be loaded into it."""
@@ -3516,8 +3518,10 @@ def clear_notes_before_load(ctx, iid, args, text):
     if got is None:
         raise NotesNotCleared("the diff viewer did not answer, so it was left holding what it "
                          "had, any notes of yours in it included")
-    if got:
-        keep_viewer_notes(ctx, shows.get("iid") or iid, shows.get("topic"), got)
+    printed = set(shows.get("printed") or [])
+    unread = [n for n in got if n[4] not in printed]
+    if unread:
+        keep_viewer_notes(ctx, shows.get("iid") or iid, shows.get("topic"), unread)
     if not hunk.clear_all_notes(sid):
         raise NotesNotCleared("the notes in the diff viewer could not be cleared, so it was left "
                          "holding what it had")

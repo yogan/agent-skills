@@ -4410,6 +4410,15 @@ class TestViewerMovesOn(ViewerCase):
         self.assertEqual([(n["topic"], n["file"], n["line"], n["text"]) for n in self.kept()],
                          [("t2", "src/basket.py", 4, "why a list here?")])
 
+    def test_a_note_notes_printed_already_is_not_kept(self):
+        """It has reached the model, and was answered there: kept, it came back as
+        unanswered on the next `notes`, once the window had moved on."""
+        w = FakeViewer([self.USER], shows=self.shows(printed=["user:1"], answered=["user:1"]))
+        with w.patches():
+            F.clear_notes_before_load(self.CTX, 1, ["patch", "/d/diff-t3.patch"], "new patch")
+        self.assertEqual(w.notes, [])
+        self.assertEqual(self.kept(), [])
+
     def test_a_note_kept_once_is_not_kept_twice(self):
         w = FakeViewer([self.USER], shows=self.shows(), clears=False)
         with w.patches():

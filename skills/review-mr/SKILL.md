@@ -656,14 +656,17 @@ python3 $SD/findings.py set <t> --state acked --iid <n>               # ● you'
 # not satisfied → draft a follow-up reply (Phase-2 rules); topic stays open
 ```
 
-**While a topic's diff is in the viewer window**, it is where you show and are shown things.
-When the user asks where something is in that diff, or asks you to point something out, run
-`point <t> <file> <line> '<text>' --iid <n>` (`--old` for a removed line) instead of naming
-`file:line`: your note goes on that line and the window jumps to it. Only the places they asked
-about, never a review of your own; a line the diff does not show is refused, so name that one in
-the chat. When they say done, run `notes --iid <n>`: answer each note in the chat, then `reply
-<number> '<gist>' --iid <n>` under it; a note marked "no longer in the window" is answered in the
-chat only. Acking the topic clears your notes and the ones you have read.
+**Asked where something is in a topic's change** ("where in the fix…", "show me where…", "point
+out…"), run `point <t> <file> <line> '<text>' --iid <n>` (`--old` for a removed line) first,
+before answering, whether or not you know of a viewer window: the user often opens it with a
+card button whose output you never see. Your note goes on that line and the window jumps to it;
+write it, and every `reply`, as plain text, since the viewer shows backticks and asterisks as
+typed. Then answer in the chat in a sentence or two, saying where the note is. Only the places
+they asked about, never a review of your own. Where `point` refuses (no window, it shows another
+topic, a line its diff does not show), name `file:line` in the chat instead. When they say done,
+run `notes --iid <n>`: answer each note in the chat, then `reply <number> '<gist>' --iid <n>`
+under it; a note marked "no longer in the window" is answered in the chat only. Acking the topic
+clears your notes and the ones you have read.
 
 **An author resolving a thread is NOT a close — only your ack is.** After you've reviewed a
 push, `set-head` to move the baseline. Always end a check with what's still left (`todo`).
