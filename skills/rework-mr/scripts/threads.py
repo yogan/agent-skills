@@ -93,6 +93,7 @@ from lib.gitlab import (
     run,
     versions,
     web_base,
+    wrote,
 )
 from lib.mr_common import (
     instant,
@@ -3258,7 +3259,7 @@ def diff_url_for(ctx, iid, start, head):
     """The diff link of the topic's pushes: GitLab makes the new version a moment after the
     push, so it is waited for."""
     for _ in range(20):
-        vs = versions(ctx, iid)
+        vs = versions(ctx, iid, fresh=True)
         if vs and vs[0].get("head_commit_sha") == head:
             return f"{ctx['web']}/-/merge_requests/{iid}/diffs?diff_id={vs[0]['id']}&start_sha={start}"
         time.sleep(1)
@@ -3398,6 +3399,7 @@ def push_fix(ctx, iid, path, tid, committed=False, take_in=False):
                 save(path, state)
             before = start = taken
         checks.push(root, rec, before, mr_branch)
+        wrote()                            # the MR and its versions this run read are old now
     except checks.Stop as e:
         # Kept with the topic: its card goes on saying the fix is made and why the push
         # stopped, until a push goes through or the fix goes. Commits on the remote the

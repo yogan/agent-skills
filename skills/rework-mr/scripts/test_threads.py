@@ -25,6 +25,7 @@ sys.path.insert(0, HERE)
 
 import threads as T  # noqa: E402
 from lib import critical_manifest  # noqa: E402
+from lib import gitlab as G  # noqa: E402
 from lib.fences import LINK_ICON  # noqa: E402
 
 # lib/tab.py: code under test never names the window the tests run in, nor asks the model.
@@ -1484,6 +1485,20 @@ class TestCodeContext(unittest.TestCase):
         finally:
             T.fix_refs.drop(self.repo, "rework-mr", 3)
             self._git("reset", "-q", "--hard", self.sha)
+
+    def test_the_wait_for_a_push_s_version_asks_gitlab_each_time(self):
+        """GitLab reads are kept for the run (lib/gitlab.py): the versions read before the push
+        must not answer the wait for the version the push makes."""
+        old, new = "1" * 40, "2" * 40
+        answers = iter([[{"id": 8, "head_commit_sha": old}]] * 2 + [[{"id": 9, "head_commit_sha": new}]])
+        G.forget()
+        self.addCleanup(G.forget)
+        with mock.patch.object(G, "run", side_effect=lambda cmd, input=None: subprocess.CompletedProcess(
+                cmd, 0, json.dumps(next(answers)), "")), mock.patch.object(T.time, "sleep"):
+            T.versions({"enc": "g%2Fp"}, 3)
+            T.wrote()
+            url = T.diff_url_for({"enc": "g%2Fp", "web": "http://gl/g/p"}, 3, old, new)
+        self.assertEqual(url, f"http://gl/g/p/-/merge_requests/3/diffs?diff_id=9&start_sha={old}")
 
     def test_a_push_recorded_with_no_time_gets_its_version_s(self):
         state = self.pushed_state()

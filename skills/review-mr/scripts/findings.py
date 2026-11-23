@@ -2197,12 +2197,9 @@ def check_pushes(state, ctx, iid, base):
     # pushes made while it waited reach the inbox as the ones made during a round do.
     seen = state.get("seen_head") or state.get("last_reviewed_head")
     state["seen_head"] = head
-    cache = {}
 
     def compare(frm, to):
-        if (frm, to) not in cache:
-            cache[(frm, to)] = _compare(ctx, frm, to)
-        return cache[(frm, to)]
+        return _compare(ctx, frm, to)
 
     # A rebase brings the target branch's own edits along, and a head-to-head compare cannot
     # tell them from the author's: the file's lines may have moved under the comment with no
@@ -2226,12 +2223,8 @@ def check_pushes(state, ctx, iid, base):
             b, a = own(before), own(after)
             authored = {p for p in set(b) | set(a) if b.get(p) != a.get(p)}
 
-    vs = []
-
     def mr_versions():
-        if not vs:
-            vs.extend(versions(ctx, iid) or [])
-        return vs
+        return versions(ctx, iid) or []
 
     def origin(x):
         return comment_origin(x, mr_versions, compare)
@@ -3892,12 +3885,9 @@ def walk_fixes(state, ctx, iid, vs=None):
     at = {v.get("head_commit_sha"): k for k, v in enumerate(chron)}
     head = chron[-1].get("head_commit_sha")
     web = _mr_web(state, ctx, iid)
-    cache = {}
 
     def compare(frm, to):
-        if (frm, to) not in cache:
-            cache[(frm, to)] = _compare(ctx, frm, to)
-        return cache[(frm, to)]
+        return _compare(ctx, frm, to)
 
     def own_change(v, path):
         diffs = compare(v.get("base_commit_sha"), v.get("head_commit_sha"))

@@ -81,6 +81,76 @@ class TestApi(unittest.TestCase):
             G.api("whatever")
 
 
+class TestReadsOncePerRun(unittest.TestCase):
+    """A run asks GitLab once for what cannot change within it; a read after its own write is
+    asked anew."""
+
+    CTX = {"enc": "g%2Fp"}
+    SHA1, SHA2 = "1" * 40, "2" * 40
+
+    def setUp(self):
+        G.forget()
+        self.addCleanup(G.forget)
+        # Other tests here put their own in place of these and leave them.
+        G.mr_object = _real_mr_object
+        self.addCleanup(setattr, G, "run", _real_run)
+        self.asked = []
+
+        def fake_run(cmd, input=None):
+            self.asked.append(cmd[2] if cmd[2] != "-X" else "WRITE")
+            return fake_result(stdout='{"diffs": [], "state": "opened"}')
+        G.run = fake_run
+
+    def count(self, part):
+        return sum(part in e for e in self.asked)
+
+    def test_the_mr_its_versions_a_compare_and_a_commit_are_asked_once(self):
+        compare = f"projects/g%2Fp/repository/compare?from={self.SHA1}&to={self.SHA2}&straight=true"
+        for _ in range(3):
+            G.mr_object(self.CTX, 7)
+            G.versions(self.CTX, 7)
+            G.api(compare)
+            G.api(f"projects/g%2Fp/repository/commits/{self.SHA2}")
+            G.api("projects/g%2Fp/merge_requests/7/versions/3")
+        self.assertEqual(len(self.asked), 5, self.asked)
+
+    def test_what_others_change_is_asked_every_time(self):
+        for _ in range(2):
+            G.api("projects/g%2Fp/merge_requests/7/discussions?per_page=100", paginate=True)
+            G.api("projects/g%2Fp/repository/compare?from=main&to=feat&straight=true")
+            G.api(f"projects/g%2Fp/repository/commits/{self.SHA2}/statuses")
+        self.assertEqual(len(self.asked), 6, self.asked)
+
+    def test_after_a_write_the_mr_is_asked_again_and_a_compare_is_not(self):
+        compare = f"projects/g%2Fp/repository/compare?from={self.SHA1}&to={self.SHA2}"
+        G.mr_object(self.CTX, 7)
+        G.versions(self.CTX, 7)
+        G.api(compare)
+        G.api_post("projects/g%2Fp/merge_requests/7/discussions/d1/notes", {"body": "x"})
+        G.mr_object(self.CTX, 7)
+        G.versions(self.CTX, 7)
+        G.api(compare)
+        self.assertEqual((self.asked.count("projects/g%2Fp/merge_requests/7"), self.count("/versions"),
+                          self.count("compare")), (2, 2, 1), self.asked)
+
+    def test_a_refused_write_counts_too(self):
+        G.mr_object(self.CTX, 7)
+        G.run = lambda cmd, input=None: (self.asked.append("WRITE"), fake_result(returncode=1, stdout="{}"))[1]
+        G.api_try("projects/g%2Fp/merge_requests/7/merge", {}, method="PUT")
+        G.run = lambda cmd, input=None: (self.asked.append(cmd[2]), fake_result(stdout="{}"))[1]
+        G.mr_object(self.CTX, 7)
+        self.assertEqual(self.asked.count("projects/g%2Fp/merge_requests/7"), 2)
+
+    def test_fresh_asks_again_for_a_caller_waiting_on_gitlab(self):
+        G.versions(self.CTX, 7)
+        G.versions(self.CTX, 7, fresh=True)
+        self.assertEqual(self.count("/versions"), 2)
+
+    def test_each_caller_gets_its_own_copy(self):
+        G.mr_object(self.CTX, 7)["state"] = "changed by one caller"
+        self.assertEqual(G.mr_object(self.CTX, 7)["state"], "opened")
+
+
 class TestTimeLimit(unittest.TestCase):
     """A GitLab call that never answers ends, as a failure that says so."""
 

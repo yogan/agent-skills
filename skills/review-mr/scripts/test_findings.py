@@ -24,6 +24,7 @@ sys.path.insert(0, HERE)
 
 import findings as F                                  # noqa: E402
 from lib import critical_manifest                      # noqa: E402
+from lib import gitlab as G                            # noqa: E402
 from lib.gitlab import POSTED_BUT                      # noqa: E402
 
 # lib/tab.py: code under test never names the window the tests run in, nor asks the model.
@@ -4164,6 +4165,53 @@ class TestPostedCommentCard(unittest.TestCase):
                         "fixes": [{"before": "a", "after": "b", "at": "2026-11-10T16:00:00Z"}]}]}
         with patch.dict(os.environ, {"REVIEW_UI_DRAWN": "1"}), patch.object(F, "topic_status", return_value="acked"):
             self.assertIn("You accepted Robin's fix and resolved it", F.closing_line(state, state["topics"][0]))
+
+
+class TestOneRefreshAsksOncePerRead(unittest.TestCase):
+    """The update check runs every half minute, and its helpers each asked GitLab for the MR,
+    its versions and the push's compare and commit on their own: one refresh asked for the
+    same compare four times. Each distinct read is asked once per run now."""
+
+    A, B, M = "a" * 40, "b" * 40, "e" * 40
+    CTX = {"enc": "g%2Fp", "web": "https://gl/g/p", "slug": "g-p"}
+
+    def gitlab(self, cmd, input=None):
+        endpoint = cmd[2]
+        self.asked.append(endpoint)
+        v2 = {"id": 2, "head_commit_sha": self.B, "base_commit_sha": self.M, "created_at": "2026-11-05T12:00:00Z"}
+        v1 = {"id": 1, "head_commit_sha": self.A, "base_commit_sha": self.M, "created_at": "2026-11-05T08:00:00Z"}
+        answers = {
+            "projects/g%2Fp/merge_requests/7": {"state": "opened", "diff_refs": {"head_sha": self.B, "base_sha": self.M}},
+            "projects/g%2Fp/merge_requests/7/versions?per_page=100": [v2, v1],
+            f"projects/g%2Fp/repository/compare?from={self.A}&to={self.B}&straight=true": {
+                "diffs": [{"new_path": "a.ts", "old_path": "a.ts", "diff": "@@ -40 +40 @@\n-old\n+new\n"}],
+                "commits": [{"id": self.B, "parent_ids": [self.A]}]},
+            f"projects/g%2Fp/repository/commits/{self.B}": {"committed_date": "2026-11-05T11:59:58Z"},
+        }
+        return subprocess.CompletedProcess(cmd, 0, json.dumps(answers.get(endpoint, {})), "")
+
+    def test_each_read_is_asked_once(self):
+        G.forget()
+        self.addCleanup(G.forget)
+        self.asked = []
+        state = {"iid": 7, "author": "Robin", "author_username": "robin.l", "me": "kim",
+                 "last_reviewed_head": self.A, "seen_head": self.A, "pushes_base": self.M,
+                 "mr_web_url": "https://gl/g/p/-/merge_requests/7",
+                 "threads": {"d1": {"mine": True, "file": "a.ts", "line": 40, "side": "new",
+                                    "head_sha": self.A, "resolved": False, "url": "https://gl/n1",
+                                    "notes": [{"body": "Off by one.", "mine": True, "at": "2026-11-05T09:00:00Z"}]}},
+                 "topics": [{"id": "t1", "thread_ids": ["d1"], "summary": "off by one", "state": None, "source": "llm"}]}
+        with patch.dict(os.environ, {"REVIEW_UI_DRAWN": "1"}), patch.object(G, "run", side_effect=self.gitlab), \
+                patch.object(F, "resolve_state", return_value=(self.CTX, 7, "/s", state)), \
+                patch.object(F, "current_user", return_value="kim"), patch.object(F, "sync"), \
+                patch.object(F, "fetch_threads", return_value={}), patch.object(F, "save"), \
+                patch.object(F, "get_worktree", return_value=None), \
+                patch.object(sys, "argv", ["findings.py", "refresh", "--iid", "7"]), \
+                redirect_stdout(io.StringIO()):
+            F.main()
+        self.assertTrue(state["topics"][0].get("fixes"), "the refresh walked the push")
+        again = {e: n for e in set(self.asked) if (n := self.asked.count(e)) > 1}
+        self.assertEqual(again, {})
 
 
 class TestAuthorFixes(unittest.TestCase):

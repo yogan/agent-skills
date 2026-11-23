@@ -98,14 +98,51 @@ def context():
     }
 
 
-def api(endpoint, paginate=False):
-    cmd = ["glab", "api", endpoint]
-    if paginate:
-        cmd.append("--paginate")
-    r = run(cmd)
-    if r.returncode != 0:
-        die(f"glab api {endpoint} failed: {r.stderr.strip() or r.stdout.strip()}")
-    out = r.stdout.strip()
+# Reads answered once per run of a script. One update check asks for the same compare, commit
+# and MR several times over, from helpers that know nothing of each other; each answer is
+# kept as text and parsed anew per caller, so no caller can change another's copy.
+#
+# Two kinds, and nothing else is kept: an answer that may change from one call to the next
+# (the threads, approvals, a branch) is asked for every time.
+_SHA = r"[0-9a-f]{7,40}"
+# Addressed by commit: the same answer for good.
+_FOREVER = re.compile(rf"projects/[^/?]+/(repository/compare\?from={_SHA}&to={_SHA}(&straight=(true|false))?"
+                      rf"|repository/commits/{_SHA}|merge_requests/\d+/versions/\d+)")
+# The MR and its versions: changed by a push or a write, so kept only until the run makes one
+# (`wrote`). A push from elsewhere during the run is the next run's news, as it is between two
+# reads a moment apart.
+_UNTIL_WRITE = re.compile(r"projects/[^/?]+/merge_requests/\d+(/versions\?per_page=100)?")
+_READS = {}
+
+
+def wrote():
+    """The run changed something on GitLab (a write, a push): what it read of the MR and its
+    versions is no longer the answer, so those are asked for again."""
+    for k in [k for k in _READS if _UNTIL_WRITE.fullmatch(k[0])]:
+        del _READS[k]
+
+
+def forget():
+    """Every read kept so far, gone: for tests, which run many scripts' worth in one process."""
+    _READS.clear()
+
+
+def api(endpoint, paginate=False, fresh=False):
+    """GitLab's answer to a GET of `endpoint`, parsed; dies on failure. A read that cannot
+    change within the run is asked once (see `_READS`); `fresh` asks again all the same, for a
+    caller waiting for GitLab to catch up."""
+    key = (endpoint, paginate)
+    out = None if fresh else _READS.get(key)
+    if out is None:
+        cmd = ["glab", "api", endpoint]
+        if paginate:
+            cmd.append("--paginate")
+        r = run(cmd)
+        if r.returncode != 0:
+            die(f"glab api {endpoint} failed: {r.stderr.strip() or r.stdout.strip()}")
+        out = r.stdout.strip()
+        if _FOREVER.fullmatch(endpoint) or _UNTIL_WRITE.fullmatch(endpoint):
+            _READS[key] = out
     if not out:
         return []
     try:
@@ -136,6 +173,7 @@ def api_post(endpoint, body, method="POST"):
     cmd = ["glab", "api", "-X", method, "-H", "Content-Type: application/json",
            endpoint, "--input", "-"]
     r = run(cmd, input=json.dumps(body))
+    wrote()                       # refused, made, or perhaps made: read the MR anew either way
     if r.returncode == TIMED_OUT:
         # A write that ran out of time may have been made all the same: posting it again could
         # post it twice.
@@ -169,6 +207,7 @@ def api_try(endpoint, body, method="POST"):
     cmd = ["glab", "api", "-X", method, "-H", "Content-Type: application/json",
            endpoint, "--input", "-"]
     r = run(cmd, input=json.dumps(body))
+    wrote()
     if r.returncode == TIMED_OUT:
         return None, f"{r.stderr} — it may or may not have gone through"
     if r.returncode != 0:
@@ -358,12 +397,13 @@ def mr_base(ctx, iid):
     return refs.get("base_sha")
 
 
-def versions(ctx, iid):
+def versions(ctx, iid, fresh=False):
     """MR diff versions, newest first — one per push (survives force-push). Used to
     derive a stable diff-between-versions URL (see lib/diff_url.py) and, in review-mr's
-    findings.py, to detect a rebase between two of the reviewer's baselines."""
+    findings.py, to detect a rebase between two of the reviewer's baselines. `fresh`: asked
+    again even where this run read them already (`api`)."""
     return api(f"projects/{ctx['enc']}/merge_requests/{iid}/versions?per_page=100",
-               paginate=True)
+               paginate=True, fresh=fresh)
 
 
 def remember_user(state, me):
