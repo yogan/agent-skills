@@ -1,0 +1,88 @@
+{
+ "recorded_from": {
+  "model": "claude-sonnet-5-5",
+  "session": "74435fb5-ae4e-4c1b-af66-44318310663f.jsonl"
+ },
+ "streams": [
+  {
+   "name": "main",
+   "first": "<command-message>agent-skills:review-mr</command-message> <command-name>/agent-skills:review-mr</command-name> <command-args>!5</command-args>",
+   "replies": [
+    {
+     "content": [
+      {
+       "type": "tool_use",
+       "id": "toolu_0173jaVQMcfwiDjBbLf9uU29",
+       "name": "Bash",
+       "input": {
+        "command": "SD=~/.claude/skills/review-mr/scripts; python3 $SD/findings.py prune --iid 5; python3 $SD/findings.py worktree --iid 5; git worktree list"
+       }
+      }
+     ],
+     "prompts": [
+      "<command-message>agent-skills:review-mr</command-message> <command-name>/agent-skills:review-mr</command-name> <command-args>!5</command-args>",
+      "Base directory for this skill: {SRC}/agent-skills/skills/review-mr # Review MR Reviewing **someone else's** GitLab MR. glab-only; nothing reaches GitLab but what the user posts. `SD=~/.claude/skills/r"
+     ]
+    },
+    {
+     "content": [
+      {
+       "type": "tool_use",
+       "id": "toolu_01CE2rDRPrXgBXnWCe8DZBAq",
+       "name": "Bash",
+       "input": {
+        "command": "SD=~/.claude/skills/review-mr/scripts; cd {SRC}/agent-skills-demo-review-mr5 && git fetch origin && git checkout -f --detach \"origin/$(python3 $SD/findings.py branch --iid 5)\" && python3 $SD/findings.py begun --iid 5"
+       }
+      }
+     ]
+    },
+    {
+     "content": [
+      {
+       "type": "tool_use",
+       "id": "toolu_01PhNLoXnzyBLbtZ4XXaYXy9",
+       "name": "Bash",
+       "input": {
+        "command": "SD=~/.claude/skills/review-mr/scripts; cd {SRC}/agent-skills-demo-review-mr5 && python3 $SD/findings.py resume --iid 5"
+       }
+      }
+     ]
+    },
+    {
+     "content": [
+      {
+       "type": "text",
+       "text": "Resumed MR !5. The checkout is on the branch tip. New activity since your last review is in the sidebar's News box, where you can open a round."
+      }
+     ]
+    }
+   ],
+   "ids": {
+    "toolu_0173jaVQMcfwiDjBbLf9uU29": [
+     "814d73d",
+     "4b562a8",
+     "1d4d7cf",
+     "2ad2b4a"
+    ],
+    "toolu_01CE2rDRPrXgBXnWCe8DZBAq": [
+     "1d4d7cf",
+     "c8c9913",
+     "2ad2b4a"
+    ]
+   },
+   "hexes": {
+    "toolu_0173jaVQMcfwiDjBbLf9uU29": [
+     "814d73d",
+     "4b562a8",
+     "1d4d7cf",
+     "2ad2b4a"
+    ],
+    "toolu_01CE2rDRPrXgBXnWCe8DZBAq": [
+     "1d4d7cf",
+     "c8c9913",
+     "2ad2b4a"
+    ]
+   }
+  }
+ ]
+}

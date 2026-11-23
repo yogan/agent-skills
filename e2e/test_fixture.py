@@ -89,6 +89,28 @@ class TestCopy(unittest.TestCase):
         self.assertEqual((got["E2E_PROJECT"], got["E2E_GITLAB_HOST"]), ("demo/e2e-rework-fix", "gitlab.test"))
 
 
+class TestUntitled(unittest.TestCase):
+    """The other reviewers' threads sync adopted, named by its refusal to render without them."""
+
+    def untitled(self, stderr):
+        done = subprocess.CompletedProcess([], 1, stdout="", stderr=stderr)
+        with mock.patch.object(fixture.subprocess, "run", return_value=done):
+            return fixture.untitled_topics("/nowhere", 5)
+
+    # Several at once (MR !5 has three): each is named, and nothing from the hint after them.
+    def test_every_untitled_topic_is_named_and_none_from_the_hint_after_them(self):
+        self.assertEqual(self.untitled(
+            "error: needs summary: t3, t4, t5 — read the threads (`bodies`), `set t3 --summary '...'`"
+            " / `set t4 --summary '...'` / `set t6 --summary '...'`, then re-run"), ["t3", "t4", "t5"])
+
+    def test_one_untitled_topic(self):
+        self.assertEqual(self.untitled("error: needs summary: t5 — read the threads"), ["t5"])
+
+    def test_no_refusal_stops_the_reset(self):
+        with self.assertRaises(SystemExit):
+            self.untitled("")
+
+
 class TestCounter(unittest.TestCase):
     def test_the_next_merge_request_gets_the_number_asked_for(self):
         with mock.patch.object(fixture, "psql", return_value="2\nUPDATE 1") as psql:

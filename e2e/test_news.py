@@ -56,6 +56,8 @@ class Rig:
                     f.write(text)
         elif args[0] in ("push", "commit", "rebase"):
             self.done.append(args[0])
+        elif args[0] == "add":
+            self.done.append(args)
         return types.SimpleNamespace(stdout=out + "\n", stderr="", returncode=0)
 
     def api(self, path, method="GET", body=None, user="root", **_kw):
@@ -63,6 +65,9 @@ class Rig:
             return self.threads
         if path.endswith("/merge_requests/3"):
             return {"state": "opened"}
+        if method == "PUT" and path.endswith("?resolved=true"):
+            self.done.append(("resolve", path.split("/discussions/")[1].split("?")[0], user))
+            return {}
         raise AssertionError(f"unexpected call: {method} {path}")
 
     def post_thread(self, iid, user, path, needle, body):
@@ -177,6 +182,54 @@ class TestNews(unittest.TestCase):
         self.assertNotEqual(code, 0)
         self.assertEqual(again.done, [])
         self.assertIn("`suggest` ran before", out)
+
+    def mr5(self, **changed):
+        """MR !5's files as the fixture leaves them, but for `changed`."""
+        lists = {path: ("import { formatDate, formatRelative } from '@/utils/format';\n"
+                        + hook + "            return <span>{formatRelative(createdAt)}</span>;\n")
+                 for path, hook in news.LISTS.items()}
+        base = {fixture.MR5_FORMAT: fixture.MR5_NEW[fixture.MR5_FORMAT],
+                fixture.MR5_COMMENTS: "import { formatRelative } from '@/utils/format';\n" + fixture.MR5_COMMENT_DATE,
+                **lists}
+        return {**base, **changed}
+
+    # The build clone holds files of fixture.py's own (a seed it imported): a commit takes only its fix's.
+    def test_fixes_on_top_commits_each_fix_with_its_own_files_and_pushes_both_at_once(self):
+        with open(os.path.join(self.build, "mr5-seed.json"), "w") as f:
+            f.write("[]")
+        rig = Rig(self.build, self.mr5())
+        self.assertEqual(self.run_news(rig, "fixes-on-top")[0], 0)
+        self.assertEqual(rig.done, [
+            ("add", fixture.MR5_FORMAT, news.USE_NOW, fixture.MR5_DISCUSSIONS, fixture.MR5_USERS), "commit",
+            ("add", fixture.MR5_COMMENTS), "commit", "push"])
+        with open(os.path.join(self.build, fixture.MR5_FORMAT)) as f:
+            self.assertIn(news.RELATIVE_FIXED, f.read())
+        with open(os.path.join(self.build, fixture.MR5_USERS)) as f:
+            self.assertIn("formatRelative(createdAt, now)", f.read())
+        with open(os.path.join(self.build, fixture.MR5_COMMENTS)) as f:
+            self.assertIn(news.COMMENT_DATE_FIXED, f.read())
+
+    def test_fixes_on_top_runs_once(self):
+        rig = Rig(self.build, self.mr5(**{fixture.MR5_FORMAT: news.RELATIVE_FIXED}))
+        code, out = self.run_news(rig, "fixes-on-top")
+        self.assertNotEqual(code, 0)
+        self.assertEqual(rig.done, [])
+        self.assertIn("`fixes-on-top` ran before", out)
+
+    def test_peer_resolve_has_chidi_resolve_his_own_thread_once(self):
+        mine = {"id": "MIRIAM", "notes": [{"author": {"username": "reviewer-bot"},
+                                           "position": {"new_path": fixture.MR5_COMMENTS}, "body": "a time element"}]}
+        chidi = {"id": "CHIDI", "notes": [{"author": {"username": "peer-bot"}, "resolved": False,
+                                           "position": {"new_path": fixture.MR5_DAYJS}, "body": "FYI"}]}
+        rig = Rig(self.build, {}, [mine, chidi])
+        self.assertEqual(self.run_news(rig, "peer-resolve")[0], 0)
+        self.assertEqual(rig.done, [("resolve", "CHIDI", "peer-bot")])
+        chidi["notes"][0]["resolved"] = True
+        again = Rig(self.build, {}, [mine, chidi])
+        code, out = self.run_news(again, "peer-resolve")
+        self.assertNotEqual(code, 0)
+        self.assertEqual(again.done, [])
+        self.assertIn("`peer-resolve` ran before", out)
 
     def test_help_says_which_commands_exclude_each_other(self):
         code, out = self.run_news(Rig(self.build, {}), "help")

@@ -20,7 +20,7 @@ nothing and can run at the same time, and the demo's own project is never a test
 
 `--mr N` is the reset between two test runs, for what one run can have changed: it deletes that
 one merge request and makes it again, with its threads, its checkout and the skills' state for
-it, and leaves the rest of the rig alone. GitLab would number the new one !5, so the project's
+it, and leaves the rest of the rig alone. GitLab would number the new one !6, so the project's
 counter is set back in GitLab's database for the one creation (`next_mr_number`). It only
 does this on a rig that is otherwise as a full reset left it (`intact`): where the project,
 `main` or another merge request is not, it says why and runs everything instead.
@@ -84,6 +84,7 @@ DATES = {
     "mr2": "2024-05-06T14:31:00+02:00",
     "mr3": "2024-05-07T10:05:00+02:00",
     "mr4": "2024-05-08T11:20:00+02:00",
+    "mr5": "2024-05-09T15:40:00+02:00",
 }
 IDENT = {
     "author-bot": ("Novak, Alex - CD67890", "author-bot@e2e.test"),
@@ -709,10 +710,12 @@ def review_worktree(branch, iid):
 FINDINGS = os.path.join(_REPO_ROOT, "skills", "review-mr", "scripts", "findings.py")
 
 
-def findings(worktree, *args):
+def findings(worktree, *args, drawn=False):
+    """`drawn`: as in a session the mod draws, for what the skill keeps only there (its view of
+    another reviewer's thread)."""
     sd = FINDINGS
-    r = subprocess.run(["python3", sd, *args], cwd=worktree,
-                       capture_output=True, text=True)
+    r = subprocess.run(["python3", sd, *args], cwd=worktree, capture_output=True, text=True,
+                       env={**os.environ, "REVIEW_UI_DRAWN": "1"} if drawn else None)
     if r.returncode != 0:
         die(f"findings.py {' '.join(args)} failed:\n{r.stderr.strip() or r.stdout.strip()}")
     return r.stdout.strip()
@@ -745,26 +748,7 @@ def seed_mr2(iid):
     info(f"peer thread {peer['id'][:12]}")
 
     wt = wt0
-    findings(wt, "worktree", "--iid", str(iid), "--set", wt)
-    seed = [{"kind": "issue", "severity": t["severity"], "source": "both",
-             "summary": t["summary"], "file": t["file"], "draft": t["body"]}
-            for t, _ in posted]
-    seed_file = os.path.join(BUILD, "mr2-seed.json")
-    with open(seed_file, "w") as f:
-        json.dump(seed, f)
-    out = findings(wt, "import", seed_file, "--iid", str(iid))
-    info(out)
-    # Extract the bare handles rather than splitting the string: `import` renders topic
-    # refs for humans (`◈ t1, ◈ t2`), and that decoration is free to change — it did,
-    # and a `.replace(" ", "")` split then produced `◈t1`, which `link` cannot resolve.
-    tids = re.findall(r"t\d+", out.rsplit(":", 1)[1])
-    if len(tids) != len(posted):
-        die(f"import reported {len(tids)} topics, expected {len(posted)}: {out!r}")
-    for tid, (_t, did) in zip(tids, posted):
-        findings(wt, "link", tid, did, "--iid", str(iid))
-    info(f"linked {len(tids)} topics to their threads")
-    findings(wt, "set-head", "--iid", str(iid))
-    info("baseline recorded at version 1")
+    record_own_topics(wt, iid, posted)
 
     step("MR !2 — author pushes two fixes")
     # This stage runs last (it needs the re-cloned working copy for the review
@@ -786,6 +770,45 @@ def seed_mr2(iid):
     title_peer_topic(wt, iid)
 
 
+def record_own_topics(wt, iid, posted):
+    """Your posted threads (`posted`: (thread spec, discussion id) pairs) recorded as topics
+    through the skill's own CLI (import → link), then the baseline at the MR's head now."""
+    findings(wt, "worktree", "--iid", str(iid), "--set", wt)
+    seed = [{"kind": "issue", "severity": t["severity"], "source": "both",
+             "summary": t["summary"], "file": t["file"], "draft": t["body"]}
+            for t, _ in posted]
+    seed_file = os.path.join(BUILD, f"mr{iid}-seed.json")
+    with open(seed_file, "w") as f:
+        json.dump(seed, f)
+    out = findings(wt, "import", seed_file, "--iid", str(iid))
+    info(out)
+    # Extract the bare handles rather than splitting the string: `import` renders topic
+    # refs for humans (`◈ t1, ◈ t2`), and that decoration is free to change — it did,
+    # and a `.replace(" ", "")` split then produced `◈t1`, which `link` cannot resolve.
+    tids = re.findall(r"t\d+", out.rsplit(":", 1)[1])
+    if len(tids) != len(posted):
+        die(f"import reported {len(tids)} topics, expected {len(posted)}: {out!r}")
+    for tid, (_t, did) in zip(tids, posted):
+        findings(wt, "link", tid, did, "--iid", str(iid))
+    info(f"linked {len(tids)} topics to their threads")
+    findings(wt, "set-head", "--iid", str(iid))
+    info("baseline recorded at version 1")
+
+
+def untitled_topics(wt, iid):
+    """The topics sync adopted from threads you did not open, which have no summary yet: its
+    refusal to render names them (`needs summary: t5` or `t3, t4, t5`). It refuses after it has
+    adopted and saved, so a `set` after it sees the adopted topics."""
+    r = subprocess.run(["python3", FINDINGS, "sync", "--iid", str(iid)], cwd=wt,
+                       capture_output=True, text=True)
+    m = re.search(r"needs summary: ((?:t\d+(?:, )?)+)", r.stderr)
+    if not m:
+        die(f"MR !{iid}: sync did not refuse for an untitled topic — the other reviewers' "
+            f"threads were not adopted, so sync is not seeing them (rc={r.returncode}: "
+            f"{(r.stderr or r.stdout).strip()})")
+    return re.findall(r"t\d+", m.group(1))
+
+
 def title_peer_topic(wt, iid):
     """Author a summary for the peer's thread, discovered through the table's refusal.
 
@@ -798,15 +821,7 @@ def title_peer_topic(wt, iid):
     handle is parsed rather than assumed to be t5: the adopted topic's number depends
     on how many were imported before it. Same reason `seed_mr2` parses `import`'s
     output instead of counting."""
-    sd = FINDINGS
-    r = subprocess.run(["python3", sd, "sync", "--iid", str(iid)], cwd=wt,
-                       capture_output=True, text=True)
-    m = re.search(r"needs summary: (t\d+)", r.stderr)
-    if not m:
-        die("MR !2: sync did not refuse for an untitled topic — the peer thread was "
-            f"not adopted, so sync is not seeing it (rc={r.returncode}: "
-            f"{(r.stderr or r.stdout).strip()})")
-    tid = m.group(1)
+    tid = untitled_topics(wt, iid)[0]
     findings(wt, "set", tid, "--summary", MR2_PEER_THREAD["summary"], "--iid", str(iid))
     info(f"titled the peer topic {tid}")
 
@@ -979,13 +994,191 @@ def clone_mr4():
     record_checks(MR4_DIR)
 
 
+# ---------------------------------------------------------------- MR !5
+
+# MR !5: Alex's again, a small one you have reviewed before (seeded as MR !2 is), with three
+# threads of other reviewers beside your two: for the cards of other reviewers' threads, and
+# for a push of fix commits on top, each commit the fix of one thread (news.py's
+# `fixes-on-top`). Every thread is on a file of its own but two, which share one line, so a
+# commit's files say which threads it answers.
+MR5_BRANCH = "feat/relative-dates"
+MR5_TITLE = "Show relative dates in the lists"
+MR5_DESC = """The lists showed full timestamps ("May 9, 2024 3:40 PM") in every row, which is
+more than a table cell needs.
+
+- `formatRelative()` beside `formatDate()`: "3 days ago"
+- the discussions, users and comments lists use it; the lists keep the exact date on hover
+- dayjs's `relativeTime` plugin, extended once in `src/lib/dayjs.ts`
+"""
+MR5_DAYJS = "src/lib/dayjs.ts"
+MR5_FORMAT = "src/utils/format.ts"
+MR5_FORMAT_TEST = "src/utils/__tests__/format.test.ts"
+MR5_COMMENTS = "src/features/comments/components/CommentsList.tsx"
+MR5_DISCUSSIONS = "src/features/discussions/components/DiscussionsList.tsx"
+MR5_USERS = "src/features/users/components/UsersList.tsx"
+# The lines news.py's two commits change: the relative date (your first thread's), and the
+# comment's date (your second's, and Miriam's).
+MR5_RELATIVE = "export const formatRelative = (date: number) => dayjs(date).fromNow();"
+MR5_COMMENT_DATE = ('                <span className="text-xs font-semibold">'
+                    '{formatRelative(comment.createdAt)}</span>\n')
+# The MR's one commit: new files whole, changed files as (old, new) replacements of the base.
+MR5_NEW = {
+    MR5_DAYJS: """import { default as dayjs } from 'dayjs';
+import relativeTime from 'dayjs/plugin/relativeTime';
+
+// Plugins are global to dayjs: extended once, here, before anything formats a date.
+dayjs.extend(relativeTime);
+
+export { dayjs };
+""",
+    MR5_FORMAT: f"""import {{ dayjs }} from '@/lib/dayjs';
+
+export const formatDate = (date: number) => dayjs(date).format('MMMM D, YYYY h:mm A');
+
+// "3 days ago": short enough for a table cell.
+{MR5_RELATIVE}
+""",
+    MR5_FORMAT_TEST: """import { formatRelative } from '../format';
+
+const DAY = 24 * 60 * 60 * 1000;
+
+test('formatRelative says how long ago a date was', () => {
+  expect(formatRelative(Date.now() - 3 * DAY)).toBe('3 days ago');
+});
+""",
+}
+MR5_LIST_CELL = ("""          title: 'Created At',
+          field: 'createdAt',
+          Cell({ entry: { createdAt } }) {
+            return <span>{formatDate(createdAt)}</span>;
+""", """          title: 'Created',
+          field: 'createdAt',
+          Cell({ entry: { createdAt } }) {
+            return <span title={formatDate(createdAt)}>{formatRelative(createdAt)}</span>;
+""")
+MR5_LIST_IMPORT = ("import { formatDate } from '@/utils/format';\n",
+                   "import { formatDate, formatRelative } from '@/utils/format';\n")
+MR5_EDITS = {
+    MR5_DISCUSSIONS: [MR5_LIST_IMPORT, MR5_LIST_CELL],
+    MR5_USERS: [MR5_LIST_IMPORT, MR5_LIST_CELL],
+    MR5_COMMENTS: [("import { formatDate } from '@/utils/format';\n",
+                    "import { formatRelative } from '@/utils/format';\n"),
+                   ('                <span className="text-xs font-semibold">'
+                    '{formatDate(comment.createdAt)}</span>\n', MR5_COMMENT_DATE)],
+}
+
+# Your comments, as if posted at your last review; news.py's `fixes-on-top` answers each with
+# a commit of its own. Fields as MR2_THREADS's.
+MR5_THREADS = [
+    {"key": "stale", "file": MR5_FORMAT, "needle": MR5_RELATIVE, "severity": "medium",
+     "summary": "relative dates are computed once per render, so a list left open goes stale",
+     "body": """`fromNow()` runs when the row renders, and nothing renders these lists again while
+they stay open: a discussion created "a few seconds ago" still says so an hour later.
+
+Could the lists pass in a `now` that moves on, say once a minute?"""},
+    {"key": "hover", "file": MR5_COMMENTS, "needle": "{formatRelative(comment.createdAt)}",
+     "severity": "low", "summary": "comments lost their exact date, with nothing on hover",
+     "body": """The discussions and users lists keep the exact date in a `title`, but the
+comments drop it: once a thread is a month old, "a month ago" is all a reader gets.
+
+Could this keep `formatDate` in a `title`, as the lists do?"""},
+]
+
+# Other reviewers' threads, in the order they are posted and so listed under "From other
+# reviewers". Each is for your information, and judged so at your last review: its summary
+# and its view are written by the fixture, as that session would have (MR2_PEER_THREAD says
+# why a summary must be). The second is on the line of your second thread.
+MR5_PEER_THREADS = [
+    {"user": "peer-bot", "file": MR5_DAYJS, "needle": "dayjs.extend(relativeTime);",
+     "body": """FYI: `dayjs.extend` changes the one global dayjs, so every module importing
+`dayjs` directly gets `relativeTime` too once this file has loaded. Fine as it is, just
+something to know when a test imports `format.ts` on its own.""",
+     "summary": "dayjs.extend is global, so the plugin reaches every dayjs import",
+     "why": "Chidi notes that `dayjs.extend` changes the global `dayjs`, so `relativeTime` "
+            "reaches every module that imports it. A remark for the author; nothing in it asks "
+            "anything of you."},
+    {"user": "reviewer-bot", "file": MR5_COMMENTS, "needle": "{formatRelative(comment.createdAt)}",
+     "body": """Small one: a `<time dateTime=…>` in place of the span would let screen readers
+and tests read the real date instead of "3 days ago".""",
+     "summary": "a time element would give screen readers and tests the real date",
+     "why": "Miriam suggests a `<time dateTime>` element in place of the `span`, so assistive "
+            "technology and tests read the real date. A suggestion to the author; nothing in it "
+            "asks anything of you."},
+    {"user": "peer-bot", "file": MR5_FORMAT_TEST, "needle": "const DAY = 24 * 60 * 60 * 1000;",
+     "body": "Nit: `DAY` could live in a shared test helper; the users tests will want it too.",
+     "summary": "the DAY constant could move to a shared test helper",
+     "why": "Chidi suggests moving `DAY` to a shared test helper so other tests can use it. A nit "
+            "for the author; nothing in it asks anything of you."},
+]
+
+
+def replace_once(path, old, new):
+    """`old` replaced by `new` in the build tree's `path`, where it occurs exactly once."""
+    full = os.path.join(BUILD, path)
+    with open(full) as f:
+        text = f.read()
+    if text.count(old) != 1:
+        die(f"{path}: expected one {old.strip()[:60]!r}, found {text.count(old)}")
+    with open(full, "w") as f:
+        f.write(text.replace(old, new))
+
+
+def build_mr5():
+    """One commit by Alex on the demo's main. Its fixes come later, from news.py."""
+    step("MR !5 — relative dates (re-review target with other reviewers' threads)")
+    git("checkout", "--quiet", "-B", MR5_BRANCH, build_main(), cwd=BUILD)
+    for path, text in MR5_NEW.items():
+        full = os.path.join(BUILD, path)
+        os.makedirs(os.path.dirname(full), exist_ok=True)
+        with open(full, "w") as f:
+            f.write(text)
+    for path, edits in MR5_EDITS.items():
+        for old, new in edits:
+            replace_once(path, old, new)
+    git("add", *MR5_NEW, *MR5_EDITS, cwd=BUILD)
+    git("commit", "--quiet", "-m", "show relative dates in the lists", cwd=BUILD,
+        user="author-bot", date=DATES["mr5"])
+    push_branch("author-bot", MR5_BRANCH)
+    return create_mr("author-bot", MR5_BRANCH, MR5_TITLE, MR5_DESC, expect_iid=5)
+
+
+def seed_mr5(iid):
+    """As seed_mr2, the other way round for what comes after: your threads and the other
+    reviewers', recorded and judged, and the baseline at the one version there is. Nothing is
+    pushed or answered: news.py brings that while a session watches."""
+    step("MR !5 — seeding the review conversation")
+    wt = review_worktree(MR5_BRANCH, iid)
+    findings(wt, "lang", "--set", "en")
+    posted = [(t, post_thread(iid, "frank", t["file"], t["needle"], t["body"])["id"])
+              for t in MR5_THREADS]
+    peers = [(p, post_thread(iid, p["user"], p["file"], p["needle"], p["body"]))
+             for p in MR5_PEER_THREADS]
+    record_own_topics(wt, iid, posted)
+    # Each adopted topic told apart by its thread's first comment, linked in its view.
+    tids = untitled_topics(wt, iid)
+    of = {}
+    for tid in tids:
+        said = findings(wt, "bodies", tid, "--iid", str(iid))
+        for p, d in peers:
+            if f"note_{d['notes'][0]['id']}" in said:
+                of[tid] = p
+    order = [of.get(tid) for tid in tids]
+    if order != [p for p, _ in peers]:
+        die(f"MR !5: the other reviewers' threads came in as {tids}, not in the order they were "
+            "posted, which the scenarios name them by")
+    for tid, p in zip(tids, order):
+        findings(wt, "peer", tid, "fyi", "--summary", p["summary"], "--why", p["why"],
+                 "--iid", str(iid), drawn=True)
+    info(f"titled the other reviewers' threads {', '.join(tids)}, each for your information")
+
+
 # ---------------------------------------------------------------- local clone
 
 
 def review_worktrees():
     """Each review worktree that is there -> (its MR's branch, the commit it is on)."""
     out = {}
-    for iid, branch in ((1, MR1_BRANCH), (2, MR2_BRANCH)):
+    for iid, branch in ((1, MR1_BRANCH), (2, MR2_BRANCH), (5, MR5_BRANCH)):
         path = f"{WORKDIR}-review-mr{iid}"
         r = git("rev-parse", "HEAD", cwd=path, check=False) if os.path.isdir(path) else None
         if r and r.returncode == 0:
@@ -1102,7 +1295,7 @@ def wipe_skill_state(iid=None):
 
 # ---------------------------------------------------------------- one MR alone
 
-MR_COUNT = 4
+MR_COUNT = 5
 
 
 class NotIntact(Exception):
@@ -1188,7 +1381,14 @@ def remake_mr4():
     clone_mr4()
 
 
-REMAKE = {1: remake_mr1, 2: remake_mr2, 3: remake_mr3, 4: remake_mr4}
+def remake_mr5():
+    wipe_skill_state(5)
+    mr = build_mr5()
+    wait_for_diff(mr["iid"])
+    seed_mr5(mr["iid"])
+
+
+REMAKE = {1: remake_mr1, 2: remake_mr2, 3: remake_mr3, 4: remake_mr4, 5: remake_mr5}
 
 
 def remake(iids):
@@ -1210,7 +1410,7 @@ def remake(iids):
 # ---------------------------------------------------------------- driver
 
 
-STAGES = ("project", "main", "mr1", "mr2", "mr3", "mr4", "clone", "state", "prepared")
+STAGES = ("project", "main", "mr1", "mr2", "mr3", "mr4", "mr5", "clone", "state", "prepared")
 
 
 def main():
@@ -1263,8 +1463,11 @@ def main():
         mr4 = build_mr4()
         wait_for_diff(mr4["iid"])
         seed_mr4(mr4["iid"])
-    # MR !2's conversation is seeded last: it re-clones nothing, but it does need the
-    # working copy (for the review worktree), which the clone stage rebuilds.
+    if "mr5" in want:
+        mr5 = build_mr5()
+        wait_for_diff(mr5["iid"])
+    # MR !2's and MR !5's conversations are seeded last: they re-clone nothing, but they do
+    # need the working copy (for the review worktrees), which the clone stage rebuilds.
     if "clone" in want:
         reclone_workdir()
         clone_mr4()
@@ -1272,6 +1475,8 @@ def main():
         wipe_skill_state()
     if "mr2" in want:
         seed_mr2(2)
+    if "mr5" in want:
+        seed_mr5(5)
     # Last, and after the state wipe: the wipe removes review-mr's <slug>--mr1/ state folder
     # wholesale, so anything registered before it would be thrown away again.
     if "prepared" in want:

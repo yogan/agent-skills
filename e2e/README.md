@@ -20,7 +20,7 @@ Talk-day checklist and run of show: [RUNBOOK.md](RUNBOOK.md).
 | `timing.py` | where a verify run's time went (reset, claude's start, each kind of step), and one set of runs against another |
 | `screenshot.py` | a colour capture (`.ansi`) as a PNG drawn as Ghostty draws it, the whole screen or the sidebar alone |
 | `transcript.py` | what a session ran, from its transcript: prompts, replies, calls, results, engine notes; a failed verify run keeps it as `transcript.txt` |
-| `news.py` | the MRs change from outside while a session works on them, as the other people on them would: MR !1's author answers and pushes (`reply`, `push`, `fix`, `both`), `main` moves and MR !2 is rebased onto it with a fix (`main`, `rebase-fix`), MR !3 is approved, settled, given a pipeline, reopened, merged. Each command checks everything before it changes anything, runs once, and says which commands exclude each other (`python3 news.py help`) |
+| `news.py` | the MRs change from outside while a session works on them, as the other people on them would: MR !1's author answers and pushes (`reply`, `push`, `fix`, `both`), `main` moves and MR !2 is rebased onto it with a fix (`main`, `rebase-fix`), MR !3 is approved, settled, given a pipeline, reopened, merged, MR !5 gets two fix commits on top and another reviewer resolves a thread of theirs (`fixes-on-top`, `peer-resolve`). Each command checks everything before it changes anything, runs once, and says which commands exclude each other (`python3 news.py help`) |
 | `.runs/` | `drive.py verify` captures, one folder per run (gitignored) |
 | `patches/` | the frozen MR diffs (`mr1-flaws.patch`, `mr2/`, `mr3/`) |
 | `artifacts/` | MR !1's frozen explainer and review-branch seed — tracked, so the live first pass generates neither |
@@ -81,7 +81,7 @@ python3 fixture.py --mr 3   # MR !3 alone, ~6 s (MR !2: ~11 s)
 
 Deletes and recreates the *project* (that is what restarts MR IIDs at 1), re-pushes branches,
 recreates the MRs, seeds threads and the local review state, re-clones the working copy at
-`~/src/agent-skills-demo` (plus `-review-mr1` and `-review-mr2` beside it — one review
+`~/src/agent-skills-demo` (plus `-review-mr1`, `-review-mr2` and `-review-mr5` beside it — one review
 worktree per reviewed MR, as the skill records them), wipes skill state under
 `~/.claude/review-mr/` and `~/.claude/rework-mr/`, and finally registers MR !1's two prepared
 inputs (below).
@@ -114,13 +114,13 @@ explainer, edit `artifacts/` and re-run the stage above. Both are plain files �
 
 `--mr N` is the reset between two test runs. A scenario works on one merge request, so
 that one is all it can have changed: `--mr N` deletes it and makes it again with its threads,
-its checkout and the skills' state for it, and leaves the other three as they are. GitLab
-would number the new one !5, so the project's merge request counter is set back in GitLab's
+its checkout and the skills' state for it, and leaves the other four as they are. GitLab
+would number the new one !6, so the project's merge request counter is set back in GitLab's
 own database for that one creation (`gitlab-psql` in the container; `next_mr_number`), and
 the number GitLab then gives is checked.
 
 It does this only on a rig that is otherwise whole: the project, `main` and
-`release/2024-06` where a full reset leaves them, all four merge requests there, the working
+`release/2024-06` where a full reset leaves them, all five merge requests there, the working
 copy a checkout. Anything else (a merged MR !3 or `news.py main` has moved `main`; a rig never reset) and it
 says why and runs everything. `drive.py verify` asks for it before every rig scenario.
 
@@ -128,7 +128,7 @@ says why and runs everything. `drive.py verify` asks for it before every rig sce
 
 `drive.py verify` never runs on the demo's project. Each scenario on the rig has a copy of
 the rig that is its alone: a project of its own beside the demo's (`demo/e2e-rework-fix`),
-built by the same `fixture.py` with the same four merge requests under the same numbers, and
+built by the same `fixture.py` with the same five merge requests under the same numbers, and
 its checkouts under `~/src/agent-skills-e2e/<scenario>/`, with the skills' state beside them
 in `state/` rather than in your `~/.claude` (`MR_SKILLS_STATE`, which takes the place of
 `~/.claude` for both skills; a scenario without the rig keeps it in its run's folder). The
@@ -160,6 +160,7 @@ On talk day use `./tmux-demo.sh` instead — it runs this only if the state does
 | `!1` | `author-bot` | upstream **PR #175** (standalone mock server), 2 real commits, 20 files, with 2 planted flaws alongside 2 genuine upstream ones. Targets `release/2024-06`, not `main`. Explainer and seed prepared, so nothing is generated live | `/review-mr`, live first pass |
 | `!2` | `author-bot` | route-level prefetch, plus a seeded conversation: fixed-by-push, author-asks-a-question, promised-but-not-done, untouched, and one peer thread | `/review-mr`, re-review |
 | `!3` | **you** | query-key factories in 2 commits, with 3 reviewer threads (trivial / hard / scope creep) | `/rework-mr` |
+| `!5` | `author-bot` | relative dates in the lists, 1 commit, pre-seeded like !2: two threads of yours, and three of other reviewers' (Chidi, Miriam), each titled and judged for your information. Its fixes come from `news.py fixes-on-top`, one commit per thread of yours | `/review-mr`, re-review with other reviewers |
 
 The MR !2 state is not hand-written. Threads are posted, recorded through `findings.py`'s own
 CLI (`import` → `link`), the baseline is taken with `set-head` while the worktree still sits on

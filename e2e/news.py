@@ -33,6 +33,15 @@ MR !3, your own; Miriam (reviewer-bot) reviews it:
                                     # on !3's branch that your checkout does not have
     python3 e2e/news.py merge       # you merge it
 
+MR !5, which you re-review beside two other reviewers; Alex is its author:
+
+    python3 e2e/news.py fixes-on-top  # Alex pushes two fix commits on top at once: the first
+                                      # fixes your thread on the relative date (format.ts) and
+                                      # changes three files besides, the second your thread on
+                                      # the comment's date and Miriam's on the same line
+                                      # (CommentsList.tsx), with no word in either thread
+    python3 e2e/news.py peer-resolve  # Chidi (peer-bot) resolves his own thread on dayjs.ts
+
 Which commands exclude each other:
 
 - Each runs once per rig. Run again, it refuses and changes nothing.
@@ -42,7 +51,8 @@ Which commands exclude each other:
 - `more` and `doubt` go in either order; after `merge`, nothing on !3 does.
 - `suggest` changes a file no topic of !3 is about, so a fix pushed before or after it is
   still the fix; a push made after it stops until the commit is taken in.
-- Everything else goes in any order: `both` touches nothing the others do.
+- Everything else goes in any order: `both` touches nothing the others do, nor do
+  `fixes-on-top` and `peer-resolve` each other's thread.
 
 Every command checks everything first and only then changes anything, so a refused command
 leaves the rig as it was. Never resets anything; `fixture.py` (or `tmux-demo.sh --force`) is
@@ -453,6 +463,107 @@ def plan_suggest():
                   "Apply 1 suggestion(s) to 1 file(s)", "suggest")
 
 
+# ---------------------------------------------------------------- MR !5
+
+IID5 = 5
+
+# Alex's two fix commits on top, pushed at once: the first answers your thread on the
+# relative date and touches three files besides; the second answers your thread on the
+# comment's date, and Miriam's on the same line, in a file the first leaves alone.
+RELATIVE_FIXED = ('// "3 days ago", from `now`: a list that stays open passes one that moves on.\n'
+                  "export const formatRelative = (date: number, now: number = Date.now()) =>\n"
+                  "  dayjs(date).from(now);")
+USE_NOW = "src/hooks/useNow.ts"
+USE_NOW_TEXT = """import { useEffect, useState } from 'react';
+
+// The time now, moved on every `everyMs`: for anything that says how long ago something was.
+export const useNow = (everyMs = 60_000) => {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const id = window.setInterval(() => setNow(Date.now()), everyMs);
+    return () => window.clearInterval(id);
+  }, [everyMs]);
+  return now;
+};
+"""
+LIST_NOW = {  # each list: its hook import and `now`, and the cell passing it
+    "import { formatDate, formatRelative } from '@/utils/format';\n":
+        "import { useNow } from '@/hooks/useNow';\nimport { formatDate, formatRelative } from '@/utils/format';\n",
+    "{formatRelative(createdAt)}": "{formatRelative(createdAt, now)}",
+}
+LISTS = {fx.MR5_DISCUSSIONS: "  const discussionsQuery = useDiscussions();\n",
+         fx.MR5_USERS: "  const usersQuery = useUsers();\n"}
+COMMENT_DATE_FIXED = """                <time
+                  className="text-xs font-semibold"
+                  dateTime={new Date(comment.createdAt).toISOString()}
+                  title={formatDate(comment.createdAt)}
+                >
+                  {formatRelative(comment.createdAt)}
+                </time>
+"""
+COMMENTS_IMPORT = ("import { formatRelative } from '@/utils/format';\n",
+                   "import { formatDate, formatRelative } from '@/utils/format';\n")
+FIX_COMMITS = (
+    ("move relative dates on once a minute", {
+        fx.MR5_FORMAT: [(fx.MR5_RELATIVE, RELATIVE_FIXED),
+                        ('// "3 days ago": short enough for a table cell.\n', "")],
+        USE_NOW: [("", USE_NOW_TEXT)],
+        **{path: [*LIST_NOW.items(), (hook, hook + "  const now = useNow();\n")]
+           for path, hook in LISTS.items()}}),
+    ("keep the exact date of a comment on hover", {
+        fx.MR5_COMMENTS: [COMMENTS_IMPORT, (fx.MR5_COMMENT_DATE, COMMENT_DATE_FIXED)]}),
+)
+# Chidi's thread that he resolves himself: the first of the other reviewers' (fixture.py).
+RESOLVED_PEER = fx.MR5_PEER_THREADS[0]
+
+
+def plan_fixes_on_top():
+    """Alex's FIX_COMMITS, each a commit of its own on !5's branch, pushed together as one
+    fast-forward push. Refused where the branch has them already."""
+    branch = fx.MR5_BRANCH
+    sha = tip(branch, "author-bot")
+    for path, old in ((fx.MR5_FORMAT, fx.MR5_RELATIVE), (fx.MR5_COMMENTS, fx.MR5_COMMENT_DATE)):
+        if old not in file_at(sha, path):
+            raise Refused(f"{path} is changed on {branch} already: `fixes-on-top` ran before.")
+
+    def push(_s):
+        b = fx.BUILD
+        fx.git("checkout", "--quiet", "--force", "--detach", sha, cwd=b)
+        for message, edits in FIX_COMMITS:
+            for path, steps in edits.items():
+                full = os.path.join(b, path)
+                os.makedirs(os.path.dirname(full), exist_ok=True)
+                text = open(full).read() if os.path.exists(full) else ""
+                for old, new in steps:
+                    if old and text.count(old) != 1:
+                        die(f"{path}: expected one {old.strip()[:60]!r} on {branch}")
+                    text = text.replace(old, new, 1) if old else new
+                with open(full, "w") as f:
+                    f.write(text)
+            fx.git("add", *edits, cwd=b)
+            fx.git("commit", "--quiet", "-m", message, cwd=b, user="author-bot")
+        fx.git("push", "--quiet", fx.push_url("author-bot"), f"HEAD:refs/heads/{branch}", cwd=b)
+    said = "', '".join(m for m, _ in FIX_COMMITS)
+    return [(f"!{IID5}: author-bot pushed two commits on top: '{said}'", push)]
+
+
+def plan_peer_resolve():
+    """Chidi resolves his own thread on RESOLVED_PEER's file: it closes by itself for you."""
+    p = RESOLVED_PEER
+    d = next((d for d in discussions(IID5)
+              if (first_note(d).get("author") or {}).get("username") == p["user"]
+              and (first_note(d).get("position") or {}).get("new_path") == p["file"]), None)
+    if not d:
+        raise Refused(f"no thread of {p['user']}'s on {p['file']} in !{IID5}: it is not as "
+                      "fixture.py seeds it.")
+    if first_note(d).get("resolved"):
+        raise Refused(f"Chidi's thread on {p['file']} is resolved already: `peer-resolve` ran before.")
+    enc = fx.project_path_enc()
+    return [(f"!{IID5}: {p['user']} resolved their thread on {p['file']}",
+             lambda _s: fx.api(f"projects/{enc}/merge_requests/{IID5}/discussions/{d['id']}?resolved=true",
+                               "PUT", {}, user=p["user"]))]
+
+
 # ---------------------------------------------------------------- the commands
 
 COMMANDS = {
@@ -461,6 +572,7 @@ COMMANDS = {
     "approve": plan_approve, "settle": plan_settle, "merge": plan_merge,
     "more": lambda: plan_more(MORE, "more"), "doubt": lambda: plan_more(DOUBT, "doubt"),
     "suggest": plan_suggest,
+    "fixes-on-top": plan_fixes_on_top, "peer-resolve": plan_peer_resolve,
 }
 
 

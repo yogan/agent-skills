@@ -79,6 +79,7 @@ REPLY_INSTEAD = [
 
 REVIEW1 = "~/src/agent-skills-demo-review-mr1"
 REVIEW2 = "~/src/agent-skills-demo-review-mr2"
+REVIEW5 = "~/src/agent-skills-demo-review-mr5"
 WORK = "~/src/agent-skills-demo"
 SCROLL = "~/src/agent-skills-demo-scroll"     # MR !4's checkout (fixture.py's MR4_DIR)
 # A scrollbar's thumb as the sidebar draws it: a full cell, or one filled from the bottom.
@@ -497,6 +498,97 @@ REWORK_PUSHBACK = [
             Check("git rev-list --count origin/main..@{u}", r"^2$"),   # folded into its commit
 ]
 
+# MR !5's rows in the sidebar, each by its id and the start of its summary (fixture.py's
+# MR5_THREADS and MR5_PEER_THREADS): an id alone is in the News box's lines too.
+ROW5 = {"t1": " t1 relative dates", "t2": " t2 comments lost", "t3": " t3 dayjs.extend",
+        "t4": " t4 a time element", "t5": " t5 the DAY constant"}
+
+
+def settles(who, *buttons):
+    """Another reviewer's card ending on whose it is to settle, these buttons under it, in this
+    order: the first of them the primary, which the band puts first."""
+    return rf"{who}'s to settle *│\n(?:│ *│\n)*│[^\n]*?" + button(*buttons)
+
+
+# The line above a fix's files where they are some of the commits of a push: the second of
+# Alex's two commits on top, or the first.
+ONE_OF_TWO = Expect(r"1 of 2 commits of this push", region="panel", wait=60)
+# A file only the first commit changed, or only the second.
+FIRST_ONLY = r"UsersList\.tsx|useNow\.ts"
+SECOND_ONLY = r"CommentsList\.tsx"
+
+REREVIEW_PEERS = [
+            Prompt("/review-mr !5", timeout=600),
+            Panel(True),
+            # Three threads of other reviewers', each for your information: watched, in order.
+            Expect(r"From other reviewers\n[^\n]*\bt3\b[^\n]*\n[^\n]*\bt4\b[^\n]*\n[^\n]*\bt5\b",
+                   region="panel", wait=60),
+            Click(ROW5["t3"], offset=1, region="panel"),
+            Expect(current("t3"), region="panel", wait=30),
+            # Its card: what the agent made of it when it came in, whose it is to settle, and
+            # the way on through the others, never a "Seen".
+            Expect(r"Analysis", region="screen"),
+            Expect(r"Chidi notes that", region="screen"),
+            Expect(settles("Chidi", "Next", "Reply…", "Analyse"), region="main"),
+            Expect(button("Seen"), region="screen", absent=True),
+            press("Next"),
+            Expect(current("t4"), region="panel", wait=30),
+            Expect(settles("Miriam", "Next", "Reply…", "Analyse"), region="main"),
+            # The card left behind still says whose it is: it is not closed on GitLab.
+            Expect(r"Chidi's to settle", region="main"),
+            Expect(r"\bClosed\.", region="main", absent=True),
+            press("Next"),
+            Expect(current("t5"), region="panel", wait=30),
+            # The last of them: its way on closes the card.
+            Expect(settles("Chidi", "Close", "Reply…", "Analyse"), region="main"),
+            press("Close"),
+            Expect(current("t5"), region="panel", absent=True, wait=30),
+            # Chidi resolves his own: closed by itself at the next update check, nothing judged.
+            Check(f"{NEWS} peer-resolve", r"resolved their thread"),
+            Expect(r"Closed \(1\)", region="panel", wait=60),
+            Expect(r"From other reviewers\n[^\n]*\bt4\b[^\n]*\n[^\n]*\bt5\b", region="panel"),
+            Click("Closed (1)", region="panel"),
+            Click(ROW5["t3"], offset=1, region="panel"),
+            Expect(current("t3"), region="panel", wait=30),
+            # Its card ends on who resolved it: no verdict, nothing to answer.
+            Expect(r"Chidi resolved it[^╭]*\Z", region="main", wait=30),
+            Expect(r"Verdict", region="screen", absent=True),
+            *[Expect(button(b), region="screen", absent=True)
+              for b in ("Next", "Reply…", "Follow up", "Wait for author")],
+]
+
+REREVIEW_COMMITS = [
+            Prompt("/review-mr !5", timeout=600),
+            Panel(True),
+            Expect(r"Waiting for author", region="panel", wait=60),
+            Expect(r"From other reviewers", region="panel"),
+            # Alex answers both of your threads with a commit each, pushed together on top.
+            Check(f"{NEWS} fixes-on-top", r"pushed two commits on top"),
+            Expect(r"Alex pushed · t1, t2\b", region="panel", wait=120),
+            # The second commit fixed t2: its files alone, and the line says it is one of two.
+            Click(ROW5["t2"], offset=1, region="panel"),
+            Expect(current("t2"), region="panel", wait=30),
+            ONE_OF_TWO,
+            Expect(SECOND_ONLY, region="panel"),
+            Expect(FIRST_ONLY, region="panel", absent=True),
+            # The first fixed t1: its own commit's files, three of them besides t1's own.
+            Click(ROW5["t1"], offset=1, region="panel"),
+            Expect(current("t1"), region="panel", wait=30),
+            ONE_OF_TWO,
+            Expect(r"useNow\.ts", region="panel"),
+            Expect(r"UsersList\.tsx", region="panel"),
+            Expect(SECOND_ONLY, region="panel", absent=True),
+            # Miriam's thread, on t2's line: the second commit is its fix too, to look at. Its
+            # way into the diff viewer is the sidebar's, above the fix's files: a card leaves
+            # that button to the sidebar wherever the sidebar shows them.
+            Click(ROW5["t4"], offset=1, region="panel"),
+            Expect(current("t4"), region="panel", wait=30),
+            Expect(r"Show in hunk", region="panel", wait=60),
+            ONE_OF_TWO,
+            Expect(SECOND_ONLY, region="panel"),
+            Expect(FIRST_ONLY, region="panel", absent=True),
+]
+
 SCENARIOS = [
     Scenario(
         "smoke", "the driver itself: start claude, send a prompt, read the answer",
@@ -579,6 +671,12 @@ SCENARIOS = [
             # but rereview-2's recording has no judgment of t4's news to play.)
             Expect(r"rebased and pushed · t2\b", region="panel", wait=240),
         ]),
+    Scenario(
+        "rereview-peers", "MR !5: other reviewers' threads, one card after another, and one closes by itself once resolved",
+        REVIEW5, needs_rig=True, mods=[MOD], steps=REREVIEW_PEERS),
+    Scenario(
+        "rereview-commits", "MR !5: Alex pushes a fix commit per thread on top, and each topic shows its own commit's files",
+        REVIEW5, needs_rig=True, mods=[MOD], steps=REREVIEW_COMMITS),
     Scenario(
         "rework-3", "MR !3, rework: three reviewer threads", WORK,
         needs_rig=True, mods=[MOD], steps=[
@@ -696,6 +794,12 @@ SCENARIOS = [
             press('Post'),
             Check('glab api "projects/$P/merge_requests/1/discussions"',
                   r'"new_path":"[^"]*db\.ts"', wait=SOON),
+            # The dropped t1, opened again from the folded Closed group: its card, the last in
+            # the chat, ends on the drop.
+            Click("Closed (1)", region="panel"),
+            Click(" t1 CORS", offset=1, region="panel"),
+            Expect(current("t1"), region="panel", wait=30),
+            Expect(r"You dropped it[^╭]*\Z", region="main"),
         ]),
 
     Scenario(
