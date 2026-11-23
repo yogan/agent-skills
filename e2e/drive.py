@@ -231,10 +231,6 @@ class Scenario:
     allow: tuple = VERIFY_ALLOW
     needs_rig: bool = False     # the local GitLab must be up and reset (tmux-demo.sh --check)
     recording: str = ""         # another scenario's recording to play, where this one is a part of it
-    # The mod's update check every 12 s instead of every 3 minutes, for a scenario whose steps
-    # wait for what it brings in. Only where its recording was made with it: the check judges
-    # news with the model, and a recording made without that has no answer for it.
-    fast_check: bool = False
 
     def mr(self):
         """The number of the merge request its steps work on, from the command they type
@@ -637,6 +633,9 @@ def skills_plugin(out):
     return d
 
 
+FAST_TICK_MS = "2000"
+
+
 def claude_command(sc, model, verify, plugins=(), mock=None, calls=None, state=None):
     """`mock`: (its environment, the tools the recording uses) for a run on a recording.
     `calls`: a file the mod keeps its own model calls in, for a recording of the run.
@@ -661,8 +660,12 @@ def claude_command(sc, model, verify, plugins=(), mock=None, calls=None, state=N
     if verify:
         env["REVIEW_UI_NO_OPEN"] = "1"   # a verify run opens nothing: no explainer in a browser
         env["AGENT_TAB_OFF"] = "1"       # ...renames no window and asks no model for a tab title
-    if verify and sc.fast_check:
-        env["REVIEW_UI_TICK_MS"] = "2000"      # see Scenario.fast_check
+    # Every run, in every mode, ticks the mod's update check every 2 s instead of every 30 s,
+    # so it asks GitLab every 12 s instead of every 3 minutes and no step sits out the poll.
+    # There is no slow tick to choose: a recording plays only at the pace it was made at (the
+    # check judges news with the model, and a recording made at another pace has no answer
+    # for the calls this one makes), so one pace for all keeps every recording playable.
+    env["REVIEW_UI_TICK_MS"] = FAST_TICK_MS
     if calls:
         env["REVIEW_UI_CALLS"] = calls         # see mock_model.py
     if state:

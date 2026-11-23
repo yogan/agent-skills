@@ -234,7 +234,10 @@ can only find the new state. A press that leaves its text standing (a row of the
 key that fills the prompt) gives no such sign and gets a pause of 1.5 s, as does any press
 before a step that looks only once: one that says something is NOT there, or one that types.
 A check that only reads GitLab takes `wait=`, and asks again until the press before it has
-landed; one that changes something runs once. Every run leaves a `timing.json`;
+landed; one that changes something runs once. Nor does any run wait out the mod's update
+check: every run, in every mode, ticks it every 2 s instead of every 30 s, so it asks GitLab
+every 12 s instead of every 3 minutes (`REVIEW_UI_TICK_MS`). There is no slower setting for a
+scenario to choose, since a recording plays only at the pace it was made at. Every run leaves a `timing.json`;
 `python3 timing.py` adds them up by part, and `python3 timing.py BEFORE AFTER` compares two
 `--out` folders (its docstring is the method).
 

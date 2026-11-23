@@ -144,6 +144,22 @@ class TestStep(unittest.TestCase):
         self.assertIn("REVIEW_UI_CALLS=/run/calls.json", cmd)
         self.assertNotIn("REVIEW_UI_CALLS", drive.claude_command(sc, "sonnet", verify=True))
 
+    def test_every_run_of_every_scenario_ticks_the_update_check_fast(self):
+        """No mode and no scenario waits out the mod's 30 s poll: a recording made at one pace
+        has no answer for the calls of another, so there is one pace for all."""
+        import scenarios
+        mocked = ({"ANTHROPIC_BASE_URL": "http://127.0.0.1:9"}, ["Bash"])
+        for sc in scenarios.SCENARIOS:
+            for mode, cmd in {
+                "verify, recording": drive.claude_command(sc, "mock", verify=True, mock=mocked,
+                                                          state="/run/state"),
+                "verify, real model": drive.claude_command(sc, "haiku", verify=True,
+                                                           calls="/run/calls.json"),
+                "showcase, recording": drive.claude_command(sc, None, verify=False, mock=mocked),
+                "showcase, own model": drive.claude_command(sc, None, verify=False),
+            }.items():
+                self.assertIn("REVIEW_UI_TICK_MS=2000 ", cmd, f"{sc.name}, {mode}")
+
     def test_a_showcase_keeps_the_users_settings_and_model(self):
         sc = drive.Scenario("x", "x", cwd=None, steps=[], mods=["~/m"])
         cmd = drive.claude_command(sc, None, verify=False)

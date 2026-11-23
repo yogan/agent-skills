@@ -596,7 +596,7 @@ SCENARIOS = [
 
     Scenario(
         "rework-rounds", "MR !3: the plan pass, two plans agreed with a press and a reply instead of the third", WORK,
-        needs_rig=True, mods=[MOD], fast_check=True, steps=[
+        needs_rig=True, mods=[MOD], steps=[
             # The reviewer has approved meanwhile; the sidebar's heading says so once the
             # update check has run, which it does on its first tick of the review.
             Check(f"{NEWS} approve", r"approved"),
@@ -622,47 +622,47 @@ SCENARIOS = [
 
     Scenario(
         "rework-fix", "MR !3: a fix pushed and resolved, a fix pushed and replied to, a reply instead of a fix, the merge", WORK,
-        needs_rig=True, mods=[MOD], fast_check=True, steps=[*REWORK_FIX]),
+        needs_rig=True, mods=[MOD], steps=[*REWORK_FIX]),
 
     Scenario(
         "rework-pipeline", "MR !3 settled: a failed pipeline, auto-merge while one runs, merged when it passes", WORK,
-        needs_rig=True, mods=[MOD], fast_check=True, recording="rework-fix", steps=REWORK_PIPELINE),
+        needs_rig=True, mods=[MOD], recording="rework-fix", steps=REWORK_PIPELINE),
 
     Scenario(
         "rework-refused", "MR !3 settled: GitLab refuses the merge, and the box says so", WORK,
-        needs_rig=True, mods=[MOD], fast_check=True, recording="rework-fix", steps=REWORK_REFUSED),
+        needs_rig=True, mods=[MOD], recording="rework-fix", steps=REWORK_REFUSED),
 
     Scenario(
         "try-pushed-fix", "MR !3 up to t1's pushed fix in four files, for a person to try (--keep)", WORK,
-        needs_rig=True, mods=[MOD], fast_check=True, recording="rework-fix", steps=REWORK_FIX[:21]),
+        needs_rig=True, mods=[MOD], recording="rework-fix", steps=REWORK_FIX[:21]),
 
     Scenario(
         "rework-twice", "MR !3: t1 fixed again after t2's push, two pushes on its card, the sidebar and its reply", WORK,
-        needs_rig=True, mods=[MOD], fast_check=True, steps=[*REWORK_TWICE]),
+        needs_rig=True, mods=[MOD], steps=[*REWORK_TWICE]),
 
     Scenario(
         "try-pushed-twice", "MR !3 up to t1's second push, t2's between, for a person to try (--keep)", WORK,
-        needs_rig=True, mods=[MOD], fast_check=True, recording="rework-twice", steps=REWORK_TWICE[:TRY_TWICE]),
+        needs_rig=True, mods=[MOD], recording="rework-twice", steps=REWORK_TWICE[:TRY_TWICE]),
 
     Scenario(
         "rework-mind", "MR !3: a decline that leaves a TODO, a fix dropped for a question, a pushed fix defended", WORK,
-        needs_rig=True, mods=[MOD], fast_check=True, steps=[*REWORK_MIND]),
+        needs_rig=True, mods=[MOD], steps=[*REWORK_MIND]),
 
     Scenario(
         "rework-ahead", "MR !3: t1's fix asked for while t3 was current, put aside, back by itself after t3's push", WORK,
-        needs_rig=True, mods=[MOD], fast_check=True, steps=[*REWORK_AHEAD]),
+        needs_rig=True, mods=[MOD], steps=[*REWORK_AHEAD]),
 
     Scenario(
         "rework-combined", "MR !3, main moved: t1's and t2's fixes and a rebase in one push, recorded on both", WORK,
-        needs_rig=True, mods=[MOD], fast_check=True, steps=[*REWORK_COMBINED]),
+        needs_rig=True, mods=[MOD], steps=[*REWORK_COMBINED]),
 
     Scenario(
         "rework-stopped", "MR !3: a push that would overwrite a suggestion applied on GitLab stops, and t1's card says so", WORK,
-        needs_rig=True, mods=[MOD], fast_check=True, steps=[*REWORK_STOPPED]),
+        needs_rig=True, mods=[MOD], steps=[*REWORK_STOPPED]),
 
     Scenario(
         "rework-pushback", "MR !3: a doubted fix defended, then a comment added under it, pushed, and the reply posted on its link", WORK,
-        needs_rig=True, mods=[MOD], fast_check=True, steps=[*REWORK_PUSHBACK]),
+        needs_rig=True, mods=[MOD], steps=[*REWORK_PUSHBACK]),
 
     Scenario(
         "try-scrolling", "MR !4: every sidebar area with more than it shows, beside ones that fit, for a person to try (--keep)",
