@@ -3944,10 +3944,13 @@ class TestStateByWord(unittest.TestCase):
     def test_a_card_ends_on_who_resolved_its_thread_and_how(self):
         """The card rule: its last line before the buttons is the topic's latest event. The
         reviewer's resolve names them; the user's "Fixed" + resolve says it was theirs."""
+        def story(state, t, close=None):
+            # The push alone, then the close the card hands the story to tell.
+            return ["PUSHED"] + ([T.ui.step_md(close["icon"], close["text"], close["at"])] if close else [])
         self.pushed()
         th = self.state["threads"]["d1"]
         th.update(resolved=True, resolved_by="Haas, Miriam - X1", resolved_at="2026-02-01T13:02:00Z")
-        with mock.patch.object(T, "story_steps", return_value=["PUSHED"]):
+        with mock.patch.object(T, "story_steps", side_effect=story):
             parts = [x for x in T._step_parts(self.state, self.t1) if x]
         self.assertRegex(parts[-1], rf"^((Nov|Feb) \d+, )?\d\d:\d\d {T.ui.STEP_DONE_ICON} Miriam resolved it$")
         th.update(resolved=False, resolved_by=None, resolved_at=None)
@@ -3955,7 +3958,7 @@ class TestStateByWord(unittest.TestCase):
             T.post_reply(self.state, {"enc": "g%2Fp", "web": "https://gl/g/p"}, 1, "t1", None,
                          fixed=True, resolve=True)
         th.update(resolved=True, resolved_by="Me", resolved_mine=True)
-        with mock.patch.object(T, "story_steps", return_value=["PUSHED"]):
+        with mock.patch.object(T, "story_steps", side_effect=story):
             parts = [x for x in T._step_parts(self.state, self.t1) if x]
         self.assertRegex(parts[-1], rf"^((Nov|Feb) \d+, )?\d\d:\d\d {T.ui.STEP_DONE_ICON} You fixed and resolved it$")
         # A resolve is no comment to open: the line carries no link of its own.
@@ -4003,6 +4006,23 @@ class TestStateByWord(unittest.TestCase):
         steps = parts[:-1][len(parts) - 2 - parts[:-1][::-1].index(""):]
         self.assertTrue(any(re.search(r"^(Feb 1, )?\d\d:00 \S+ You agreed the plan: Fix\. p$", x) for x in steps))
         self.assertRegex(steps[-1], r" Miriam resolved it$")        # no gap before the close
+
+    def test_a_resolve_before_a_later_push_is_told_before_it(self):
+        """The reviewer replied and resolved together, and the fix went up half an hour
+        later: the resolve was appended under the push, at its earlier time."""
+        self.pushed()
+        self.t1["pushes"][0]["at"] = "2026-11-20T10:51:00Z"
+        th = self.state["threads"]["d1"]
+        th["notes"] = [
+            {"author": "Robin", "body": "Rename it.", "at": "2026-11-19T22:59:00Z", "mine": False, "url": "https://gl/n1"},
+            {"author": "Robin", "body": "Fine as is.", "at": "2026-11-20T10:18:37.657Z", "mine": False, "url": "https://gl/n2"}]
+        th.update(resolved=True, resolved_by="Robin", resolved_at="2026-11-20T10:18:37.888Z")
+        with mock.patch.object(T, "_git", return_value=""):
+            parts = [x for x in T._step_parts(self.state, self.t1) if x]
+        close = next(i for i, x in enumerate(parts) if x.endswith("Robin resolved it"))
+        push = next(i for i, x in enumerate(parts) if "You pushed a fix" in x)
+        self.assertLess(close, push, parts)
+        self.assertEqual(sum(x.endswith("resolved it") for x in parts), 1)
 
     def test_the_story_tells_every_round_in_the_order_things_happened(self):
         """A topic the reviewer reopened: its card started at the second plan, the first

@@ -3757,16 +3757,19 @@ class TestPostedCommentCard(unittest.TestCase):
 
     URL = "http://gl/g/p/-/merge_requests/2#note_1"
 
-    def card(self, thread=None, topic=None, status="open", author_username="robin.l"):
+    def card(self, thread=None, topic=None, status="open", author_username="robin.l", verdict=None):
+        """`thread["more"]`: the notes after the comment."""
+        more = (thread or {}).get("more") or []
+        thread = {k: v for k, v in (thread or {}).items() if k != "more"}
         state = {"iid": 2, "author": "Robin", "author_username": author_username,
                  "threads": {"d1": {"mine": True, "resolved": False, "file": "a.md", "line": 3,
-                                    "url": self.URL, **(thread or {}),
+                                    "url": self.URL, **thread,
                                     "notes": [{"body": "Nit: stale.", "mine": True, "url": self.URL,
-                                               "at": "2026-11-10T16:39:00Z"}]}},
+                                               "at": "2026-11-10T16:39:00Z"}, *more]}},
                  "topics": [{"id": "t2", "thread_ids": ["d1"], "summary": "stale section", "state": None,
                              "why": "The section is stale. **Recommendation:** raise it.", **(topic or {})}]}
         with patch.dict(os.environ, {"REVIEW_UI_DRAWN": "1"}), patch.object(F, "_thread_context", return_value=[]), \
-                patch.object(F, "verdict_of", return_value=None), patch.object(F, "kept_fix", return_value=None), \
+                patch.object(F, "verdict_of", return_value=verdict), patch.object(F, "kept_fix", return_value=None), \
                 patch.object(F, "topic_status", return_value=status):
             return F._render_quote(state, "t2")
 
@@ -3806,6 +3809,32 @@ class TestPostedCommentCard(unittest.TestCase):
         self.assertEqual(self.last_line(out), f"{F.ui.RESOLVED_ICON} Robin resolved it on GitLab and pushed a fix")
         self.assertNotIn("toggle", out)
         self.assertNotIn("Waits on", out)
+
+    def test_a_resolve_before_a_later_push_is_told_before_it(self):
+        """The author replied and resolved together, and pushed the fix half an hour later:
+        the resolve was appended under the push, at its earlier time. On both cards that
+        tell the story: the posted comment's, and the judged answer's."""
+        thread = {"resolved": True, "resolved_by": "Robin Lang", "resolved_username": "robin.l",
+                  "resolved_at": "2026-11-20T10:18:37.888Z",
+                  "more": [{"body": "Will do.", "mine": False, "author": "Lang, Robin",
+                            "url": "http://gl/g/p/-/merge_requests/2#note_2", "at": "2026-11-20T10:18:37.657Z"}]}
+        topic = {"fixes": [{"before": "a", "after": "b", "at": "2026-11-20T10:51:00Z", "mixed": False,
+                            "url": "http://gl/g/p/-/merge_requests/2/diffs?diff_id=2"}]}
+        verdict = {"says": "settled", "text": "Settled.", "did": "Renamed it."}
+        for v in (None, verdict):
+            with self.subTest(verdict=bool(v)), patch.object(F, "get_worktree", return_value=None):
+                out = self.card(thread, topic, status="needs_ack", verdict=v)
+                lines = out.strip().splitlines()
+                close = next(i for i, x in enumerate(lines) if "Robin resolved it" in x)
+                push = next(i for i, x in enumerate(lines) if "Robin pushed a fix" in x)
+                self.assertLess(close, push, out)
+                self.assertLess(next(i for i, x in enumerate(lines) if "Robin [replied" in x), close, out)
+        # A close made here is the user's decision on all of it, and ends the story whatever
+        # the times before it say.
+        acked = {**topic, "state": "acked", "closed": {"how": "fixed", "at": "2026-11-20T10:30:00Z"}}
+        with patch.object(F, "get_worktree", return_value=None):
+            out = self.card(thread, acked, status="acked")
+        self.assertTrue(self.last_line(out).endswith("Robin fixed it · you acked it"), out)
 
     def test_resolved_by_the_user_says_so(self):
         out = self.card({"resolved": True, "resolved_by": "Frank", "resolved_mine": True,

@@ -1250,12 +1250,13 @@ def _step_parts(state, t):
                 else "Draft reply")
         out += [ui.heading_md(ui.DRAFT_ICON, head), "", _quote_draft(draft, x.get("file")), ""]
     if told:
-        out += [*story_steps(state, t), ""]
-    # The comment a press closed it with is the story's own line saying so: not twice.
-    closing = None if told and close_in_story(state, t) else closing_line(state, t)
+        # What closed it is one of the story's events, at its time. The comment a press
+        # closed it with is the story's own line saying so: not twice.
+        out += [*story_steps(state, t, None if close_in_story(state, t) else closing_event(state, t)), ""]
+    closing = None if told else closing_line(state, t)
     if closing:
-        # The latest event: the timeline's last step where the card tells one, so it goes on
-        # under the steps with no gap; else apart.
+        # The latest event: under the steps before it with no gap where there are some; else
+        # apart.
         if len(out) > 1 and out[-1] == "" and _STEP.match(out[-2]):
             out.insert(len(out) - 1, closing)
         else:
@@ -1448,11 +1449,12 @@ def note_plan(t):
     t["plans"].append({"at": t.get("plan_at"), "plan": t.get("plan"), "outcome": t.get("outcome") or "fix"})
 
 
-def story_steps(state, t):
+def story_steps(state, t, close=None):
     """`t`'s whole story for its card, one line per event in the order they happened
     (`ui.story_md`): every comment in its threads (the reviewer's and your own, each the
     link to itself), every plan agreed, every fix pushed (its GitLab link, and how it
-    differed from its plan), a fix dropped, then whom it waits on now. Every round of it:
+    differed from its plan), a fix dropped, `close` (`closing_event`) at its own time like
+    the rest, then whom it waits on now. Every round of it:
     a topic the reviewer reopened still tells its first plan, fix and reply. What the fix
     changed is the sidebar's and the diff viewer's to show, not a copy here."""
     done = ui.STEP_DONE_ICON
@@ -1501,7 +1503,7 @@ def story_steps(state, t):
         why = _gist(d.get("why"), 160)
         events.append({"at": at, "icon": done, "text": "You put the fix aside, kept in git" if d.get("aside")
                        else "You dropped the fix" + (f": {why}" if why else "")})
-    out = ui.story_md(events + comments[1:])
+    out = ui.story_md(events + comments[1:] + ([close] if close else []))
     resolved = bool(t["thread_ids"]) and all(
         (state["threads"].get(x) or {}).get("resolved") for x in t["thread_ids"])
     if t.get("state") == "waiting" and not resolved:
@@ -1518,20 +1520,27 @@ def close_in_story(state, t):
 
 
 def closing_line(state, t):
-    """The line a topic's card ends on once its threads are resolved: what closed it, by
-    whom, and when (the card rule: a card's last line before its buttons is the topic's
-    latest event). The reviewer's word on it is in the sidebar's thread, not here. None while
-    a thread is open. Mirrors findings.py's `closing_line`, whose closes differ (an ack)."""
+    """`closing_event` as one line, for a card that tells no story and the `closed:` line a
+    resolve prints."""
+    e = closing_event(state, t)
+    return ui.closed_md(e["text"], e["at"]) if e else None
+
+
+def closing_event(state, t):
+    """What closed a topic once its threads are resolved: by whom, how and when, as one of
+    its story's events (`story_steps`). The reviewer's word on it is in the sidebar's thread,
+    not here. None while a thread is open. Mirrors findings.py's `closing_event`, whose closes
+    differ (an ack)."""
     thr = [state["threads"].get(x) or {} for x in t["thread_ids"]]
     if not thr or not all(x.get("resolved") for x in thr):
         return None
     c, x = t.get("closed") or {}, thr[0]
     if c and (x.get("resolved_mine") or not x.get("resolved_by")):
         how = {"fixed": "fixed", "replied": "replied"}.get(c.get("how"))
-        return ui.closed_md(f"You {how} and resolved it" if how else "You resolved it",
-                            x.get("resolved_at") or c.get("at"))
+        return {"at": x.get("resolved_at") or c.get("at"), "icon": ui.STEP_DONE_ICON,
+                "text": f"You {how} and resolved it" if how else "You resolved it"}
     who = "You" if x.get("resolved_mine") else first_name(x.get("resolved_by")) or "The reviewer"
-    return ui.closed_md(f"{who} resolved it", x.get("resolved_at"))
+    return {"at": x.get("resolved_at"), "icon": ui.STEP_DONE_ICON, "text": f"{who} resolved it"}
 
 
 def context_digest(state, tid):

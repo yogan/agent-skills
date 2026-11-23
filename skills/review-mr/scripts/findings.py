@@ -1392,12 +1392,10 @@ def _render_quote(state, tid, refine=False):
     out += _draft_block(state, t, t.get("draft"), follow_up=True)
     if is_own_posted:
         # The topic's whole story, as rework-mr's card tells its own: every comment, every
-        # push of the author's, then whom it waits on or what closed it, the latest event
-        # last, right under the others.
-        out += ["", *story_steps(state, t)]
-        if closing and not close_in_story(state, t):
-            out.append(closing)
-        elif topic_status(state, t) == "open":
+        # push of the author's and what closed it, each at its time, the latest event last;
+        # then, while it is open, whom it waits on.
+        out += ["", *story_steps(state, t, None if close_in_story(state, t) else closing_event(state, t))]
+        if not closing and topic_status(state, t) == "open":
             out.append(ui.step_md(ui.STEP_WAITS_ICON, f"Waits on {first_name(state.get('author')) or 'the author'}"))
     elif closing:
         # The latest thing that happened to the topic, the card's last line.
@@ -1415,9 +1413,17 @@ def close_in_story(state, t):
 
 
 def closing_line(state, t):
-    """The line a posted topic's card ends on once it is closed here or its threads are
-    resolved: what happened last, by whom, and when (the card rule: a card's last line before
-    its buttons is the topic's latest event). None while neither.
+    """`closing_event` as one line, for a card that tells no story and the `closed:` lines a
+    command prints."""
+    e = closing_event(state, t)
+    return ui.step_md(e["icon"], e["text"], e["at"]) if e else None
+
+
+def closing_event(state, t):
+    """What closed a posted topic, once it is closed here or its threads are resolved: by
+    whom, how and when, as one of its story's events (`story_steps`); None while neither.
+    `last`: a close made here, the user's own decision on everything the story tells, which
+    ends it whatever times the events before it carry.
 
     Closed here, it says how: the user's Accept + resolve (the one place "accepted" is said),
     an ack of the author's fix, an ack of a thread somebody resolved. Resolved on GitLab and
@@ -1430,7 +1436,11 @@ def closing_line(state, t):
     if res:
         who = "you" if res.get("resolved_mine") else first_name(res.get("resolved_by")) or "someone"
     c = t.get("closed") or {}
-    url = next((x.get("url") for x in thr if x.get("url")), None)
+
+    def done(text, at, last=False):
+        # `ui.closed_md`'s line, as an event.
+        return {"at": at, "icon": ui.STEP_DONE_ICON, "text": text, "last": last}
+
     if topic_status(state, t) == "acked" and t.get("source") not in ("peer", "author"):
         at = c.get("at") or t.get("acked_at")
         if c.get("how") == "accepted":
@@ -1438,31 +1448,34 @@ def closing_line(state, t):
             # they pushed and said nothing. Neither (settled in person, say): nothing was.
             replied = any(not n.get("mine") for x in thr for n in x.get("notes") or [])
             what = "answer" if replied else "fix" if fixes_of(t) else None
-            return ui.closed_md(f"You accepted {author}'s {what} and resolved it" if what
-                                else "You resolved it", at, url)
+            return done(f"You accepted {author}'s {what} and resolved it" if what
+                        else "You resolved it", at, True)
         if c.get("how") == "replied":
-            return ui.closed_md("You replied and resolved it", at, url)
+            return done("You replied and resolved it", at, True)
         if c.get("how") == "fixed":
             push = f" (push {c['push']})" if (c.get("push") or 0) > 1 else ""
-            return ui.closed_md(f"{author} fixed it{push} · you acked it", at, url)
+            return done(f"{author} fixed it{push} · you acked it", at, True)
         if who == "you":
-            return ui.closed_md("You resolved and acked it", at, url)
+            return done("You resolved and acked it", at, True)
         if who:
-            return ui.closed_md(f"{who} resolved it · you acked it", at, url)
-        return ui.closed_md("You acked it", at, url)
+            return done(f"{who} resolved it · you acked it", at, True)
+        return done("You acked it", at, True)
     if not res:
         return None
     by_author = author_resolved(state, t)
     if by_author:
         how = " and pushed a fix" if by_author == "pushed" else "; nothing pushed for it yet"
-        return ui.step_md(ui.RESOLVED_ICON, f"{author} resolved it on GitLab{how}", res.get("resolved_at"))
-    return ui.closed_md(f"{'You' if who == 'you' else who} resolved it", res.get("resolved_at"), url)
+        return {"at": res.get("resolved_at"), "icon": ui.RESOLVED_ICON,
+                "text": f"{author} resolved it on GitLab{how}"}
+    return done(f"{'You' if who == 'you' else who} resolved it", res.get("resolved_at"))
 
 
-def story_steps(state, t):
+def story_steps(state, t, close=None):
     """`t`'s whole story for its card, one line per event in the order they happened
     (`ui.story_md`): every comment in its threads (yours and the others', each the link to
-    itself) and every push of the author's noted for it (its GitLab link). The whole of it
+    itself), every push of the author's noted for it (its GitLab link), and `close`, what
+    closed it (`closing_event`), at its own time like the rest: a resolve that came with a
+    reply goes before the push that followed it. The whole of it
     or none: a card that picked the latest reply out, with the comment, the answers and the
     push before it left out, gave nobody the means to check the verdict above it. What a
     comment says is the sidebar's thread; what a push changed, the sidebar's file. Mirrors
@@ -1494,7 +1507,9 @@ def story_steps(state, t):
         did = "pushed a change to its file" if f.get("near") else "pushed a fix"
         nth = f" (push {k})" if len(fixes) > 1 else ""
         events.append({"at": f.get("at"), "icon": ui.PUSHED_ICON, "text": f"{author} {did}{nth}{said(f)}"})
-    return ui.story_md(events)
+    last = [close] if close and close.get("last") else []
+    return ui.story_md(events + ([close] if close and not last else [])) + [
+        ui.step_md(e["icon"], e["text"], e["at"]) for e in last]
 
 
 def author_resolved(state, t):
@@ -1539,7 +1554,7 @@ def render_answered(state, t, summ, v):
     # The follow-up that answers the verdict, then the topic's whole story and what closed
     # it: one timeline, the latest event last, right above the buttons.
     out += _draft_block(state, t, t.get("draft"), follow_up=True)
-    steps = story_steps(state, t) + [x for x in [closing_line(state, t)] if x and not close_in_story(state, t)]
+    steps = story_steps(state, t, None if close_in_story(state, t) else closing_event(state, t))
     if topic_status(state, t) == "open":
         steps.append(ui.step_md(ui.STEP_WAITS_ICON, f"Waits on {author}"))
     if steps:
