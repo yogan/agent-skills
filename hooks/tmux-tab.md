@@ -20,14 +20,21 @@ second session in a split of the window, neither names it nor gives its name bac
 [`lib/tab.py`](../lib/tab.py).
 
 The skills that work through an MR take their session's tab over while they do (`tab.take`):
-review-mr shows 󱉻 and rework-mr 󱢛, each with the MR's short title, whoever named the window,
-and their diff viewer windows show 󰢪 with the same title. The session itself gets the full
-name, `󱉻 !1234 Title of the MR`, on its next prompt: only a hook's output can name a session,
-so the skill leaves the name in `~/.cache/agent-skills/session-name/<pane>` and the
+review-mr shows 󱉻 and rework-mr 󱢛, each with the MR's short title, whoever named the window.
+The session itself gets the full name, `󱉻 !1234 Title of the MR`, on its next prompt: only a
+hook's output can name a session, so the skill leaves the name in
+`~/.cache/agent-skills/session-name/<pane>` and the
 `UserPromptSubmit` hook hands it over. The tab keeps the skill's icon until the session ends
-(`SessionEnd`), also once the MR is merged, closed or cleaned up locally. Their
-viewers show the MR's number until its short title is known.
+(`SessionEnd`), also once the MR is merged, closed or cleaned up locally.
 split-handoff names the windows it opens the same way (`󱙺 <title>`).
+
+A diff viewer window a skill opens shows 󰢪 and what it holds now, renamed on every load:
+the short title of the topic whose diff or fix it shows (review-mr, rework-mr), or of the
+commit's subject (self-review), and `uncommitted` for the uncommitted change. Until that
+short title is known, the window shows a plain fact instead, never the name of what it held
+before: the topic's id (`󰢪 t3`), or the commit's place (`󰢪 commit 2/5`). A viewer window you
+renamed by hand keeps your name, and nothing gives a viewer window a name back when the
+session ends.
 
 ## Install
 

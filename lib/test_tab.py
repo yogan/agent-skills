@@ -326,18 +326,76 @@ class TestSkills(Rig):
         self.run_hook("end", data={"reason": "other"}, env=self.NESTED)
         self.assertEqual(self.t.name, f"{tab.REWORK_ICON} rounding")
 
-    def test_a_viewer_is_named_at_once_its_number_until_a_short_title_is_known(self):
-        self.assertEqual(tab.viewer_label(self.TITLE, fallback="!12"), f"{tab.VIEWER_ICON} !12")
-        self.later.assert_called_once()
-        tab.remember(self.TITLE, "payment retry")
-        self.assertEqual(tab.viewer_label(self.TITLE, fallback="!12"), f"{tab.VIEWER_ICON} payment retry")
-
     def test_off_in_tests(self):
         with mock.patch.dict(os.environ, {tab.OFF_ENV: "1"}):
             tab.take(tab.REVIEW_ICON, "x", pane="%999999")
-            tab.viewer_label(self.TITLE, fallback="!12")
         self.assertEqual(self.t.name, f"{R} kept plan")
         self.later.assert_not_called()
+
+
+class TestViewer(Rig):
+    """A diff viewer window a skill opened says what it shows now, renamed on every load:
+    the short title, a plain fact (the topic's id) until that is known, never the name of
+    what it showed before. The fake window is the viewer's here."""
+    V = tab.VIEWER_ICON
+    T3, T5 = "Retry the payment call with backoff", "Add feature flag for offline viewing mode"
+
+    def open(self, title, meanwhile):
+        """What `hunk.spawn_session` does: `new-window -n` (tmux's naming off), then adopt."""
+        given = tab.viewer_label(title, meanwhile)
+        self.t.opts.update(window_name=given, **{"automatic-rename": "0"})
+        tab.adopt("%999999", given)
+        tab.viewer("%999999", title, meanwhile)
+
+    def shorten(self, title, says):
+        with mock.patch.object(tab, "ask_model", return_value=says):
+            self.run_hook("shorten", "--icon", self.V, title)
+
+    def test_it_opens_named_after_its_first_load(self):
+        self.open(self.T3, "t3")
+        self.assertEqual(self.t.name, f"{self.V} t3")              # not "Retry the payment"
+        self.shorten(self.T3, "payment retry")
+        self.assertEqual(self.t.name, f"{self.V} payment retry")
+        self.assertEqual(tab.viewer_label(self.T3, "t3"), f"{self.V} payment retry")
+        self.assertEqual(tab.viewer_label("uncommitted", "uncommitted"), f"{self.V} uncommitted")
+
+    def test_a_reload_to_another_topic_drops_the_old_name_at_once(self):
+        self.open(self.T3, "t3")
+        self.shorten(self.T3, "payment retry")
+        self.later.reset_mock()
+        self.assertTrue(tab.viewer("%999999", self.T5, "t5"))
+        self.assertEqual(self.t.name, f"{self.V} t5")              # not "payment retry"
+        self.later.assert_called_once()
+        self.shorten(self.T5, "offline flag")
+        self.assertEqual(self.t.name, f"{self.V} offline flag")
+        tab.viewer("%999999", self.T3, "t3")                       # back: cached, at once
+        self.assertEqual(self.t.name, f"{self.V} payment retry")
+
+    def test_a_model_late_for_the_topic_before_changes_nothing(self):
+        self.open(self.T3, "t3")
+        tab.viewer("%999999", "Short title", "t5")
+        self.shorten(self.T3, "payment retry")
+        self.assertEqual(self.t.name, f"{self.V} Short title")
+
+    def test_a_topic_with_no_title_is_its_id(self):
+        self.open(None, "t3")
+        self.assertEqual(self.t.name, f"{self.V} t3")
+        self.later.assert_not_called()
+
+    def test_a_viewer_the_user_renamed_keeps_their_name(self):
+        self.open(self.T3, "t3")
+        self.t("tmux rename-window -t %999999 logs".split())
+        self.later.reset_mock()
+        self.assertFalse(tab.viewer("%999999", self.T5, "t5"))
+        self.shorten(self.T5, "offline flag")
+        self.assertEqual(self.t.name, "logs")
+        self.later.assert_not_called()
+
+    def test_a_window_opened_with_a_name_is_not_taken_without_adopting_it(self):
+        """`new-window -n` turns tmux's own naming off, which reads as a user's name."""
+        self.t.opts.update(window_name="srv", **{"automatic-rename": "0"})
+        self.assertFalse(tab.viewer("%999999", self.T5, "t5"))
+        self.assertEqual(self.t.name, "srv")
 
 
 class TestCache(unittest.TestCase):

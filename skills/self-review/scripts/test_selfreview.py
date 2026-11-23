@@ -131,9 +131,10 @@ class TestRange(Repo):
 class TestShow(Repo):
     def show(self, target):
         shown = []
+        self.names = []
         with patch.object(S.hunk, "show_review",
-                          lambda repo, label, args, stat: shown.append((args, stat))
-                          or ("s1", "2 (self-review)")), \
+                          lambda repo, name, args, stat: self.names.append(name)
+                          or shown.append((args, stat)) or ("s1", "2 (self-review)")), \
                 patch.object(S, "guard_switch", lambda *a, **k: None), \
                 patch.object(S.hunk, "find_session", lambda repo, owner: None), \
                 patch.object(S.hunk, "set_mark", lambda *a: True), \
@@ -153,6 +154,15 @@ class TestShow(Repo):
     def test_the_uncommitted_change_is_shown_against_head(self):
         write(self.path("new.txt"), "n\n")
         self.assertEqual(self.show("work"), [(["diff", "HEAD"], [("new.txt", 1, 0)])])
+
+    def test_the_window_is_named_after_the_piece_it_shows(self):
+        """A commit's subject, and its place until the subject's short form is known; the
+        uncommitted change as that (lib/tab.py `viewer`)."""
+        self.show("2")
+        self.assertEqual(self.names, [("two", "commit 2/3")])
+        write(self.path("new.txt"), "n\n")
+        self.show("work")
+        self.assertEqual(self.names, [("uncommitted", "uncommitted")])
 
     def test_a_background_session_without_a_pane_is_told_how_to_get_one(self):
         """Not the generic Hunk failure: the author needs to know the session left its

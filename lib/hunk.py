@@ -39,6 +39,10 @@ self-review's window (`show_review`) holds the author's own review of their chan
 commit or the uncommitted change at a time. There the notes are the point: the author's
 and the agent's threaded answers stay across every reload, and are cleared only once the
 author has signed off on what the window shows.
+
+Each load names the window after what it now holds (`name`: a title, and a plain fact to
+show until the title's short form is known; lib/tab.py `viewer`), so a window reloaded from
+one topic to the next never goes on carrying the name of the one before.
 """
 import json
 import os
@@ -49,7 +53,7 @@ import subprocess
 import time
 from datetime import datetime, timezone
 
-from lib import diffsize, tmux
+from lib import diffsize, tab, tmux
 
 # Marks a tmux window as belonging to one agent session. See the module docstring for why
 # this lives on the window rather than in a file.
@@ -218,6 +222,8 @@ def spawn_session(repo, label, owner, sleep=None, cmd="hunk diff HEAD"):
     if rc != 0:
         _run(["tmux", "kill-window", "-t", pane])
         return None
+    # Named by us, so ours to rename on the next load, until the user renames it.
+    tab.adopt(pane, label, run=_run)
     for _ in range(SPAWN_TRIES):
         for s in sessions():
             if _pane_of(s) == pane:
@@ -258,18 +264,33 @@ def close_session(session_id, owner):
     return False
 
 
-def window_of(session_id):
-    """How to tell the user where to look — "9 (!123)" — or None if the window is gone."""
+def window_of(session_id, name=None):
+    """How to tell the user where to look — "9 (!123)" — or None if the window is gone.
+    `name`: (title, meanwhile) of what the window now holds, its name from now on (see
+    `rename`), so the pointer already says it."""
     for s in sessions():
         if s.get("sessionId") != session_id:
             continue
         pane = _pane_of(s)
         if not pane:
             return None
+        if name:
+            tab.viewer(pane, *name, run=_run)
         rc, out = _run(["tmux", "display-message", "-p", "-t", pane,
                         "#{window_index} (#{window_name})"])
         return out.strip() if rc == 0 and out.strip() else None
     return None
+
+
+def rename(session_id, name):
+    """Name the session's window after what a reload put in it: `name` is (title,
+    meanwhile), as lib/tab.py `viewer` takes them. False where it was not renamed: no
+    window, or one the user renamed by hand."""
+    for s in sessions():
+        if s.get("sessionId") == session_id:
+            pane = _pane_of(s)
+            return bool(pane) and tab.viewer(pane, *name, run=_run)
+    return False
 
 
 def focus_window(session_id):
@@ -809,7 +830,7 @@ def reload_patch(session_id, path):
     return (data.get("result") or {}).get("fileCount")
 
 
-def show_patch(path, label, cwd, owner=None, sleep=None):
+def show_patch(path, name, cwd, owner=None, sleep=None):
     """Put the patch at `path` in this agent's own window; return (session_id, where) or
     None to mean "show the diff inline instead".
 
@@ -821,6 +842,7 @@ def show_patch(path, label, cwd, owner=None, sleep=None):
 
     A patch session has no repository, so it is found by the owner mark alone
     (`find_session(None, …)`): one window per agent, reloaded for each diff it shows.
+    `name` is (title, meanwhile) of what it shows (see `rename`).
 
     The viewer reloads a patch only from inside the git repository its window started in
     (hunk 0.25: "refused patch file outside the initial Hunk root"), and the skills keep
@@ -844,12 +866,12 @@ def show_patch(path, label, cwd, owner=None, sleep=None):
     if count is None:
         if sid and not close_session(sid, owner):
             return None
-        sid = spawn_session(cwd, label, owner, sleep=sleep,
+        sid = spawn_session(cwd, tab.viewer_label(*name), owner, sleep=sleep,
                             cmd=f"hunk patch {shlex.quote(path)}")
         if not sid:
             return None
         count = len(loaded_stat(sid) or [])
-    return _confirm(sid, count, expect, since)
+    return _confirm(sid, count, expect, since, name)
 
 
 def not_shown():
@@ -862,7 +884,7 @@ def not_shown():
     return "the diff viewer did not come up holding exactly this diff (its files and line counts)"
 
 
-def show_working_diff(repo, label, expect_stat, owner=None, sleep=None):
+def show_working_diff(repo, name, expect_stat, owner=None, sleep=None):
     """Put the repo's working diff in this agent's own window; return (session_id, where)
     or None to mean "show the diff inline instead".
 
@@ -874,45 +896,48 @@ def show_working_diff(repo, label, expect_stat, owner=None, sleep=None):
 
     A round starts the window clean of the agent's own notes (see `clear_agent_notes`):
     what is anchored in there always describes the diff currently loaded, never the one it
-    replaced.
+    replaced. `name` is (title, meanwhile) of the fix it shows (see `rename`).
     """
-    sid = _own_window(repo, label, owner, sleep)
+    sid = _own_window(repo, name, owner, sleep)
     if not sid:
         return None
     # Before the reload, not after: clearing is addressed by note id, and a reload can
     # re-anchor or drop a note whose line no longer exists, leaving nothing to clear.
     clear_agent_notes(sid)
     since = time.time()
-    return _confirm(sid, reload_working_diff(sid), expect_stat, since)
+    return _confirm(sid, reload_working_diff(sid), expect_stat, since, name)
 
 
-def show_review(repo, label, args, expect_stat, owner=None, sleep=None):
+def show_review(repo, name, args, expect_stat, owner=None, sleep=None):
     """Put `hunk <args>` — `["show", sha]` for one commit, `["diff", "HEAD"]` for the
     uncommitted change — in this agent's own window; return (session_id, where), or None
     when the window could not be made to hold exactly `expect_stat`.
 
     Unlike `show_working_diff`, every note stays. This is the author's own review: their
     notes and the agent's threaded answers are the conversation about the change, and a
-    reload after an agreed fix is how they check that fix against what they wrote.
+    reload after an agreed fix is how they check that fix against what they wrote. `name`
+    is (title, meanwhile) of the piece it shows (see `rename`).
     """
-    sid = _own_window(repo, label, owner, sleep)
+    sid = _own_window(repo, name, owner, sleep)
     if not sid:
         return None
     since = time.time()
-    return _confirm(sid, reload_review(sid, args), expect_stat, since)
+    return _confirm(sid, reload_review(sid, args), expect_stat, since, name)
 
 
-def _own_window(repo, label, owner, sleep):
-    """This agent's viewer for `repo`, opened beside it if there is none yet, or None."""
+def _own_window(repo, name, owner, sleep):
+    """This agent's viewer for `repo`, opened beside it if there is none yet, or None. A new
+    one opens with the name of what it is about to show (`name`, see `rename`)."""
     if not installed() or not in_tmux():
         return None
     owner = owner or owner_id()
     if not owner:
         return None
-    return find_session(repo, owner) or spawn_session(repo, label, owner, sleep=sleep)
+    return find_session(repo, owner) or spawn_session(repo, tab.viewer_label(*name), owner,
+                                                      sleep=sleep)
 
 
-def _confirm(sid, file_count, expect_stat, since=None):
+def _confirm(sid, file_count, expect_stat, since=None, name=None):
     """(sid, where) once the window provably holds `expect_stat`, else None.
 
     The file count first because the reload reports it for free, and it also tells a
@@ -922,6 +947,9 @@ def _confirm(sid, file_count, expect_stat, since=None):
     shows. It still holds `expect_stat` when the keep-notes extension's record of the load
     that finished after `since` says so: everything loaded is exactly `expect_stat`, and what
     it shows is exactly what the window itself reports. Nothing else counts as hidden.
+
+    `name` renames the window once it provably holds that diff, before its name is read
+    for the pointer.
     """
     expect = sorted(tuple(f) for f in expect_stat)
     if file_count is None:
@@ -933,7 +961,7 @@ def _confirm(sid, file_count, expect_stat, since=None):
         whole = whole_review(sid, since) if since is not None else None
         if not whole or whole[0] != expect or whole[1] != shown or file_count != len(shown):
             return None
-    where = window_of(sid)
+    where = window_of(sid, name)
     return (sid, where) if where else None
 
 

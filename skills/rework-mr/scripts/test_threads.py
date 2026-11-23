@@ -350,7 +350,7 @@ class TestDiffViewRouting(unittest.TestCase):
             [("src/a.ts", 2, 1), ("new/n.ts", 1, 1), ("gone.ts", 0, 2)],
         )
 
-    def test_the_window_names_the_mr_worked_on_most_recently(self):
+    def test_the_state_taken_is_the_mr_worked_on_most_recently(self):
         """Ranked by each state FILE's mtime, not its directory's. A directory's mtime only
         moves when an entry is added or removed, and the state is rewritten in place — so
         on a real store the MR being reworked today ranked below one created later and
@@ -373,14 +373,7 @@ class TestDiffViewRouting(unittest.TestCase):
                 mock.patch.object(T, "project_slug", lambda: "acme-api"),
                 mock.patch.object(T, "_git", lambda *a: "git@host:acme/api.git\n"),
             ):
-                self.assertEqual(T.window_label(), f"{T.tab.VIEWER_ICON} !123")
-                # Its MR's title where the state has it, once a model wrote its short form
-                # (lib/tab.py); its number until then, never the title cut mid-thought.
-                with open(os.path.join(root, "acme-api--mr123", "topics.json"), "w") as fh:
-                    fh.write('{"title": "Retry the payment call with backoff"}')
-                self.assertEqual(T.window_label(), f"{T.tab.VIEWER_ICON} !123")
-                with mock.patch.object(T.tab, "cached", lambda t: "payment retry"):
-                    self.assertEqual(T.window_label(), f"{T.tab.VIEWER_ICON} payment retry")
+                self.assertEqual(T.own_mr("acme-api"), "123")
 
     def own_mr_store(self, root, states):
         """`states`: (iid, source branch or None), oldest first, written to `root`."""
@@ -414,7 +407,6 @@ class TestDiffViewRouting(unittest.TestCase):
                 for branch, iid in (("feat-a", 3), ("feat-b", 4)):
                     with mock.patch.object(T, "_git", self.fake_git(branch)):
                         self.assertEqual(T.local_state()[1]["iid"], iid)
-                        self.assertEqual(T.window_label(), f"{T.tab.VIEWER_ICON} !{iid}")
                 # A branch no state names: none of the states that name another.
                 with mock.patch.object(T, "_git", self.fake_git("other")):
                     self.assertEqual(T.local_state(), (None, None))
@@ -447,16 +439,24 @@ class TestDiffViewRouting(unittest.TestCase):
                     self.assertEqual(T.local_state()[1]["iid"], 4)
 
     def test_naming_the_window_never_calls_glab(self):
-        """`diff-view` is independent of glab and the network by design, and this label is
-        cosmetic — it must not put a subprocess, or a hang, on every diff shown."""
-        with mock.patch.object(T, "context") as ctx, mock.patch.object(T, "run") as run:
-            with mock.patch.object(T, "_git", lambda *a: ""):
-                T.window_label()
+        """`diff-view` is independent of glab and the network by design, and the window's
+        name is cosmetic — it must not put a subprocess, or a hang, on every diff shown."""
+        with mock.patch.object(T, "context") as ctx, mock.patch.object(T, "run") as run, \
+                mock.patch.object(T.hunk, "show_working_diff", return_value=("sid", "9 (x)")):
+            T.diff_view_block("t3", SAMPLE_DIFF)
             ctx.assert_not_called()
             run.assert_not_called()
 
-    def test_window_label_falls_back_to_the_branch(self):
-        self.assertEqual(T.window_label(), f"{T.tab.VIEWER_ICON} feat/x")
+    def test_the_window_is_named_after_the_topic_whose_fix_it_shows(self):
+        """Its title where the state has one, its id meanwhile (lib/tab.py `viewer`); the
+        id alone where no state is at hand, never the MR's or another topic's name."""
+        state = {"topics": [{"id": "t3", "summary": "Retry with backoff"}, {"id": "t4"}]}
+        with mock.patch.object(T.hunk, "show_working_diff", return_value=("sid", "9 (x)")) as show:
+            T.diff_view_block("t3", SAMPLE_DIFF, state=state)
+            T.diff_view_block("t4", SAMPLE_DIFF, state=state)
+            T.diff_view_block("t3", SAMPLE_DIFF)
+        self.assertEqual([c[0][1] for c in show.call_args_list],
+                         [("Retry with backoff", "t3"), (None, "t4"), (None, "t3")])
 
     def test_both_shapes_satisfy_the_stop_hook_gate(self):
         """The gate has one signature and two renders to cover; pinning it to the old
@@ -3195,6 +3195,9 @@ class TestFixAgainstThePlan(unittest.TestCase):
         self.show("--as-agreed", "--note", "src/a.ts:3:why")
         self.hunk.clear_agent_notes.assert_called_once_with("sid")
         self.hunk.reload_working_diff.assert_called_once_with("sid")
+        # Named after the topic it now shows, not the one it showed before.
+        self.hunk.rename.assert_called_once_with("sid", T.viewer_name(self.state, "t1"))
+        self.assertEqual(T.viewer_name(self.state, "t1")[1], "t1")
         self.hunk.add_notes.assert_called_once_with("sid", [{"filePath": "src/a.ts", "newLine": 3, "summary": "why"}])
         self.hunk.focus_window.assert_not_called()          # moved to only on a press
 

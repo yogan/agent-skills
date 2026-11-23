@@ -4205,19 +4205,22 @@ class TestViewerMovesOn(ViewerCase):
 
     def test_a_shown_diff_records_its_topic_on_the_window(self):
         w = FakeViewer()
-        with w.patches(), patch.object(F.hunk, "show_patch", return_value=("s1", "9 (◈ !1)")), \
+        state = new_state(topics=[{"id": "t3", "thread_ids": [], "summary": "Retry with backoff"}])
+        with w.patches(), patch.object(F.hunk, "show_patch", return_value=("s1", "9 (◈ !1)")) as show, \
                 patch.object(F, "get_worktree", return_value=None):
-            F._show_in_viewer(self.CTX, 1, "t3", [{"old_path": "a.py", "new_path": "a.py",
-                                                   "diff": "@@ -1 +1 @@\n-a\n+b\n"}])
+            F._show_in_viewer(state, self.CTX, 1, "t3", [{"old_path": "a.py", "new_path": "a.py",
+                                                          "diff": "@@ -1 +1 @@\n-a\n+b\n"}])
         self.assertEqual((w.shows()["iid"], w.shows()["topic"]), (1, "t3"))
+        # The window is named after the topic it now shows: its title, its id meanwhile.
+        self.assertEqual(show.call_args[0][1], ("Retry with backoff", "t3"))
 
     def test_the_authors_fix_on_a_press_moves_the_window_on_too(self):
         """A press's output never reaches the model: the kept copy is how the notes do."""
         w = FakeViewer([self.USER], shows=self.shows())
-        state = new_state(topics=[{"id": "t3", "thread_ids": []}])
+        state = new_state(topics=[{"id": "t3", "thread_ids": [], "summary": "Retry with backoff"}])
         with w.patches(), patch.object(F, "picked_fix", return_value={"ends": ("a", "b")}), \
                 patch.object(F.fix_refs, "patch", return_value="diff --git a/x b/x\n"), \
-                patch.object(F.fix_refs, "show", return_value=("s1", "9 (◈ !1)")), \
+                patch.object(F.fix_refs, "show", return_value=("s1", "9 (◈ !1)")) as show, \
                 patch.object(F.hunk, "focus_window"), \
                 patch.object(F, "get_worktree", return_value="/wt"):
             _, _, code = self.run_cli("hunk-show", "t3", state=state)
@@ -4225,6 +4228,7 @@ class TestViewerMovesOn(ViewerCase):
         self.assertEqual(w.notes, [])
         self.assertEqual([n["text"] for n in self.kept()], ["why a list here?"])
         self.assertEqual(w.shows()["topic"], "t3")
+        self.assertEqual(show.call_args[0][3], ("Retry with backoff", "t3"))   # the window's name
 
     def test_the_authors_fix_on_a_press_is_not_loaded_over_notes_not_cleared(self):
         w = FakeViewer([self.USER], shows=self.shows(), answers=False)

@@ -111,16 +111,17 @@ def stat(repo, ends, paths=None):
     return hunk.diff_stat(patch(repo, ends, paths))
 
 
-def show(repo, ends, path, label, paths=None):
-    """Write the fix to `path` and put it in this agent's diff viewer window: (session_id,
-    where), or None where it could not be shown there (see `hunk.show_patch`)."""
+def show(repo, ends, path, name, paths=None):
+    """Write the fix to `path` and put it in this agent's diff viewer window, named `name`
+    ((title, meanwhile), see `hunk.rename`): (session_id, where), or None where it could not
+    be shown there (see `hunk.show_patch`)."""
     text = patch(repo, ends, paths)
     if not text.strip():
         return None
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, "w") as fh:
         fh.write(text)
-    return hunk.show_patch(path, label, repo)
+    return hunk.show_patch(path, name, repo)
 
 
 def drop(repo, skill, iid):

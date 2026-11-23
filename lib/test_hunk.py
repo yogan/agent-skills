@@ -12,6 +12,7 @@ user approves a force-push against something they never saw.
 """
 import json
 import os
+import re
 import sys
 import tempfile
 import unittest
@@ -22,6 +23,9 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from lib import hunk                                   # noqa: E402
 
 REPO = "/w/acme-api"
+# What a skill names its viewer after: the title of what it shows, and the plain fact to
+# show until the title's short form is known (lib/tab.py `viewer`).
+NAME = ("Retry the payment call with backoff", "t3")
 
 
 KEEP_DIR = hunk.keep_dir
@@ -35,7 +39,10 @@ def setUpModule():
     write to the read marks hunk-mark-read keeps there."""
     for stub in (patch.object(hunk.tmux, "_records", lambda: []),
                  patch.object(hunk, "keep_dir", lambda: None),
-                 patch.object(hunk, "mark_read_dir", lambda: os.devnull)):
+                 patch.object(hunk, "mark_read_dir", lambda: os.devnull),
+                 # No short title this machine's model wrote decides a window's name here.
+                 patch.object(hunk.tab, "CACHE", os.devnull),
+                 patch.object(hunk.tab, "spawn", lambda *a, **k: None)):
         stub.start()
         unittest.addModuleCleanup(stub.stop)
 
@@ -155,7 +162,7 @@ class FakeRun:
 
     def __init__(self, sessions=(), owners=None, new_pane="%9", window="9 (!123)",
                  reload_files=1, reload_ok=True, list_ok=True, register=True,
-                 window_ids=None, loaded=None, new_repo=REPO):
+                 window_ids=None, loaded=None, new_repo=REPO, named=False, opts=None):
         self.sessions = list(sessions)
         self.owners = dict(owners or {})
         self.new_pane, self.window = new_pane, window
@@ -170,6 +177,11 @@ class FakeRun:
         self.register = register
         # What a spawned session reports as its repository: a patch window has none.
         self.new_repo = new_repo
+        # pane -> its window's name and options (tmux's own and lib/tab.py's). `named`: the
+        # window's name is read from there, for the tests about it; else every window
+        # answers `window`.
+        self.opts = {p: dict(o) for p, o in (opts or {}).items()}
+        self.named = named
         self.calls = []
 
     def __call__(self, argv, timeout=None, stdin=None):
@@ -190,13 +202,30 @@ class FakeRun:
             return 0, _json.dumps({"comments": []})
         if argv[:2] == ["tmux", "show-options"]:
             pane = argv[argv.index("-t") + 1]
+            if argv[-1] != hunk.OWNER_OPT:
+                got = self.opts.get(pane, {}).get(argv[-1])
+                return (0, got) if got is not None else (1, "")
             return (0, self.owners[pane]) if pane in self.owners else (1, "")
         if argv[:2] == ["tmux", "new-window"]:
             if self.register:
                 self.sessions.append(session("new", self.new_repo, self.new_pane))
+            # `-n` names the window and turns tmux's own naming of it off.
+            self.opts[self.new_pane] = {"window_name": argv[argv.index("-n") + 1],
+                                        "automatic-rename": "0"}
             return 0, self.new_pane + "\n"
         if argv[:2] == ["tmux", "set-option"]:
-            self.owners[argv[argv.index("-t") + 1]] = argv[-1]
+            pane = argv[argv.index("-t") + 1]
+            if hunk.OWNER_OPT in argv:
+                self.owners[pane] = argv[-1]
+            elif "-wu" in argv:
+                self.opts.get(pane, {}).pop(argv[-1], None)
+            else:
+                self.opts.setdefault(pane, {})[argv[-2]] = argv[-1]
+            return 0, ""
+        if argv[:2] == ["tmux", "rename-window"]:
+            pane = argv[argv.index("-t") + 1]
+            self.opts.setdefault(pane, {}).update(
+                {"window_name": argv[-1], "automatic-rename": "0"})
             return 0, ""
         if argv[:2] == ["tmux", "kill-window"]:
             return 0, ""
@@ -206,12 +235,19 @@ class FakeRun:
             if argv[-1] == "#{window_id}":
                 return (0, self.window_ids[argv[-2]] + "\n") \
                     if argv[-2] in self.window_ids else (1, "")
+            pane = argv[argv.index("-t") + 1]
+            if self.named and pane in self.opts:
+                # A window as lib/tab.py reads it: its name and options, "9" its index.
+                out = argv[-1].replace("#{window_index}", "9")
+                for k, v in self.opts[pane].items():
+                    out = out.replace("#{" + k + "}", v)
+                return 0, re.sub(r"#\{[^}]*\}", "", out) + "\n"
             return 0, self.window + "\n"
         return 1, ""
 
 
 class HunkCase(unittest.TestCase):
-    def show(self, fake, expect_files=1, **kw):
+    def show(self, fake, expect_files=1, name=NAME, **kw):
         """`installed` is forced rather than left to the machine: the viewer is optional
         and most machines running this suite — CI, anyone who cloned the repo — will not
         have it, which would otherwise turn every success case here into a failure that
@@ -219,7 +255,7 @@ class HunkCase(unittest.TestCase):
         with patch.dict(os.environ, {"TMUX": "/tmp/x", "CLAUDE_CODE_SESSION_ID": "me"}), \
                 patch.object(hunk, "installed", lambda: True), \
                 patch.object(hunk, "_run", fake):
-            return hunk.show_working_diff(REPO, "!123", stat_of(expect_files),
+            return hunk.show_working_diff(REPO, name, stat_of(expect_files),
                                           sleep=lambda _s: None, **kw)
 
 
@@ -305,13 +341,13 @@ class TestFallsBackInline(HunkCase):
         fake = FakeRun([session(pane="%4")], owners={"%4": "me"})
         with patch.dict(os.environ, {"CLAUDE_CODE_SESSION_ID": "me"}, clear=True), \
                 patch.object(hunk, "_run", fake):
-            self.assertIsNone(hunk.show_working_diff(REPO, "!123", 1))
+            self.assertIsNone(hunk.show_working_diff(REPO, NAME, 1))
 
     def test_no_agent_identity(self):
         fake = FakeRun()
         with patch.dict(os.environ, {"TMUX": "/tmp/x"}, clear=True), \
                 patch.object(hunk, "_run", fake):
-            self.assertIsNone(hunk.show_working_diff(REPO, "!123", 1))
+            self.assertIsNone(hunk.show_working_diff(REPO, NAME, 1))
 
     def test_viewer_not_installed(self):
         """Checked up front, never discovered by trying: spawning a window for a binary
@@ -322,7 +358,7 @@ class TestFallsBackInline(HunkCase):
                 patch.object(hunk, "shutil") as sh, \
                 patch.object(hunk, "_run", fake):
             sh.which.side_effect = lambda b: None if b == "hunk" else "/usr/bin/tmux"
-            self.assertIsNone(hunk.show_working_diff(REPO, "!123", 1))
+            self.assertIsNone(hunk.show_working_diff(REPO, NAME, 1))
         self.assertEqual(fake.calls, [], "must not spawn or query anything")
 
     def test_daemon_unreachable(self):
@@ -417,6 +453,69 @@ class TestSucceeds(HunkCase):
         self.assertNotIn("--repo", reloads[0])
 
 
+class TestWindowName(HunkCase):
+    """The window is named after what each load put in it (lib/tab.py `viewer`): the short
+    title where known, the topic's id until then, never the name of what it held before;
+    and never a name the user gave it by hand."""
+    V = hunk.tab.VIEWER_ICON
+    T5 = ("Add feature flag for offline viewing mode", "t5")
+
+    def setUp(self):
+        env = patch.dict(os.environ)          # the runner's AGENT_TAB_OFF would keep the model
+        env.start()                           # from being asked; what is asked is faked here
+        self.addCleanup(env.stop)
+        os.environ.pop(hunk.tab.OFF_ENV, None)
+        self.later = patch.object(hunk.tab, "spawn").start()
+        self.addCleanup(patch.stopall)
+
+    def ours(self, name):
+        """The agent's viewer, named `name` by an earlier load."""
+        return {"window_name": name, "automatic-rename": "0", hunk.tab.SET_OPT: name}
+
+    def test_a_new_window_opens_with_the_name_of_its_first_load(self):
+        fake = FakeRun(new_pane="%9", named=True)
+        self.assertEqual(self.show(fake, name=NAME), ("new", f"9 ({self.V} t3)"))
+        spawn = next(c for c in fake.calls if c[:2] == ["tmux", "new-window"])
+        self.assertEqual(spawn[spawn.index("-n") + 1], f"{self.V} t3")
+        self.assertEqual(fake.opts["%9"][hunk.tab.WANT_OPT], NAME[0])  # the model is asked
+        self.later.assert_called_once()
+
+    def test_a_reload_to_another_topic_is_renamed_at_once(self):
+        fake = FakeRun([session("mine", pane="%4")], owners={"%4": "me"}, named=True,
+                       opts={"%4": self.ours(f"{self.V} payment retry")})
+        self.assertEqual(self.show(fake, name=self.T5), ("mine", f"9 ({self.V} t5)"))
+        self.later.assert_called_once()
+        with patch.object(hunk.tab, "cached", lambda t: "offline flag" if t == self.T5[0] else None):
+            self.assertEqual(self.show(fake, name=self.T5), ("mine", f"9 ({self.V} offline flag)"))
+
+    def test_a_patch_window_is_renamed_the_same_way(self):
+        loaded = hunk.diff_stat(SAMPLE_DIFF)
+        fake = FakeRun([session("mine", repo=None, pane="%4")], owners={"%4": "me"}, named=True,
+                       opts={"%4": self.ours(f"{self.V} payment retry")},
+                       reload_files=len(loaded), loaded=loaded)
+        with tempfile.NamedTemporaryFile("w", suffix=".patch", delete=False) as fh:
+            fh.write(SAMPLE_DIFF)
+        self.addCleanup(os.unlink, fh.name)
+        with patch.dict(os.environ, {"TMUX": "/tmp/x", "CLAUDE_CODE_SESSION_ID": "me"}), \
+                patch.object(hunk, "installed", lambda: True), patch.object(hunk, "_run", fake):
+            self.assertEqual(hunk.show_patch(fh.name, self.T5, "/w"), ("mine", f"9 ({self.V} t5)"))
+
+    def test_a_window_the_user_renamed_keeps_their_name(self):
+        renamed = dict(self.ours(f"{self.V} payment retry"), window_name="logs")
+        fake = FakeRun([session("mine", pane="%4")], owners={"%4": "me"}, named=True,
+                       opts={"%4": renamed})
+        self.assertEqual(self.show(fake, name=self.T5), ("mine", "9 (logs)"))
+        self.later.assert_not_called()
+
+    def test_a_reload_outside_a_show_renames_too(self):
+        fake = FakeRun([session("mine", pane="%4")], owners={"%4": "me"}, named=True,
+                       opts={"%4": self.ours(f"{self.V} payment retry")})
+        with patch.object(hunk, "_run", fake):
+            self.assertTrue(hunk.rename("mine", self.T5))
+            self.assertFalse(hunk.rename("gone", self.T5))
+        self.assertEqual(fake.opts["%4"]["window_name"], f"{self.V} t5")
+
+
 class TestShowPatch(unittest.TestCase):
     """review-mr's window: a patch file, found by owner alone since it has no repository."""
 
@@ -429,7 +528,7 @@ class TestShowPatch(unittest.TestCase):
         with patch.dict(os.environ, {"TMUX": "/tmp/x", "CLAUDE_CODE_SESSION_ID": "me"}), \
                 patch.object(hunk, "installed", lambda: True), \
                 patch.object(hunk, "_run", fake):
-            return hunk.show_patch(fh.name, "!123", "/w", sleep=lambda _s: None), fh.name
+            return hunk.show_patch(fh.name, NAME, "/w", sleep=lambda _s: None), fh.name
 
     def loaded(self):
         return hunk.diff_stat(self.PATCH)
@@ -480,7 +579,7 @@ class TestShowPatch(unittest.TestCase):
 
     def test_outside_tmux_it_is_inline(self):
         with patch.dict(os.environ, {}, clear=True):
-            self.assertIsNone(hunk.show_patch("/nonexistent", "!1", "/w"))
+            self.assertIsNone(hunk.show_patch("/nonexistent", NAME, "/w"))
 
 
 class TestNotes(unittest.TestCase):
@@ -714,7 +813,7 @@ class TestBackgroundSession(unittest.TestCase):
                 patch.object(hunk.tmux, "own_pane", lambda *a, **k: pane), \
                 patch.object(hunk, "installed", lambda: True), \
                 patch.object(hunk, "_run", fake):
-            return hunk.show_working_diff(REPO, "!123", stat_of(1), sleep=lambda _s: None)
+            return hunk.show_working_diff(REPO, NAME, stat_of(1), sleep=lambda _s: None)
 
     def test_the_window_opens_beside_the_pane_the_session_is_shown_in(self):
         fake = FakeRun(new_pane="%9", window_ids={"%2": "@7"})
@@ -783,7 +882,7 @@ class TestOwnReview(HunkCase):
         with patch.dict(os.environ, {"TMUX": "/tmp/x", "CLAUDE_CODE_SESSION_ID": "me"}), \
                 patch.object(hunk, "installed", lambda: True), \
                 patch.object(hunk, "_run", fake):
-            return hunk.show_review(REPO, "self-review", list(args), stat_of(1),
+            return hunk.show_review(REPO, NAME, list(args), stat_of(1),
                                     sleep=lambda _s: None)
 
     def test_the_review_command_is_passed_through_to_the_reload(self):
@@ -1045,7 +1144,7 @@ class TestKeepNotesFiles(KeptFilesCase):
         run, _ = self.run_with([])
         with patch.object(hunk, "_run", run), \
                 patch.object(hunk, "loaded_stat", lambda _s: shown), \
-                patch.object(hunk, "window_of", lambda _s: "9 (!123)"):
+                patch.object(hunk, "window_of", lambda _s, _name=None: "9 (!123)"):
             return hunk._confirm("s1", count, stat_of(expect), since)
 
     def test_a_window_hiding_read_files_holds_the_diff_its_record_says_it_loaded(self):
@@ -1070,8 +1169,8 @@ class TestKeepNotesFiles(KeptFilesCase):
         """The rework card's diff and the self-review piece, each in a window that hides one
         of their two files as read: shown, not refused."""
         self.write(501, [], review=dict(self.REVIEW, loadedAt=4102444800000))
-        for show in (lambda: hunk.show_working_diff(REPO, "!123", stat_of(2), sleep=None),
-                     lambda: hunk.show_review(REPO, "!123", ["show", "abc"], stat_of(2))):
+        for show in (lambda: hunk.show_working_diff(REPO, NAME, stat_of(2), sleep=None),
+                     lambda: hunk.show_review(REPO, NAME, ["show", "abc"], stat_of(2))):
             fake = FakeRun([dict(session("mine", pane="%4"), pid=501, launchedAt=self.LAUNCHED)],
                            owners={"%4": "me"}, reload_files=1, loaded=stat_of(1))
             with patch.dict(os.environ, {"TMUX": "/tmp/x", "CLAUDE_CODE_SESSION_ID": "me"}), \

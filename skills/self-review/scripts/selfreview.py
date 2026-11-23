@@ -33,11 +33,10 @@ _REPO_ROOT = os.path.dirname(
 if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
 
-from lib import hunk, tab, tmux  # noqa: E402
+from lib import hunk, tmux  # noqa: E402
 from lib.cli import die  # noqa: E402
 from lib.git import default_base, git  # noqa: E402
 
-LABEL = tab.label(tab.VIEWER_ICON, "self-review")
 # Recorded on the window: the tree-ish whose new side it shows — the commit, or a snapshot
 # of the working tree — so a reload can tell where each noted line went since.
 SHOWN = "@self-review-shown"
@@ -125,6 +124,8 @@ def show(target, cwd=None, after_amend=False):
             die("no uncommitted changes to review")
         args, stat, what = ["diff", "HEAD"], work_stat(cwd), "the uncommitted change"
         shows = snapshot(cwd)
+        # The window's name: what it shows (lib/hunk.py `rename`).
+        name = ("uncommitted", "uncommitted")
     else:
         # Every change in the tree from here on is an agreed fix, which `amend` folds into
         # this commit wholesale — so the tree has to start out clean.
@@ -134,6 +135,7 @@ def show(target, cwd=None, after_amend=False):
         (sha, subject), total = commit_at(int(target), cwd)
         args, stat, shows = ["show", sha], commit_stat(sha, cwd), sha
         what = f"commit {target} of {total}, {sha[:8]} \"{subject}\""
+        name = (subject, f"commit {target}/{total}")
     if not after_amend:
         guard_switch(repo, args, cwd)
     # Taken before the reload: a reload can drop a note whose line no longer exists, and
@@ -144,7 +146,7 @@ def show(target, cwd=None, after_amend=False):
         require_all_shown(sid, cwd)
     before = (hunk.notes(sid) or []) if sid else []
     shown_before = hunk.mark(sid, SHOWN) if sid else ""
-    shown = hunk.show_review(repo, LABEL, args, stat)
+    shown = hunk.show_review(repo, name, args, stat)
     if not shown:
         if tmux.in_background() and not hunk.in_tmux():
             die(tmux.background_hint())

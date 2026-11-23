@@ -3263,7 +3263,7 @@ def render_topic_diff(state, ctx, iid, tid, show=False, inline_limit=80):
         return "\n".join(out)
     if show:
         try:
-            viewer = _show_in_viewer(ctx, iid, tid, picked)
+            viewer = _show_in_viewer(state, ctx, iid, tid, picked)
         except NotesNotCleared as e:
             viewer = None
             out += ["", f"_{e}; the diff is here instead._"]
@@ -3295,18 +3295,14 @@ def topic_patch(picked):
     return "\n".join(out) + "\n"
 
 
-def viewer_label(ctx, iid):
-    """This review's diff viewer window's name (lib/tab.py): the MR's short title, from its
-    saved state, else its number."""
-    try:
-        title = (load(state_file(STATE_ROOT, ctx["slug"], iid, "findings.json", make=False))
-                 or {}).get("title")
-    except (OSError, ValueError):
-        title = None                      # a state being written, or none yet: its number
-    return tab.viewer_label(title or f"!{iid}", fallback=f"!{iid}")
+def viewer_name(state, tid):
+    """The diff viewer window's name while it shows topic `tid` (`hunk.rename`): the
+    topic's title, its card's, and its id until the title's short form is known. Mirrors
+    threads.py's `viewer_name`."""
+    return (topic_for(state, tid) or {}).get("summary"), tid
 
 
-def _show_in_viewer(ctx, iid, tid, picked):
+def _show_in_viewer(state, ctx, iid, tid, picked):
     """The pointer lines when the topic's diff is now in this agent's viewer window, or
     None to show it inline — no tmux, no viewer, or a window that came back holding
     anything but exactly this patch's files and line counts (see `hunk.show_patch`).
@@ -3317,7 +3313,7 @@ def _show_in_viewer(ctx, iid, tid, picked):
     clear_notes_before_load(ctx, iid, path, patch)
     with open(path, "w") as fh:
         fh.write(patch)
-    shown = hunk.show_patch(path, viewer_label(ctx, iid),
+    shown = hunk.show_patch(path, viewer_name(state, tid),
                             get_worktree(ctx["slug"], iid) or os.getcwd())
     if not shown:
         return None
@@ -4495,7 +4491,7 @@ def main():
             clear_notes_before_load(ctx, iid, fix, text)
         except NotesNotCleared as e:
             die(str(e))
-        shown = fix_refs.show(wt, ends, fix, viewer_label(ctx, iid), f.get("paths"))
+        shown = fix_refs.show(wt, ends, fix, viewer_name(state, args.topic), f.get("paths"))
         if not shown:
             die(hunk.not_shown())
         mark_shown(shown[0], iid, args.topic, fix, text)

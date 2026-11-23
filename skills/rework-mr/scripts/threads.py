@@ -968,34 +968,14 @@ def own_mr(slug):
     return os.path.basename(max(pick, key=_state_mtime)).rsplit("--mr", 1)[1]
 
 
-def window_label(default="diff"):
-    """The name to give this agent's viewer window (lib/tab.py's viewer icon): its MR's short
-    title where the MR can be had locally (`own_mr`), else its number, else the branch.
-
-    Read off the state directory's own naming rather than by asking GitLab, and via
-    `project_slug()` rather than `context()`, which would shell out to glab for the host's
-    API scheme. `diff-view` is deliberately independent of glab and the network (see
-    `main`), and a window's NAME is cosmetic enough that it must not be the thing that
-    reintroduces a round-trip — or a hang, since that helper takes no timeout — per topic.
-    """
-    try:
-        # Checked before the slug is derived rather than caught after: with no origin
-        # remote `remote_url()` calls `die()`, which prints to stderr on the way out.
-        # Catching the SystemExit would still leave that stray line in the terminal, on a
-        # path where nothing is actually wrong.
-        if (_git("remote", "get-url", "origin") or "").strip():
-            slug = project_slug()
-            iid = own_mr(slug)
-            if iid:
-                title = (load(os.path.join(STATE_ROOT, f"{slug}--mr{iid}", "topics.json")) or {}).get("title")
-                return tab.viewer_label(title or f"!{iid}", fallback=f"!{iid}")
-    except (Exception, SystemExit):  # noqa: BLE001 — no remote/state → use branch
-        pass
-    branch = (_git("rev-parse", "--abbrev-ref", "HEAD") or "").strip()
-    return tab.viewer_label(branch or default)
+def viewer_name(state, tid):
+    """The diff viewer window's name while it shows topic `tid`'s fix (`hunk.rename`): the
+    topic's title, its card's, and its id until the title's short form is known; its id
+    alone where no state is at hand. Mirrors findings.py's `viewer_name`."""
+    return ((topic_for(state, tid) or {}).get("summary") if state else None), tid
 
 
-def diff_view_block(tid, diff, plain=False, notes=()):
+def diff_view_block(tid, diff, plain=False, notes=(), state=None):
     """`diff-view.sh`'s whole output: the pointer block when the working diff could be put
     in a viewer window, the inline diff when it could not.
 
@@ -1013,6 +993,8 @@ def diff_view_block(tid, diff, plain=False, notes=()):
     validates each one against the loaded files and would reject it otherwise. They are
     dropped without comment when the diff went inline instead — there is nowhere to anchor
     a note in a fenced block, and the rationale belongs in the prose around it there.
+
+    `state`, where at hand, names the window after the topic (`viewer_name`).
     """
     stat = diff_stat(diff)
     # An empty diff is refused rather than rendered. Both shapes would otherwise ask for a
@@ -1040,7 +1022,7 @@ def diff_view_block(tid, diff, plain=False, notes=()):
         if notes
         else ""
     )
-    shown = hunk.show_working_diff(root, window_label(), stat)
+    shown = hunk.show_working_diff(root, viewer_name(state, tid), stat)
     if not shown:
         return render_diff_view(tid, diff, dropped)
     if notes:
@@ -1817,19 +1799,23 @@ def emit(state, block, topic=None):
     )
 
 
-def reload_open_viewer(notes):
+def reload_open_viewer(notes, name):
     """Where this session's diff viewer for the repository is open, put the fix just shown
     in it: a fix changed after a look in the viewer (its notes answered) is shown again, and
     the window would otherwise go on showing the fix as it was, beside a card about the new
     one. The agent's notes of the earlier showing go, this showing's come in; the user's
     own are dropped only by the read that hands them to the model (`hunk-notes`). Never
-    opens a window: that is the user's press (`hunk-show`)."""
+    opens a window: that is the user's press (`hunk-show`). `name`: the window's name from
+    now on (`viewer_name`)."""
     root = (_git("rev-parse", "--show-toplevel") or "").strip()
     sid = root and hunk.installed() and hunk.find_session(root, hunk.owner_id())
     if not sid:
         return
     hunk.clear_agent_notes(sid)
-    if hunk.reload_working_diff(sid) is not None and notes:
+    if hunk.reload_working_diff(sid) is None:
+        return
+    hunk.rename(sid, name)
+    if notes:
         try:
             hunk.add_notes(sid, notes)
         except ValueError:
@@ -3908,7 +3894,7 @@ def main():
                 if was and was != args.topic and step_of(state, topic_for(state, was)) != "fixed":
                     t["fix"]["made_on"] = was
                 CURRENT.jump(state, args.topic)
-                reload_open_viewer(notes)
+                reload_open_viewer(notes, viewer_name(state, args.topic))
                 # The topic's whole card, the fix in it: the card the fix was made from is
                 # folded away once this one is up.
                 emit(state, render_quote(state, args.topic), args.topic)
@@ -3917,7 +3903,7 @@ def main():
             save(path, state)
         print(
             critical_manifest.with_manifest(
-                diff_view_block(args.topic, diff, args.plain, notes),
+                diff_view_block(args.topic, diff, args.plain, notes, state),
                 topic=args.topic,
             )
         )
@@ -4183,7 +4169,7 @@ def main():
         ends = kept_fix(state, t, args.push) or die(f"{tref(args.topic)} has no pushed fix kept "
                                                     "in git to show: its diff link is all there is")
         shown = fix_refs.show(root, ends, state_file(STATE_ROOT, ctx["slug"], iid, f"fix-{args.topic}.patch"),
-                              window_label())
+                              viewer_name(state, args.topic))
         if not shown:
             die(hunk.not_shown())
         hunk.focus_window(shown[0])
@@ -4194,7 +4180,7 @@ def main():
         diff = working_diff()
         if not diff.strip():
             die("nothing in the working tree to show")
-        shown = hunk.show_working_diff(root, window_label(), diff_stat(diff)) if root else None
+        shown = hunk.show_working_diff(root, viewer_name(state, args.topic), diff_stat(diff)) if root else None
         if not shown:
             die("the diff viewer did not open with this fix: it needs hunk inside tmux, and "
                 "its window must hold exactly the fix's files")

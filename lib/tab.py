@@ -8,7 +8,8 @@ icon while the window wants the user, a confused robot while a prompt waits):
             Claude Code generates), or its repository until it has one
     REVIEW  the session while /review-mr works through an MR
     REWORK  the session while /rework-mr works through one
-    VIEWER  a diff viewer window a skill opened
+    VIEWER  a diff viewer window a skill opened, named after what it shows now: renamed
+            on every load (`viewer`), like any window this module named (`adopt`)
 
 A window is renamed only where nobody else named it: one tmux still names after its process
 (`automatic-rename`, a fresh window), or one whose name is still the last this module gave it
@@ -21,7 +22,9 @@ neither names the window nor gives its name back.
 
 A tab never shows a title cut mid-thought: a title goes up at once only where it fits, or a
 model shortened it before; otherwise the tab keeps its name until the model's short form is
-there (`show`), and the cut is only what a failed model call leaves.
+there (`show`), and the cut is only what a failed model call leaves. A window whose old name
+would say something untrue meanwhile (a viewer loaded with another diff) shows a plain fact
+instead until then, `meanwhile`.
 
 Every function degrades to doing nothing outside tmux, or where tmux refuses.
 """
@@ -240,21 +243,24 @@ def _shorten_later(pane, icon, title, keep):
     spawn([sys.executable, HOOK, "shorten", "--icon", icon] + (["--hold"] if keep else []) + [title], env)
 
 
-def show(pane, icon, title, keep=False, run=None):
+def show(pane, icon, title, keep=False, run=None, meanwhile=None):
     """`title` in `pane`'s tab, as soon as its short form is known: at once where it is
-    `ready`, else once the model wrote it. `keep`: a skill's hold, whoever named the window;
-    else only where the window is free to name. True where it was renamed now."""
+    `ready`, else once the model wrote it, the tab showing `meanwhile` until then where
+    given (else keeping its name). `keep`: a skill's hold, whoever named the window; else
+    only where the window is free to name. True where it was renamed now."""
     run = run or _run
     if not pane or not title or (not keep and not _mine(pane, run)):
         return False
+    put = hold if keep else name
     short = ready(title)
     if short:
         run(["tmux", "set-option", "-wu", "-t", pane, WANT_OPT])
-        return hold(pane, icon, short, run) if keep else name(pane, icon, short, run)
+        return put(pane, icon, short, run)
     # The newest title asked for wins: a model late with an older one finds this changed.
     run(["tmux", "set-option", "-w", "-t", pane, WANT_OPT, title])
+    renamed = bool(meanwhile) and put(pane, icon, meanwhile, run)
     _shorten_later(pane, icon, title, keep)
-    return False
+    return renamed
 
 
 def finish(pane, icon, title, short, keep=False, run=None):
@@ -329,14 +335,29 @@ def take_mr(icon, iid, title):
     take(icon, title or f"!{iid}", session=f"{icon} !{iid} {title or ''}".rstrip())
 
 
-def viewer_label(title, fallback=None):
-    """A diff viewer window's name, needed at once: its icon and the short title of what it
-    shows where that is `ready`, else `fallback` (the MR's number) while the model writes
-    one for the next window."""
-    short = ready(title)
-    if not short:
-        _shorten_later("", VIEWER_ICON, title, False)
-    return label(VIEWER_ICON, short or fallback or cut(title))
+def viewer_label(title, meanwhile):
+    """The name a diff viewer window opens with, before anything can rename it: its icon and
+    the short title of what it first shows where that is `ready`, else `meanwhile`. The
+    load that follows (`viewer`) asks the model for the rest."""
+    return label(VIEWER_ICON, ready(title) or meanwhile)
+
+
+def adopt(pane, given, run=None):
+    """A window opened by a skill with the name `given` is this module's to rename, as
+    long as it keeps that name: opening it with a name turned tmux's own naming off, which
+    `_mine` would otherwise read as the user's. Nothing restores such a window: the
+    session's end gives back its own window alone."""
+    run = run or _run
+    rc, _ = run(["tmux", "set-option", "-w", "-t", pane, SET_OPT, given])
+    return rc == 0
+
+
+def viewer(pane, title, meanwhile, run=None):
+    """A diff viewer window says what it holds now, after a load: `title`'s short form,
+    `meanwhile` (a plain fact, the topic or commit it is) until the model wrote one, never
+    the name of what it held before. A window the user renamed keeps their name. True where
+    it was renamed now."""
+    return show(pane, VIEWER_ICON, title or meanwhile, run=run, meanwhile=meanwhile)
 
 
 def _load():
