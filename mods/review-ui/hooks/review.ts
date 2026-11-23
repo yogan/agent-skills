@@ -49,6 +49,10 @@ export type Press =
   | { kind: 'leave' }
   // On to the round's next topic from one that needs nothing in this pass: nothing counted.
   | { kind: 'next' }
+  // review-mr, another reviewer's thread: on to the next of them, as the sidebar lists them
+  // (`to`), or its card closed after the last. `ack`: marked read on the way, for one the
+  // agent judged needs the person.
+  | { kind: 'peer-next'; to: string | null; ack?: true }
   // review-mr: a posted comment's card closed, the topic waiting on its author as it was.
   | { kind: 'keep-waiting' }
   | { kind: 'ack' }
@@ -164,8 +168,9 @@ const ICON: Record<string, string> = {
   'Fix it': '\u{F05B7}', 'Fix instead…': '\u{F05B7}', // md-wrench
   'Change plan…': '\u{F04E1}', // md-swap_horizontal
   'Propose a plan': '\u{F0982}', // md-map_outline
-  'Explain': '\u{F1739}', 'Explain further': '\u{F1739}', 'Analyse more': '\u{F1739}', // md-chat_question_outline
+  'Explain': '\u{F1739}', 'Explain further': '\u{F1739}', 'Analyse more': '\u{F1739}', 'Analyse': '\u{F1739}', // md-chat_question_outline
   'Next': '\u{F0BB1}', // md-page_next_outline
+  'Close': '\u{F0156}', // md-close, the card's own ✕
   'Post': '\u{F048A}', 'Send follow-up': '\u{F048A}', '“Fixed”': '\u{F048A}', // md-send
   'Post + resolve': '\u{F1161}', '“Fixed” + resolve': '\u{F1161}', // md-send_check
   'Copy': '\u{F0CFA}', // md-clipboard_arrow_right_outline
@@ -218,7 +223,8 @@ export const buttonsFor = (review: ReviewState | null): BandButton[] => {
   const topic = currentTopic(review)
   // Every topic the person has open can be put off: to the end of the round, and once
   // there, out of it.
-  if (!topic || buttons === null || review?.skill !== 'review-mr' || stepOf(topic) === 'watch') return ordered(buttons ?? [])
+  // Another reviewer's thread has a way on of its own, through the others (`peerButtons`).
+  if (!topic || buttons === null || review?.skill !== 'review-mr' || buttons.some(b => b.key === 'peer-next')) return ordered(buttons ?? [])
   // The author's push that changed its lines, to look at: never the recommendation.
   const look = topic.fix_kept && !topic.peer ? [showFix] : []
   return ordered([...buttons, ...look, ...(hasNext(review, topic.id) ? [{ key: 'next', label: 'Next', press: { kind: 'next' } } as BandButton] : [])])
@@ -317,18 +323,8 @@ const stepButtons = (review: ReviewState | null): BandButton[] | null => {
       }
       // The agent's verdict on the author's answer is on the card; the buttons follow it.
       const ack: BandButton = { key: 'ack', label: 'Ack', press: { kind: 'ack' } }
-      if (topic?.peer) {
-        // Another reviewer's thread the agent judged needs the person: its advice first.
-        // Seen closes it for the person only; the thread is its reviewer's to resolve.
-        const view = topic.peer_view
-        const reply: BandButton = { key: 'reply', label: 'Reply…', press: { kind: 'fill', text: `Draft my reply for ${t}${inLang(review)}: ` } }
-        const seen: BandButton = { key: 'seen', label: 'Seen', press: { kind: 'ack' } }
-        const merge: BandButton[] = view?.advice === 'merge' && view.into
-          ? [{ key: 'merge', label: `Merge into ${view.into}`, press: { kind: 'merge', into: view.into } }] : []
-        const order = view?.advice === 'merge' ? [...merge, reply, seen]
-          : view?.advice === 'seen' ? [seen, reply] : [reply, seen]
-        return order.map((b, i) => (i === 0 ? { ...b, isPrimary: true as const } : b))
-      }
+      // Another reviewer's thread the agent judged needs the person: its advice first.
+      if (topic?.peer) return peerButtons(review, topic)
       // A judged answer: the verdict's own answer first. Accepting resolves the GitLab thread
       // and closes the topic in one press (Accept alone where the thread is resolved already);
       // replying says the answer is not good enough; Analyse more asks the agent to look again.
@@ -385,10 +381,7 @@ const stepButtons = (review: ReviewState | null): BandButton[] | null => {
         { key: 'no-follow', label: 'Nothing to add', press: { kind: 'no-follow-up' } },
       ]
     case 'watch':
-      return [
-        { key: 'seen', label: 'Seen', press: { kind: 'leave' }, isPrimary: true },
-        { key: 'reply', label: 'Reply…', press: { kind: 'fill', text: `Draft my reply for ${t}${inLang(review)}: ` } },
-      ]
+      return topic ? peerButtons(review, topic) : []
     case 'waiting': {
       // Already resolved on GitLab, closing it here is an ack; otherwise Resolve (GitLab's
       // word) resolves the thread too: settled in person, say, with no answer in the thread.
@@ -406,6 +399,37 @@ const stepButtons = (review: ReviewState | null): BandButton[] | null => {
       // what arrives.
       return null
   }
+}
+
+// The next of the other reviewers' threads after `tid`, in the order the sidebar's group
+// lists them (panel.ts's `sectionsOf`); the group's first for a thread not in it (one judged
+// to need the person is in the round instead). Null after the last.
+export const nextPeerOf = (review: ReviewState | null, tid: string): string | null => {
+  const group = (review?.topics ?? []).filter(t => t.watching).map(t => t.id)
+  return group.slice(group.indexOf(tid) + 1).find(id => id !== tid) ?? null
+}
+
+// What the agent is asked to look at another reviewer's thread again, deeper than the
+// summary on its card. Modelled on Analyse more: a view it changes is a card of its own.
+export const peerAnalysePrompt = (t: string): string => `Analyse ${t}, another reviewer's thread: read it whole (\`bodies ${t}\`, every comment in order) and the code it is on. Say in a few lines whether its point holds, and whether it touches or contradicts any of my own topics (name them). Where you now think the thread needs me, store your new view (\`peer ${t} needs --why '…' --advice reply|merge|seen\`, with \`--into <t>\` for merge): its card follows. Otherwise do not show ${t} again; your reply gives the details.`
+
+// Another reviewer's thread, which the person watches: it is its reviewer's to settle, so
+// the way on is the primary answer, through the others in the sidebar's order, and the
+// card closes after the last. One judged to need the person has the agent's advice first
+// (where that is to merge or to reply), and is marked read on the way.
+const peerButtons = (review: ReviewState | null, topic: ReviewTopic): BandButton[] => {
+  const t = topic.id
+  const view = topic.peer_view
+  const needs = view?.says === 'needs'
+  const to = nextPeerOf(review, t)
+  const way: BandButton = { key: 'peer-next', label: to ? 'Next' : 'Close', press: { kind: 'peer-next', to, ...(needs ? { ack: true as const } : {}) } }
+  const reply: BandButton = { key: 'reply', label: 'Reply…', press: { kind: 'fill', text: `Draft my reply for ${t}${inLang(review)}: ` } }
+  const merge: BandButton[] = needs && view?.advice === 'merge' && view.into
+    ? [{ key: 'merge', label: `Merge into ${view.into}`, press: { kind: 'merge', into: view.into } }] : []
+  const order = needs && view?.advice === 'merge' ? [...merge, reply, way]
+    : needs && view?.advice === 'reply' ? [reply, way] : [way, reply]
+  const analyse: BandButton = { key: 'explain', label: 'Analyse', press: ask(peerAnalysePrompt(t)) }
+  return [...order.map((b, i) => (i === 0 ? { ...b, isPrimary: true as const } : b)), analyse]
 }
 
 // A comment the person posted by hand that the agent found no longer holds: its corrected
@@ -636,6 +660,8 @@ export const argsFor = (press: Press, topic: string, card: ReviewCard | null): s
     case 'next':
     case 'keep-waiting':
       return ['leave']
+    case 'peer-next':
+      return ['leave', ...(press.ack ? ['--ack', topic] : []), ...(press.to ? ['--to', press.to] : [])]
     default:
       return undefined
   }
@@ -671,7 +697,7 @@ export const outcomeOf = (press: Press, stdout: string, now?: string, wasPosted 
   // A press that closed its topic: the scripts' closing line (lib/ui.py's `closed_md`), the
   // same words the topic's card ends on whenever it is drawn again.
   const closed = /^closed: (.+)$/m.exec(stdout)?.[1]
-  if (closed && ['resolve', 'ack', 'post'].includes(press.kind)) {
+  if (closed && (['resolve', 'ack', 'post'].includes(press.kind) || (press.kind === 'peer-next' && press.ack))) {
     const step = STEP.exec(closed)
     const rest = step?.[3] ?? closed
     // Its thread's link, at its end, drawn as a link: the label without its icon, which
@@ -734,6 +760,7 @@ export const didText = (press: Press, topic: string, into?: string): string => {
   if (press.kind === 'post' && press.resolve) return `${topic}: posted the reply and resolved the thread`
   if (press.kind === 'post' && press.reply) return `${topic}: posted the reply in its thread`
   if (press.kind === 'merge') return `merged ${topic} into ${into ?? press.into}`
+  if (press.kind === 'peer-next') return `${topic}: ${press.ack ? 'marked it read' : 'saw it'}; it is its reviewer's to settle${press.to ? `; on to ${press.to}, the next of the other reviewers' threads` : ''}`
   if (press.kind === 'own-done') return 'their own review is done; the topics start'
   if (press.kind === 'explainer') return press.how === 'skip' ? 'skipped the explainer' : 'chose to generate an explainer'
   if (press.kind === 'no-follow-up') return `${topic}: nothing to add to their comment`

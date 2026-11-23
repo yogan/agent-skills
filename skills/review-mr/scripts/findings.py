@@ -406,8 +406,8 @@ def peer_waiting(state, t, thr=None):
 
 
 def peer_closed(t, thr):
-    """Whether the user closed another reviewer's thread (Seen, or Leave to them before it)
-    and nobody wrote in it since."""
+    """Whether the user closed another reviewer's thread (Next or Close on its card, Seen or
+    Leave to them before) and nobody wrote in it since."""
     acked = _ts(t.get("acked_at")) if t.get("state") == "acked" else None
     if not acked:
         return False
@@ -1377,7 +1377,9 @@ def _render_quote(state, tid, refine=False):
     # them. It is the thing being decided, so it goes last, exactly as an unposted
     # topic's draft does. `note` is NOT a fallback here: that is review-branch's seed
     # text for the original comment, long since posted.
-    if t.get("why") and topic_status(state, t) not in ("acked", "dropped"):
+    # Another reviewer's thread keeps its summary while the user watches it: one for their
+    # information is acked from the start, and without it its card said nothing at all.
+    if t.get("why") and (topic_status(state, t) not in ("acked", "dropped") or peer_waiting(state, t)):
         # What the agent makes of it: its own finding, now on the user's merged comment, or
         # another reviewer's thread, judged when it came in.
         out += (["", ui.analysis_heading(), "", ui.without_recommendation(t["why"])]
@@ -1402,6 +1404,12 @@ def _render_quote(state, tid, refine=False):
     elif closing:
         # The latest thing that happened to the topic, the card's last line.
         out += ["", closing if ui.drawn() else f"_({closing})_"]
+    if peer_waiting(state, t):
+        # Another reviewer's thread, closed here or not, stays open on GitLab: whose it is to
+        # settle, as an own comment's card ends on whom it waits on.
+        # A step of its story: under the closing line where there is one.
+        out += ([] if closing else [""]) + [
+            ui.step_md(ui.STEP_WAITS_ICON, f"{t.get('by') or 'Its reviewer'}'s to settle")]
     return "\n".join(out).strip()
 
 
@@ -1419,6 +1427,28 @@ def closing_line(state, t):
     command prints."""
     e = closing_event(state, t)
     return ui.step_md(e["icon"], e["text"], e["at"]) if e else None
+
+
+def ack_topic(state, t):
+    """Close `t` here at the user's word (`set --state acked`, `leave --ack`)."""
+    if topic_status(state, t) != "acked":
+        # How it was closed, for the line its card ends on: on the author's fix where a push
+        # changed its lines since the comment, else on what stands.
+        t["closed"] = {"how": "fixed" if fixes_of(t) else "acked", "at": now_iso(),
+                       "push": len(fixes_of(t))}
+    t["state"] = "acked"
+    # Stamped so a later author note can be recognised as newer than the ack.
+    t["acked_at"] = now_iso()
+
+
+def print_acked(state, iid, t):
+    """What an ack prints once saved: its `closed:` line, and what the diff viewer did."""
+    closing = press_close(state, t)
+    if closing:
+        print(f"closed: {closing}")
+    tidied = tidy_viewer(iid, t["id"])
+    if tidied:
+        print(tidied)
 
 
 def press_close(state, t):
@@ -2715,6 +2745,8 @@ def state_json(state):
             # What a button that acts on the verdict hands the chat, which did not judge it.
             "verdict_text": (verdict_of(state, t) or {}).get("text"),
             "peer": peer_waiting(state, t),
+            # Who opened it, where somebody other than the user did: whose it is to settle.
+            "by": t.get("by"),
             "peer_view": ({k: v for k, v in peer_view_of(state, t).items() if k != "on"}
                           if peer_waiting(state, t) and peer_view_of(state, t) else None),
             # Another reviewer's thread the user watches and has not closed for themselves.
@@ -4530,8 +4562,13 @@ def main():
     pm.add_argument("--iid", type=int)
 
     sub.add_parser("state").add_argument("--iid", type=int)
-    sub.add_parser("leave", help="close the topic the user opened to look at: the next one "
-                   "that needs them becomes current, or none").add_argument("--iid", type=int)
+    pl = sub.add_parser("leave", help="close the topic the user opened to look at: the next one "
+                        "that needs them becomes current, or none")
+    pl.add_argument("--ack", metavar="TOPIC", help="on a press: close this topic for the user "
+                    "first (another reviewer's thread, marked read)")
+    pl.add_argument("--to", metavar="TOPIC", help="on a press: make this topic current "
+                    "instead (the next of the other reviewers' threads)")
+    pl.add_argument("--iid", type=int)
     sub.add_parser("refresh", help="sync quietly and print the state as JSON (the mod's "
                    "update check)").add_argument("--iid", type=int)
     sub.add_parser("approve-mr", help="on a person's press only: approve the MR on GitLab, "
@@ -4731,9 +4768,18 @@ def main():
     if cmd == "state":                    # offline, and asked for after every view
         print(json.dumps(state_json(state)))
         return
-    if cmd == "leave":                    # offline: the sidebar's close
-        CURRENT.leave(state)
+    if cmd == "leave":                    # offline: the sidebar's close, and a card's Next
+        acked = topic_for(state, args.ack) or die(f"no topic {args.ack}") if args.ack else None
+        to = topic_for(state, args.to) or die(f"no topic {args.to}") if args.to else None
+        if acked:
+            ack_topic(state, acked)
+        if to:
+            focus_on(state, to["id"])
+        else:
+            CURRENT.leave(state)
         save(path, state)
+        if acked:
+            print_acked(state, iid, acked)
         print(json.dumps(state_json(state)))
         return
     if cmd == "hunk-show":                # on a press: the author's fix in the diff viewer
@@ -5058,15 +5104,11 @@ def main():
         if args.state == "reset":
             t["state"] = None
             t.pop("acked_at", None)
+        elif args.state == "acked":
+            ack_topic(state, t)
         elif args.state:
-            if args.state == "acked" and topic_status(state, t) != "acked":
-                # How it was closed, for the line its card ends on: on the author's fix where
-                # a push changed its lines since the comment, else on what stands.
-                t["closed"] = {"how": "fixed" if fixes_of(t) else "acked", "at": now_iso(),
-                               "push": len(fixes_of(t))}
             t["state"] = args.state
-            # Stamped so a later author note can be recognised as newer than the ack.
-            t["acked_at"] = now_iso() if args.state == "acked" else None
+            t["acked_at"] = None
         # Counted from the anchor the draft is stored with: a `--line` or `--file` in the
         # same call moves it.
         moved = {k: getattr(args, k) for k in ("file", "line") if getattr(args, k) is not None}
@@ -5089,12 +5131,8 @@ def main():
             # A follow-up answers the thread as it stands now (`drop_stale_drafts`).
             t["draft_on"] = answer_mark(state, t)
         save(path, state)
-        closing = press_close(state, t) if args.state == "acked" else None
-        if closing:
-            print(f"closed: {closing}")
-        tidied = tidy_viewer(iid, args.topic) if args.state == "acked" else None
-        if tidied:
-            print(tidied)
+        if args.state == "acked":
+            print_acked(state, iid, t)
         if args.summary is not None:
             # Answered at the moment the wrong-language summary is stored, rather than
             # two commands later when a whole table has to be re-rendered.

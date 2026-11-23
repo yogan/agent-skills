@@ -1740,7 +1740,10 @@ const drawCard = async ($: EngineInterface, e: Parameters<EngineInterface['ui'][
 // the moment another topic was current, and a card left in the chat cannot bring it back.
 const standing = (r: ReviewState | null, t: ReviewState['topics'][number] | undefined): string | null => {
   const other = r?.skill === 'rework-mr' ? 'the reviewers' : r?.author ?? 'the author'
-  const word = !t ? null : t.state === 'waiting' || t.status === 'waiting' ? `Waiting for ${other}`
+  // Another reviewer's thread, still open: closed for the person, never on GitLab, so
+  // "Closed" read as resolved. It is its reviewer's to settle, named as the card names them.
+  const word = !t ? null : t.peer ? `${t.by ?? 'Its reviewer'}'s to settle`
+    : t.state === 'waiting' || t.status === 'waiting' ? `Waiting for ${other}`
     : ['done', 'acked', 'wontfix'].includes(t.state ?? '') || t.status === 'done' ? 'Closed'
     : t.state === 'dropped' ? 'Dropped'
     : null

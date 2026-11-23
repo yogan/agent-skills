@@ -38,6 +38,8 @@ export type ReviewTopic = {
   author_resolved?: 'pushed' | 'unpushed' | null
   // Another reviewer's thread (or the MR author's own) that waits on the user.
   peer?: boolean
+  // review-mr: who opened it, where somebody other than the user did (a first name).
+  by?: string | null
   // review-mr: the agent's view of another reviewer's thread, which the user watches: for
   // their information, or needs them, and what to do then.
   peer_view?: { says: 'fyi' | 'needs'; advice: 'seen' | 'reply' | 'merge'; into?: string | null } | null

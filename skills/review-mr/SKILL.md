@@ -364,8 +364,15 @@ the user answers each match with a press when their round reaches it.
 
 **Another reviewer's thread, or the MR author's own,** becomes a topic by itself on a sync;
 the mod's model call gives it a title and a view (see *Rounds and verdicts*). The user
-watches it: `Seen` marks it read, `Reply…` is theirs to write, and `Merge into tN` is there
-where you advised it.
+watches it: its card shows your stored view, `Next` goes on to the next of the other
+reviewers' threads (`Close` after the last; one you judged `needs` is marked read on the way),
+`Reply…` is theirs to write, and `Merge into tN` is there where you advised it.
+
+**"Analyse"** on such a card reaches you as their prompt: read the whole thread (`bodies <t>`)
+and the code it is on, then say in a few lines whether its point holds and whether it touches
+or contradicts one of the user's own topics. Where it now needs them, store the new view
+(`peer <t> needs --why '…' --advice …`): its card follows. Otherwise leave the topic unshown;
+your reply carries the details.
 
 **"Explain"** reaches you as their prompt: compare the two in at most 5 lines, what
 each says and what one covers that the other does not, and end on your recommendation. The

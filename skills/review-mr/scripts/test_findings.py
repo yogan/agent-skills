@@ -3332,6 +3332,36 @@ class TestWatchedThreads(unittest.TestCase):
         self.state["threads"]["d1"]["last_at"] = "2026-11-05T10:00:00Z"
         self.assertEqual(F.needs_verdict(self.state), ["t1"])
 
+    def test_its_card_shows_what_it_says_while_watched_fyi_or_needs_or_read(self):
+        """One for the user's information is acked from the start: its card dropped the
+        stored summary with the ack, and showed only its title and place."""
+        self.t["why"] = "Sam asks whether the map should be a set."
+        for says, ov in (("fyi", None), ("needs", None), ("needs", "acked")):
+            with self.subTest(says=says, state=ov):
+                self.view(says)
+                self.t["state"] = ov
+                self.assertIn("the map should be a set", F.render_quote(self.state, "t1"))
+        # The user's own topic, closed, keeps leaving it out.
+        self.state["threads"]["d9"] = {"mine": True, "body": "x", "resolved": True}
+        own = add_linked_topic(self.state, "d9", summary="mine", why="Its own reasoning.")
+        own.update(state="acked", acked_at="2026-11-05T10:00:00Z")
+        self.assertEqual(F.topic_status(self.state, own), "acked")
+        self.assertNotIn("Its own reasoning", F.render_quote(self.state, own["id"]))
+
+    def test_its_card_ends_on_whose_it_is_to_settle_while_open_on_gitlab(self):
+        self.view("fyi")
+        waits = F.ui.STEP_WAITS_ICON
+        self.assertEqual(F.render_quote(self.state, "t1").splitlines()[-1], f"{waits} Its reviewer's to settle")
+        self.t["by"] = "Sam"
+        self.assertEqual(F.render_quote(self.state, "t1").splitlines()[-1], f"{waits} Sam's to settle")
+        self.state["threads"]["d1"]["resolved"] = True              # settled on GitLab
+        self.assertNotIn("to settle", F.render_quote(self.state, "t1"))
+
+    def test_state_says_who_opened_it(self):
+        self.t["by"] = "Sam"
+        self.assertEqual(F.state_json(self.state)["topics"][0]["by"], "Sam")
+
+
 
 class TestOwnThreads(unittest.TestCase):
     def test_every_own_thread_needs_settling(self):
@@ -4679,6 +4709,47 @@ class TestPressClose(ViewerCase):
     def test_an_ack_of_ones_own_topic_says_how_it_closed(self):
         self.assertIn("closed: ", self.ack("llm"))
         self.assertIn("you acked it", self.ack("llm"))
+
+
+class TestLeaveToAnotherThread(ViewerCase):
+    """A watched thread's card goes on to the next of them (`leave --to`), marking one that
+    needed the user read on the way (`--ack`), as Seen did."""
+
+    def setUp(self):
+        super().setUp()
+        env = patch.dict(os.environ, {"REVIEW_UI_DRAWN": "1"})
+        env.start()
+        self.addCleanup(env.stop)
+        self.state = new_state(threads={x: {"author": "Sam", "awaiting": "author", "body": "b",
+                                            "last_at": "2026-11-05T09:00:00Z"} for x in ("d1", "d2", "d3")},
+                               own_review="done", in_round=True)
+        for x, says in (("d1", "needs"), ("d2", "fyi"), ("d3", "fyi")):
+            t = add_linked_topic(self.state, x, source="peer", summary=x)
+            t["peer_view"] = {"says": says, "advice": "reply", "into": None, "on": F.answer_mark(self.state, t)}
+        F.focus_on(self.state, "t1")
+
+    def leave(self, *argv):
+        with patch.object(F, "viewer_window", lambda: None):
+            out, err, code = self.run_cli("leave", *argv, state=self.state)
+        self.assertIsNone(code, err)
+        return out
+
+    def test_to_makes_that_one_current(self):
+        self.leave("--to", "t3")
+        self.assertEqual(F.current_topic(self.state), "t3")
+        self.assertIsNone(self.state["topics"][0]["state"])          # nothing acked
+
+    def test_ack_marks_it_read_and_says_so(self):
+        out = self.leave("--ack", "t1", "--to", "t2")
+        self.assertEqual(F.topic_status(self.state, self.state["topics"][0]), "acked")
+        self.assertEqual(F.current_topic(self.state), "t2")
+        self.assertEqual(json.loads(out.splitlines()[-1])["current"], "t2")
+
+    def test_no_such_topic_is_refused(self):
+        with patch.object(F, "viewer_window", lambda: None):
+            _, err, code = self.run_cli("leave", "--to", "t9", state=self.state)
+        self.assertTrue(code)
+        self.assertIn("no topic t9", err)
 
 
 class WorktreeCase(ViewerCase):

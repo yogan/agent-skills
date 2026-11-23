@@ -1235,15 +1235,28 @@ test('a call cut off by a reload of the mod leaves nothing marked as being judge
   expect(judgingOf({ run: null, topics: [] }, 'load-2')).toEqual([])
 })
 
-test("another reviewer's thread that needs you offers the agent's advice first; Seen closes it for you", async ($, on) => {
+test("another reviewer's thread that needs you offers the agent's advice first; Close marks it read after the last", async ($, on) => {
   const peer = { ...topic('t6', 'needs_ack'), source: 'peer', peer: true }
   const w = world(on, [stateOf('t6', [{ ...peer, peer_view: { says: 'needs' as const, advice: 'reply' as const } }])])
   await openReview($, w, view('t6'))
   const ui = await mountStep($, 'terminal')
-  expect(await labels(ui)).toEqual(['Reply…', 'Seen', 'Next', 'Show sidebar'])
-  await ui.press({ key: 'seen' })
+  expect(await labels(ui)).toEqual(['Reply…', 'Close', 'Analyse', 'Show sidebar'])
+  await ui.press({ key: 'peer-next' })
   await ui.unmount()
-  expect(w.ran.map(r => r.argv.slice(2).join(' '))).toContain('set t6 --state acked --iid 42')
+  expect(w.ran.map(r => r.argv.slice(2).join(' '))).toContain('leave --ack t6 --iid 42')
+})
+
+test("another reviewer's thread that needs you goes on to the first of the others, marked read on the way", async ($, on) => {
+  const needs = { ...topic('t6', 'needs_ack'), source: 'peer', peer: true, peer_view: { says: 'needs' as const, advice: 'seen' as const } }
+  const fyi = (id: string) => ({ ...topic(id, 'acked'), source: 'peer', peer: true, watching: true, peer_view: { says: 'fyi' as const, advice: 'seen' as const } })
+  const w = world(on, [stateOf('t6', [topic('t1', 'needs_ack'), fyi('t3'), fyi('t4'), needs], { in_round: true, round: ['t6', 't1'] })])
+  await openReview($, w, view('t6'))
+  const ui = await mountStep($, 'terminal')
+  // Its advice was only to know of it: the way on takes the first place, and no round Next.
+  expect(await labels(ui)).toEqual(['Next', 'Reply…', 'Analyse', 'Show sidebar'])
+  await ui.press({ key: 'peer-next' })
+  await ui.unmount()
+  expect(w.ran.map(r => r.argv.slice(2).join(' '))).toContain('leave --ack t6 --to t3 --iid 42')
 })
 
 test('Merge into tN is offered only where the agent advised it, and merges there', async ($, on) => {
@@ -1251,21 +1264,44 @@ test('Merge into tN is offered only where the agent advised it, and merges there
   const w = world(on, [stateOf('t6', [topic('t1', 'open'), { ...peer, peer_view: { says: 'needs' as const, advice: 'merge' as const, into: 't1' } }])])
   await openReview($, w, view('t6'))
   const ui = await mountStep($, 'terminal')
-  expect(await labels(ui)).toEqual(['Merge into t1', 'Reply…', 'Seen', 'Next', 'Show sidebar'])
+  expect(await labels(ui)).toEqual(['Merge into t1', 'Reply…', 'Close', 'Analyse', 'Show sidebar'])
   await ui.press({ key: 'merge' })
   await ui.unmount()
   expect(w.ran.map(r => r.argv.slice(2).join(' '))).toContain('merge t1 t6 --iid 42')
 })
 
-test("another reviewer's thread opened for your information offers Seen and Reply…, never Later", async ($, on) => {
-  const peer = { ...topic('t6', 'acked'), source: 'peer', peer: true }
+test("another reviewer's thread opened for your information offers Close after the last of them, and Reply…", async ($, on) => {
+  const peer = { ...topic('t6', 'acked'), source: 'peer', peer: true, watching: true }
   const w = world(on, [stateOf('t6', [{ ...peer, peer_view: { says: 'fyi' as const, advice: 'seen' as const } }])])
   await openReview($, w, view('t6'))
   const ui = await mountStep($, 'terminal')
-  expect(await labels(ui)).toEqual(['Seen', 'Reply…', 'Show sidebar'])
-  await ui.press({ key: 'seen' })
+  expect(await labels(ui)).toEqual(['Close', 'Reply…', 'Analyse', 'Show sidebar'])
+  await ui.press({ key: 'peer-next' })
   await ui.unmount()
   expect(w.ran.map(r => r.argv.slice(2).join(' '))).toContain('leave --iid 42')
+})
+
+test("Next on another reviewer's thread goes to the next of them in the sidebar's order, never the round's", async ($, on) => {
+  const fyi = (id: string) => ({ ...topic(id, 'acked'), source: 'peer', peer: true, watching: true, peer_view: { says: 'fyi' as const, advice: 'seen' as const } })
+  // t2 needs the user and is the round's next; t5 is the next of the other reviewers' threads.
+  const w = world(on, [stateOf('t4', [fyi('t1'), topic('t2', 'needs_ack'), fyi('t4'), fyi('t5')], { in_round: true, round: ['t2'] })])
+  await openReview($, w, view('t4'))
+  const ui = await mountStep($, 'terminal')
+  expect(await labels(ui)).toEqual(['Next', 'Reply…', 'Analyse', 'Show sidebar'])
+  await ui.press({ key: 'peer-next' })
+  await ui.unmount()
+  expect(w.ran.map(r => r.argv.slice(2).join(' '))).toContain('leave --to t5 --iid 42')
+})
+
+test("Analyse on another reviewer's thread asks for the whole thread, the user's own topics, and a new view only where it needs them", () => {
+  const peer = { ...topic('t6', 'acked'), source: 'peer', peer: true, watching: true, peer_view: { says: 'fyi' as const, advice: 'seen' as const } }
+  const review = JSON.parse(stateOf('t6', [peer]))
+  const analyse = buttonsFor(review).find(b => b.label === 'Analyse')
+  expect(analyse?.press).toMatchObject({ kind: 'ask', prompt: expect.stringContaining('`bodies t6`, every comment in order') })
+  const prompt = (analyse?.press as { prompt: string }).prompt
+  expect(prompt).toContain('my own topics')
+  expect(prompt).toContain("`peer t6 needs --why '…' --advice reply|merge|seen`")
+  expect(prompt).toContain('do not show t6 again')
 })
 
 test('a later comment that is a draft posted by hand is linked to its topic', async ($, on) => {
@@ -2052,6 +2088,40 @@ test('beside the sidebar, a waiting topic\'s card that only held its code and th
   // Its title and where it is, then the one line; no code, no thread.
   expect((await ui.findAll({ type: 'Markdown' })).map(m => m.props.text)).toEqual(['`src/cache.ts:17`'])
   expect((await ui.findAll({ type: 'Text' })).map(t => String(t.text ?? '')).filter(t => /^Waiting for /.test(t))).toEqual(['Waiting for the author.'])
+  await ui.unmount()
+})
+
+// Another reviewer's thread closed for the person is still open on GitLab: its card, left in
+// the chat, says whose it is to settle; "Closed" read as resolved. Once resolved on GitLab it
+// is no longer one the person watches, and reads Closed as any other.
+for (const [extra, said] of [[{ by: 'Sam' }, "Sam's to settle."], [{}, "Its reviewer's to settle."], [{ peer: false }, 'Closed.']] as const) {
+  test(`another reviewer's thread closed for you reads ${said}`, async ($, on) => {
+    const head = '\u{f0182} **t4** **summary of t4** · `src/cache.ts:17`'
+    const body = `${head}\n\n> [\u{f03cc}](http://gitlab.test/x#note_1) **Sam** _Nov 5, 11:38_\n> why a map here?`
+    const out = body + '\n\n<!-- paste-gate:critical\n' + JSON.stringify({ first: head, critical: [], topic: 't4', focus: 't4', review: REVIEW }) + '\n-->'
+    const peer = { ...topic('t4', 'acked'), source: 'peer', peer: true, peer_view: { says: 'fyi' as const, advice: 'seen' as const } }
+    const w = world(on, [stateOf('t1', [topic('t1', 'needs_ack'), { ...peer, ...extra }])])
+    await openReview($, w, view('t1'))
+    w.panes.push('review-ui-topics')
+    const ui = await $.ui.mount({ ...(cardRow('tu-other', out) as object), viewport: { columns: 120, rows: 50, isFullscreen: true } } as never)
+    expect((await ui.findAll({ type: 'Text' })).map(t => String(t.text ?? '')).filter(t => /settle\.$|^Closed\.$/.test(t))).toEqual([said])
+    await ui.unmount()
+  })
+}
+
+// The card itself ends on it (the script's story line), live or dimmed: never said twice.
+test("another reviewer's card that says whose it is to settle gets no second line", async ($, on) => {
+  const head = '\u{f0182} **t4** **summary of t4** · `src/cache.ts:17`'
+  const body = `${head}\n\n> [\u{f03cc}](http://gitlab.test/x#note_1) **Sam** _Nov 5, 11:38_\n> why a map here?\n\n\u{f051f} Sam's to settle`
+  const out = body + '\n\n<!-- paste-gate:critical\n' + JSON.stringify({ first: head, critical: [], topic: 't4', focus: 't4', review: REVIEW }) + '\n-->'
+  const peer = { ...topic('t4', 'acked'), source: 'peer', peer: true, by: 'Sam', peer_view: { says: 'fyi' as const, advice: 'seen' as const } }
+  const w = world(on, [stateOf('t1', [topic('t1', 'needs_ack'), peer])])
+  await openReview($, w, view('t1'))
+  w.panes.push('review-ui-topics')
+  const ui = await $.ui.mount({ ...(cardRow('tu-other', out) as object), viewport: { columns: 120, rows: 50, isFullscreen: true } } as never)
+  const texts = (await ui.findAll({ type: 'Text' })).map(t => String(t.text ?? ''))
+  expect(texts.some(t => t.includes("Sam's to settle"))).toBe(true)
+  expect(texts.filter(t => /to settle\.$/.test(t))).toEqual([])          // no line of the mod's own
   await ui.unmount()
 })
 
@@ -3814,7 +3884,7 @@ test('every step button has its icon, one per action in both skills', () => {
     'Redo…', 'Run the checks', 'Fix the checks', 'Push', 'Push and resolve', 'Drop', 'Summarize', 'Merge into t3',
     'Keep separate', 'Link as t3\'s comment', 'Judge', 'Ack', 'Accept', 'Accept + resolve', 'Resolve',
     'Not enough…', 'Wait for author', 'Nothing to add', 'Seen', 'Generate explainer', 'Skip explainer',
-    'My review is done', 'Next', 'Apply edit', 'Approve MR']
+    'My review is done', 'Next', 'Close', 'Analyse', 'Apply edit', 'Approve MR']
   expect(labels.filter(l => !iconOf(l))).toEqual([])
   // The same action, the same icon.
   expect(iconOf('Reply now')).toBe(iconOf('Reply…'))
