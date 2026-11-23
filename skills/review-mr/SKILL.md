@@ -366,7 +366,9 @@ the user answers each match with a press when their round reaches it.
 the mod's model call gives it a title and a view (see *Rounds and verdicts*). The user
 watches it: its card shows your stored view, `Next` goes on to the next of the other
 reviewers' threads (`Close` after the last; one you judged `needs` is marked read on the way),
-`Reply…` is theirs to write, and `Merge into tN` is there where you advised it.
+`Reply…` is theirs to write, and `Merge into tN` is there where you advised it. After that
+press, their prompt asks what the thread adds to tN: at most 2 lines, then re-judge tN's kind
+and severity (below).
 
 **"Analyse"** on such a card reaches you as their prompt: read the whole thread (`bodies <t>`)
 and the code it is on, then say in a few lines whether its point holds and whether it touches
@@ -381,15 +383,31 @@ buttons stay up.
 **A merge keeps your findings in play.** The user's comment becomes the topic's thread, and
 the topic comes up again with `I merged my comment into <t>. What does your own analysis add
 to it?`. Answer in at most 2 lines: what you have beyond their comment (a concrete fix, a
-working alternative, a case they did not name), or that you have nothing to add. Their buttons
+working alternative, a case they did not name), or that you have nothing to add, then
+re-judge its kind and severity (below). Their buttons
 are `Follow up` and `Nothing to add`. A follow-up is a reply below their comment, drafted
 like any other (`set <t> --draft '…'`, which shows it as a follow-up), short, and never a
 restatement of what their comment already says.
 
-`merge` follows the same rule. Of findings not posted yet, the user's wording, severity and
-draft win. Where one of them is posted, its words stay as they are on GitLab, and the topic
+`merge` follows the same rule. Of findings not posted yet, the user's wording, kind, severity
+and draft win. Where one of them is posted, its words stay as they are on GitLab, and the topic
 comes up offering a follow-up for what the others add or correct: show it
-(`quote <t> --focus`) and answer the same question as above.
+(`quote <t> --focus`) and answer the same question as above. Then re-judge its kind and
+severity.
+
+**Re-judge kind and severity** after every merge (yours, a comment of the user's, another
+reviewer's thread) and whenever you look at a topic again on request (`Analyse more`,
+`Analyse`). Does the kind (issue, question, praise) and severity still fit what the topic is
+now: its threads, the code as it stands? Where not, set them yourself
+(`set <t> --kind … --severity …`) and say so in one line: `t4: question → high issue: <why>`.
+Not on the background verdict of an author's answer.
+
+**The user's kind and severity stand.** Theirs is only what they stated: asked for in the chat
+(`set <t> --kind … --severity … --by-user`), or named in their own comment or words as you add
+its topic (`add … --kind … --severity … --by-user`). Your reading of their comment is yours,
+so leave `--by-user` off there. Each is theirs on its own: pass `--by-user` with only what
+they stated, as a severity they gave leaves the kind yours to judge. `set` refuses your own
+change to one of theirs; say in one line how you would judge it instead.
 
 ## The current topic
 

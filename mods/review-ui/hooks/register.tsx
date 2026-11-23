@@ -3,7 +3,7 @@ import type { EngineInterface, Register } from 'claude-code'
 
 import type { ReviewCard, ReviewHost, ReviewOutcome, ReviewJudging, ReviewNote, ReviewNotice, ReviewPlaced, ReviewSession, ReviewState } from '../types'
 import {
-  argsFor, boxLookOf, buttonsFor, checkPrompt, judgingOf, endOf, hasNext, iconOf, isHeldTopic, isMergeWatched, outcomeOf, earlyPrompt, proposePrompt, replyPrompt, clockOf, currentTopic, didText, inboxOf, sentenceOf, noteForModel, stepOf, untilOf, waitingLine, waitingOf,
+  argsFor, boxLookOf, buttonsFor, checkPrompt, judgingOf, endOf, hasNext, iconOf, isHeldTopic, isMergeWatched, outcomeOf, earlyPrompt, proposePrompt, replyPrompt, clockOf, currentTopic, didText, inboxOf, sentenceOf, noteForModel, ownMergedPrompt, peerMergedPrompt, stepOf, untilOf, waitingLine, waitingOf,
   type BandButton, type InboxLine,
 } from './review.ts'
 import {
@@ -2000,9 +2000,10 @@ const stepControls = async ($: EngineInterface, s: ReviewSession, r: ReviewState
             : 'Skip the explainer for this MR and carry on with the review.' })
         }
         if (ok && b.press.kind === 'settle' && b.press.how === 'merge') {
-          // The topic is the user's comment now: what the agent's own analysis adds to
-          // it (a better fix, a proven alternative) needs the model to say.
-          await $.prompt.submit({ text: `I merged my comment into ${b.press.into}. What does your own analysis add to it?` })
+          await $.prompt.submit({ text: ownMergedPrompt(b.press.into) })
+        }
+        if (ok && b.press.kind === 'merge') {
+          await $.prompt.submit({ text: peerMergedPrompt(t, b.press.into) })
         }
       }
     }

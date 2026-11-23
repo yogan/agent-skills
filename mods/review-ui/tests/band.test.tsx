@@ -2,7 +2,7 @@ import type { On } from 'claude-code'
 import type { Engine } from 'claude-code/testing'
 import { expect, mock, test } from 'claude-code/testing'
 import { inboxMark } from '../hooks/panel.ts'
-import { boxLookOf, buttonsFor, CI_PROMPT, endOf, iconOf, inboxOf, isMergeWatched, judgingOf, proposePrompt, sentenceOf, untilOf } from '../hooks/review.ts'
+import { boxLookOf, buttonsFor, CI_PROMPT, endOf, iconOf, inboxOf, isMergeWatched, judgingOf, kindCheck, proposePrompt, sentenceOf, untilOf } from '../hooks/review.ts'
 import { BAR_LOWER, BAR_UPPER, barPaint, type BarLook, type BarSpec } from '../hooks/sidebar.ts'
 
 // The test runtime's timer, which the engine's types leave out (a mod has no timers of its own).
@@ -866,7 +866,7 @@ test('a comment the agent matched waits for the press: merge, or keep separate',
   await ui.unmount()
   expect(w.ran.map(r => r.argv.slice(2).join(' '))).toContain('settle d7 merge --iid 42')
   expect(w.placed.length).toBe(1)
-  expect(w.prompts).toEqual(['I merged my comment into t3. What does your own analysis add to it?'])
+  expect(w.prompts).toEqual([`I merged my comment into t3. What does your own analysis add to it? ${kindCheck('t3')}`])
 })
 
 test('a topic your comment was merged into offers a follow-up, or nothing to add', async ($, on) => {
@@ -1268,6 +1268,10 @@ test('Merge into tN is offered only where the agent advised it, and merges there
   await ui.press({ key: 'merge' })
   await ui.unmount()
   expect(w.ran.map(r => r.argv.slice(2).join(' '))).toContain('merge t1 t6 --iid 42')
+  // Nothing else asks once the thread's own topic is gone: what it adds, and whether t1's
+  // kind and severity still fit.
+  expect(w.prompts).toEqual([expect.stringMatching(/^I merged t6, another reviewer's thread, into t1\. Read t1's threads whole \(`bodies t1`\)/)])
+  expect(w.prompts[0]).toContain(kindCheck('t1'))
 })
 
 test("another reviewer's thread opened for your information offers Close after the last of them, and Reply…", async ($, on) => {
@@ -1302,6 +1306,14 @@ test("Analyse on another reviewer's thread asks for the whole thread, the user's
   expect(prompt).toContain('my own topics')
   expect(prompt).toContain("`peer t6 needs --why '…' --advice reply|merge|seen`")
   expect(prompt).toContain('do not show t6 again')
+  expect(prompt).toContain(kindCheck('t6'))
+})
+
+test('Analyse more asks whether the kind and severity still fit', () => {
+  const review = JSON.parse(stateOf('t2', [{ ...topic('t2', 'needs_ack'), verdict: 'settled' }]))
+  const analyse = buttonsFor(review).find(b => b.label === 'Analyse more')
+  expect((analyse?.press as { prompt: string }).prompt).toContain(kindCheck('t2'))
+  expect(kindCheck('t2')).toContain('`set t2 --kind … --severity …`')
 })
 
 test('a later comment that is a draft posted by hand is linked to its topic', async ($, on) => {

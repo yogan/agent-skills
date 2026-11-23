@@ -322,6 +322,54 @@ def add_topic(state, **fields):
     return t
 
 
+BY_USER_HELP = ("with --kind/--severity: what the user stated themselves, so each one passed "
+                "is theirs and your own re-judging leaves it")
+
+
+def user_owns(t):
+    """Which of `t`'s kind and severity the user stated themselves (`by_user`), each on its
+    own: a severity they gave says nothing of the kind, which stays the agent's to judge. A
+    state written while one mark covered both (`kind_by_user`) owns both, as it meant then."""
+    own = set(t.get("by_user") or ())
+    if t.get("kind_by_user"):
+        own |= {"kind", "severity"}
+    return own
+
+
+def own_by_user(t, fields):
+    """Mark `fields` (of kind and severity) of `t` the user's, beside those already theirs."""
+    own = user_owns(t) | set(fields)
+    t.pop("kind_by_user", None)
+    if own:
+        t["by_user"] = sorted(own)
+    else:
+        t.pop("by_user", None)
+
+
+def refuse_rejudge(t, kind, severity, by_user):
+    """Why the agent may not set this kind/severity on `t`, or None. One the user stated
+    themselves (`--by-user`: in their comment, or asked for in the chat) stands against the
+    agent's own judgment: only a change the user asks for replaces it. A topic of the
+    user's own review is not theirs by that alone: its kind is a default or the agent's
+    reading of their comment, the very misreads a re-judge corrects. Filling in a severity
+    nobody gave yet changes nothing of theirs."""
+    if by_user:
+        return None
+    own = user_owns(t)
+    asked = [(f, v) for f, v in (("kind", kind), ("severity", severity)) if v is not None]
+    changed = [f for f, v in asked if f in own and t.get(f) not in (None, v)]
+    if not changed:
+        return None
+    both = len(changed) > 1
+    now = ", ".join(str(t[f]) for f in changed)
+    rest = [f for f, _v in asked if f not in changed]
+    return (f"{t['id']}'s {' and '.join(changed)} {'are' if both else 'is'} the user's ({now}): "
+            f"left as {'they are' if both else 'it is'}; nothing was set."
+            + (f" Set the {rest[0]} alone." if rest else "")
+            + " Say in one line how you would judge it instead; `--by-user` only when the user "
+            f"asks you to change {'them' if both else 'it'}.")
+
+
 def attach_thread(state, t, discussion_id, ctx, iid, start_sha=None):
     """Link a posted GitLab thread to a topic and capture its baseline."""
     first_thread = not t["thread_ids"]
@@ -4264,21 +4312,40 @@ def _listed_worktree(path):
 
 def merge_findings(into, others):
     """Fold `others` into `into`: the same point, found more than once, by the user, the agent
-    or both. Not on GitLab yet, the user's wording wins: their summary, severity and draft.
-    Already posted, what is on GitLab stays as posted, and what the rest adds or corrects
-    becomes a follow-up reply on that thread, drafted with the user like any other (the
-    topic comes up offering one, as a comment merged in from their own review does)."""
+    or both. Not on GitLab yet, the user's wording wins: their summary, kind, severity and
+    draft. Already posted, what is on GitLab stays as posted, and what the rest adds or
+    corrects becomes a follow-up reply on that thread, drafted with the user like any other
+    (the topic comes up offering one, as a comment merged in from their own review does); a
+    draft of the user's own that was not posted yet is where that reply starts.
+    What describes the finding goes together: one finding's severity on another's kind
+    describes neither. Only what the user stated of the two stands against that, whichever
+    finding they stated it on, and against what was posted too, as it stands against a
+    re-judge (`refuse_rejudge`)."""
     if not others:
         return
     group = [into, *others]
     posted = next((x for x in group if x["thread_ids"]), None)
     unposted = [x for x in group if not x["thread_ids"]]
     word_of = posted or next((x for x in group if x.get("source") == "human"), into)
+    stated = {}
+    for x in group:
+        for f in user_owns(x):
+            if x.get(f) is not None:
+                stated.setdefault(f, x[f])
     if word_of is not into:
         into["summary"], into["severity"] = word_of.get("summary"), word_of.get("severity")
-        into["draft"] = word_of.get("draft")
-        if word_of.get("draft_at"):
-            into["draft_at"] = word_of["draft_at"]
+        into["kind"] = word_of.get("kind") or "issue"
+    into.update(stated)
+    into.pop("by_user", None)
+    into.pop("kind_by_user", None)
+    own_by_user(into, stated)
+    mine = next((x for x in unposted if x.get("source") in ("human", "both") and x.get("draft")),
+                None)
+    draft_of = (posted if posted.get("draft") or not mine else mine) if posted else word_of
+    if draft_of is not into:
+        into["draft"] = draft_of.get("draft")
+        if draft_of.get("draft_at"):
+            into["draft_at"] = draft_of["draft_at"]
     for o in others:
         into["thread_ids"] += [x for x in o["thread_ids"] if x not in into["thread_ids"]]
     into["source"] = "both"
@@ -4536,6 +4603,7 @@ def main():
     pa.add_argument("--thread", dest="thread",
                     help="discussion id of an already-posted thread — links it in the "
                          "same call (use for a comment you posted in the UI yourself)")
+    pa.add_argument("--by-user", action="store_true", help=BY_USER_HELP)
     for f in ("summary", "file", "line", "draft", "note", "why"):
         pa.add_argument(f"--{f}")
 
@@ -4546,6 +4614,7 @@ def main():
     ps.add_argument("--severity", choices=tuple(SEV_ICON))
     ps.add_argument("--source", choices=tuple(SRC_ICON))
     ps.add_argument("--state", choices=("acked", "dropped", "reset"))
+    ps.add_argument("--by-user", action="store_true", help=BY_USER_HELP)
     for f in ("summary", "file", "line", "draft", "note", "ticket", "start-sha", "why"):
         ps.add_argument(f"--{f}")
     # `set --draft` echoes the refreshed view, so it needs the same switch as `quote`:
@@ -5086,9 +5155,13 @@ def main():
         if warn:
             print(warn)
     elif cmd == "add":
+        if args.by_user and args.kind is None and args.severity is None:
+            die("--by-user goes with --kind or --severity")
         t = add_topic(state, kind=args.kind, severity=args.severity,
                       source=args.source, summary=args.summary, file=args.file,
-                      line=args.line, draft=args.draft, note=args.note, why=args.why)
+                      line=args.line, draft=args.draft, note=args.note, why=args.why,
+                      by_user=[f for f in ("kind", "severity") if getattr(args, f) is not None]
+                      if args.by_user else None)
         if args.thread:
             # Adopting a comment you posted yourself: creating the topic and linking the
             # thread are one intention, so they are one call. Splitting them produced a
@@ -5101,6 +5174,13 @@ def main():
             print(warn)
     elif cmd == "set":
         t = topic_for(state, args.topic) or die(f"no topic {args.topic}")
+        if args.by_user and args.kind is None and args.severity is None:
+            die("--by-user goes with --kind or --severity")
+        refused = refuse_rejudge(t, args.kind, args.severity, args.by_user)
+        if refused:
+            die(refused)
+        if args.by_user:
+            own_by_user(t, [f for f in ("kind", "severity") if getattr(args, f) is not None])
         if args.state == "reset":
             t["state"] = None
             t.pop("acked_at", None)

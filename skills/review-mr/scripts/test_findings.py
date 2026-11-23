@@ -2155,6 +2155,132 @@ class TestMergeTopics(unittest.TestCase):
             self.assertEqual((into["summary"], into["draft"], into["thread_ids"], into["follow_up"]),
                              ("human words", None, ["d1"], "offer"))
 
+    def test_the_kind_goes_with_the_severity_that_wins(self):
+        """A question kept the other finding's severity and ended as a "medium question"."""
+        into = {**self.finding("t1", "llm"), "kind": "question", "severity": "medium"}
+        peer = {**self.finding("t2", "peer", thread="d2"), "kind": "issue", "severity": "high"}
+        F.merge_findings(into, [peer])
+        self.assertEqual((into["kind"], into["severity"]), ("issue", "high"))
+
+    def test_whether_the_user_set_the_kind_goes_with_the_word_that_wins(self):
+        mine = {**self.finding("t2", "human"), "kind": "question", "by_user": ["kind"]}
+        into = self.finding("t1", "llm")
+        F.merge_findings(into, [mine])
+        self.assertEqual((into["kind"], into.get("by_user")), ("question", ["kind"]))
+
+    def test_what_the_user_stated_stands_against_what_was_posted(self):
+        """Merged into another reviewer's thread, the user's question stays theirs; the
+        severity they did not state is the posted one's."""
+        for posted_first in (True, False):
+            mine = {**self.finding("t1", "human"), "kind": "question", "severity": "low",
+                    "by_user": ["kind"]}
+            peer = {**self.finding("t2", "peer", thread="d2"), "kind": "issue", "severity": "high"}
+            into, other = (peer, mine) if posted_first else (mine, peer)
+            F.merge_findings(into, [other])
+            self.assertEqual((into["kind"], into["severity"], into.get("by_user")),
+                             ("question", "high", ["kind"]))
+
+    def test_the_users_unposted_draft_starts_the_follow_up(self):
+        """Their words are not lost to the posted thread's none: they come up as the reply
+        into it, for the user to look at with the rest."""
+        for posted_first in (True, False):
+            mine = self.finding("t1", "human", draft="Does this expire at all?")
+            peer = self.finding("t2", "peer", thread="d2")
+            into, other = (peer, mine) if posted_first else (mine, peer)
+            F.merge_findings(into, [other])
+            self.assertEqual((into["draft"], into["follow_up"]), ("Does this expire at all?", "offer"))
+        state = new_state(threads={"d2": {"author": "Kim", "body": "Cache never expires.",
+                                          "file": "a.ts", "line": 4, "url": "http://gl/2"}},
+                          topics=[{**into, "summary": "cache never expires"}])
+        out = F.render_quote(state, into["id"])
+        self.assertIn("Draft of follow-up reply to post", out)
+        self.assertIn("> Does this expire at all?", out)
+
+
+class TestKindTheUserSet(unittest.TestCase):
+    """A kind or severity the user set stands against the agent's own re-judging."""
+
+    def run_set(self, t, *flags):
+        state = {"iid": 2, "threads": {}, "topics": [t]}
+        err = io.StringIO()
+        with patch.object(F, "resolve_state", return_value=(CTX, 2, "/s", state)), \
+                patch.object(F, "current_user"), patch.object(F, "save"), \
+                patch.object(sys, "argv", ["findings.py", "set", t["id"], *flags, "--iid", "2"]), \
+                redirect_stdout(io.StringIO()), redirect_stderr(err):
+            try:
+                F.main()
+            except SystemExit:
+                pass
+        return err.getvalue()
+
+    def run_add(self, *flags):
+        state = {"iid": 2, "threads": {}, "topics": [], "seq": 0}
+        with patch.object(F, "resolve_state", return_value=(CTX, 2, "/s", state)), \
+                patch.object(F, "current_user"), patch.object(F, "save"), \
+                patch.object(sys, "argv", ["findings.py", "add", "--summary", "Cache never expires",
+                                           *flags, "--iid", "2"]), \
+                redirect_stdout(io.StringIO()):
+            F.main()
+        return state["topics"][0]
+
+    def test_a_topic_of_the_users_own_review_is_not_theirs_by_that_alone(self):
+        """Its kind is the default or the agent's reading of their comment: a misread the
+        re-judge must be free to correct."""
+        t = self.run_add("--source", "human")
+        self.assertNotIn("by_user", t)
+
+    def test_a_kind_the_user_stated_is_added_as_theirs(self):
+        t = self.run_add("--source", "human", "--kind", "question", "--by-user")
+        self.assertEqual((t["kind"], t["by_user"]), ("question", ["kind"]))
+
+    def test_the_agent_may_not_change_a_kind_the_user_set(self):
+        t = {"id": "t4", "kind": "question", "severity": "medium", "by_user": ["kind", "severity"],
+             "thread_ids": []}
+        err = self.run_set(t, "--kind", "issue", "--severity", "high")
+        self.assertIn("t4's kind and severity are the user's (question, medium)", err)
+        self.assertEqual((t["kind"], t["severity"]), ("question", "medium"))
+
+    def test_one_mark_for_both_from_before_owns_both(self):
+        t = {"id": "t4", "kind": "question", "severity": "medium", "kind_by_user": True,
+             "thread_ids": []}
+        self.assertIn("t4's severity is the user's (medium)", self.run_set(t, "--severity", "high"))
+        self.assertEqual(t["severity"], "medium")
+
+    def test_a_severity_the_user_gave_leaves_the_kind_to_the_agent(self):
+        """Their "that's a high one" says nothing of whether it is an issue or a question."""
+        t = self.run_add("--source", "human", "--severity", "high", "--by-user")
+        self.assertEqual(t["by_user"], ["severity"])
+        self.assertEqual(self.run_set(t, "--kind", "question"), "")
+        err = self.run_set(t, "--kind", "issue", "--severity", "low")
+        self.assertIn("t1's severity is the user's (high): left as it is; nothing was set. "
+                      "Set the kind alone.", err)
+        self.assertEqual((t["kind"], t["severity"]), ("question", "high"))
+
+    def test_a_severity_the_user_asked_for_leaves_the_agents_kind_its_own(self):
+        t = {"id": "t4", "kind": "question", "severity": "medium", "thread_ids": []}
+        self.assertEqual(self.run_set(t, "--severity", "low", "--by-user"), "")
+        self.assertEqual(t["by_user"], ["severity"])
+        self.assertEqual(self.run_set(t, "--kind", "issue"), "")
+        self.assertEqual((t["kind"], t["severity"]), ("issue", "low"))
+
+    def test_a_severity_nobody_gave_yet_may_be_filled_in(self):
+        t = {"id": "t4", "kind": "issue", "severity": None, "by_user": ["kind", "severity"],
+             "thread_ids": []}
+        self.assertEqual(self.run_set(t, "--severity", "low"), "")
+        self.assertEqual(t["severity"], "low")
+
+    def test_what_the_user_asked_for_is_set_and_then_theirs(self):
+        t = {"id": "t4", "kind": "question", "severity": "medium", "thread_ids": []}
+        self.assertEqual(self.run_set(t, "--kind", "issue", "--by-user"), "")
+        self.assertEqual((t["kind"], t["by_user"]), ("issue", ["kind"]))
+        self.assertIn("is the user's", self.run_set(t, "--kind", "question"))
+        self.assertEqual(t["kind"], "issue")
+
+    def test_the_agents_own_kind_it_may_judge_again(self):
+        t = {"id": "t4", "kind": "question", "severity": "medium", "thread_ids": []}
+        self.assertEqual(self.run_set(t, "--kind", "issue", "--severity", "high"), "")
+        self.assertEqual((t["kind"], t["severity"], t.get("by_user")), ("issue", "high", None))
+
 
 class TestWhereTheModDraws(unittest.TestCase):
     """lib/ui.py: in a session the review-ui mod draws, the views change for the person;

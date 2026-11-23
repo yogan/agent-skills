@@ -332,7 +332,7 @@ const stepButtons = (review: ReviewState | null): BandButton[] | null => {
         ? { ...ack, label: label.replace(' + resolve', '') }
         : { key: 'resolve', label, press: { kind: 'resolve' } })
       const analyse: BandButton = { key: 'explain', label: 'Analyse more',
-        press: ask(`Analyse ${t} more: read the answer and the change again, deeper than the verdict on its card, and say whether the verdict still holds and why. Where it does not, store the new one (\`verdict\`, with its \`--case\` where it is \`more\`): its output is a card of the change, and the buttons follow it. Do not show the topic again; your reply gives the details.`) }
+        press: ask(`Analyse ${t} more: read the answer and the change again, deeper than the verdict on its card, and say whether the verdict still holds and why. Where it does not, store the new one (\`verdict\`, with its \`--case\` where it is \`more\`): its output is a card of the change, and the buttons follow it. Do not show the topic again; your reply gives the details. ${kindCheck(t)}`) }
       if (topic?.verdict === 'settled') {
         return [
           { ...accept('Accept + resolve'), isPrimary: true },
@@ -409,9 +409,22 @@ export const nextPeerOf = (review: ReviewState | null, tid: string): string | nu
   return group.slice(group.indexOf(tid) + 1).find(id => id !== tid) ?? null
 }
 
+// A topic's kind and severity are set when it is seeded: whenever the agent looks at it again
+// (a merge, an analysis asked for), it judges whether they still fit what the topic now is.
+// One the person set is refused by the script, which says so.
+export const kindCheck = (t: string): string => `Then judge whether ${t}'s kind and severity still fit what it is now (its threads, the code as it stands); where not, set them (\`set ${t} --kind … --severity …\`) and say so in one line, e.g. "${t}: question → high issue: <why>".`
+
 // What the agent is asked to look at another reviewer's thread again, deeper than the
 // summary on its card. Modelled on Analyse more: a view it changes is a card of its own.
-export const peerAnalysePrompt = (t: string): string => `Analyse ${t}, another reviewer's thread: read it whole (\`bodies ${t}\`, every comment in order) and the code it is on. Say in a few lines whether its point holds, and whether it touches or contradicts any of my own topics (name them). Where you now think the thread needs me, store your new view (\`peer ${t} needs --why '…' --advice reply|merge|seen\`, with \`--into <t>\` for merge): its card follows. Otherwise do not show ${t} again; your reply gives the details.`
+export const peerAnalysePrompt = (t: string): string => `Analyse ${t}, another reviewer's thread: read it whole (\`bodies ${t}\`, every comment in order) and the code it is on. Say in a few lines whether its point holds, and whether it touches or contradicts any of my own topics (name them). Where you now think the thread needs me, store your new view (\`peer ${t} needs --why '…' --advice reply|merge|seen\`, with \`--into <t>\` for merge): its card follows. Otherwise do not show ${t} again; your reply gives the details. ${kindCheck(t)}`
+
+// After the person merged their own comment into a topic: what the agent's own analysis adds
+// to it (a better fix, a proven alternative) needs the model to say.
+export const ownMergedPrompt = (into: string): string => `I merged my comment into ${into}. What does your own analysis add to it? ${kindCheck(into)}`
+
+// After the person merged another reviewer's thread into one of their topics: what it adds
+// there, which nothing else asks once the thread's own topic is gone.
+export const peerMergedPrompt = (t: string, into: string): string => `I merged ${t}, another reviewer's thread, into ${into}. Read ${into}'s threads whole (\`bodies ${into}\`) and say in at most 2 lines what that thread adds to ${into}, or that it adds nothing. ${kindCheck(into)}`
 
 // Another reviewer's thread, which the person watches: it is its reviewer's to settle, so
 // the way on is the primary answer, through the others in the sidebar's order, and the
