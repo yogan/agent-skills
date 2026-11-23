@@ -283,7 +283,7 @@ class TestQuit(Rig):
 
 
 class TestSkills(Rig):
-    """review-mr and rework-mr take the session's tab over for an MR and give it back."""
+    """review-mr and rework-mr take the session's tab over for an MR, until the session ends."""
     TITLE = "Retry the payment call with backoff"
 
     def setUp(self):
@@ -325,13 +325,6 @@ class TestSkills(Rig):
         tab.take(tab.REWORK_ICON, "rounding", pane="%999999")
         self.run_hook("end", data={"reason": "other"}, env=self.NESTED)
         self.assertEqual(self.t.name, f"{tab.REWORK_ICON} rounding")
-
-    def test_given_back_the_session_title_follows_again(self):
-        tab.take(tab.REWORK_ICON, "rounding", pane="%999999")
-        tab.give_back(pane="%999999")
-        self.assertEqual(self.t.name, f"{R} kept plan")
-        self.run_hook("title", "tab names")
-        self.assertEqual(self.t.name, f"{R} tab names")
 
     def test_a_viewer_is_named_at_once_its_number_until_a_short_title_is_known(self):
         self.assertEqual(tab.viewer_label(self.TITLE, fallback="!12"), f"{tab.VIEWER_ICON} !12")

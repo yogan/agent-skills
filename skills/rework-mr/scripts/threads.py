@@ -4277,7 +4277,7 @@ def main():
         # Where the mod draws, the box's Clean up locally says it and does it.
         cleanup = "" if ui.drawn() else render_cleanup(cleanup_facts(ctx, iid))
         emit(state, render_present(state, cleanup), current_topic(state))
-        # The session's tab says it reworks this MR, until Clean up locally or its end.
+        # The session's tab says it reworks this MR, until the session ends.
         tab.take_mr(tab.REWORK_ICON, iid, state.get("title"))
         if ui.drawn():
             chat_opens(state, current_topic(state))
@@ -4300,7 +4300,6 @@ def main():
             die("cleaning up is the user's press, on Clean up locally in the sidebar's box; "
                 "nothing else removes the branch, the worktree or this review's state.")
         print(clean_up_locally(ctx, iid, path))
-        tab.give_back()                   # the session's tab, which `present` took
         return
     elif cmd == "plans":
         print(render_plans(state))

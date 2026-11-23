@@ -4309,7 +4309,7 @@ def main():
         ex = explainer_line(exp, opened)
         emit(state, (f"{ex}\n\n" if ex else "") + render_present(state),
              current_topic(state))
-        # The session's tab says it reviews this MR, until the MR is over or the session ends.
+        # The session's tab says it reviews this MR, until the session ends.
         tab.take_mr(tab.REVIEW_ICON, iid, state.get("title"))
         # Again, after the render: `render_quote` records the context it just showed, and
         # `--refine` compares against that. Every command that renders a topic in full
@@ -4665,8 +4665,6 @@ def main():
             status = mr_status(ctx, iid, me)
             state.setdefault("mr_news", []).extend(mr_news(state.get("mr_status"), status, now_iso()))
             state["mr_status"] = status
-            if is_over(state):
-                tab.give_back()           # the session's tab, which `present` took
             keep_author_fixes(state, get_worktree(state.get("slug") or ctx["slug"], iid), iid)
         state["diff_base"] = base or state.get("diff_base")
         save(path, state)

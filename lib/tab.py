@@ -324,18 +324,9 @@ def take(icon, title, pane=None, session=None):
 def take_mr(icon, iid, title):
     """`take` for a skill working through MR `iid`, from each command a session opens with:
     the tab shows `icon` and the MR's short title, the session gets `<icon> !<iid> <title>`
-    on its next prompt. Given back when the MR's work ends, or the session does."""
+    on its next prompt. Kept until the session ends, also past the MR's merge or clean-up,
+    so the tab still says at a glance what the session was for."""
     take(icon, title or f"!{iid}", session=f"{icon} !{iid} {title or ''}".rstrip())
-
-
-def give_back(pane=None):
-    """The skill's hold ends (the MR is merged, closed or cleaned up). Never fails."""
-    if os.environ.get(OFF_ENV):
-        return
-    try:
-        release(own_pane() if pane is None else pane)
-    except Exception:  # noqa: BLE001
-        pass
 
 
 def viewer_label(title, fallback=None):

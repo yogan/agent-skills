@@ -24,8 +24,8 @@ review-mr shows 󱉻 and rework-mr 󱢛, each with the MR's short title, whoever
 and their diff viewer windows show 󰢪 with the same title. The session itself gets the full
 name, `󱉻 !1234 Title of the MR`, on its next prompt: only a hook's output can name a session,
 so the skill leaves the name in `~/.cache/agent-skills/session-name/<pane>` and the
-`UserPromptSubmit` hook hands it over. The tab is given back once the MR is merged or closed
-(review-mr), cleaned up locally (rework-mr), or the session ends (`SessionEnd`). Their
+`UserPromptSubmit` hook hands it over. The tab keeps the skill's icon until the session ends
+(`SessionEnd`), also once the MR is merged, closed or cleaned up locally. Their
 viewers show the MR's number until its short title is known.
 split-handoff names the windows it opens the same way (`󱙺 <title>`).
 
