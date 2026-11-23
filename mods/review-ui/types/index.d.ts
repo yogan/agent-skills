@@ -254,6 +254,8 @@ export type ReviewCode = {
   // one shown is `file`; `commented` is the file the comment is on.
   fix_files?: [string, number, number][]
   commented?: string | null
+  // review-mr: a pushed fix that is only some of its push's commits, [those, all the push's].
+  fix_commits?: [number, number] | null
   // A file the MR adds or removes whole (never a renamed one), drawn plain and marked so.
   whole?: 'added' | 'removed' | null
   // The file was removed since the comment: the rows are the file as the comment saw it.

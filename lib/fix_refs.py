@@ -10,7 +10,8 @@ and the two ends, `t1` or `t1/push2`.
 
 rework-mr keeps the person's own fix (the MR's head before the topic's first push, and the
 head that push made); review-mr the author's (the code a push changed the topic's lines
-from, and the head it made). A ref holds its commit against `git gc`, which a force push
+from, and the head it made, or where the push laid several commits on top, the commit
+before the first of the topic's and the last of them). A ref holds its commit against `git gc`, which a force push
 would otherwise leave unreachable, so the fix can be shown as long as the MR is open; once
 it is merged or closed they are dropped (`drop`), all of the MR's at once. A push that came
 with a rebase keeps, as its start, the head before it rebased onto the new base (`rebased`):

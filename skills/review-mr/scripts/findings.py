@@ -2482,7 +2482,7 @@ def card_face(state, t):
     return hashlib.sha1(json.dumps([
         t.get("summary"), topic_status(state, t), said, resolved,
         [v.get(k) for k in ("says", "case", "text", "did", "on")], t.get("asked"),
-        [[f.get("before"), f.get("after"), bool(f.get("near"))] for f in fixes_of(t)],
+        [[f.get("before"), f.get("after"), bool(f.get("near")), f.get("commits")] for f in fixes_of(t)],
         draft_text(t), t.get("closed"), t.get("why"),
         (peer_view_of(state, t) or {}) if peer_waiting(state, t) else None,
     ], sort_keys=True, default=str).encode()).hexdigest()[:12]
@@ -3134,6 +3134,20 @@ def _compare(ctx, frm, to):
     except SystemExit:
         return None
     return (r or {}).get("diffs")
+
+
+def _push_commits(ctx, frm, to):
+    """The commits GitLab's compare API lists from `frm` (left out) to `to`, each with its
+    `id` and `parent_ids`; None on error."""
+    if not frm or not to:
+        return None
+    try:
+        r = api(f"projects/{ctx['enc']}/repository/compare"
+                f"?from={frm}&to={to}&straight=true")
+    except SystemExit:
+        return None
+    got = (r or {}).get("commits") if isinstance(r, dict) else None
+    return got if isinstance(got, list) else None
 
 
 # How long a push may lie before GitLab records the version it made (`push_time`).
@@ -3855,6 +3869,12 @@ def walk_fixes(state, ctx, iid, vs=None):
     `updates` report, and the record says it may include other changes. Each topic keeps
     where it got to (`t["fix_walk"]`), so a check walks only the versions new since.
 
+    A push that laid commits on top, as an author who answers each thread with a commit of
+    its own pushes, is narrowed to the topic's commits in it (`its_commits`): what the
+    sidebar and the viewer show of the fix is theirs, not every other thread's answer that
+    went up with them. A push that rewrote the branch (a rebase, a force push) is the fix
+    whole, as nobody can say which of its commits did what.
+
     Where the versions cannot tell (the comment's commit is no version's head), one record
     spans the comment's commit to the head, marked as possibly holding other changes, and
     follows the head until the topic is closed here.
@@ -3886,12 +3906,146 @@ def walk_fixes(state, ctx, iid, vs=None):
         d = _file_diff(diffs, path)
         return _HUNK_HEADER_RE.sub("", (d or {}).get("diff") or "")
 
-    for t in state["topics"]:
+    def step(t, places, diffs, after, rebase):
+        """What one change (`diffs`, making `after`) did to the places `t`'s code is in:
+        (hits, nears, moved, places after it). `rebase`: the two versions where the change
+        is a push that came with a rebase, else False."""
+        hits, nears, moved, now = [], [], [], []
+        for p in places:
+            d = _file_diff(diffs, p["file"])
+            text = (d or {}).get("diff")
+            hit, first, last = code_view.touched(text, p["first"], p["last"])
+            there = {**p, "file": (d or {}).get("new_path") or p["file"], "first": first,
+                     "last": last}
+            if p.get("left"):
+                now.append(there)                 # followed, not watched (`walk_places`)
+                continue
+            # The change touched the place's file: its lines (`hit`), or elsewhere in it
+            # (`near`, as `check_pushes` notes it: the agent judges whether it concerns the
+            # comment, `settle_near_fixes`). Not for a topic closed (`fixes_closed`): a later
+            # change to its file is no answer to it.
+            near = not hit and bool((text or "").strip()) and not fixes_closed(state, t)
+            if (hit or near) and rebase:
+                was, became = own_change(rebase[0], p["file"]), own_change(rebase[1], p["file"])
+                if was is not None and was == became:
+                    hit = near = False            # the rebase moved it, not the author
+                elif was is None or became is None:
+                    near = False                  # GitLab could not say whose change it is
+            # Lines removed may have gone elsewhere rather than away: a function moved into
+            # another file, or down its own. The walk goes on where they went; where every
+            # one of them went, this place is only followed (`walk_places`).
+            went = code_view.moved_to(text, p["first"], p["last"], [
+                (o.get("new_path") or o.get("old_path"), o.get("diff"), o is d)
+                for o in diffs]) if hit else []
+            if went:
+                via = [*p.get("via", []), after]
+                now += [{**q, "via": via} for q in went]
+                moved += [q for q in went if q not in moved]
+                if code_view.all_removed(text, p["first"], p["last"]):
+                    there["left"] = after
+            now.append(there)
+            if hit or near:
+                (hits if hit else nears).append(p.get("via") or [])
+        return hits, nears, moved, [p for k, p in enumerate(now) if p not in now[:k]]
+
+    def its_commits(t, places, before, after):
+        """Which of the commits a push laid on top (`before` an ancestor of `after`, one
+        line of commits) are `t`'s: each carried through as a push of its own, from the
+        places its code was in before the push, those that changed its lines, else those
+        that changed its file. Merged into the push's record: `commits` (those, oldest
+        first) with `of` (how many the push held) and `span` (the commit before the first
+        of them, and the last), and `paths` (the files they changed, both names of a
+        renamed one) where others lie between them; `commits` None where the push is the
+        fix whole (no line of commits, one commit, or all of them its); None where GitLab
+        could not say, so a later walk asks again (`backfill`)."""
+        chain = push_chain(before, after)
+        if chain is None:
+            return None
+        if chain is False or len(chain) < 2:
+            return {"commits": None}
+        hits, nears, parent, ends = [], [], before, {}
+        for c in chain:
+            diffs = compare(parent, c)
+            if diffs is None:
+                return None
+            h, n, _moved, places = step(t, places, diffs, c, False)
+            (hits if h else nears if n else []).append(c)
+            ends[c] = (parent, diffs)
+            parent = c
+        picked = hits or nears
+        if not picked or len(picked) == len(chain):
+            return {"commits": None}
+        part = {"commits": picked, "of": len(chain), "span": [ends[picked[0]][0], picked[-1]]}
+        at = [chain.index(c) for c in picked]
+        if at[-1] - at[0] + 1 != len(at):
+            # The range from the first to the last holds commits that are not its: only the
+            # files its own changed, so the others' files are left out (those that changed
+            # a file of its too are in, as they are in the code).
+            part["paths"] = sorted({q for c in picked for d in ends[c][1]
+                                    for q in (d.get("old_path"), d.get("new_path")) if q})
+        return part
+
+    chains = {}
+
+    def push_chain(before, after):
+        """The commits from `before` (left out) to `after`, oldest first, where they are one
+        line on top of it: [] where `after` is `before`, False where they are not (a force
+        push, a merge), None where GitLab could not say."""
+        if (before, after) not in chains:
+            got = _push_commits(ctx, before, after)
+            if got is None:
+                return None
+            by = {c.get("id"): c for c in got}
+            line, at = [], after
+            while at != before and len(line) <= len(by):
+                c = by.get(at)
+                ps = (c or {}).get("parent_ids") or []
+                if len(ps) != 1:
+                    break
+                line.append(at)
+                at = ps[0]
+            chains[(before, after)] = line[::-1] if at == before and len(line) == len(by) else False
+        return chains[(before, after)]
+
+    def backfill(t):
+        """A topic whose fixes were recorded before a push's commits were told apart: walked
+        again from its comment, on a copy, and each fix given the commits the copy found for
+        the same push. Its fixes as they are otherwise (judged, dropped), and a fix the copy
+        walked past without finding is the push whole; one it did not get to, GitLab cutting
+        its walk short, is left to the next walk."""
+        old = [f for f in t.get("fixes") or [] if "commits" not in f]
+        if not old:
+            return
+        if all(f.get("mixed") or f.get("rebase") for f in old):
+            for f in old:
+                f["commits"] = None
+            return
+        g = {**json.loads(json.dumps(t)), "fixes": []}
+        g.pop("fix_walk", None)
+        reached = walk_topic(g, ghost=True)
+        found = {(f["before"], f["after"]): f for f in g.get("fixes") or []}
+        for f in old:
+            new = found.get((f["before"], f["after"]))
+            if f.get("mixed") or f.get("rebase"):
+                f["commits"] = None
+            elif new is None:
+                # Not found by a walk that got to the head: the push whole. One GitLab cut
+                # short says nothing of the pushes past where it stopped: the next walk asks.
+                if reached:
+                    f["commits"] = None
+            elif "commits" in new:
+                f.update({k: new[k] for k in ("commits", "of", "span", "paths") if k in new})
+
+    def walk_topic(t, ghost=False):
+        """Walk `t` on from where it got to. Whether the walk got to the head: False where
+        GitLab could not say what a version changed, and the walk stopped before it."""
         if not t["thread_ids"] or t.get("state") == "dropped":
-            continue
+            return True
         x = state["threads"].get(t["thread_ids"][0]) or {}
         if not (x.get("file") and x.get("line") and x.get("side") == "new" and x.get("head_sha")):
-            continue
+            return True
+        if not ghost:
+            backfill(t)
         if "fix_walk" not in t:
             sha, first, last = comment_origin(x, vs, compare) or (
                 x["head_sha"], x.get("line_start") or x["line"], x["line"])
@@ -3901,62 +4055,35 @@ def walk_fixes(state, ctx, iid, vs=None):
         k = at.get(w["sha"])
         if k is None:
             if w["sha"] == head or w.get("lost") and fixes_closed(state, t):
-                continue
+                return True
             diffs = compare(w["sha"], head)
             if diffs is not None and any(
                     code_view.touched((_file_diff(diffs, p["file"]) or {}).get("diff"), p["first"], p["last"])[0]
                     for p in places if not p.get("left")):
                 w["lost"] = True
                 t["fixes"] = [{"before": w["sha"], "after": head, "at": now_iso(), "mixed": True,
-                               "url": f"{ctx['web']}/-/compare/{w['sha']}...{head}"}]
-            continue
+                               "commits": None, "url": f"{ctx['web']}/-/compare/{w['sha']}...{head}"}]
+            return diffs is not None
         for prev, cur in zip(chron[k:], chron[k + 1:]):
             diffs = compare(prev.get("head_commit_sha"), cur.get("head_commit_sha"))
             if diffs is None:
-                break                             # GitLab could not say: the next check tries
+                return False                      # GitLab could not say: the next check tries
             rebase = cur.get("base_commit_sha") != prev.get("base_commit_sha")
             after = cur.get("head_commit_sha")
-            hits, nears, moved, now = [], [], [], []
-            for p in places:
-                d = _file_diff(diffs, p["file"])
-                text = (d or {}).get("diff")
-                hit, first, last = code_view.touched(text, p["first"], p["last"])
-                there = {**p, "file": (d or {}).get("new_path") or p["file"], "first": first,
-                         "last": last}
-                if p.get("left"):
-                    now.append(there)             # followed, not watched (`walk_places`)
-                    continue
-                # The push changed the place's file: its lines (`hit`), or elsewhere in it
-                # (`near`, as `check_pushes` notes it: the agent judges whether it concerns
-                # the comment, `settle_near_fixes`). Not for a topic closed (`fixes_closed`):
-                # a later change to its file is no answer to it.
-                near = not hit and bool((text or "").strip()) and not fixes_closed(state, t)
-                if (hit or near) and rebase:
-                    was, became = own_change(prev, p["file"]), own_change(cur, p["file"])
-                    if was is not None and was == became:
-                        hit = near = False        # the rebase moved it, not the author
-                    elif was is None or became is None:
-                        near = False              # GitLab could not say whose change it is
-                # Lines removed may have gone elsewhere rather than away: a function moved
-                # into another file, or down its own. The walk goes on where they went; where
-                # every one of them went, this place is only followed (`walk_places`).
-                went = code_view.moved_to(text, p["first"], p["last"], [
-                    (o.get("new_path") or o.get("old_path"), o.get("diff"), o is d)
-                    for o in diffs]) if hit else []
-                if went:
-                    via = [*p.get("via", []), after]
-                    now += [{**q, "via": via} for q in went]
-                    moved += [q for q in went if q not in moved]
-                    if code_view.all_removed(text, p["first"], p["last"]):
-                        there["left"] = after
-                now.append(there)
-                if hit or near:
-                    (hits if hit else nears).append(p.get("via") or [])
-            places = w["places"] = [p for k, p in enumerate(now) if p not in now[:k]]
+            hits, nears, moved, now = step(t, places, diffs, after, rebase and (prev, cur))
+            was, places = places, now
+            w["places"] = places
             if hits or nears:
                 fix = {"before": prev.get("head_commit_sha"), "after": after,
-                       "at": push_time(ctx, cur) or now_iso(), "mixed": rebase, "rebase": rebase,
+                       "at": cur.get("created_at") if ghost else push_time(ctx, cur) or now_iso(),
+                       "mixed": rebase, "rebase": rebase,
                        "url": f"{web}/diffs?diff_id={cur.get('id')}&start_sha={prev.get('head_commit_sha')}"}
+                if not rebase:
+                    part = its_commits(t, was, fix["before"], after)
+                    if part is not None:
+                        fix.update(part)
+                else:
+                    fix["commits"] = None
                 if not hits:
                     fix["near"] = True
                 # The moves the places it was found on came through: a move the agent rejects
@@ -3977,6 +4104,10 @@ def walk_fixes(state, ctx, iid, vs=None):
                         fix["paths"] = sorted({d.get("new_path") or d.get("old_path") for d in own})
                 t.setdefault("fixes", []).append(fix)
             w["sha"] = after
+        return True
+
+    for t in state["topics"]:
+        walk_topic(t)
 
 
 def fixes_closed(state, t):
@@ -4123,10 +4254,24 @@ def keep_author_fixes(state, wt, iid):
         for n, f in enumerate(fixes_of(t), 1):
             key = t["id"] if f.get("legacy") else fix_key(t, n)
             k = have.get(key)
+            start, end = fix_ends(f)
             # A push that came with a rebase is kept from the head before it rebased onto
-            # its base, a commit of its own: the same push, so not kept again.
-            if not k or k[1] != f["after"] or (k[0] != f["before"] and not f.get("base")):
-                fix_refs.keep(wt, SKILL, iid, key, f["before"], f["after"], onto=f.get("base"))
+            # its base, a commit of its own: the same push, so not kept again. One kept whole
+            # before its commits were told apart is kept again, as its commits.
+            if not k or k[1] != end or (k[0] != start and not f.get("base")):
+                fix_refs.keep(wt, SKILL, iid, key, start, end, onto=f.get("base"))
+
+
+def fix_ends(f):
+    """The two commits a fix's diff runs between: its commits within the push where it is
+    only some of them (`walk_fixes`), else the push's."""
+    return tuple(f["span"]) if f.get("span") else (f["before"], f["after"])
+
+
+def fix_part(f):
+    """(how many of its push's commits a fix is, how many the push held) where it is only
+    some of them, else None: what the sidebar says was left out."""
+    return [len(f["commits"]), f["of"]] if f.get("commits") and f.get("of") else None
 
 
 def kept_fixes(state, t, kept=None):
@@ -4136,8 +4281,15 @@ def kept_fixes(state, t, kept=None):
     if kept is None:
         wt = get_worktree(state.get("slug") or "", state.get("iid"))
         kept = fix_refs.kept(wt, SKILL, state.get("iid")) if fixes and wt and os.path.isdir(wt) else {}
-    return [{**f, "ends": kept.get(t["id"] if f.get("legacy") else fix_key(t, n))}
-            for n, f in enumerate(fixes, 1)]
+    out = []
+    for n, f in enumerate(fixes, 1):
+        ends = kept.get(t["id"] if f.get("legacy") else fix_key(t, n))
+        if f.get("span") and ends and tuple(ends) != fix_ends(f):
+            # Kept as the push whole still (git did not have its commits when it was kept
+            # again): shown whole, and said to be.
+            f = {k: v for k, v in f.items() if k not in ("commits", "of", "span", "paths")}
+        out.append({**f, "ends": ends})
+    return out
 
 
 def kept_fix(state, t, n=None):
@@ -4157,9 +4309,13 @@ def picked_fix(state, t, n=None):
 
 def shared_with(state, t, f):
     """The other topics the same push is a fix of: one push that changed several topics'
-    lines is listed under each, and each says the others are in it too."""
-    return [x["id"] for x in state["topics"] if x is not t
-            and any((g["before"], g["after"]) == (f["before"], f["after"]) for g in fixes_of(x))]
+    lines is listed under each, and each says the others are in it too. Not where each is
+    only its own commits of the push, and none of them the other's."""
+    def meets(g):
+        return ((g["before"], g["after"]) == (f["before"], f["after"])
+                and (not f.get("commits") or not g.get("commits")
+                     or bool(set(f["commits"]) & set(g["commits"]))))
+    return [x["id"] for x in state["topics"] if x is not t and any(meets(g) for g in fixes_of(x))]
 
 
 # ------------------------------------------------- prepared inputs (explainer, seed)
@@ -4983,6 +5139,9 @@ def main():
             elif v:
                 # The fix's files with their sizes, under the file: the viewer's.
                 v.update(fix_files=files, commented=code_view.commented(wt, x or {}))
+        if v and files and fix_part(fix):
+            # Some of the push's commits only: the sidebar says how many were left out.
+            v["fix_commits"] = fix_part(fix)
         if v:
             v.setdefault("mode", "since" if mine else "mr")
             push = pushed_of(state, t) if not args.thread else None

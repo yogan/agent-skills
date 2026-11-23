@@ -1317,6 +1317,34 @@ test("another reviewer's thread whose lines the author's push changed offers tha
   await panel.unmount()
 })
 
+// review-mr: the line over a pushed fix's files, where the fix is some of its push's commits.
+const partLine = async ($: Engine, on: On, pushes: number, columns: number) => {
+  const code = codeOf(20, [3, 3], { mode: 'pushed', file: 'src/queue.ts', commented: 'src/queue.ts',
+    fix_files: [['src/queue.ts', 2, 1], ['src/worker.ts', 1, 0]], fix_commits: [1, 2] })
+  const w = world(on, [stateOf('t1', [{ ...topic('t1', 'needs_ack'), fix_kept: true, pushes } as Topic])],
+    { code: { stdout: JSON.stringify(code) } })
+  await openReview($, w, view('t1'))
+  const panel = await $.ui.mount({ ...PANEL, props: { ...PANEL.props, bodyColumns: columns }, surface: 'terminal' })
+  const texts = (await panel.findAll({ type: 'Text' })).map(t => String(t.text ?? ''))
+  const said = JSON.stringify((await panel.find({ type: 'Box', key: 'files-line' }))?.children ?? [])
+  await panel.unmount()
+  return { said, texts }
+}
+
+test("a pushed fix that is some of its push's commits says how many over its files, after the viewer's key", async ($, on) => {
+  const { said, texts } = await partLine($, on, 1, 60)
+  expect(said).toContain('files-hunk')
+  expect(texts).toContain(' 1 of 2 commits of this push')
+})
+
+test("beside the push picker, how many of its commits a fix is is said shorter", async ($, on) => {
+  expect((await partLine($, on, 2, 72)).texts).toContain(' 1 of 2 commits')
+})
+
+test("where even the shorter form does not fit, the line leaves it out", async ($, on) => {
+  expect((await partLine($, on, 2, 60)).said).not.toContain('of 2 commits')
+})
+
 test("Next on another reviewer's thread goes to the next of them in the sidebar's order, never the round's", async ($, on) => {
   const fyi = (id: string) => ({ ...topic(id, 'acked'), source: 'peer', peer: true, watching: true, peer_view: { says: 'fyi' as const, advice: 'seen' as const } })
   // t2 needs the user and is the round's next; t5 is the next of the other reviewers' threads.

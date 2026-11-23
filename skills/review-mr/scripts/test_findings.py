@@ -1900,6 +1900,68 @@ class TestStateForTheMod(unittest.TestCase):
                     F.keep_author_fixes(state, wt, 7)
                 keep.assert_not_called()
 
+    def test_a_fix_that_is_some_of_its_push_s_commits_is_kept_as_those_alone(self):
+        """One push laid four commits on top: the second and the fourth changed the topic's
+        a.ts, the first and the third answered other threads in b.ts and c.ts. Kept
+        whole before its commits were told apart, it is kept again as its own, and until
+        then shown whole and not said to be part of the push."""
+        with tempfile.TemporaryDirectory() as wt:
+            git = lambda *a: subprocess.run(["git", "-C", wt, *a], check=True,  # noqa: E731
+                                            capture_output=True, text=True).stdout.strip()
+            git("init", "-q")
+            for k, v in (("user.email", "t@example.invalid"), ("user.name", "t"), ("commit.gpgsign", "false")):
+                git("config", k, v)
+
+            def commit(changes, msg):
+                for path, text in changes.items():
+                    with open(os.path.join(wt, path), "w") as fh:
+                        fh.write(text)
+                git("add", ".")
+                git("commit", "-qm", msg)
+                return git("rev-parse", "HEAD")
+            before = commit({"a.ts": "one\nm\nm\nm\nm\nend\n", "b.ts": "b\n", "c.ts": "c\n"}, "base")
+            start = commit({"b.ts": "b2\n"}, "a thread's")
+            first = commit({"a.ts": "ONE\nm\nm\nm\nm\nend\n"}, "its first")
+            other = commit({"b.ts": "B\n", "c.ts": "C\n"}, "another thread's")
+            after = commit({"a.ts": "ONE\nm\nm\nm\nm\nEND\n"}, "its second")
+            state = new_state()
+            state["iid"] = 7
+            F.add_topic(state, summary="a", file="a.ts", line=1)
+            t = state["topics"][0]
+            t["fixes"] = [{"before": before, "after": after, "at": "x", "mixed": False}]
+            with patch.object(F, "get_worktree", return_value=wt):
+                F.keep_author_fixes(state, wt, 7)
+                t["fixes"][0].update(commits=[first, after], of=4, span=[start, after], paths=["a.ts"])
+                self.assertNotEqual(other, after)
+                f = F.picked_fix(state, t)                  # still kept whole: shown whole
+                self.assertEqual((f["ends"], F.fix_part(f)), ((before, after), None))
+                F.keep_author_fixes(state, wt, 7)
+                f = F.picked_fix(state, t)
+                self.assertEqual((f["ends"], F.fix_part(f)), ((start, after), [2, 4]))
+                self.assertEqual(F.fix_refs.stat(wt, f["ends"], f.get("paths")), [("a.ts", 2, 2)])
+
+    def test_the_sidebar_says_how_much_of_its_push_a_fix_is(self):
+        state = new_state()
+        state["iid"] = 7
+        F.add_topic(state, summary="a", file="a.ts", line=1)
+        state["topics"][0]["thread_ids"] = ["d1"]
+        state["threads"] = {"d1": {"file": "a.ts", "line": 1, "side": "new", "head_sha": "A"}}
+        view = {"file": "a.ts", "line": 1, "side": "new", "rows": [["+", None, 1, "x"]], "at": [1, 1]}
+
+        def code(fix):
+            with patch.object(F, "resolve_state", return_value=(CTX, 7, "/s", state)), \
+                    patch.object(F, "get_worktree", return_value="/wt"), \
+                    patch.object(F, "picked_fix", return_value=fix), \
+                    patch.object(F.fix_refs, "stat", return_value=[("a.ts", 1, 1)]), \
+                    patch.object(F.code_view, "view", return_value=dict(view)), \
+                    patch.object(F.code_view, "now_at", side_effect=lambda r, s, p, c=None: p), \
+                    patch.object(sys, "argv", ["findings.py", "code", "t1", "--iid", "7"]), \
+                    redirect_stdout(io.StringIO()) as out:
+                F.main()
+            return json.loads(out.getvalue())
+        self.assertEqual(code({"ends": ("B1", "C"), "commits": ["C"], "of": 2, "span": ["B1", "C"]})["fix_commits"], [1, 2])
+        self.assertNotIn("fix_commits", code({"ends": ("A", "C"), "commits": None}))
+
     def test_the_sidebar_lists_the_author_s_fix_and_shows_a_file_picked_from_it(self):
         state = new_state()
         state["iid"] = 7
@@ -4130,6 +4192,7 @@ class TestAuthorFixes(unittest.TestCase):
         self.t = self.state["topics"][0]
         self.versions = [{"id": 1, "head_commit_sha": "A", "base_commit_sha": "M", "created_at": "2026-11-05T08:00:00Z"}]
         self.diffs = {}
+        self.chains = {}
 
     def push(self, sha, vid, diffs, base="M"):
         prev = self.versions[0]["head_commit_sha"]
@@ -4137,11 +4200,23 @@ class TestAuthorFixes(unittest.TestCase):
                                  "created_at": f"2026-11-05T1{vid}:00:00Z"})
         self.diffs[(prev, sha)] = diffs
 
+    def push_commits(self, vid, commits, whole, base="M"):
+        """A push of `commits` laid on top, `(sha, diffs)` each, oldest first, the last its
+        head; `whole`: the push's diff, as GitLab compares its two versions."""
+        prev = self.versions[0]["head_commit_sha"]
+        self.push(commits[-1][0], vid, whole, base=base)
+        parents = [prev] + [c for c, _ in commits[:-1]]
+        for parent, (c, diffs) in zip(parents, commits):
+            self.diffs[(parent, c)] = diffs
+        self.chains[(prev, commits[-1][0])] = [{"id": c, "parent_ids": [parent]}
+                                               for parent, (c, _) in zip(parents, commits)]
+
     def walk(self, commits=None):
         """`commits`: each push's head commit as GitLab answers it, by sha (none: unknown)."""
         def api(endpoint):
             return (commits or {}).get(endpoint.rsplit("/", 1)[-1]) or {}
         with patch.object(F, "_compare", side_effect=lambda ctx, a, b: self.diffs.get((a, b))), \
+                patch.object(F, "_push_commits", side_effect=lambda ctx, a, b: self.chains.get((a, b))), \
                 patch.object(F, "api", side_effect=api), \
                 patch.object(F, "get_worktree", return_value=None):
             F.walk_fixes(self.state, self.CTX, 7, vs=list(self.versions))
@@ -4278,6 +4353,112 @@ class TestAuthorFixes(unittest.TestCase):
         self.t.update(state="acked", closed={"how": "fixed", "push": 2, "at": "2026-11-05T15:00:00Z"})
         with patch.object(F, "topic_status", return_value="acked"):
             self.assertIn("Robin fixed it (push 2) · you acked it", F.closing_line(self.state, self.t))
+
+    def a_ts(self, diff):
+        return {"new_path": "a.ts", "old_path": "a.ts", "diff": diff}
+
+    def other(self, path):
+        return {"new_path": path, "old_path": path, "diff": self.ELSEWHERE}
+
+    def test_a_push_of_commits_on_top_is_narrowed_to_the_one_that_changed_its_lines(self):
+        """The author answered each thread with a commit of its own and pushed them at once:
+        the first commit answered t2 in b.ts and c.ts, the second t1. Each topic's fix is
+        its own commit, and neither says the other is in it."""
+        self.state["threads"]["d2"] = {"mine": True, "file": "b.ts", "line": 3, "side": "new", "head_sha": "A",
+                                       "resolved": False, "notes": []}
+        self.state["topics"].append({"id": "t2", "thread_ids": ["d2"], "summary": "s", "state": None, "source": "llm"})
+        self.push_commits(2, [("B1", [self.other("b.ts"), self.other("c.ts")]), ("C", [self.a_ts(self.FIX)])],
+                          [self.a_ts(self.FIX), self.other("b.ts"), self.other("c.ts")])
+        self.walk()
+        (f,) = F.fixes_of(self.t)
+        self.assertEqual((f["before"], f["after"], f["commits"], f["of"], f["span"]), ("A", "C", ["C"], 2, ["B1", "C"]))
+        self.assertNotIn("paths", f)
+        self.assertEqual(F.fix_ends(f), ("B1", "C"))
+        self.assertEqual(F.fix_part(f), [1, 2])
+        (g,) = F.fixes_of(self.state["topics"][1])
+        self.assertEqual((g["commits"], g["span"]), (["B1"], ["A", "B1"]))
+        with patch.object(F, "get_worktree", return_value=None):
+            self.assertNotIn("includes", "\n".join(F.story_steps(self.state, self.t)))
+
+    def test_its_lines_are_carried_through_each_commit_of_the_push(self):
+        """The first commit added two lines above the comment's, the second changed the
+        comment's line, now 42: only the second is its fix."""
+        self.push_commits(2, [("B1", [self.a_ts("@@ -1,0 +2,2 @@\n+a\n+b\n")]),
+                              ("C", [self.a_ts("@@ -42 +42 @@\n-old\n+new\n")])],
+                          [self.a_ts("@@ -1,0 +2,2 @@\n+a\n+b\n@@ -40 +42 @@\n-old\n+new\n")])
+        self.walk()
+        (f,) = F.fixes_of(self.t)
+        self.assertEqual((f["commits"], f.get("near")), (["C"], None))
+
+    def test_commits_of_its_apart_show_only_the_files_they_changed(self):
+        """Its lines changed by the first and the third of three commits: the diff runs from
+        before the first to the third, and only over the files those two changed."""
+        self.push_commits(2, [("B1", [self.a_ts(self.FIX)]), ("B2", [self.other("b.ts")]),
+                              ("C", [self.a_ts(self.AGAIN), self.other("d.ts")])],
+                          [self.a_ts("@@ -40 +40 @@\n-old\n+newer\n"), self.other("b.ts"), self.other("d.ts")])
+        self.walk()
+        (f,) = F.fixes_of(self.t)
+        self.assertEqual((f["commits"], f["of"], f["span"], f["paths"]), (["B1", "C"], 3, ["A", "C"], ["a.ts", "d.ts"]))
+
+    def test_a_push_that_changed_its_file_elsewhere_is_narrowed_to_that_commit(self):
+        self.push_commits(2, [("B1", [self.other("b.ts")]), ("C", [self.a_ts(self.ELSEWHERE)])],
+                          [self.a_ts(self.ELSEWHERE), self.other("b.ts")])
+        self.walk()
+        (f,) = F.fixes_of(self.t)
+        self.assertEqual((f["commits"], f["near"]), (["C"], True))
+
+    def test_a_push_that_rewrote_the_branch_is_the_fix_whole(self):
+        # A rebase: the push's commits are no answer of the author's alone.
+        self.push_commits(2, [("B1", [self.other("b.ts")]), ("C", [self.a_ts(self.FIX)])],
+                          [self.a_ts(self.FIX), self.other("b.ts")], base="N")
+        self.diffs[("M", "A")] = [self.a_ts("@@ -1 +1 @@\n-p\n+q\n")]
+        self.diffs[("N", "C")] = [self.a_ts("@@ -1 +1 @@\n-p\n+r\n")]
+        # A force push: its commits are not on top of the head before it.
+        self.push_commits(3, [("D1", [self.other("b.ts")]), ("D", [self.a_ts(self.AGAIN)])],
+                          [self.a_ts(self.AGAIN), self.other("b.ts")], base="N")
+        self.versions[0]["base_commit_sha"] = self.versions[1]["base_commit_sha"] = "N"
+        self.chains[("C", "D")][0]["parent_ids"] = ["Z"]
+        self.walk()
+        self.assertEqual([(f["after"], f["commits"]) for f in F.fixes_of(self.t)], [("C", None), ("D", None)])
+        self.assertEqual([F.fix_part(f) for f in F.fixes_of(self.t)], [None, None])
+
+    def test_a_fix_recorded_before_its_commits_were_told_apart_gets_them_on_the_next_walk(self):
+        """Recorded as the push whole (GitLab did not list the commits then, or the record is
+        from before they were told apart): the next walk finds them, and keeps what was
+        judged of the fix."""
+        self.push_commits(2, [("B1", [self.other("b.ts")]), ("C", [self.a_ts(self.ELSEWHERE)])],
+                          [self.a_ts(self.ELSEWHERE), self.other("b.ts")])
+        chains, self.chains = self.chains, {}
+        self.walk()
+        (f,) = F.fixes_of(self.t)
+        self.assertNotIn("commits", f)
+        F.settle_near_fixes(self.t, "settled")             # judged its fix
+        self.chains = chains
+        self.walk()
+        (f,) = F.fixes_of(self.t)
+        self.assertEqual((f["commits"], f.get("near")), (["C"], None))
+        self.assertEqual(self.t["fix_walk"]["sha"], "C")
+
+    def test_a_fix_the_next_walk_did_not_get_to_is_asked_for_again(self):
+        """GitLab could not compare the second push while the topic was walked again: the
+        first push's fix gets its commits, the second's waits for a walk that gets to it,
+        rather than being taken for the push whole for good."""
+        self.push_commits(2, [("B1", [self.other("b.ts")]), ("B", [self.a_ts(self.FIX)])],
+                          [self.a_ts(self.FIX), self.other("b.ts")])
+        self.push_commits(3, [("C1", [self.other("c.ts")]), ("D", [self.a_ts(self.AGAIN)])],
+                          [self.a_ts(self.AGAIN), self.other("c.ts")])
+        chains, self.chains = self.chains, {}
+        self.walk()
+        self.assertEqual([("commits" in f) for f in F.fixes_of(self.t)], [False, False])
+        self.chains = chains
+        second = self.diffs.pop(("B", "D"))
+        self.walk()
+        first, last = F.fixes_of(self.t)
+        self.assertEqual(first["commits"], ["B"])
+        self.assertNotIn("commits", last)
+        self.diffs[("B", "D")] = second
+        self.walk()
+        self.assertEqual([f["commits"] for f in F.fixes_of(self.t)], [["B"], ["D"]])
 
     def as_peer(self, view=None):
         """t1 as another reviewer's thread the user said nothing in, with the agent's view of

@@ -3105,9 +3105,19 @@ export const register: Register = on => {
       const atRight = picker && total
         ? { el: <Box key="files-right" flexDirection="row">{picker}<Text>{'  '}</Text>{total.el}</Box>, width: cells(pushLabel) + 3 + 2 + total.width }
         : total ?? (picker ? { el: picker, width: cells(pushLabel) + 3 } : undefined)
+      // review-mr, a push of several commits of which only some are the topic's (an author
+      // who answers each thread with a commit of its own): the files are theirs, and the
+      // line says how many of the push's commits that is, dim after the viewer's key. Said
+      // shorter where the line is narrow, and not at all where even that does not fit.
+      const part = code.view.fix_commits
+      const partRoom = cols - 4 - (atRight ? atRight.width + (total ? 1 : 3) : 1) - (lead?.width ?? 0) - 1 - (lead ? 1 : 0)
+      const partSaid = part
+        ? [`${part[0]} of ${countOf(part[1], 'commit')} of this push`, `${part[0]} of ${countOf(part[1], 'commit')}`]
+          .find(x => cells(x) <= partRoom)
+        : undefined
       filesPart = (
         <Box key="files" flexDirection="column">
-          {rule('files-line', [], atRight, undefined, undefined, lead, !!total)}
+          {rule('files-line', partSaid ? [{ text: `${lead ? ' ' : ''}${partSaid}`, isDim: true }] : [], atRight, undefined, undefined, lead, !!total)}
           {fileRows.length > 0 && areaRows(`files:${code.base}`, fileRows, filesShown, filesTop, 0, null)}
         </Box>
       )
