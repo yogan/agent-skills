@@ -580,13 +580,13 @@ class TestPoint(unittest.TestCase):
         w = FakeWindow([])
         added = []
 
-        def add(sid, path, line, text, author, side="new"):
+        def add(sid, path, line, text, author, side="new", args=None):
             added.append((path, line, side, author))
             return w.add_note(sid, path, line, text, author) if lands else None
 
         with patch.object(S, "own_session", lambda cwd=None: "s1"), \
                 patch.object(S.hunk, "notes", lambda sid: list(w.notes)), \
-                patch.object(S.hunk, "add_note", add), \
+                patch.object(S.hunk, "point", add), \
                 patch.object(S.hunk, "whole_review", lambda sid: ([], [], list(hidden))), \
                 patch.object(S.hunk, "mark", lambda sid, key: "abc"), \
                 patch.object(S.hunk, "loaded_input", lambda sid: ("show", "abc")), \

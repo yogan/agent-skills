@@ -822,6 +822,25 @@ class TestOwnReview(HunkCase):
             hunk.add_note("s1", "f.py", 7, "text", "agent", side="old")
         self.assertIn("--old-line", run.call_args[0][0])
 
+    def test_a_point_is_a_note_brought_into_view(self):
+        """`--focus` moves the view to the note and switches the agent's notes on; a plain
+        note (a moved thread) leaves the view where the person has it."""
+        made = {"result": {"commentId": "mcp:abc"}}
+        with patch.object(hunk, "_run", return_value=(0, json.dumps(made))) as run:
+            self.assertEqual(hunk.point("s1", "f.py", 7, "here", "agent"), "mcp:abc")
+            self.assertIn("--focus", run.call_args[0][0])
+            hunk.add_note("s1", "f.py", 7, "text", "agent")
+            self.assertNotIn("--focus", run.call_args[0][0])
+
+    def test_a_point_on_a_file_that_stays_hidden_is_not_made(self):
+        shown = []
+        with patch.object(hunk, "show_unread", lambda sid, paths, args: shown.append(
+                (paths, args)) or False), \
+                patch.object(hunk, "_run", side_effect=AssertionError("note added")):
+            self.assertIsNone(hunk.point("s1", "f.py", 7, "here", "agent",
+                                         args=["patch", "/p.patch"]))
+        self.assertEqual(shown, [(["f.py"], ["patch", "/p.patch"])])
+
     def test_a_refused_note_has_no_id(self):
         with patch.object(hunk, "_run", return_value=(1, "")):
             self.assertIsNone(hunk.add_note("s1", "f.py", 7, "text", "you"))

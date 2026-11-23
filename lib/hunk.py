@@ -999,17 +999,32 @@ def reply(session_id, parent_id, text, author="agent"):
                    "--summary", text, "--author", author, "--json"])
 
 
-def add_note(session_id, path, line, text, author, side="new"):
+def add_note(session_id, path, line, text, author, side="new", focus=False):
     """Start a thread on `line` of `path`, on its new or old side; its id, or None.
 
     Whatever `author` says, the viewer records the note as the agent's: it has no way to
     create one as the user's, and only the user can edit or delete it in the window. A
     line no hunk of the loaded diff shows is refused, so a note can only go where the
-    reader can see it.
+    reader can see it. `focus` moves the window's view to the note and switches the agent's
+    notes on, which the viewer starts with hidden.
     """
     return _added(["hunk", "session", "comment", "add", session_id, "--file", path,
                    f"--{side}-line", str(line), "--summary", text, "--author", author,
-                   "--json"])
+                   *(["--focus"] if focus else []), "--json"])
+
+
+def point(session_id, path, line, text, author, side="new", args=None):
+    """Point the person at `line` of `path` with a note of the agent's, in view: the window
+    moves to it and shows the agent's notes (`add_note`'s `focus`). Its id, or None where
+    the viewer refused it — a line the loaded diff does not show, or a file it hides.
+
+    `args` is what the window holds, as `hunk session reload` takes it: given, a file the
+    window hides as read is shown again first (`show_unread`). Without it the caller has
+    made sure the file is shown. A note is never a highlight: the viewer can clear
+    highlights only all at once, and marks no more than part of one line with them."""
+    if args is not None and not show_unread(session_id, [path], args):
+        return None
+    return add_note(session_id, path, line, text, author, side=side, focus=True)
 
 
 def mark(session_id, key):

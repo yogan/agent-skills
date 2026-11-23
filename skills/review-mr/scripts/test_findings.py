@@ -4,6 +4,7 @@ table, topic status derivation, and thread reconciliation.
 
 Run: `python3 skills/review-mr/scripts/test_findings.py` (stdlib only).
 """
+import contextlib
 import hashlib
 import io
 import json
@@ -4019,6 +4020,348 @@ class TestAuthorFixes(unittest.TestCase):
         self.t.update(state="acked", closed={"how": "fixed", "push": 2, "at": "2026-11-05T15:00:00Z"})
         with patch.object(F, "topic_status", return_value="acked"):
             self.assertIn("Robin fixed it (push 2) · you acked it", F.closing_line(self.state, self.t))
+
+
+class FakeViewer:
+    """This agent's diff viewer window, for the notes in it: the `hunk` calls the review's
+    viewer commands make, acting on a list of notes in `hunk.notes`' shape and on the
+    window's marks."""
+
+    def __init__(self, notes=(), shows=None, answers=True, lands=True, clears=True):
+        self.notes = [dict(n) for n in notes]
+        self.marks = {F.VIEWER_MARK: json.dumps(shows)} if shows else {}
+        self.answers, self.lands, self.clears = answers, lands, clears
+        self.pointed, self.dropped, self.cleared = [], [], 0
+        self.n = 0
+
+    @staticmethod
+    def note(nid, source, text, file="src/basket.py", line=4, side="new", parent=None):
+        return {"id": nid, "parent": parent, "source": source, "author": source, "file": file,
+                "side": side, "line": line, "end": line, "text": text, "at": nid}
+
+    def _add(self, parent, file, line, side, text):
+        self.n += 1
+        nid = f"mcp:n{self.n}"
+        self.notes.append(self.note(nid, "agent", text, file, line, side, parent))
+        return nid
+
+    def user_notes(self, sid):
+        if not self.answers:
+            return None
+        return [(n["file"], n["side"], n["line"], n["text"], n["id"]) for n in self.notes
+                if n["source"] == "user"]
+
+    def all_notes(self, sid):
+        return [dict(n) for n in self.notes] if self.answers else None
+
+    def clear_all_notes(self, sid):
+        if not self.clears:
+            return False
+        self.cleared += 1
+        self.notes = []
+        return True
+
+    def drop_note(self, sid, nid):
+        self.dropped.append(nid)
+        self.notes = [n for n in self.notes if n["id"] != nid]
+        return True
+
+    def reply(self, sid, parent, text, author="agent"):
+        at = next(n for n in self.notes if n["id"] == parent)
+        return self._add(parent, at["file"], at["line"], at["side"], text)
+
+    def point(self, sid, path, line, text, author, side="new", args=None):
+        self.pointed.append((path, line, side, author, args))
+        return self._add(None, path, line, side, text) if self.lands else None
+
+    def shows(self):
+        return json.loads(self.marks.get(F.VIEWER_MARK) or "{}")
+
+    def patches(self, window="s1"):
+        stack = contextlib.ExitStack()
+        stack.enter_context(patch.object(F, "viewer_window", lambda: window))
+        for name, fn in (("user_notes", self.user_notes), ("notes", self.all_notes),
+                         ("clear_all_notes", self.clear_all_notes), ("drop_note", self.drop_note),
+                         ("reply", self.reply), ("point", self.point),
+                         ("mark", lambda sid, key: self.marks.get(key, "")),
+                         ("set_mark", lambda sid, key, value: self.marks.__setitem__(key, value) or True),
+                         ("show_unread", lambda sid, paths, args: True),
+                         ("window_of", lambda sid: "9 (◈ !1)")):
+            stack.enter_context(patch.object(F.hunk, name, fn))
+        return stack
+
+
+class ViewerCase(unittest.TestCase):
+    CTX = {"slug": "grp-shop", "enc": "x"}
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        stub = patch.object(F, "STATE_ROOT", tmp.name)
+        stub.start()
+        self.addCleanup(stub.stop)
+
+    def kept(self):
+        return F._kept_notes(F.kept_notes_path(self.CTX, 1, make=False))
+
+    def shows(self, topic="t2", patch_file="/d/diff-t2.patch", text="old patch", **more):
+        return {"iid": 1, "topic": topic, "patch": patch_file, "digest": F._digest([text]), **more}
+
+    def run_cli(self, *argv, state=None):
+        """`findings.py <argv> --iid 1`: (stdout, stderr, exit code or None)."""
+        state = state or new_state(topics=[{"id": "t2", "thread_ids": []},
+                                           {"id": "t3", "thread_ids": []}])
+        code = None
+        with patch.object(F, "resolve_state", return_value=(self.CTX, 1, "/s", state)), \
+                patch.object(F, "save"), patch.object(F, "current_user", return_value="kim"), \
+                patch.object(sys, "argv", ["findings.py", *argv, "--iid", "1"]), \
+                redirect_stdout(io.StringIO()) as out, redirect_stderr(io.StringIO()) as err:
+            try:
+                F.main()
+            except SystemExit as e:
+                code = e.code
+        return out.getvalue(), err.getvalue(), code
+
+
+class TestViewerMovesOn(ViewerCase):
+    """Before the window loads another diff, every note in it goes — they would re-anchor
+    onto unrelated code — and the user's are kept for `notes` first."""
+
+    USER = FakeViewer.note("user:1", "user", "why a list here?")
+    AGENT = FakeViewer.note("mcp:0", "agent", "this is the loop")
+
+    def test_the_users_notes_are_kept_with_their_topic_and_the_window_cleared(self):
+        w = FakeViewer([self.USER, self.AGENT], shows=self.shows())
+        with w.patches():
+            F.clear_notes_before_load(self.CTX, 1, "/d/diff-t3.patch", "new patch")
+        self.assertEqual(w.notes, [])
+        self.assertEqual([(n["topic"], n["file"], n["line"], n["text"]) for n in self.kept()],
+                         [("t2", "src/basket.py", 4, "why a list here?")])
+
+    def test_a_note_kept_once_is_not_kept_twice(self):
+        w = FakeViewer([self.USER], shows=self.shows(), clears=False)
+        with w.patches():
+            for _ in range(2):
+                with self.assertRaises(F.NotesNotCleared):
+                    F.clear_notes_before_load(self.CTX, 1, "/d/diff-t3.patch", "new patch")
+        self.assertEqual(len(self.kept()), 1)
+
+    def test_the_same_patch_again_keeps_every_note(self):
+        w = FakeViewer([self.USER, self.AGENT], shows=self.shows())
+        with w.patches():
+            F.clear_notes_before_load(self.CTX, 1, "/d/diff-t2.patch", "old patch")
+        self.assertEqual(len(w.notes), 2)
+        self.assertEqual(self.kept(), [])
+
+    def test_a_viewer_that_does_not_answer_is_not_loaded_over(self):
+        w = FakeViewer([self.USER], shows=self.shows(), answers=False)
+        with w.patches(), self.assertRaises(F.NotesNotCleared):
+            F.clear_notes_before_load(self.CTX, 1, "/d/diff-t3.patch", "new patch")
+        self.assertEqual(w.cleared, 0)
+
+    def test_shown_inline_when_the_viewer_notes_cannot_be_cleared(self):
+        w = FakeViewer([self.USER], shows=self.shows(), answers=False)
+        state = new_state(threads={"d1": {"body": "x", "file": "a.py", "line": 3, "url": "u"}},
+                          last_reviewed_head="OLD1",
+                          mr_web_url="https://gitlab.example.com/g/r/-/merge_requests/1")
+        F.adopt_inbound(state, None, None)
+        with w.patches(), patch.object(F, "mr_head", return_value="NEW1"), \
+                patch.object(F, "versions", return_value=[{"id": 2}]), \
+                patch.object(F, "_compare", return_value=[
+                    {"old_path": "a.py", "new_path": "a.py", "diff": "@@ -1 +1 @@\n-a\n+b\n"}]), \
+                patch.object(F.hunk, "show_patch", side_effect=AssertionError("loaded")):
+            out = F.render_topic_diff(state, self.CTX, 1, "t1", True)
+        self.assertIn("the diff viewer did not answer", out)
+        self.assertIn("```diff", out)
+
+    def test_a_shown_diff_records_its_topic_on_the_window(self):
+        w = FakeViewer()
+        with w.patches(), patch.object(F.hunk, "show_patch", return_value=("s1", "9 (◈ !1)")), \
+                patch.object(F, "get_worktree", return_value=None):
+            F._show_in_viewer(self.CTX, 1, "t3", [{"old_path": "a.py", "new_path": "a.py",
+                                                   "diff": "@@ -1 +1 @@\n-a\n+b\n"}])
+        self.assertEqual((w.shows()["iid"], w.shows()["topic"]), (1, "t3"))
+
+    def test_the_authors_fix_on_a_press_moves_the_window_on_too(self):
+        """A press's output never reaches the model: the kept copy is how the notes do."""
+        w = FakeViewer([self.USER], shows=self.shows())
+        state = new_state(topics=[{"id": "t3", "thread_ids": []}])
+        with w.patches(), patch.object(F, "picked_fix", return_value={"ends": ("a", "b")}), \
+                patch.object(F.fix_refs, "patch", return_value="diff --git a/x b/x\n"), \
+                patch.object(F.fix_refs, "show", return_value=("s1", "9 (◈ !1)")), \
+                patch.object(F.hunk, "focus_window"), \
+                patch.object(F, "get_worktree", return_value="/wt"):
+            _, _, code = self.run_cli("hunk-show", "t3", state=state)
+        self.assertIsNone(code)
+        self.assertEqual(w.notes, [])
+        self.assertEqual([n["text"] for n in self.kept()], ["why a list here?"])
+        self.assertEqual(w.shows()["topic"], "t3")
+
+    def test_the_authors_fix_on_a_press_is_not_loaded_over_notes_not_cleared(self):
+        w = FakeViewer([self.USER], shows=self.shows(), answers=False)
+        state = new_state(topics=[{"id": "t3", "thread_ids": []}])
+        with w.patches(), patch.object(F, "picked_fix", return_value={"ends": ("a", "b")}), \
+                patch.object(F.fix_refs, "patch", return_value="diff --git a/x b/x\n"), \
+                patch.object(F.fix_refs, "show", side_effect=AssertionError("loaded")), \
+                patch.object(F, "get_worktree", return_value="/wt"):
+            _, err, code = self.run_cli("hunk-show", "t3", state=state)
+        self.assertEqual(code, 1)
+        self.assertIn("did not answer", err)
+
+
+class TestPointingOut(ViewerCase):
+    def test_a_point_goes_on_the_topic_shown_and_says_where(self):
+        w = FakeViewer(shows=self.shows())
+        with w.patches():
+            out, _, code = self.run_cli("point", "t2", "src/basket.py", "12", "the total is summed here")
+        self.assertIsNone(code)
+        self.assertEqual(w.pointed, [("src/basket.py", 12, "new", "agent",
+                                      ["patch", "/d/diff-t2.patch"])])
+        self.assertIn("pointed out src/basket.py:12 on", out)
+
+    def test_a_removed_line_is_pointed_at_on_the_old_side(self):
+        w = FakeViewer(shows=self.shows())
+        with w.patches():
+            out, _, _ = self.run_cli("point", "t2", "src/basket.py", "7", "was here", "--old")
+        self.assertEqual(w.pointed[0][2], "old")
+        self.assertIn("src/basket.py:7 (removed line)", out)
+
+    def test_another_topics_diff_is_refused(self):
+        w = FakeViewer(shows=self.shows(topic="t3"))
+        with w.patches():
+            _, err, code = self.run_cli("point", "t2", "src/basket.py", "12", "here")
+        self.assertEqual(code, 1)
+        self.assertIn("show it first with `diff t2 --show`", err)
+        self.assertEqual(w.pointed, [])
+
+    def test_a_line_the_diff_does_not_show_is_named_in_the_chat(self):
+        w = FakeViewer(shows=self.shows(), lands=False)
+        with w.patches():
+            _, err, code = self.run_cli("point", "t2", "src/basket.py", "900", "here")
+        self.assertEqual(code, 1)
+        self.assertIn("Name that place in the chat instead", err)
+
+    def test_without_a_window_it_says_so(self):
+        with patch.object(F, "viewer_window", lambda: None), \
+                patch.object(F.hunk, "installed", lambda: True), \
+                patch.object(F.hunk, "in_tmux", lambda: True):
+            _, err, code = self.run_cli("point", "t2", "src/basket.py", "12", "here")
+        self.assertEqual(code, 1)
+        self.assertIn("no diff viewer window of yours is open", err)
+
+
+class TestReadingNotes(ViewerCase):
+    def test_live_notes_are_numbered_and_kept_ones_named_as_gone(self):
+        kept = F.kept_notes_path(self.CTX, 1)
+        F.save(kept, [{"topic": "t2", "file": "src/cart.py", "side": "old", "line": 9,
+                       "text": "this went?", "id": "user:0"}])
+        w = FakeViewer([FakeViewer.note("user:1", "user", "why a list here?")],
+                       shows=self.shows(topic="t3"))
+        with w.patches():
+            out, _, code = self.run_cli("notes")
+        self.assertIsNone(code)
+        self.assertEqual(out.splitlines(), [
+            f"#1  {F.tref('t3')} src/basket.py:4", "    why a list here?",
+            f"written on {F.tref('t2')}, src/cart.py:9 (removed line): no longer in the "
+            "window, answer in the chat", "    this went?"])
+        self.assertFalse(os.path.exists(kept))
+        self.assertEqual(w.shows()["printed"], ["user:1"])
+        self.assertEqual(len(w.notes), 1)               # stays until the topic is acked
+
+    def test_a_number_stays_the_notes_and_an_answered_one_is_not_repeated(self):
+        w = FakeViewer([FakeViewer.note("user:1", "user", "first"),
+                        FakeViewer.note("user:2", "user", "second")],
+                       shows=self.shows(printed=["user:2"], answered=["user:2"]))
+        with w.patches():
+            out, _, _ = self.run_cli("notes")
+        self.assertEqual(out.splitlines(), [f"#2  {F.tref('t2')} src/basket.py:4", "    first"])
+
+    def test_a_viewer_that_does_not_answer_forgets_nothing(self):
+        kept = F.kept_notes_path(self.CTX, 1)
+        F.save(kept, [{"topic": "t2", "file": "a.py", "side": "new", "line": 1, "text": "x",
+                       "id": "user:0"}])
+        w = FakeViewer(shows=self.shows(), answers=False)
+        with w.patches():
+            _, err, code = self.run_cli("notes")
+        self.assertEqual(code, 1)
+        self.assertIn("did not answer", err)
+        self.assertTrue(os.path.exists(kept))
+
+    def test_kept_notes_are_read_without_a_window(self):
+        F.save(F.kept_notes_path(self.CTX, 1), [{"topic": "t2", "file": "a.py", "side": "new",
+                                                 "line": 1, "text": "x", "id": "user:0"}])
+        with patch.object(F, "viewer_window", lambda: None):
+            out, _, code = self.run_cli("notes")
+        self.assertIsNone(code)
+        self.assertIn("no longer in the window", out)
+
+    def test_no_window_and_nothing_kept_says_so(self):
+        with patch.object(F, "viewer_window", lambda: None), \
+                patch.object(F.hunk, "installed", lambda: True), \
+                patch.object(F.hunk, "in_tmux", lambda: True):
+            _, err, code = self.run_cli("notes")
+        self.assertEqual(code, 1)
+        self.assertIn("no diff viewer window of yours is open", err)
+
+    def test_a_reply_goes_under_the_numbered_note(self):
+        w = FakeViewer([FakeViewer.note("user:1", "user", "why a list here?")],
+                       shows=self.shows(printed=["user:1"]))
+        with w.patches():
+            out, _, code = self.run_cli("reply", "#1", "order matters here")
+        self.assertIsNone(code)
+        self.assertEqual([(n["parent"], n["text"]) for n in w.notes if n["source"] == "agent"],
+                         [("user:1", "order matters here")])
+        self.assertEqual(w.shows()["answered"], ["user:1"])
+        self.assertEqual(out.strip(), "answered #1 under the note on src/basket.py:4")
+
+    def test_a_number_notes_never_gave_is_refused(self):
+        w = FakeViewer([FakeViewer.note("user:1", "user", "x")], shows=self.shows())
+        with w.patches():
+            _, err, code = self.run_cli("reply", "1", "y")
+        self.assertEqual(code, 1)
+        self.assertIn("`notes` numbers them", err)
+
+
+class TestAckClearsTheViewer(ViewerCase):
+    def notes(self):
+        n = FakeViewer.note
+        return [n("mcp:a", "agent", "the loop is here", line=12),
+                n("user:1", "user", "why a list?"),
+                n("mcp:b", "agent", "order matters", parent="user:1"),
+                n("mcp:c", "agent", "and the total", line=20),
+                n("user:2", "user", "where is it rounded?", line=20, parent="mcp:c")]
+
+    def ack(self, w, topic="t2"):
+        with w.patches():
+            return self.run_cli("set", topic, "--state", "acked")
+
+    def test_the_agents_notes_and_the_printed_users_go(self):
+        w = FakeViewer(self.notes(), shows=self.shows(printed=["user:1", "user:2"]))
+        _, _, code = self.ack(w)
+        self.assertIsNone(code)
+        self.assertEqual(w.notes, [])
+
+    def test_a_note_never_printed_stays_with_the_thread_above_it(self):
+        w = FakeViewer(self.notes(), shows=self.shows(printed=["user:1"]))
+        self.ack(w)
+        self.assertEqual([n["id"] for n in w.notes], ["mcp:c", "user:2"])
+
+    def test_a_window_on_another_topic_is_left_alone(self):
+        w = FakeViewer(self.notes(), shows=self.shows(topic="t3", printed=["user:1"]))
+        self.ack(w)
+        self.assertEqual(len(w.notes), 5)
+
+    def test_a_viewer_that_does_not_answer_never_fails_the_ack(self):
+        w = FakeViewer(self.notes(), shows=self.shows(), answers=False)
+        out, _, code = self.ack(w)
+        self.assertIsNone(code)
+        self.assertIn("the diff viewer did not answer; its notes stay", out)
+
+    def test_no_window_is_no_word(self):
+        with patch.object(F, "viewer_window", lambda: None):
+            out, _, code = self.run_cli("set", "t2", "--state", "acked")
+        self.assertIsNone(code)
+        self.assertNotIn("viewer", out)
 
 
 class TestIidEitherSide(unittest.TestCase):

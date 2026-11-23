@@ -643,6 +643,15 @@ python3 $SD/findings.py set <t> --state acked --iid <n>               # ● you'
 # not satisfied → draft a follow-up reply (Phase-2 rules); topic stays open
 ```
 
+**While a topic's diff is in the viewer window**, it is where you show and are shown things.
+When the user asks where something is in that diff, or asks you to point something out, run
+`point <t> <file> <line> '<text>' --iid <n>` (`--old` for a removed line) instead of naming
+`file:line`: your note goes on that line and the window jumps to it. Only the places they asked
+about, never a review of your own; a line the diff does not show is refused, so name that one in
+the chat. When they say done, run `notes --iid <n>`: answer each note in the chat, then `reply
+<number> '<gist>' --iid <n>` under it; a note marked "no longer in the window" is answered in the
+chat only. Acking the topic clears your notes and the ones you have read.
+
 **An author resolving a thread is NOT a close — only your ack is.** After you've reviewed a
 push, `set-head` to move the baseline. Always end a check with what's still left (`todo`).
 
@@ -713,6 +722,6 @@ details can be collapsed or hidden.
 `glab` authenticated; a review worktree (or willingness to create one); run inside the target
 repo. `python3`. (`clip.sh` copies to the clipboard via macOS `pbcopy`; where that is
 missing the copy is skipped and nothing else changes.) Build blocks: the `explain-branch` and `review-branch`
-skills installed. `findings.py` subcommands: sync·todo·present·resume·updates·bodies·quote·draft·diff·candidates·
+skills installed. `findings.py` subcommands: sync·todo·present·resume·updates·bodies·quote·draft·diff·point·notes·reply·candidates·
 import·add·set·drop·merge·link·posted·own-review·propose·verdict·peer·head·base·branch·set-head·worktree·explainer·seed·prune·path·begun·lang
 (run any with `-h`).

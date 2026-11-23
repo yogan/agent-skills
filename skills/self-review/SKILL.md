@@ -80,9 +80,9 @@ project's own MR skill.
 The one time you start a diff note: when the author asks you to point at something ("point
 out…", "show me where…"), and only at the places they asked about — never as a review of
 your own. `sr point <file> <line> '<text>'` (`--old` for a removed line) puts your note on
-that line of the piece in the window; the author toggles your notes with `a`, and `}` jumps
-to the next one. Only lines the piece's diff shows can carry a note: a place outside it is
-refused, so name that one in the chat instead. Say in chat which notes you left. A reply the
+that line of the piece in the window and moves the window's view to it, your notes shown; the
+author toggles them with `a`, and `}` jumps to the next one. Only lines the piece's diff shows
+can carry a note: a place outside it is refused, so name that one in the chat instead. Say in chat which notes you left. A reply the
 author writes under one comes back through `sr notes` like any other.
 
 ## Rules the script holds you to

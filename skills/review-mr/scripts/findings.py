@@ -52,6 +52,11 @@ each only on a person's press):
   draft <t>      the draft's comment body ONLY — the paste/post payload (no meta)
   diff <t>       the author's change for one topic since you posted it, for YOU to summarise;
                  `--show` when the user asks to see it (viewer window, or inline)
+  point <t> <file> <line> <text> [--old]   on the user's request only: your note on that
+                 line of <t>'s diff in the viewer window, brought into view
+  notes          the user's notes in the viewer window, numbered, and those from diffs it
+                 has moved on from
+  reply <n> <text>   answer the user's note <n> under it in the window
   import <file>  bulk-add findings from a JSON array (review-branch seed)
   add [--thread <id>]  add one finding; --thread links an already-posted thread
   set <t> …      update a topic's fields / state
@@ -3242,7 +3247,11 @@ def render_topic_diff(state, ctx, iid, tid, show=False, inline_limit=80):
     if not nlines:
         return "\n".join(out)
     if show:
-        viewer = _show_in_viewer(ctx, iid, tid, picked)
+        try:
+            viewer = _show_in_viewer(ctx, iid, tid, picked)
+        except NotesNotCleared as e:
+            viewer = None
+            out += ["", f"_{e}; the diff is here instead._"]
         if viewer:
             return "\n".join(out + [""] + viewer)
     if not show or nlines <= inline_limit:
@@ -3285,20 +3294,244 @@ def viewer_label(ctx, iid):
 def _show_in_viewer(ctx, iid, tid, picked):
     """The pointer lines when the topic's diff is now in this agent's viewer window, or
     None to show it inline — no tmux, no viewer, or a window that came back holding
-    anything but exactly this patch's files and line counts (see `hunk.show_patch`)."""
+    anything but exactly this patch's files and line counts (see `hunk.show_patch`).
+    Raises `NotesNotCleared` where the window could not be cleared for it
+    (`clear_notes_before_load`)."""
     patch = topic_patch(picked)
     path = state_file(STATE_ROOT, ctx["slug"], iid, f"diff-{tid}.patch")
+    clear_notes_before_load(ctx, iid, path, patch)
     with open(path, "w") as fh:
         fh.write(patch)
     shown = hunk.show_patch(path, viewer_label(ctx, iid),
                             get_worktree(ctx["slug"], iid) or os.getcwd())
     if not shown:
         return None
+    mark_shown(shown[0], iid, tid, path, patch)
     stat = hunk.diff_stat(patch)
     head = f"_Full diff in tmux window {shown[1]}:_ {diffsize.of_stat(stat)}"
     # The only line naming where the diff is, so it must not be the one a paste may drop.
     critical_manifest.mark(head)
     return [head, "", fence("\n".join(hunk.stat_rows(stat)), "yaml")]
+
+
+# What this agent's diff viewer window shows, recorded on the window (`hunk.set_mark`) as
+# JSON: the MR, the topic, the patch file and a digest of its text; and which of the user's
+# notes in it `notes` has printed (their numbers, in that order) and `reply` has answered.
+# On the window because all of it is true only for as long as the window is.
+VIEWER_MARK = "@review-mr-shown"
+
+
+class NotesNotCleared(Exception):
+    """The diff viewer window could not be asked for the user's notes in it, or could not
+    clear them, so it was left holding what it had rather than loaded over them."""
+
+
+def viewer_window():
+    """This agent's diff viewer window, as its session id, or None: no tmux, no `hunk`, or
+    no window of this agent's open."""
+    if not hunk.installed() or not hunk.in_tmux():
+        return None
+    return hunk.find_session(None, hunk.owner_id())
+
+
+def no_viewer(then):
+    """Why there is no diff viewer window to work with, in one line."""
+    if not hunk.installed() or not hunk.in_tmux():
+        return hunk.not_shown()
+    return f"no diff viewer window of yours is open; {then}"
+
+
+def viewer_shows(sid):
+    """The window's `VIEWER_MARK`, or {} where there is none."""
+    try:
+        m = json.loads(hunk.mark(sid, VIEWER_MARK) or "{}")
+    except ValueError:
+        return {}
+    return m if isinstance(m, dict) else {}
+
+
+def _set_shows(sid, shows):
+    return hunk.set_mark(sid, VIEWER_MARK, json.dumps(shows, separators=(",", ":")))
+
+
+def _same_patch(shows, path, text):
+    return shows.get("patch") == path and shows.get("digest") == _digest([text])
+
+
+def kept_notes_path(ctx, iid, make=True):
+    """Where the user's notes on a diff the window has since moved on from are kept, until
+    `notes` prints them."""
+    return state_file(STATE_ROOT, ctx["slug"], iid, "viewer-notes.json", make)
+
+
+def _kept_notes(path):
+    try:
+        data = load(path)
+    except (OSError, ValueError):
+        return []
+    return [n for n in data if isinstance(n, dict)] if isinstance(data, list) else []
+
+
+def clear_notes_before_load(ctx, iid, path, text):
+    """Ready this agent's diff viewer window to load the patch `text` at `path`.
+
+    The viewer re-anchors its notes by line number when it loads another diff, so a note
+    left on one topic's diff would land on unrelated code in the next: every note goes. The
+    user's are kept first (`kept_notes_path`, with the topic they were written on), because
+    a load is often a person's press, whose output never reaches the model; the kept copy
+    is then the only way their notes still do. Loading the same patch again moves nothing,
+    and every note stays.
+
+    Raises `NotesNotCleared` where the viewer cannot say which notes it holds, or cannot clear
+    them: the window is then left as it is, and nothing is to be loaded into it."""
+    sid = viewer_window()
+    if not sid:
+        return
+    shows = viewer_shows(sid)
+    if _same_patch(shows, path, text):
+        return
+    got = hunk.user_notes(sid)
+    if got is None:
+        raise NotesNotCleared("the diff viewer did not answer, so it was left holding what it "
+                         "had, any notes of yours in it included")
+    if got:
+        keep_viewer_notes(ctx, shows.get("iid") or iid, shows.get("topic"), got)
+    if not hunk.clear_all_notes(sid):
+        raise NotesNotCleared("the notes in the diff viewer could not be cleared, so it was left "
+                         "holding what it had")
+
+
+def keep_viewer_notes(ctx, iid, topic, notes):
+    """Add the user's `notes` (`hunk.user_notes`' shape), written on `topic`, to the kept
+    copy; a note kept already is not kept twice."""
+    path = kept_notes_path(ctx, iid)
+    hold(path)
+    data = _kept_notes(path)
+    have = {n.get("id") for n in data}
+    data += [{"topic": topic, "file": f, "side": side, "line": line, "text": text, "id": nid}
+             for f, side, line, text, nid in notes if nid not in have]
+    _save(path, data)
+
+
+def mark_shown(sid, iid, tid, path, text):
+    """Record on the window that it now shows topic `tid`'s patch at `path`. The same patch
+    loaded again keeps the record of which notes were printed and answered."""
+    prev = viewer_shows(sid)
+    shows = {"iid": iid, "topic": tid, "patch": path, "digest": _digest([text])}
+    if _same_patch(prev, path, text):
+        shows.update({k: prev[k] for k in ("printed", "answered") if k in prev})
+    _set_shows(sid, shows)
+
+
+def point_out(iid, tid, path, line, text, side):
+    """A note of the agent's on `path`:`line` of topic `tid`'s diff in the viewer, in view;
+    the line saying where. Only on that diff: a note meant for another would go on whatever
+    the window holds at that line."""
+    sid = viewer_window() or die(no_viewer(f"show the diff first with `diff {tid} --show`"))
+    shows = viewer_shows(sid)
+    if shows.get("iid") != iid or shows.get("topic") != tid or not shows.get("patch"):
+        die(f"the diff viewer does not show {tid}'s diff; show it first with "
+            f"`diff {tid} --show`")
+    if not hunk.point(sid, path, line, text, "agent", side=side,
+                      args=["patch", shows["patch"]]):
+        die(f"{path}:{line} cannot carry a note: it is not a line {tid}'s diff in the viewer "
+            "shows (or it is hidden there as read). Name that place in the chat instead.")
+    return f"pointed out {_where(path, side, line)} on {tref(tid)} in window {hunk.window_of(sid)}"
+
+
+def _where(file, side, line):
+    return f"{file}:{line}" + (" (removed line)" if side == "old" else "")
+
+
+def viewer_notes(ctx, iid):
+    """The user's notes for the model, as lines: those in the window not yet answered,
+    numbered for `reply`, then those kept from diffs it has moved on from, to answer in the
+    chat. Printed before the kept copy is forgotten; a note in the window stays there until
+    its topic is acked."""
+    sid = viewer_window()
+    kept_path = kept_notes_path(ctx, iid, make=False)
+    if os.path.exists(kept_path):
+        hold(kept_path)
+    kept = _kept_notes(kept_path)
+    if not sid and not kept:
+        die(no_viewer("there are no notes to read"))
+    live, shows = [], {}
+    if sid:
+        live = hunk.user_notes(sid)
+        if live is None:
+            die("the diff viewer did not answer; nothing can be said about the notes in it")
+        shows = viewer_shows(sid)
+    printed = list(shows.get("printed") or [])
+    answered = set(shows.get("answered") or [])
+    # A number, once given, stays the note's for as long as the window shows this diff.
+    printed += [n[4] for n in live if n[4] and n[4] not in printed]
+    topic = tref(shows["topic"]) if shows.get("topic") else "?"
+    lines = []
+    for f, side, line, text, nid in live:
+        if nid not in answered:
+            lines += [f"#{printed.index(nid) + 1}  {topic} {_where(f, side, line)}",
+                      f"    {text}"]
+    seen = {n[4] for n in live}
+    for n in kept:
+        if n.get("id") not in seen:
+            on = tref(n["topic"]) if n.get("topic") else "an earlier diff"
+            lines += [f"written on {on}, {_where(n.get('file'), n.get('side'), n.get('line'))}"
+                      ": no longer in the window, answer in the chat", f"    {n.get('text')}"]
+    print("\n".join(lines) if lines else "no notes of yours in the diff viewer")
+    if sid and printed != list(shows.get("printed") or []):
+        _set_shows(sid, {**shows, "printed": printed})
+    hunk.forget_notes(kept_path)
+
+
+def reply_note(number, text):
+    """Answer the user's note `number` (as `notes` numbered it) under it in the window."""
+    sid = viewer_window() or die(no_viewer("answer the note in the chat"))
+    shows = viewer_shows(sid)
+    printed = shows.get("printed") or []
+    ref = number.lstrip("#")
+    if not ref.isdigit() or not 1 <= int(ref) <= len(printed):
+        die(f"no note #{ref} in the diff viewer; `notes` numbers them")
+    nid = printed[int(ref) - 1]
+    live = hunk.user_notes(sid)
+    if live is None:
+        die("the diff viewer did not answer; nothing was posted")
+    note = next((n for n in live if n[4] == nid), None) or die(
+        f"note #{ref} is no longer in the diff viewer; answer it in the chat")
+    if shows.get("patch") and not hunk.show_unread(sid, [note[0]], ["patch", shows["patch"]]):
+        die(f"#{ref} is on {note[0]}, which the window hides as read and could not show "
+            "again: Hunk takes no reply there. Answer it in the chat")
+    if not hunk.reply(sid, nid, text):
+        die(f"the reply to #{ref} was refused by the viewer")
+    _set_shows(sid, {**shows, "answered": (shows.get("answered") or []) + [nid]})
+    return f"answered #{ref} under the note on {_where(*note[:3])}"
+
+
+def tidy_viewer(iid, tid):
+    """Topic `tid` is acked: where the diff viewer window shows it, its notes go — the
+    agent's, and the user's that `notes` has printed. A user's note never printed stays,
+    and so does every note above it in its thread. Never stands in the ack's way: a line to
+    print where the viewer did not answer, else None."""
+    sid = viewer_window()
+    shows = viewer_shows(sid) if sid else {}
+    if shows.get("iid") != iid or shows.get("topic") != tid:
+        return None
+    got = hunk.notes(sid)
+    if got is None:
+        return "the diff viewer did not answer; its notes stay"
+    printed = set(shows.get("printed") or [])
+    by_id = {n["id"]: n for n in got}
+    stays = set()
+    for n in got:
+        if n["source"] == "user" and n["id"] not in printed:
+            at = n["id"]
+            while at in by_id and at not in stays:
+                stays.add(at)
+                at = by_id[at]["parent"]
+    # Newest first, so a reply goes before the note it answers.
+    for n in reversed(got):
+        if n["id"] not in stays and (n["source"] != "user" or n["id"] in printed):
+            hunk.drop_note(sid, n["id"])
+    return None
 
 
 # ---------------------------------------------------------------- worktree
@@ -3867,7 +4100,8 @@ def set_lang(slug, lang):
 
 # The commands that only read the state: they run alongside any other, since a write is
 # whole or nothing (`save`). The mod asks for these after every view and on every move.
-READ_ONLY = ("state", "code", "draft", "path", "begun", "proposal", "bodies", "judge-prompt", "hunk-show")
+READ_ONLY = ("state", "code", "draft", "path", "begun", "proposal", "bodies", "judge-prompt", "hunk-show",
+             "point", "notes", "reply")
 
 
 def resolve_state(args):
@@ -4063,6 +4297,22 @@ def main():
     ph.add_argument("--push", type=int, help="which of the author's fixes (1-based); the latest "
                     "where none is given")
     ph.add_argument("--iid", type=int)
+    pt = sub.add_parser("point", help="on the user's request only: your note on a line of "
+                        "<t>'s diff in your viewer window, brought into view")
+    pt.add_argument("topic")
+    pt.add_argument("file", help="the file, as the diff names it")
+    pt.add_argument("line", type=int, help="its line number, on the new side unless --old")
+    pt.add_argument("text", help="what to say there")
+    pt.add_argument("--old", action="store_true", help="a removed line, by its old number")
+    pt.add_argument("--iid", type=int)
+    sub.add_parser("notes", help="the user said done: their notes in your viewer window not "
+                   "yet answered, numbered for `reply`, and those from diffs it has moved on "
+                   "from, to answer in the chat").add_argument("--iid", type=int)
+    pry = sub.add_parser("reply", help="answer the user's note <number>, as `notes` numbers "
+                         "it, under it in the viewer window")
+    pry.add_argument("number")
+    pry.add_argument("text")
+    pry.add_argument("--iid", type=int)
     pc = sub.add_parser("code", help="a topic's file, or one of your threads', as JSON for "
                         "the mod's sidebar")
     pc.add_argument("topic", nargs="?")
@@ -4224,12 +4474,29 @@ def main():
         f = picked_fix(state, t, args.push)
         ends = (f or {}).get("ends") or die(f"{tref(args.topic)} has no push of the author's "
                                             "kept in git to show")
-        shown = fix_refs.show(wt, ends, state_file(STATE_ROOT, ctx["slug"], iid, f"fix-{args.topic}.patch"),
-                              viewer_label(ctx, iid), f.get("paths"))
+        fix = state_file(STATE_ROOT, ctx["slug"], iid, f"fix-{args.topic}.patch")
+        text = fix_refs.patch(wt, ends, f.get("paths"))
+        try:
+            clear_notes_before_load(ctx, iid, fix, text)
+        except NotesNotCleared as e:
+            die(str(e))
+        shown = fix_refs.show(wt, ends, fix, viewer_label(ctx, iid), f.get("paths"))
         if not shown:
             die(hunk.not_shown())
+        mark_shown(shown[0], iid, args.topic, fix, text)
         hunk.focus_window(shown[0])
         print(f"the author's fix for {tref(args.topic)} is in the diff viewer, window {shown[1]}")
+        return
+    if cmd == "point":
+        topic_for(state, args.topic) or die(f"no topic {args.topic}")
+        print(point_out(iid, args.topic, args.file, args.line, args.text,
+                        "old" if args.old else "new"))
+        return
+    if cmd == "notes":
+        viewer_notes(ctx, iid)
+        return
+    if cmd == "reply":
+        print(reply_note(args.number, args.text))
         return
     if cmd == "code":                     # offline: the sidebar asks on every move
         # The file the sidebar shows: the topic's, or one of the user's own threads'.
@@ -4544,6 +4811,9 @@ def main():
         save(path, state)
         if args.state == "acked" and closing_line(state, t):
             print(f"closed: {closing_line(state, t)}")
+        tidied = tidy_viewer(iid, args.topic) if args.state == "acked" else None
+        if tidied:
+            print(tidied)
         if args.summary is not None:
             # Answered at the moment the wrong-language summary is stored, rather than
             # two commands later when a whole table has to be re-rendered.
@@ -4752,6 +5022,9 @@ def main():
         save(path, state)
         print(f"resolved and acked {tref(args.topic)}")
         print(f"closed: {closing_line(state, t)}")
+        tidied = tidy_viewer(iid, args.topic)
+        if tidied:
+            print(tidied)
     elif cmd == "post":
         failed = []
         url = post_draft(state, ctx, iid, args.topic, args.expect, args.resolve, failed)
@@ -4764,6 +5037,9 @@ def main():
         closing = args.resolve and closing_line(state, topic_for(state, args.topic))
         if closing:
             print(f"closed: {closing}")
+            tidied = tidy_viewer(iid, args.topic)
+            if tidied:
+                print(tidied)
         if failed:
             posted_but(f"posted {tref(args.topic)}: {url}", failed)
     elif cmd == "posted":

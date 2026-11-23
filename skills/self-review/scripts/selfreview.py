@@ -477,8 +477,9 @@ def reply(ref, text, cwd=None):
 
 
 def point(path, line, text, side="new", cwd=None):
-    """Start a diff note of the agent's own on `path`:`line` — only ever because the
-    author asked for something to be pointed out, never as a review of the agent's own.
+    """Start a diff note of the agent's own on `path`:`line`, in view (`hunk.point`) —
+    only ever because the author asked for something to be pointed out, never as a review
+    of the agent's own.
 
     The viewer refuses a line no hunk of the loaded piece shows; that place has to be
     named in the chat instead, which is what the error says.
@@ -491,7 +492,7 @@ def point(path, line, text, side="new", cwd=None):
         die(f"{path} is hidden in the window as read and could not be shown again, and Hunk "
             "takes no note on a file it does not show. Ask the author to show hidden files "
             "again (hunk-mark-read: \"Hide/show read files\"), or name that place in the chat")
-    nid = hunk.add_note(sid, path, line, text, "agent", side=side)
+    nid = hunk.point(sid, path, line, text, "agent", side=side)
     if not nid:
         die(f"{path}:{line} cannot carry a note: it is not a line this piece's diff shows "
             "(or not a file in it). Name that place in the chat instead.")
