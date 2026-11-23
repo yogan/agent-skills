@@ -630,7 +630,9 @@ test("a row is the topic's handle, severity and title: a pencil marks a draft, a
   expect(await ui.find({ type: 'Text', text: '\u{f0cb6} ' })).toBeDefined()             // the draft's pencil
   expect(await ui.find({ type: 'Text', text: /^\u{f12c4}/u })).toBeUndefined()             // no state icon
   await ui.press({ key: 'group-closed' })
-  expect((await ui.find({ type: 'Text', text: / summary of t2/ }))?.props.strikethrough).toBe(true)
+  // The title alone is struck, never the space before it.
+  const struck = await ui.find({ type: 'Text', text: /summary of t2/ })
+  expect([struck?.props.strikethrough, struck?.text.startsWith(' ')]).toEqual([true, false])
   await ui.unmount()
 })
 

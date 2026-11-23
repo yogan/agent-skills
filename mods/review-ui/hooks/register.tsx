@@ -2528,8 +2528,11 @@ export const register: Register = on => {
             <Button key={`row-${x.id}`} plain onPress={() => (x.isCurrent && isLeavable ? leave() : showTopic($, s, x.id))}>
               {!isReview && <Text {...base}>{`${x.icon} `}</Text>}
               <Text {...base} color={ACCENT}>{x.id.padEnd(idWidth)}</Text>
-              {/* A dropped topic is struck through: closed, and not raised after all. */}
-              <Text {...base} strikethrough={x.state === 'dropped' || undefined}>{` ${fitTitle(x.title, room)}`}</Text>
+              {/* A dropped topic is struck through: closed, and not raised after all. The
+                  title alone, never the space that parts it from its id. */}
+              {x.state === 'dropped'
+                ? [<Text key="gap" {...base}>{' '}</Text>, <Text key="title" {...base} strikethrough>{fitTitle(x.title, room)}</Text>]
+                : <Text {...base}>{` ${fitTitle(x.title, room)}`}</Text>}
             </Button>
           </Box>
         )
