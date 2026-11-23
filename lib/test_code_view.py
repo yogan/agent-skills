@@ -34,7 +34,17 @@ class TestTouched(unittest.TestCase):
     REWRITE = "@@ -8,7 +8,8 @@ def f():\n a8\n a9\n a10\n-a11\n+b11\n+b12\n a12\n a13\n a14\n"
 
     def test_a_rewritten_line_of_the_comment_s_is_a_hit(self):
-        self.assertEqual(code_view.touched(self.REWRITE, 10, 11), (True, 10, 11))
+        # Line 11 became two: the stretch now ends on the second.
+        self.assertEqual(code_view.touched(self.REWRITE, 10, 11), (True, 10, 12))
+
+    def test_a_hit_carries_the_stretch_to_what_took_its_place(self):
+        """Above the stretch the push added lines and inside it rewrote one: the next push
+        is checked against the lines the author left, not the numbers it had before."""
+        diff = "@@ -2,0 +3,2 @@\n+n1\n+n2\n@@ -20,3 +22,2 @@\n a20\n-a21\n+b21\n a22\n"
+        self.assertEqual(code_view.touched(diff, 20, 22), (True, 22, 24))
+
+    def test_a_stretch_removed_whole_lands_on_the_line_after_it(self):
+        self.assertEqual(code_view.touched("@@ -10,3 +9,0 @@\n-a\n-b\n-c\n", 10, 12), (True, 10, 10))
 
     def test_context_lines_are_not_changes_and_move_with_the_hunk(self):
         self.assertEqual(code_view.touched(self.REWRITE, 13, 14), (False, 14, 15))
@@ -49,6 +59,87 @@ class TestTouched(unittest.TestCase):
 
     def test_a_file_the_push_left_alone_keeps_its_lines(self):
         self.assertEqual(code_view.touched(None, 4, 6), (False, 4, 6))
+
+
+FUNC = ["def shipping_cost(order):",
+        "    weight = sum(item.weight for item in order.items)",
+        "    if weight > order.carrier.limit:",
+        "        raise TooHeavy(weight)",
+        "    rate = order.carrier.rate_for(order.zone)",
+        "    return round(weight * rate, 2)"]
+
+
+def removed(at, lines):
+    """A diff removing `lines` from line `at` on."""
+    return f"@@ -{at},{len(lines)} +{at - 1},0 @@\n" + "".join(f"-{x}\n" for x in lines)
+
+
+def added(at, lines, context=()):
+    """A diff adding `lines` at line `at`, the file's own `context` lines just above them."""
+    n = len(context)
+    return (f"@@ -{at - n},{n} +{at - n},{n + len(lines)} @@\n" + "".join(f" {x}\n" for x in context)
+            + "".join(f"+{x}\n" for x in lines))
+
+
+class TestMovedTo(unittest.TestCase):
+    """Where a push moved the lines a comment is on, read off GitLab's diffs of the files it
+    changed: the block they were removed with, found among the lines it added."""
+
+    GONE = removed(20, FUNC)                       # lines 20-25; the comment on 22, the `if`
+
+    def test_a_function_moved_into_another_file_takes_the_comment_s_line_along(self):
+        got = code_view.moved_to(self.GONE, 22, 22, [("pricing.py", self.GONE, True),
+                                                     ("carriers.py", added(40, FUNC, ["", ""]), False)])
+        self.assertEqual(got, [{"file": "carriers.py", "first": 42, "last": 42}])
+
+    def test_into_a_new_file(self):
+        new = f"@@ -0,0 +1,{len(FUNC)} @@\n" + "".join(f"+{x}\n" for x in FUNC)
+        self.assertEqual(code_view.moved_to(self.GONE, 21, 23, [("shipping.py", new, False)]),
+                         [{"file": "shipping.py", "first": 2, "last": 4}])
+
+    def test_moved_and_the_commented_line_itself_edited_on_the_way(self):
+        edited = [*FUNC[:2], "    if weight > order.carrier.max_weight:", *FUNC[3:]]
+        self.assertEqual(code_view.moved_to(self.GONE, 22, 22, [("carriers.py", added(40, edited), False)]),
+                         [{"file": "carriers.py", "first": 42, "last": 42}])
+
+    def test_a_deletion_is_no_move_however_much_boilerplate_was_added_elsewhere(self):
+        other = added(5, ["import os", "", "}", "return", "    pass", FUNC[4], "else:"])
+        self.assertEqual(code_view.moved_to(self.GONE, 22, 22, [("carriers.py", other, False)]), [])
+
+    def test_the_same_lines_added_far_apart_are_no_move(self):
+        """Three of the deleted function's lines turn up in one file, each in a change of
+        its own far from the others: no block moved there."""
+        other = "".join(added(at, [FUNC[k], f"    log.debug('step {k}')"] + ["    pass"] * 8)
+                        for at, k in ((10, 1), (60, 2), (110, 4)))
+        self.assertEqual(code_view.moved_to(self.GONE, 22, 22, [("carriers.py", other, False)]), [])
+
+    def test_lines_the_destination_had_already_are_no_move(self):
+        """The same function was in the other file before the push: removing this copy is
+        a deletion of a duplicate, not a move."""
+        kept = "@@ -38,6 +38,7 @@\n+# shared\n" + "".join(f" {x}\n" for x in FUNC)
+        self.assertEqual(code_view.moved_to(self.GONE, 22, 22, [("carriers.py", kept, False)]), [])
+
+    def test_split_into_two_files_each_takes_its_part(self):
+        more = ["def handling_fee(order):", "    fee = order.carrier.base_fee",
+                "    if order.fragile:", "        fee += order.carrier.fragile_fee", "    return fee"]
+        gone = removed(20, FUNC + more)                # 20-25 and 26-30
+        got = code_view.moved_to(gone, 22, 28, [("carriers.py", added(10, FUNC), False),
+                                                ("fees.py", added(3, more), False)])
+        self.assertEqual(got, [{"file": "carriers.py", "first": 12, "last": 15},
+                               {"file": "fees.py", "first": 3, "last": 5}])
+
+    def test_moved_further_down_the_same_file(self):
+        diff = self.GONE + "@@ -60,0 +55,6 @@\n" + "".join(f"+{x}\n" for x in FUNC)
+        self.assertEqual(code_view.moved_to(diff, 22, 22, [("pricing.py", diff, True)]),
+                         [{"file": "pricing.py", "first": 57, "last": 57}])
+
+    def test_a_rewrite_in_place_is_no_move(self):
+        diff = (f"@@ -20,{len(FUNC)} +20,{len(FUNC)} @@\n" + "".join(f"-{x}\n" for x in FUNC)
+                + "".join(f"+{x}  \n" for x in FUNC))
+        self.assertEqual(code_view.moved_to(diff, 22, 22, [("pricing.py", diff, True)]), [])
+
+    def test_lines_the_push_left_alone_move_nowhere(self):
+        self.assertEqual(code_view.moved_to(self.GONE, 5, 6, [("carriers.py", added(40, FUNC), False)]), [])
 
 
 class TestLineAnchor(unittest.TestCase):
@@ -135,6 +226,26 @@ class TestView(unittest.TestCase):
         # Another of the fix's files picked: shown with no comment on it.
         v = code_view.fix_view(repo, thread, files, "o.md", before, after)
         self.assertEqual((v["file"], v["line"], v["at"]), ("o.md", None, [1, 1]))
+
+    def test_a_fix_that_moved_the_code_opens_where_it_went(self):
+        """The push moved the commented function into another file: the comment's file
+        shows only its removal, so the view opens on the function where it is now, its line
+        marked, and the comment's file still leads the list."""
+        repo, before = self.repo(["# pricing", *FUNC, "# end"], ["# pricing", "# end"])
+        with open(os.path.join(repo, "o.md"), "w") as f:
+            f.write("".join(f"{x}\n" for x in ["# carriers", "", *FUNC]))
+        self.git(repo, "add", "-A")
+        self.git(repo, "commit", "-qm", "move it")
+        after = subprocess.run(["git", "-C", repo, "rev-parse", "HEAD"], capture_output=True, text=True).stdout.strip()
+        files = [["o.md", 8, 0], ["t.md", 0, 6]]
+        thread = {"file": "t.md", "line": 4, "head_sha": before, "side": "new"}
+        v = code_view.fix_view(repo, thread, files, None, before, after,
+                               moved=[{"file": "o.md", "first": 5, "last": 5}])
+        self.assertEqual((v["file"], v["line"], v["fix_files"]), ("o.md", 5, files[::-1]))
+        self.assertEqual(code_view.new_lines(v)[v["line"] - 1], FUNC[2])
+        # Picked by hand, the comment's file shows the removal, as before.
+        self.assertEqual(code_view.fix_view(repo, thread, files, "t.md", before, after,
+                                            moved=[{"file": "o.md", "first": 5, "last": 5}])["file"], "t.md")
 
     def test_a_file_the_mr_adds_or_removes_whole_says_so(self):
         repo, base = self.repo(list("abc"), list("abc"))

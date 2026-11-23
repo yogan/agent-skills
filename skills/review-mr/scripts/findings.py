@@ -1508,7 +1508,13 @@ def story_steps(state, t, close=None):
         # one; until then it is what is known of it, a change to the file.
         did = "pushed a change to its file" if f.get("near") else "pushed a fix"
         nth = f" (push {k})" if len(fixes) > 1 else ""
-        events.append({"at": f.get("at"), "icon": ui.PUSHED_ICON, "text": f"{author} {did}{nth}{said(f)}"})
+        # Where it moved the code: the sidebar opens there, and a story that said only "fix"
+        # beside a diff of the comment's file losing it all reads as a deletion.
+        went = sorted({q["file"] for q in f.get("moved_to") or []})
+        moved = ("" if not went else " · moved within its file" if went == [topic_file(state, t)[0]]
+                 else " · moved to " + ", ".join(f"`{os.path.basename(q)}`" for q in went))
+        events.append({"at": f.get("at"), "icon": ui.PUSHED_ICON,
+                       "text": f"{author} {did}{nth}{moved}{said(f)}"})
     last = [close] if close and close.get("last") else []
     return ui.story_md(events + ([close] if close and not last else [])) + [
         ui.step_md(e["icon"], e["text"], e["at"]) for e in last]
@@ -2151,20 +2157,31 @@ def check_pushes(state, ctx, iid, base):
         diffs = compare(since, head)
         if diffs is None:
             continue
-        d = _file_diff(diffs, x["file"])
-        hit, a, b = code_view.touched((d or {}).get("diff"), first, last)
-        if hit and authored is not None and x["file"] not in authored:
-            hit = False                   # the rebase moved it, not the author
-        # The author's push changed the comment's file elsewhere: an answer in code is as
-        # often beside the commented lines as on them (a `.catch` two lines down, a guard
-        # above), so the topic is the user's to look at too, and the agent judges whether
-        # the change concerns it. After a rebase only where the MR's own change to the file
-        # is known to differ: what the target branch brought along is nobody's answer.
-        # Not for another reviewer's thread: nobody judges a push for one, and a change
-        # elsewhere in its file is no news of it.
-        near = (not hit and bool(((d or {}).get("diff") or "").strip())
-                and t.get("source") not in ("peer", "author")
-                and (not rebased or (authored is not None and x["file"] in authored)))
+        _, a, b = code_view.touched((_file_diff(diffs, x["file"]) or {}).get("diff"), first, last)
+        # Where a push moved the code out of the comment's file (`walk_fixes`, which has
+        # walked up to here), the code is watched where it went instead.
+        fw = t.get("fix_walk")
+        places = ([p for p in walk_places(fw) if not p.get("left")]
+                  if fw and fw.get("sha") == since and any(p.get("via") for p in walk_places(fw))
+                  else [{"file": x["file"], "first": first, "last": last}])
+        hit = near = False
+        for q in places:
+            d = _file_diff(diffs, q["file"])
+            on = code_view.touched((d or {}).get("diff"), q["first"], q["last"])[0]
+            if on and authored is not None and q["file"] not in authored:
+                on = False                # the rebase moved it, not the author
+            hit = hit or on
+            # The author's push changed the file elsewhere: an answer in code is as often
+            # beside the commented lines as on them (a `.catch` two lines down, a guard
+            # above), so the topic is the user's to look at too, and the agent judges
+            # whether the change concerns it. After a rebase only where the MR's own change
+            # to the file is known to differ: what the target branch brought along is
+            # nobody's answer. Not for another reviewer's thread: nobody judges a push for
+            # one, and a change elsewhere in its file is no news of it.
+            near = near or (not on and bool(((d or {}).get("diff") or "").strip())
+                            and t.get("source") not in ("peer", "author")
+                            and (not rebased or (authored is not None and q["file"] in authored)))
+        near = near and not hit
         if hit or near:
             t["pushed"] = {"from": (p or {}).get("from") or w["sha"], "to": head,
                            "at": now_iso()}
@@ -2234,13 +2251,16 @@ def verdict_word(state, t, v):
     return word if mine else word.replace("Your comment", "The comment")
 
 
-def store_verdict(state, t, says, text, did=None, asked=None, case=None, unrelated=False):
-    """Store the agent's judgment of the answer standing on `t`."""
+def store_verdict(state, t, says, text, did=None, asked=None, case=None, unrelated=False,
+                  wrong_move=False):
+    """Store the agent's judgment of the answer standing on `t`. `wrong_move`: the code a
+    push was found to have moved the commented code to is not it (`settle_moves`)."""
     if asked:
         t["asked"] = asked              # about the comment, so it outlasts every answer
     t["verdict"] = {"says": says, "text": text, "did": did, "on": answer_mark(state, t)}
     if says == "more" and case:
         t["verdict"]["case"] = case
+    settle_moves(t, wrong_move)
     settle_near_fixes(t, says, case, unrelated)
     if says == "wait":
         t["draft"] = None               # waiting is choosing not to send it
@@ -2491,7 +2511,9 @@ _ANSWER_FORMS = {
         "comment raised and what it asked for, e.g. `save()` drops its promise, so a failed write "
         "goes unnoticed; asked for an `await`.>\". An item marked *push beside its lines* may add "
         "\"unrelated_push\": true where the pushed change has nothing to do with the comment (with "
-        "`wait` where nothing else answers it)."),
+        "`wait` where nothing else answers it). An item marked *code moved* may add "
+        "\"wrong_move\": true where the code it names as where the commented code went is not "
+        "that code: the topic then stays on the comment's file."),
     "peer": (
         'Another reviewer\'s thread, theirs to settle, which the user watches: {"view": "fyi" | '
         '"needs", "why": "<1-2 sentences: what it says>"}. `needs` only when it is the user\'s '
@@ -2544,14 +2566,18 @@ def judge_prompt(state, ctx, iid, skip=()):
                 if kinds_now == ["push"] else
                 "the author answered, and pushed a change to the comment's file (not its lines)"
                 if near else "the author answered")
+        moves = moves_said(t)
         marks = [m for m, on in (("give asked", not t.get("asked")),
-                                 ("push beside its lines", near)) if on]
+                                 ("push beside its lines", near),
+                                 ("code moved", unjudged_move(t))) if on]
         out += [f"## {tid}: {name or 'an answered comment'}"
                 + (f" (*{'*, *'.join(marks)}*)" if marks else ""), "",
-                f"What happened: {what}."]
+                f"What happened: {what}.", *moves]
         if t.get("asked"):
             out.append(f"What the comment asked, as recapped before: {t['asked']}")
         out += ["", judge.fenced("thread", _whole_threads(state, t)), "",
+                "What the author changed since the comment, in the comment's file and wherever "
+                "its code moved:" if moves else
                 "What the author changed in the comment's file since the comment:",
                 judge.fenced("diff", render_topic_diff(state, ctx, iid, tid)), ""]
     for th in j["own"]:
@@ -2617,7 +2643,8 @@ def judge_store(state, ctx, iid, item, a):
     case = judge.choice(a, "case", tuple(VERDICT_CASES)) if says == "more" else None
     near = bool((pushed_of(state, t) or {}).get("near"))
     store_verdict(state, t, says, text, did=did, asked=None if t.get("asked") else asked,
-                  case=case, unrelated=near and a.get("unrelated_push") is True)
+                  case=case, unrelated=near and a.get("unrelated_push") is True,
+                  wrong_move=unjudged_move(t) and a.get("wrong_move") is True)
 
 
 def propose_match(state, thread, into, summary, why, recommend):
@@ -3216,7 +3243,8 @@ def render_updates(state, ctx, iid):
 
 def render_topic_diff(state, ctx, iid, tid, show=False, inline_limit=80):
     """What the author changed for one topic since you posted it, server-side via the
-    compare API (force-push-safe). Always prints the compare URL.
+    compare API (force-push-safe): the comment's file, and every file a push moved its code
+    to (`topic_files`), said above the diff. Always prints the compare URL.
 
     Plain, it is the AGENT's input: the whole diff, from which it tells the user in a few
     bullets what changed — the user reads that summary, not a dump. `show=True` is for when
@@ -3231,19 +3259,25 @@ def render_topic_diff(state, ctx, iid, tid, show=False, inline_limit=80):
     if not start:
         return f"{tref(tid)}: no baseline captured — nothing to compare yet"
     cur = mr_head(ctx, iid)
-    file = _loc(state, t, full=True).rsplit(":", 1)[0]
+    # The comment's file, and every file its code moved to since: a function moved out of
+    # it, fix and all, is in the file it went to, and the comment's file alone shows it
+    # removed.
+    files = topic_files(state, t)
     vs = versions(ctx, iid)
     diff_id = vs[0].get("id") if vs else None
     web = _mr_web(state, ctx, iid)
     url = f"{web}/diffs?diff_id={diff_id}&start_sha={start}"
     out = [f"**{tref(tid)}** — author changes since you posted "
            f"(`{start[:12]}` → `{(cur or '')[:12]}`)", url]
+    out += [f"_{m}_" for m in moves_said(t)]
     diffs = _compare(ctx, start, cur)
     if diffs is None:
         out.append("_(couldn't fetch the diff — open the URL)_")
         return "\n".join(out)
-    picked = [d for d in diffs if file and (d.get("new_path") == file
-              or d.get("old_path") == file)] if file else diffs
+
+    def which(d):
+        return next((k for k, f in enumerate(files) if f in (d.get("new_path"), d.get("old_path"))), None)
+    picked = sorted((d for d in diffs if which(d) is not None), key=which) if files else diffs
     if not picked:
         out.append("_(no change to this topic's file in that range — the author may "
                    "have addressed it elsewhere; open the URL for the whole diff)_")
@@ -3678,8 +3712,11 @@ def walk_fixes(state, ctx, iid, vs=None):
     The MR's versions are GitLab's record of every push (force pushes included), so the walk
     goes from the version the comment was posted on to the newest, one pair of consecutive
     versions at a time, and carries the comment's lines through each (`code_view.touched`).
-    A push that only moved them is no fix; one that changed them is, with its GitLab link
-    (that version against the one before). Where a rebase came with it, the head-to-head
+    A push that only shifted them is no fix; one that changed them is, with its GitLab link
+    (that version against the one before). One that removed them and added the same code
+    elsewhere — another file, or further down this one — moved it: the record says where
+    (`moved_to`), and the walk follows the code there from then on (`walk_places`), until the
+    agent rejects the move (`settle_moves`). Where a rebase came with it, the head-to-head
     diff holds the target branch's changes too: the file counts only where the MR's own
     change to it differs between the two versions, as `_author_touch` decides for the
     `updates` report, and the record says it may include other changes. Each topic keeps
@@ -3718,15 +3755,17 @@ def walk_fixes(state, ctx, iid, vs=None):
         if "fix_walk" not in t:
             sha, first, last = comment_origin(x, vs, compare) or (
                 x["head_sha"], x.get("line_start") or x["line"], x["line"])
-            t["fix_walk"] = {"sha": sha, "file": x["file"], "first": first, "last": last}
+            t["fix_walk"] = {"sha": sha, "places": [{"file": x["file"], "first": first, "last": last}]}
         w = t["fix_walk"]
+        places = walk_places(w)
         k = at.get(w["sha"])
         if k is None:
             if w["sha"] == head or w.get("lost") and topic_status(state, t) == "acked":
                 continue
             diffs = compare(w["sha"], head)
-            d = _file_diff(diffs or [], w["file"])
-            if diffs is not None and code_view.touched((d or {}).get("diff"), w["first"], w["last"])[0]:
+            if diffs is not None and any(
+                    code_view.touched((_file_diff(diffs, p["file"]) or {}).get("diff"), p["first"], p["last"])[0]
+                    for p in places if not p.get("left")):
                 w["lost"] = True
                 t["fixes"] = [{"before": w["sha"], "after": head, "at": now_iso(), "mixed": True,
                                "url": f"{ctx['web']}/-/compare/{w['sha']}...{head}"}]
@@ -3735,27 +3774,58 @@ def walk_fixes(state, ctx, iid, vs=None):
             diffs = compare(prev.get("head_commit_sha"), cur.get("head_commit_sha"))
             if diffs is None:
                 break                             # GitLab could not say: the next check tries
-            d = _file_diff(diffs, w["file"])
-            hit, first, last = code_view.touched((d or {}).get("diff"), w["first"], w["last"])
             rebase = cur.get("base_commit_sha") != prev.get("base_commit_sha")
-            # The push changed the comment's file: its lines (`hit`), or elsewhere in it
-            # (`near`, as `check_pushes` notes it: the agent judges whether it concerns the
-            # comment, `settle_near_fixes`). Not for a topic closed here: a later change to
-            # its file is no answer to it.
-            near = (not hit and bool(((d or {}).get("diff") or "").strip())
-                    and topic_status(state, t) not in ("acked", "dropped"))
-            if (hit or near) and rebase:
-                before, after = own_change(prev, w["file"]), own_change(cur, w["file"])
-                if before is not None and before == after:
-                    hit = near = False            # the rebase moved it, not the author
-                elif before is None or after is None:
-                    near = False                  # GitLab could not say whose change it is
-            if hit or near:
-                fix = {"before": prev.get("head_commit_sha"), "after": cur.get("head_commit_sha"),
+            after = cur.get("head_commit_sha")
+            hits, nears, moved, now = [], [], [], []
+            for p in places:
+                d = _file_diff(diffs, p["file"])
+                text = (d or {}).get("diff")
+                hit, first, last = code_view.touched(text, p["first"], p["last"])
+                there = {**p, "file": (d or {}).get("new_path") or p["file"], "first": first,
+                         "last": last}
+                if p.get("left"):
+                    now.append(there)             # followed, not watched (`walk_places`)
+                    continue
+                # The push changed the place's file: its lines (`hit`), or elsewhere in it
+                # (`near`, as `check_pushes` notes it: the agent judges whether it concerns
+                # the comment, `settle_near_fixes`). Not for a topic closed here: a later
+                # change to its file is no answer to it.
+                near = (not hit and bool((text or "").strip())
+                        and topic_status(state, t) not in ("acked", "dropped"))
+                if (hit or near) and rebase:
+                    was, became = own_change(prev, p["file"]), own_change(cur, p["file"])
+                    if was is not None and was == became:
+                        hit = near = False        # the rebase moved it, not the author
+                    elif was is None or became is None:
+                        near = False              # GitLab could not say whose change it is
+                # Lines removed may have gone elsewhere rather than away: a function moved
+                # into another file, or down its own. The walk goes on where they went; where
+                # every one of them went, this place is only followed (`walk_places`).
+                went = code_view.moved_to(text, p["first"], p["last"], [
+                    (o.get("new_path") or o.get("old_path"), o.get("diff"), o is d)
+                    for o in diffs]) if hit else []
+                if went:
+                    via = [*p.get("via", []), after]
+                    now += [{**q, "via": via} for q in went]
+                    moved += [q for q in went if q not in moved]
+                    if code_view.all_removed(text, p["first"], p["last"]):
+                        there["left"] = after
+                now.append(there)
+                if hit or near:
+                    (hits if hit else nears).append(p.get("via") or [])
+            places = w["places"] = [p for k, p in enumerate(now) if p not in now[:k]]
+            if hits or nears:
+                fix = {"before": prev.get("head_commit_sha"), "after": after,
                        "at": push_time(ctx, cur) or now_iso(), "mixed": rebase, "rebase": rebase,
                        "url": f"{web}/diffs?diff_id={cur.get('id')}&start_sha={prev.get('head_commit_sha')}"}
-                if near:
+                if not hits:
                     fix["near"] = True
+                # The moves the places it was found on came through: a move the agent rejects
+                # takes the pushes found only on where it led with it (`settle_moves`).
+                if any(hits or nears):
+                    fix["via"] = hits or nears
+                if moved:
+                    fix["moved_to"] = moved
                 if rebase:
                     # What the viewer and the files list show of it: the push against the
                     # head before it rebased onto the new base (`fix_refs.rebased`), so the
@@ -3767,14 +3837,98 @@ def walk_fixes(state, ctx, iid, vs=None):
                     if own is not None:
                         fix["paths"] = sorted({d.get("new_path") or d.get("old_path") for d in own})
                 t.setdefault("fixes", []).append(fix)
-            w.update(sha=cur.get("head_commit_sha"), first=first, last=last,
-                     file=(d or {}).get("new_path") or w["file"])
+            w["sha"] = after
+
+
+def walk_places(w):
+    """The places a topic's walk (`t["fix_walk"]`) follows its code through, in the code at
+    `w["sha"]`: `{"file", "first", "last"}` each, the comment's own first, then every place
+    a push moved the code to (`via`: those pushes, in order). One whose code a push moved
+    away entirely is `left` (that push): followed but not watched, so its file's later edits
+    count for nothing, until the agent judged the move (`settle_moves`). A walk recorded
+    before code was followed out of its file is read as its one place."""
+    if "places" not in w:
+        w["places"] = [{"file": w.pop("file", None), "first": w.pop("first", None),
+                        "last": w.pop("last", None)}]
+    return w["places"]
+
+
+def settle_moves(t, wrong=False):
+    """Once the agent judged the answer on `t`: each push found to have moved its code that
+    the agent had not judged yet stands where it did not call the move `wrong` (the code it
+    went to is not the commented code), and the places the code left are let go. A wrong
+    one is undone: the place it led to is dropped, with every push found only there, and
+    the walk watches where the code was again, from where it is now."""
+    w = t.get("fix_walk")
+    for f in t.get("fixes") or []:
+        if not f.get("moved_to") or f.get("move_seen"):
+            continue
+        m = f["after"]
+        places = walk_places(w) if w else []
+        if not wrong:
+            f["move_seen"] = True
+            if w:
+                w["places"] = [p for p in places if p.get("left") != m]
+            continue
+        f.pop("moved_to")
+        for g in t["fixes"]:
+            if g.get("via") and all(m in v for v in g["via"]):
+                g["off"] = True
+        if w:
+            w["places"] = [{k: v for k, v in p.items() if not (k == "left" and v == m)}
+                           for p in places if m not in p.get("via", [])]
+
+
+def moved_place(t):
+    """Where `t`'s code is, as of the walk's commit (`sha`), where pushes moved it away from
+    the comment's place entirely: the first place the walk watches that a move led to. None
+    while the comment's own place is watched still."""
+    w = t.get("fix_walk")
+    places = walk_places(w) if w else []
+    if any(not p.get("via") and not p.get("left") for p in places):
+        return None
+    p = next((p for p in places if p.get("via") and not p.get("left")), None)
+    return {**p, "sha": w["sha"]} if p else None
+
+
+def unjudged_move(t):
+    """Whether a push was found to have moved `t`'s code and the agent has not judged that
+    yet: its verdict may reject it (`settle_moves`)."""
+    return any(f.get("moved_to") and not f.get("move_seen") for f in t.get("fixes") or [])
+
+
+def topic_files(state, t):
+    """The files `t`'s code has been in: the comment's first, then every file a push moved
+    it to that the agent did not reject, under its name now. What its diff, the judge and
+    the sidebar show of the topic."""
+    out = [topic_file(state, t)[0]]
+    for f in fixes_of(t):
+        out += [q["file"] for q in f.get("moved_to") or []]
+    if t.get("fix_walk"):
+        out += [p["file"] for p in walk_places(t["fix_walk"]) if p.get("via")]
+    return [f for k, f in enumerate(out) if f and f not in out[:k]]
+
+
+def _place_md(q):
+    return f"`{q['file']}`:{q['first']}" + (f"–{q['last']}" if q["last"] != q["first"] else "")
+
+
+def moves_said(t):
+    """Where `t`'s code moved, one sentence per push that moved it, for whoever judges the
+    answer. A move is found by matching lines (`code_view.moved_to`), so the judge may find
+    it is not the commented code after all."""
+    fixes = fixes_of(t)
+    return ["The commented code moved to " + ", ".join(_place_md(q) for q in f["moved_to"])
+            + (f" in push {n}" if len(fixes) > 1 else "") + "."
+            for n, f in enumerate(fixes, 1) if f.get("moved_to")]
 
 
 def fixes_of(t):
     """The author's fixes to `t` since its comment, oldest first: one per push that changed
-    its lines, or its file where the agent did not find that change to be about something
-    else (`walk_fixes`, `settle_near_fixes`). A topic from before they were recorded has its
+    its lines (in the comment's file, or wherever a push moved them), or that file where the
+    agent did not find that change to be about something else (`walk_fixes`,
+    `settle_near_fixes`), and not one found only where a move the agent rejected led
+    (`settle_moves`). A topic from before they were recorded has its
     one noted push, if any (`t["pushed"]`)."""
     if t.get("fixes"):
         return [f for f in t["fixes"] if not f.get("off")]
@@ -3785,7 +3939,8 @@ def fixes_of(t):
 
 def settle_near_fixes(t, says, case=None, unrelated=False):
     """Once the agent judged the answer on `t`: each push noted for changing the comment's
-    file but not its lines is its fix where the verdict found the author did something about
+    file (or one its code moved to) but not its lines is its fix where the verdict found the
+    author did something about
     the comment, and not its push where it did not (the author only agreed, nothing is
     fixed, or the agent said the change is about something else). Until then such a push is
     listed as a change to the file, which is all that is known of it."""
@@ -4479,6 +4634,9 @@ def main():
     pv.add_argument("--unrelated-push", action="store_true",
                     help="the push noted for changing the comment's file has nothing to do "
                     "with the comment: it is no longer listed as the topic's")
+    pv.add_argument("--wrong-move", action="store_true",
+                    help="the code `diff <t>` says the commented code moved to is not that "
+                    "code: the topic stays on the comment's file")
     pv.add_argument("--did", help="one English sentence: what the author did since the "
                     "comment (replied …, pushed …), shown above the verdict")
     pv.add_argument("--text", required=True,
@@ -4618,15 +4776,23 @@ def main():
         # MR adds is all new and the fix cannot be told from the rest.
         mine = bool((args.since_comment or (not args.thread and fixes_of(t) and not files))
                     and since and (x or {}).get("side") != "old")
-        v = code_view.view(wt, file, line, since, start=(x or {}).get("line_start"),
-                           side=(x or {}).get("side") or "new",
-                           base=since if mine else state.get("diff_base"))
+        # Code a push moved away from the comment's place is shown where it went, carried on
+        # from where the walk last saw it; the diff is still the one since the comment.
+        went = moved_place(t) if not args.thread else None
+        if went:
+            v = code_view.view(wt, went["file"], went["last"], went["sha"], start=went["first"],
+                               base=since if mine else state.get("diff_base"))
+        else:
+            v = code_view.view(wt, file, line, since, start=(x or {}).get("line_start"),
+                               side=(x or {}).get("side") or "new",
+                               base=since if mine else state.get("diff_base"))
         if files:
             # The author's fix, kept in git: every file of it is shown the same way, as the
             # fix changes it, old and new (the commit before it to the one it made), the
             # comment's own file too. The verdict on the card is about this change, so it
             # is what the sidebar opens on: GitLab's "compare with previous version".
-            picked = code_view.fix_view(wt, x or {}, files, args.file, *ends)
+            picked = code_view.fix_view(wt, x or {}, files, args.file, *ends,
+                                        moved=fix.get("moved_to") or ())
             if picked:
                 v = {**picked, "mode": "pushed"}
             elif v:
@@ -5081,7 +5247,7 @@ def main():
             die("--case names what is wrong with an answer, so it goes with `more` only")
         before = verdict_of(state, t)
         store_verdict(state, t, args.says, args.text, did=args.did, asked=args.asked,
-                      case=args.case, unrelated=args.unrelated_push)
+                      case=args.case, unrelated=args.unrelated_push, wrong_move=args.wrong_move)
         if before and ui.drawn() and args.says != "wait":
             # A verdict the chat changed (Analyse more): the topic's whole card with it, since
             # the card up already is folded away once this one comes.

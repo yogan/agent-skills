@@ -15,6 +15,7 @@ out here, since only git knows them:
 Neither is fatal: a commit the checkout no longer has (a force-push dropped it) leaves the line
 as posted and marks nothing.
 """
+import difflib
 import functools
 import hashlib
 import os
@@ -457,12 +458,19 @@ def touched(diff, first, last):
     What the update check asks of a push: a comment is on a stretch of lines, and the push
     either rewrote some of them (the author may have answered in code) or only moved them.
     A line inserted between two of the stretch's lines counts as a change to it; one
-    inserted just before or after it does not."""
+    inserted just before or after it does not. A rewritten stretch's new lines are the
+    first and last of what took its place, so the next push is checked against the code
+    the author left there rather than against the numbers it had before; a stretch removed
+    with nothing in its place lands on the line after it, as `carry` has it."""
     old = new = 0
-    hit, shift_first, shift_last = False, None, None
+    hit = False
+    at_first = at_last = None             # their new lines, where the diff shows them
+    last_gone = False                     # `last` removed: it ends where its block ends
     for ln in (diff or "").splitlines():
         m = HUNK.match(ln)
         if m:
+            if last_gone:
+                at_last, last_gone = new - 1, False
             old, new = int(m[1]), int(m[3])
             # `-a,0` / `+c,0` name the line BEFORE an empty side, as unified diff counts.
             if m[2] == "0":
@@ -475,26 +483,164 @@ def touched(diff, first, last):
         if ln.startswith("-"):
             if first <= old <= last:
                 hit = True
+            if old == first:
+                at_first = new            # the first line put in its place, or the one after
+            if old == last:
+                last_gone = True
             old += 1
         elif ln.startswith("+"):
             if first < old <= last:
                 hit = True
             new += 1
         else:
+            if last_gone:
+                at_last, last_gone = new - 1, False
             if old == first:
-                shift_first = new - old
+                at_first = new
             if old == last:
-                shift_last = new - old
+                at_last = new
             old += 1
             new += 1
-    if hit:
-        return True, first, last
-    # Lines the diff shows as context, or does not show, moved by the hunks above them.
-    def moved(line, known):
-        if known is not None:
-            return line + known
-        return carry(diff, line)[0]
-    return False, moved(first, shift_first), moved(last, shift_last)
+    if last_gone:
+        at_last = new - 1
+    # Lines the diff does not show moved by the hunks above them.
+    a = at_first if at_first is not None else carry(diff, first)[0]
+    b = at_last if at_last is not None else carry(diff, last)[0]
+    return hit, a, max(a, b)
+
+
+# Where a push removed a comment's lines, they may have gone somewhere else rather than
+# away: a function moved into another file, or further down its own. They count as moved
+# where the block they were removed with turns up among the lines the same push added, at
+# least this much of it matching line for line (whitespace aside): three lines that say
+# something, with forty letters and digits between them. Fewer is what recurs by chance in
+# one push — a `return result`, a log call, a closing pair of braces — and a deletion on
+# purpose must not be taken for a move because a line like it was added somewhere else.
+# Lines that say nothing (`MOVE_TRIVIAL`) never count towards it, though they still match,
+# so a moved block keeps its shape.
+MOVE_MIN_LINES = 3
+MOVE_MIN_CHARS = 40
+# A line that says nothing on its own: blank, punctuation, one bare word (`pass`, `else:`,
+# `return;`, `}`), or an import, which any file may add.
+MOVE_TRIVIAL = re.compile(r"^\W*\w*\W*$|^(import|from|#include|#import|using|package|require)\b")
+# How far apart two matching stretches may lie and still be one block moved: the lines
+# between them are what the author edited on the way, so the gap may differ between the two
+# sides by this much (a line rewritten as several).
+MOVE_GAP = 5
+# How far beyond the matching lines a comment's line may lie and still go along with them,
+# counted from the nearest one: a commented signature renamed in the move matches nothing
+# itself, but the body under it does.
+MOVE_EDGE = 3
+
+
+def _norm(text):
+    return " ".join(text.split())
+
+
+def _diff_rows(diff):
+    """`diff`'s body lines, each `[kind, old, new, text, block]`: kind " ", "-" or "+", the
+    line's number on each side it is on (else None), and which block of changed lines it is
+    in — a run with no unchanged line between, numbered from 1; None for an unchanged one."""
+    rows, old, new, block, n = [], 0, 0, None, 0
+    for ln in (diff or "").splitlines():
+        m = HUNK.match(ln)
+        if m:
+            old, new, block = int(m[1]), int(m[3]), None
+            if m[2] == "0":
+                old += 1
+            if m[4] == "0":
+                new += 1
+            continue
+        if not old or ln.startswith(("---", "+++", "\\")):
+            continue
+        kind = ln[:1] if ln[:1] in ("-", "+") else " "
+        if kind == " ":
+            rows.append([" ", old, new, ln[1:], None])
+            old, new, block = old + 1, new + 1, None
+            continue
+        if block is None:
+            n += 1
+            block = n
+        rows.append([kind, old if kind == "-" else None, new if kind == "+" else None, ln[1:], block])
+        if kind == "-":
+            old += 1
+        else:
+            new += 1
+    return rows
+
+
+def moved_to(diff, first, last, others):
+    """Where a push moved old lines `first`..`last` of a file whose change is `diff`: a list
+    of `{"file", "first", "last"}`, their new lines in each file they went to (more than one
+    where the code was split up), or [] where they did not move: kept, rewritten in place,
+    or deleted. `others`: `(path, diff, same)` for every file the push changed, `same` for
+    the file itself (code moved further down it).
+
+    The lines removed with them — every block of changed lines they are in — are looked for
+    among the lines the push added, enough of them to tell (`MOVE_MIN_LINES`); a commented
+    line that matches nothing itself goes along with the matching lines around it."""
+    rows = _diff_rows(diff)
+    blocks = {r[4] for r in rows if r[0] == "-" and first <= r[1] <= last}
+    gone = [r for r in rows if r[0] == "-" and r[4] in blocks]
+    marks = [k for k, r in enumerate(gone) if first <= r[1] <= last]
+    if not marks:
+        return []
+    src = [_norm(r[3]) for r in gone]
+    out = []
+    for path, other, same in others:
+        dest = [r for r in _diff_rows(other) if r[0] != "-"]
+        # Lines the file had already match nothing: the code did not move there. Nor do the
+        # lines that took the removed ones' own place, which is a rewrite, not a move.
+        usable = [r[0] == "+" and not (same and r[4] in blocks) for r in dest]
+        sm = difflib.SequenceMatcher(None, src, [_norm(r[3]) for r in dest], autojunk=False)
+        pairs = [(a + k, b + k) for a, b, size in sm.get_matching_blocks() for k in range(size)
+                 if usable[b + k]]
+        for run in _move_runs(pairs):
+            useful = [src[i] for i, _ in run if not MOVE_TRIVIAL.match(src[i])]
+            if (len(useful) < MOVE_MIN_LINES
+                    or sum(c.isalnum() for line in useful for c in line) < MOVE_MIN_CHARS):
+                continue
+            got = [j for j in (_carried(run, i) for i in marks) if j is not None and 0 <= j < len(dest)]
+            if got:
+                out.append({"file": path, "first": dest[min(got)][2], "last": dest[max(got)][2]})
+    return out
+
+
+def all_removed(diff, first, last):
+    """Whether `diff` removes every one of old lines `first`..`last`: none of them is left
+    where it was."""
+    gone = {r[1] for r in _diff_rows(diff) if r[0] == "-"}
+    return all(n in gone for n in range(first, last + 1))
+
+
+def _move_runs(pairs):
+    """`pairs` (source line, destination line, both ascending) cut wherever the two sides
+    drift apart by more than `MOVE_GAP`: each run is one block that moved together."""
+    runs = []
+    for i, j in pairs:
+        if runs and abs((j - runs[-1][-1][1]) - (i - runs[-1][-1][0])) <= MOVE_GAP:
+            runs[-1].append((i, j))
+        else:
+            runs.append([(i, j)])
+    return runs
+
+
+def _carried(run, i):
+    """Where source line `i` landed by the matching lines of `run`: its own match, else by
+    its distance from the nearest one, within the run or `MOVE_EDGE` beyond its ends; None
+    further out."""
+    for a, b in run:
+        if a == i:
+            return b
+    before = [(a, b) for a, b in run if a < i]
+    after = [(a, b) for a, b in run if a > i]
+    if before and after:
+        return min(before[-1][1] + i - before[-1][0], after[0][1] - 1)
+    if before and i - before[-1][0] <= MOVE_EDGE:
+        return before[-1][1] + i - before[-1][0]
+    if after and after[0][0] - i <= MOVE_EDGE:
+        return after[0][1] - (after[0][0] - i)
+    return None
 
 
 def commented(repo, thread):
@@ -523,31 +669,45 @@ def place_now(repo, thread):
     return f"{now}:{line or ''}"
 
 
-def fix_view(repo, thread, files, pick=None, base="HEAD", commit=None):
-    """A fix's file for the sidebar: `files` is the fix's `[path, added, removed]` each; the
-    one shown is `pick` where it is one of them, else the comment's file where the fix
-    touches it, else the fix's first. Its change from `base` (to `commit`, or the files on
-    disk), the comment's lines carried through it where it is the comment's file; elsewhere
-    the first changed row stands for where to look. None for a fix with no files.
+def fix_view(repo, thread, files, pick=None, base="HEAD", commit=None, moved=()):
+    """A fix's file for the sidebar: `files` is the fix's `[path, added, removed]` each, and
+    `moved` the places it moved the commented code to (`{"file", "first", "last"}` in the
+    code at `commit`; see `moved_to`). The one shown is `pick` where it is one of them, else
+    where the code went where the fix moved it (the comment's file then shows it removed,
+    and nothing of what became of it), else the comment's file where the fix touches it,
+    else the fix's first. Its change from `base` (to `commit`, or the files on disk), the
+    comment's lines carried through it where it is the comment's file, or marked where the
+    code went; elsewhere the first changed row stands for where to look. None for a fix
+    with no files.
 
-    Adds `fix_files` (all of `files`, the comment's file first where the fix touches it:
-    the one the topic is about leads the list it opens on) and `commented` (the comment's
-    file now), so the sidebar lists the fix and marks the file the comment is on."""
+    Adds `fix_files` (all of `files`, the comment's file first where the fix touches it, then
+    where its code went: the files the topic is about lead the list it opens on) and
+    `commented` (the comment's file now), so the sidebar lists the fix and marks the file
+    the comment is on."""
     names = [f for f, _a, _r in files]
     if not names:
         return None
     now = commented(repo, thread)
-    want = pick if pick in names else now if now in names else names[0]
-    its = want == now
-    v = view(repo, thread.get("file") if its else want,
-             thread.get("line_end") or thread.get("line") if its else None,
-             thread.get("head_sha") if its else None,
-             start=thread.get("line_start") if its else None,
-             side=thread.get("side") or "new", base=base, commit=commit)
+    went = [q for q in moved if q["file"] in names]
+    want = (pick if pick in names else went[0]["file"] if went else now if now in names
+            else names[0])
+    there = next((q for q in went if q["file"] == want), None)
+    its = want == now and not there
+    if there:
+        # Lines in the code at `commit` already: read where they are, nothing to carry.
+        v = view(repo, want, there["last"], commit, start=there["first"], base=base, commit=commit)
+    else:
+        v = view(repo, thread.get("file") if its else want,
+                 thread.get("line_end") or thread.get("line") if its else None,
+                 thread.get("head_sha") if its else None,
+                 start=thread.get("line_start") if its else None,
+                 side=thread.get("side") or "new", base=base, commit=commit)
     if not v:
         return None
     if v["at"] is None and v["rows"]:
         hit = next((i for i, r in enumerate(v["rows"], 1) if r[0] != " "), None)
         v["at"] = [hit, hit] if hit else None
-    v.update(fix_files=sorted(files, key=lambda f: f[0] != now), commented=now)
+    lead = [now] + [q["file"] for q in went]
+    v.update(fix_files=sorted(files, key=lambda f: lead.index(f[0]) if f[0] in lead else len(lead)),
+             commented=now)
     return v

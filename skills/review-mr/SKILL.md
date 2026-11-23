@@ -628,6 +628,8 @@ python3 $SD/findings.py diff <t> --show --iid <n>  # only when the user asks to 
 
 `diff <t>` prints the topic file's change since you posted it, server-side (force-push-safe, so
 it works even when the baseline sha is long gone locally); a file that was only renamed says so.
+Where a push moved the commented code elsewhere (a function taken into another file, or further
+down its own), it says where to, and holds that file's change too, the comment's file first.
 **Do not paste it.** Tell the user in 2–4 bullets what changed — which push, what the author
 did, whether it is what the thread agreed — then your recommendation, and offer the full diff.
 **Never assemble a diff yourself** from `glab api`/`git` calls: `diff <t>` is already scoped to
@@ -701,7 +703,10 @@ follow-up MR, …): **Send follow-up** hands that step back to you to draft. A p
 topic's where it changed the file the comment is on, on its lines or beside them, also in a
 rebase; one beside them is listed as "a change to its file" until judged. Where it has nothing to
 do with the comment, say so with `--unrelated-push` (with `wait`, where nothing else answers the
-comment): it is then no longer the topic's. Another reviewer's thread is theirs to settle, and the user watches it: the judgment is
+comment): it is then no longer the topic's. A push that removed the commented lines and added
+the same code elsewhere moved it: `diff <t>` says where it went, and pushes there count as the
+topic's from then on. The move is found by matching lines, so where the code it names is not the
+commented code, say so with `--wrong-move`: the topic then stays on the comment's file. Another reviewer's thread is theirs to settle, and the user watches it: the judgment is
 `peer <t> fyi|needs --why '…'` (with `--summary '…'` for a new one). `fyi` is the usual answer;
 `needs` only when the user has something to add (a question to them: `--advice reply`; a point
 that repeats one of their topics: `--advice merge --into <t>`), its `--why` ending on a

@@ -3031,6 +3031,25 @@ class TestAnswersInCode(unittest.TestCase):
         self.assertEqual(self.t["code_seen"]["mark"], F.decision_mark(self.state, self.t))
         self.assertEqual(self.t["pushed"]["to"], "c2")
 
+    def test_code_a_push_moved_is_watched_where_it_went(self):
+        """The walk found the commented code moved to b.ts: a later push there is news, and
+        one at the comment's old lines in a.ts, other code by now, is not."""
+        self.t["fix_walk"] = {"sha": "c0", "places": [
+            {"file": "a.ts", "first": 11, "last": 11, "left": "c0"},
+            {"file": "b.ts", "first": 5, "last": 5, "via": ["c0"]}]}
+
+        def push(path, line, head):
+            files = [{"new_path": path, "old_path": path, "diff": f"@@ -{line} +{line} @@\n-x\n+y\n"}]
+            with patch.object(F, "mr_head", return_value=head), patch.object(F, "_compare", return_value=files), \
+                    patch.object(F, "versions", return_value=[]), \
+                    patch.object(F, "_gl_compare", return_value={"stat": "`+1/−1` · 1 file"}):
+                F.check_pushes(self.state, None, 1, "b0")
+        push("a.ts", 11, "c1")
+        self.assertNotIn("pushed", self.t)
+        self.t["fix_walk"]["sha"] = "c1"
+        push("b.ts", 5, "c2")
+        self.assertEqual((self.t["pushed"]["to"], self.t["pushed"].get("near")), ("c2", None))
+
     def test_a_comment_gitlab_moved_on_is_watched_from_where_it_was_written(self):
         """GitLab moves a comment's position onto every push that leaves its line as it was,
         a fix just below it included: watched from the position, that push was no news."""
@@ -4059,6 +4078,218 @@ class TestAuthorFixes(unittest.TestCase):
         self.t.update(state="acked", closed={"how": "fixed", "push": 2, "at": "2026-11-05T15:00:00Z"})
         with patch.object(F, "topic_status", return_value="acked"):
             self.assertIn("Robin fixed it (push 2) · you acked it", F.closing_line(self.state, self.t))
+
+
+FUNC = ["def shipping_cost(order):",
+        "    weight = sum(item.weight for item in order.items)",
+        "    if weight > order.carrier.limit:",
+        "        raise TooHeavy(weight)",
+        "    rate = order.carrier.rate_for(order.zone)",
+        "    return round(weight * rate, 2)"]
+FIXED = [*FUNC[:2], "    if weight >= order.carrier.limit:", *FUNC[3:]]
+FEES = ["def handling_fee(order):", "    fee = order.carrier.base_fee",
+        "    if order.fragile:", "        fee += order.carrier.fragile_fee", "    return fee"]
+
+
+def gone(at, lines):
+    return f"@@ -{at},{len(lines)} +{at - 1},0 @@\n" + "".join(f"-{x}\n" for x in lines)
+
+
+def put(at, lines):
+    return f"@@ -{at - 1},0 +{at},{len(lines)} @@\n" + "".join(f"+{x}\n" for x in lines)
+
+
+def file_diff(path, diff, **more):
+    return {"old_path": path, "new_path": path, "diff": diff, **more}
+
+
+class TestCodeMovedAway(unittest.TestCase):
+    """A push that moved the commented code — a function taken out of its file into another,
+    or further down its own — is followed there: the walk records where it went and watches
+    it there, every view of the topic shows where it went too, and the agent's verdict can
+    reject a move it finds wrong. The comment is on the `if` of `shipping_cost`, line 22 of
+    pricing.py (the function is lines 20-25)."""
+
+    CTX = {"enc": "g%2Fp", "web": "https://gl/g/p", "slug": "g-p"}
+
+    def setUp(self):
+        mock = patch.dict(os.environ, {"REVIEW_UI_DRAWN": "1", "AGENT_TAB_OFF": "1"})
+        mock.start()
+        self.addCleanup(mock.stop)
+        self.state = {"iid": 7, "author": "Robin", "author_username": "robin.l",
+                      "mr_web_url": "https://gl/g/p/-/merge_requests/7",
+                      "threads": {"d1": self.thread(22)},
+                      "topics": [{"id": "t1", "thread_ids": ["d1"], "summary": "weight limit",
+                                  "state": None, "source": "llm", "start_sha": "A"}]}
+        self.t = self.state["topics"][0]
+        self.versions = [{"id": 1, "head_commit_sha": "A", "base_commit_sha": "M",
+                          "created_at": "2026-11-05T08:00:00Z"}]
+        self.diffs = {}
+
+    @staticmethod
+    def thread(line, first=None):
+        return {"mine": True, "file": "pricing.py", "line": line, "line_start": first, "side": "new",
+                "head_sha": "A", "resolved": False, "url": "https://gl/n1",
+                "notes": [{"body": "Off by one.", "mine": True, "at": "2026-11-05T09:00:00Z"}]}
+
+    def push(self, sha, vid, diffs, base="M"):
+        prev = self.versions[0]["head_commit_sha"]
+        self.versions.insert(0, {"id": vid, "head_commit_sha": sha, "base_commit_sha": base,
+                                 "created_at": f"2026-11-05T1{vid}:00:00Z"})
+        self.diffs[(prev, sha)] = diffs
+
+    def walk(self):
+        with patch.object(F, "_compare", side_effect=lambda ctx, a, b: self.diffs.get((a, b))), \
+                patch.object(F, "api", return_value={}), \
+                patch.object(F, "get_worktree", return_value=None):
+            F.walk_fixes(self.state, self.CTX, 7, vs=list(self.versions))
+
+    def fixes(self, t=None):
+        return [(f["before"], f["after"], bool(f.get("near")), f.get("moved_to"))
+                for f in F.fixes_of(t or self.t)]
+
+    def story(self):
+        with patch.object(F, "get_worktree", return_value=None):
+            return "\n".join(F.story_steps(self.state, self.t))
+
+    def fix_then_move(self):
+        """The real case: B fixes the commented line, C moves the function, fix and all,
+        into carriers.py, an existing file, lines 40-45."""
+        self.push("B", 2, [file_diff("pricing.py", f"@@ -22 +22 @@\n-{FUNC[2]}\n+{FIXED[2]}\n")])
+        self.push("C", 3, [file_diff("pricing.py", gone(20, FIXED)),
+                           file_diff("carriers.py", put(40, FIXED))])
+
+    def test_code_moved_into_another_file_is_followed_there(self):
+        self.fix_then_move()
+        # D: other code edited where the function used to be; E: the function edited where it went.
+        self.push("D", 4, [file_diff("pricing.py", "@@ -20 +20 @@\n-def other():\n+def other(x):\n")])
+        self.push("E", 5, [file_diff("carriers.py", f"@@ -42 +42 @@\n-{FIXED[2]}\n+    if weight >= order.carrier.max_weight:\n")])
+        self.walk()
+        to = [{"file": "carriers.py", "first": 42, "last": 42}]
+        self.assertEqual(self.fixes(), [("A", "B", False, None), ("B", "C", False, to), ("D", "E", False, None)])
+        self.assertIn("Robin pushed a fix (push 2) · moved to `carriers.py`", self.story())
+        self.assertEqual(F.topic_files(self.state, self.t), ["pricing.py", "carriers.py"])
+
+    def test_the_diff_and_the_judge_see_where_the_code_went(self):
+        self.fix_then_move()
+        self.walk()
+        since = [file_diff("other.py", "@@ -1 +1 @@\n-a\n+b\n"), file_diff("carriers.py", put(40, FIXED)),
+                 file_diff("pricing.py", gone(20, FUNC))]
+        with patch.object(F, "_compare", return_value=since), patch.object(F, "mr_head", return_value="C"), \
+                patch.object(F, "versions", return_value=self.versions):
+            text = F.render_topic_diff(self.state, self.CTX, 7, "t1")
+        self.assertIn("The commented code moved to `carriers.py`:42 in push 2.", text)
+        self.assertNotIn("other.py", text)
+        self.assertLess(text.index("--- pricing.py"), text.index("--- carriers.py"))
+        with patch.object(F, "judge_list", return_value={"topics": ["t1"], "own": []}), \
+                patch.object(F, "news_of", return_value=(["push"], None)), \
+                patch.object(F, "render_topic_diff", return_value="DIFF"):
+            prompt = F.judge_prompt(self.state, self.CTX, 7)["prompt"]
+        self.assertIn("*code moved*", prompt)
+        self.assertIn("The commented code moved to `carriers.py`:42 in push 2.", prompt)
+        self.assertIn("\"wrong_move\": true", prompt)
+
+    def test_a_move_the_agent_rejects_is_undone(self):
+        """The matched code was not the commented code: where it led is dropped, with the
+        push found there only, and the comment's file is watched again."""
+        self.fix_then_move()
+        self.push("E", 4, [file_diff("carriers.py", f"@@ -42 +42 @@\n-{FIXED[2]}\n+x\n")])
+        self.walk()
+        with patch.object(F, "topic_status", return_value="needs_ack"):
+            F.store_verdict(self.state, self.t, "more", "Not this code.", case="not-fixed", wrong_move=True)
+        self.assertEqual(self.fixes(), [("A", "B", False, None), ("B", "C", False, None)])
+        self.assertEqual(F.topic_files(self.state, self.t), ["pricing.py"])
+        self.assertNotIn("moved", self.story())
+        self.push("F", 5, [file_diff("pricing.py", "@@ -20 +20 @@\n-def other():\n+def other(x):\n")])
+        self.walk()
+        self.assertEqual(self.fixes()[-1][:2], ("E", "F"))
+
+    def test_a_move_the_agent_let_stand_stops_watching_where_the_code_was(self):
+        self.fix_then_move()
+        self.walk()
+        F.settle_moves(self.t)
+        self.assertEqual([p["file"] for p in self.t["fix_walk"]["places"]], ["carriers.py"])
+        F.settle_moves(self.t, wrong=True)              # judged once: a later verdict leaves it
+        self.assertEqual(self.fixes()[-1][3], [{"file": "carriers.py", "first": 42, "last": 42}])
+
+    def test_a_walk_recorded_before_places_goes_on_from_its_one_place(self):
+        self.t["fix_walk"] = {"sha": "A", "file": "pricing.py", "first": 22, "last": 22}
+        self.push("C", 3, [file_diff("pricing.py", gone(20, FUNC)), file_diff("carriers.py", put(40, FUNC))])
+        self.walk()
+        self.assertEqual(self.fixes(), [("A", "C", False, [{"file": "carriers.py", "first": 42, "last": 42}])])
+
+    def test_into_a_new_file(self):
+        new = f"@@ -0,0 +1,{len(FUNC)} @@\n" + "".join(f"+{x}\n" for x in FUNC)
+        self.push("C", 3, [file_diff("pricing.py", gone(20, FUNC)),
+                           file_diff("shipping.py", new, new_file=True)])
+        self.walk()
+        self.assertEqual(self.fixes(), [("A", "C", False, [{"file": "shipping.py", "first": 3, "last": 3}])])
+
+    def test_a_whole_file_renamed_is_followed_as_before_with_no_move(self):
+        self.push("B", 2, [{"old_path": "pricing.py", "new_path": "shop/pricing.py", "renamed_file": True, "diff": ""}])
+        self.push("C", 3, [file_diff("shop/pricing.py", f"@@ -22 +22 @@\n-{FUNC[2]}\n+{FIXED[2]}\n")])
+        self.walk()
+        self.assertEqual(self.fixes(), [("B", "C", False, None)])
+        self.assertEqual(self.t["fix_walk"]["places"], [{"file": "shop/pricing.py", "first": 22, "last": 22}])
+
+    def test_moved_and_edited_in_the_same_push(self):
+        self.push("C", 3, [file_diff("pricing.py", gone(20, FUNC)), file_diff("carriers.py", put(40, FIXED))])
+        self.walk()
+        self.assertEqual(self.fixes(), [("A", "C", False, [{"file": "carriers.py", "first": 42, "last": 42}])])
+
+    def test_a_later_change_elsewhere_in_the_file_it_went_to_is_a_change_to_its_file(self):
+        self.fix_then_move()
+        self.push("D", 4, [file_diff("carriers.py", "@@ -5 +5 @@\n-a\n+b\n")])
+        self.walk()
+        self.assertEqual(self.fixes()[-1][:3], ("C", "D", True))
+
+    def test_code_deleted_on_purpose_is_a_fix_however_much_boilerplate_came_elsewhere(self):
+        self.push("C", 3, [file_diff("pricing.py", gone(20, FUNC)),
+                           file_diff("carriers.py", put(1, ["import os", "", "    pass", "}", FUNC[4]]))])
+        self.walk()
+        self.assertEqual(self.fixes(), [("A", "C", False, None)])
+        self.assertEqual(self.t["fix_walk"]["places"], [{"file": "pricing.py", "first": 20, "last": 20}])
+        self.assertNotIn("moved", self.story())
+
+    def test_split_into_two_files(self):
+        self.state["threads"]["d1"] = self.thread(28, 22)        # from the `if` into handling_fee
+        self.push("C", 3, [file_diff("pricing.py", gone(20, FUNC + FEES)),
+                           file_diff("carriers.py", put(10, FUNC)), file_diff("fees.py", put(3, FEES))])
+        self.walk()
+        self.assertEqual(self.fixes()[0][3], [{"file": "carriers.py", "first": 12, "last": 15},
+                                              {"file": "fees.py", "first": 3, "last": 5}])
+        self.assertIn("moved to `carriers.py`, `fees.py`", self.story())
+
+    def test_code_copied_not_moved_is_no_fix(self):
+        self.push("C", 3, [file_diff("carriers.py", put(40, FUNC))])
+        self.walk()
+        self.assertEqual(self.fixes(), [])
+
+    def test_moved_further_down_its_own_file(self):
+        self.push("C", 3, [file_diff("pricing.py", gone(20, FUNC) + put(55, FUNC).replace("@@ -54,0", "@@ -60,0"))])
+        self.walk()
+        self.assertEqual(self.fixes(), [("A", "C", False, [{"file": "pricing.py", "first": 57, "last": 57}])])
+        self.assertIn("moved within its file", self.story())
+
+    def test_each_topic_in_a_moved_function_lands_on_its_own_line(self):
+        self.state["threads"]["d2"] = {**self.thread(25), "url": "https://gl/n2"}
+        self.state["topics"].append({"id": "t2", "thread_ids": ["d2"], "summary": "rounding",
+                                     "state": None, "source": "llm"})
+        self.push("C", 3, [file_diff("pricing.py", gone(20, FUNC)), file_diff("carriers.py", put(40, FUNC))])
+        self.walk()
+        self.assertEqual([self.fixes(t)[0][3] for t in self.state["topics"]],
+                         [[{"file": "carriers.py", "first": 42, "last": 42}],
+                          [{"file": "carriers.py", "first": 45, "last": 45}]])
+
+    def test_a_move_that_came_with_a_rebase(self):
+        self.push("C", 3, [file_diff("pricing.py", gone(20, FUNC)), file_diff("carriers.py", put(40, FUNC)),
+                           file_diff("upstream.py", "@@ -1 +1 @@\n-a\n+b\n")], base="N")
+        self.diffs[("M", "A")] = [file_diff("pricing.py", put(20, FUNC))]
+        self.diffs[("N", "C")] = [file_diff("carriers.py", put(40, FUNC))]
+        self.walk()
+        (f,) = F.fixes_of(self.t)
+        self.assertEqual((f["moved_to"], f["rebase"], f["paths"]),
+                         ([{"file": "carriers.py", "first": 42, "last": 42}], True, ["carriers.py"]))
 
 
 class FakeViewer:
