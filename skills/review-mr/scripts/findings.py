@@ -3857,7 +3857,14 @@ def walk_fixes(state, ctx, iid, vs=None):
 
     Where the versions cannot tell (the comment's commit is no version's head), one record
     spans the comment's commit to the head, marked as possibly holding other changes, and
-    follows the head until the topic is closed here."""
+    follows the head until the topic is closed here.
+
+    Another reviewer's thread, or the MR author's own, is walked the same way: what the
+    sidebar shows of it is then each push that changed its code, not one span from the
+    comment to the head with everything pushed meanwhile. Nobody judges an answer on one
+    (it gets a view, `peer_view_of`), so a push that changed only its file elsewhere stays
+    listed as a change to its file. A topic noted before it was walked (its one `pushed`
+    record) is walked from its comment's commit at the next check, as every topic is."""
     vs = versions(ctx, iid) if vs is None else vs
     chron = list(reversed(vs or []))
     if not chron:
@@ -3880,7 +3887,7 @@ def walk_fixes(state, ctx, iid, vs=None):
         return _HUNK_HEADER_RE.sub("", (d or {}).get("diff") or "")
 
     for t in state["topics"]:
-        if not t["thread_ids"] or t.get("source") in ("peer", "author") or t.get("state") == "dropped":
+        if not t["thread_ids"] or t.get("state") == "dropped":
             continue
         x = state["threads"].get(t["thread_ids"][0]) or {}
         if not (x.get("file") and x.get("line") and x.get("side") == "new" and x.get("head_sha")):
@@ -3893,7 +3900,7 @@ def walk_fixes(state, ctx, iid, vs=None):
         places = walk_places(w)
         k = at.get(w["sha"])
         if k is None:
-            if w["sha"] == head or w.get("lost") and topic_status(state, t) == "acked":
+            if w["sha"] == head or w.get("lost") and fixes_closed(state, t):
                 continue
             diffs = compare(w["sha"], head)
             if diffs is not None and any(
@@ -3921,10 +3928,9 @@ def walk_fixes(state, ctx, iid, vs=None):
                     continue
                 # The push changed the place's file: its lines (`hit`), or elsewhere in it
                 # (`near`, as `check_pushes` notes it: the agent judges whether it concerns
-                # the comment, `settle_near_fixes`). Not for a topic closed here: a later
-                # change to its file is no answer to it.
-                near = (not hit and bool((text or "").strip())
-                        and topic_status(state, t) not in ("acked", "dropped"))
+                # the comment, `settle_near_fixes`). Not for a topic closed (`fixes_closed`):
+                # a later change to its file is no answer to it.
+                near = not hit and bool((text or "").strip()) and not fixes_closed(state, t)
                 if (hit or near) and rebase:
                     was, became = own_change(prev, p["file"]), own_change(cur, p["file"])
                     if was is not None and was == became:
@@ -3971,6 +3977,16 @@ def walk_fixes(state, ctx, iid, vs=None):
                         fix["paths"] = sorted({d.get("new_path") or d.get("old_path") for d in own})
                 t.setdefault("fixes", []).append(fix)
             w["sha"] = after
+
+
+def fixes_closed(state, t):
+    """Whether `t` is closed for the fix walk: a later change to its file is no answer to it.
+    The user's own topic once closed here or dropped; another reviewer's thread the user
+    watches once they closed it or it is resolved, and not where the agent's view only made
+    it something to know of (`topic_status` reads such a view as done)."""
+    if peer_waiting(state, t):
+        return t.get("state") in ("acked", "dropped")
+    return topic_status(state, t) in ("acked", "dropped")
 
 
 def walk_places(w):

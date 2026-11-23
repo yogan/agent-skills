@@ -4279,6 +4279,61 @@ class TestAuthorFixes(unittest.TestCase):
         with patch.object(F, "topic_status", return_value="acked"):
             self.assertIn("Robin fixed it (push 2) · you acked it", F.closing_line(self.state, self.t))
 
+    def as_peer(self, view=None):
+        """t1 as another reviewer's thread the user said nothing in, with the agent's view of
+        it stored on the thread as it stands where `view` is given."""
+        self.state["threads"]["d1"].update(mine=False, you_spoke=False, author="Brandt, Kim",
+                                           notes=[{"body": "Off by one.", "mine": False,
+                                                   "author": "Brandt, Kim", "at": "2026-11-05T09:00:00Z"}])
+        self.t.update(source="peer", by="Kim")
+        if view:
+            self.t["peer_view"] = {"says": view, "advice": "seen", "into": None,
+                                   "on": F.answer_mark(self.state, self.t)}
+
+    def test_another_reviewer_s_thread_has_a_fix_per_push_and_its_file_s_changes_listed(self):
+        """Walked as the user's own topics are: the sidebar's push picker lists each push
+        that changed its code, and one that changed its file elsewhere stays a change to its
+        file, since nobody judges an answer on it. Neither asks the background judge for
+        anything: the agent's view of the thread still stands."""
+        self.as_peer("needs")
+        self.push("B", 2, [{"new_path": "a.ts", "old_path": "a.ts", "diff": self.FIX}])
+        self.push("C", 3, [{"new_path": "b.ts", "old_path": "b.ts", "diff": self.ELSEWHERE}])
+        self.push("D", 4, [{"new_path": "a.ts", "old_path": "a.ts", "diff": self.ELSEWHERE}])
+        self.walk()
+        self.assertEqual([(f["before"], f["after"], bool(f.get("near"))) for f in F.fixes_of(self.t)],
+                         [("A", "B", False), ("C", "D", True)])
+        with patch.object(F, "get_worktree", return_value=None):
+            self.assertEqual(F.state_json(self.state)["topics"][0]["pushes"], 2)
+            story = "\n".join(F.story_steps(self.state, self.t))
+        self.assertIn("Robin pushed a fix (push 1)", story)
+        self.assertIn("Robin pushed a change to its file (push 2)", story)
+        self.assertEqual(F.needs_verdict(self.state), [])
+
+    def test_another_reviewer_s_thread_only_to_know_of_still_takes_its_file_s_changes(self):
+        """The agent's view made it something to know of, which reads as done: no close of
+        anybody's, so a change to its file is listed still. Closed by the user, it is not."""
+        self.as_peer("fyi")
+        self.push("B", 2, [{"new_path": "a.ts", "old_path": "a.ts", "diff": self.ELSEWHERE}])
+        self.walk()
+        self.assertEqual([f["after"] for f in F.fixes_of(self.t)], ["B"])
+        self.t.update(state="acked", acked_at="2026-11-05T13:00:00Z")
+        self.push("C", 3, [{"new_path": "a.ts", "old_path": "a.ts", "diff": "@@ -5 +5 @@\n-u\n+v\n"}])
+        self.walk()
+        self.assertEqual([f["after"] for f in F.fixes_of(self.t)], ["B"])
+
+    def test_another_reviewer_s_thread_noted_as_one_span_is_walked_from_its_comment(self):
+        """Noted before it was walked: one record from the comment's commit to the head, and
+        the sidebar listed every file pushed meanwhile. The next check walks it from the
+        comment's commit, one record per push that changed its code."""
+        self.as_peer("needs")
+        self.push("B", 2, [{"new_path": "a.ts", "old_path": "a.ts", "diff": self.FIX}])
+        self.push("C", 3, [{"new_path": "b.ts", "old_path": "b.ts", "diff": self.ELSEWHERE}])
+        self.t["pushed"] = {"from": "A", "to": "C", "at": "2026-11-05T13:00:00Z", "mark": "2:x"}
+        self.assertEqual([(f["before"], f.get("legacy")) for f in F.fixes_of(self.t)], [("A", True)])
+        self.walk()
+        self.assertEqual([(f["before"], f["after"], f.get("legacy")) for f in F.fixes_of(self.t)],
+                         [("A", "B", None)])
+
 
 FUNC = ["def shipping_cost(order):",
         "    weight = sum(item.weight for item in order.items)",
