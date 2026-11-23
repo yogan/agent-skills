@@ -393,6 +393,21 @@ test("a press that closed its topic ends its card on the script's closing line, 
   await again.unmount()
 })
 
+test("Drop ends its card on the script's closing line, once", async ($, on) => {
+  const w = world(on, [stateOf('t1', [topic('t1', 'draft')]), stateOf(null, [{ ...topic('t1', 'dropped'), state: 'dropped' }])],
+    { drop: { stdout: 'closed: 14:02 \u{F0A7A} You dropped it\n' } })
+  await openReview($, w, view('t1'))
+  const card = await $.ui.mount(cardRow('tu-open', view('t1')))
+  await card.press({ key: 'drop' })
+  await card.unmount()
+  const again = await $.ui.mount(cardRow('tu-open', view('t1')))
+  const texts = (await again.findAll({ type: 'Text' })).map(t => JSON.stringify(t))
+  expect(texts.filter(t => t.includes('You dropped it')).length).toBe(1)
+  // The script's time, not the press's.
+  expect((await again.findAll({ type: 'Text' })).some(t => String(t.text).trim() === '14:02')).toBe(true)
+  await again.unmount()
+})
+
 test('Post posts the draft its card showed, as a press', async ($, on) => {
   const w = world(on, [
     stateOf('t1', [topic('t1', 'draft', 'v7')]),

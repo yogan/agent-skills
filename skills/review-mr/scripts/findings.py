@@ -1345,7 +1345,7 @@ def _render_quote(state, tid, refine=False):
                 out += analysis_md(t["why"])
         if draft_text(t):
             out += _draft_block(state, t, draft_text(t))
-        else:
+        elif topic_status(state, t) != "dropped":     # nothing left to draft for it
             # Header + code and silence read as a complete presentation — reported
             # live as title, code fragment, "nothing else", with no sign a comment
             # was missing. The gap is the AGENT's to fill (SKILL: analysis, then ask
@@ -1371,6 +1371,10 @@ def _render_quote(state, tid, refine=False):
                       f"it; store the agreed draft with `set {t['id']} --draft '…'`, "
                       f"written in {state.get('lang') or DEFAULT_LANG}",
                       file=sys.stderr)
+        closing = closing_line(state, t)
+        if closing:
+            # How it was closed, the card's last line, as a posted topic's story ends.
+            out += ["", closing if ui.drawn() else f"_({closing})_"]
         return "\n".join(out).strip()
     v = verdict_of(state, t)
     if ui.drawn() and v and not refine and not peer_waiting(state, t):
@@ -1489,6 +1493,16 @@ def ack_topic(state, t):
     t["acked_at"] = now_iso()
 
 
+def drop_topic(t, why=None):
+    """Drop `t` here at the user's word (`drop`, `set --state dropped`): when, for the line
+    its card ends on, and why where they said. Dropped again, it keeps its first time."""
+    if t.get("state") != "dropped" or not t.get("drop"):
+        t["drop"] = {"at": now_iso()}
+    if why and why.strip():
+        t["drop"]["why"] = why.strip()
+    t["state"] = "dropped"
+
+
 def print_acked(state, iid, t):
     """What an ack prints once saved: its `closed:` line, and what the diff viewer did."""
     closing = press_close(state, t)
@@ -1512,7 +1526,7 @@ def press_close(state, t):
 
 
 def closing_event(state, t):
-    """What closed a posted topic, once it is closed here or its threads are resolved: by
+    """What closed a topic, once it is dropped, closed here or its threads are resolved: by
     whom, how and when, as one of its story's events (`story_steps`); None while neither.
     `last`: a close made here, the user's own decision on everything the story tells, which
     ends it whatever times the events before it carry.
@@ -1520,7 +1534,13 @@ def closing_event(state, t):
     Closed here, it says how: the user's Accept + resolve (the one place "accepted" is said),
     an ack of the author's fix, an ack of a thread somebody resolved. Resolved on GitLab and
     not closed here, it says by whom; the MR author's resolve is no close at all, as authors
-    tick threads off while they work and push later: it says whether a fix is pushed yet."""
+    tick threads off while they work and push later: it says whether a fix is pushed yet.
+    Dropped, posted or not, it says so, with the reason where the user gave one; a topic
+    dropped before drops were recorded says it without a time."""
+    if topic_status(state, t) == "dropped":
+        d = t.get("drop") or {}
+        return {"at": d.get("at"), "icon": ui.DROPPED_ICON, "last": True,
+                "text": "You dropped it" + (f": {d['why']}" if d.get("why") else "")}
     thr = [state["threads"].get(x) or {} for x in t["thread_ids"]]
     res = thr[0] if thr and all(x.get("resolved") for x in thr) else None
     author = first_name(state.get("author")) or "the author"
@@ -4624,6 +4644,7 @@ def main():
     pd = sub.add_parser("drop")
     pd.add_argument("topic")
     pd.add_argument("--iid", type=int)
+    pd.add_argument("--why", help="the user's reason, in a few English words, for the line its card ends on")
 
     pm = sub.add_parser("merge")
     pm.add_argument("into")
@@ -5184,10 +5205,11 @@ def main():
         if args.state == "reset":
             t["state"] = None
             t.pop("acked_at", None)
+            t.pop("drop", None)
         elif args.state == "acked":
             ack_topic(state, t)
-        elif args.state:
-            t["state"] = args.state
+        elif args.state == "dropped":
+            drop_topic(t)
             t["acked_at"] = None
         # Counted from the anchor the draft is stored with: a `--line` or `--file` in the
         # same call moves it.
@@ -5237,8 +5259,11 @@ def main():
         # ones) so a drop can be seen and undone (`set <t> --state reset`), and its
         # threads stay linked, so `sync` never adopts them again as new.
         t = topic_for(state, args.topic) or die(f"no topic {args.topic}")
-        t["state"] = "dropped"
+        drop_topic(t, args.why)
         save(path, state)
+        # The line its card now ends on, which the review-ui mod adds to the card the Drop
+        # press was on as its outcome.
+        print(f"closed: {press_close(state, t)}")
     elif cmd == "merge":
         into = topic_for(state, args.into) or die(f"no topic {args.into}")
         # Mirrors threads.py's `merge`: all looked up first, and never the topic merged into.

@@ -183,6 +183,9 @@ PUSHED_ICON = "\U000f0552"
 # waited on (md-timer_sand, the icon of Wait for author).
 STEP_DONE_ICON = "\U000f012c"
 STEP_WAITS_ICON = "\U000f051f"
+# review-mr: the line a dropped topic's card ends on, with the icon of the review-ui mod's
+# Drop button (md-trash_can_outline).
+DROPPED_ICON = "\U000f0a7a"
 
 
 def at_md(value, today=None):

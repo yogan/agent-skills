@@ -432,10 +432,14 @@ does + the real trade-off, citing `file:line`), then let the user reshape the *l
 
 ```bash
 python3 $SD/findings.py set <t> --severity … --summary … --source … --iid <n>       # reclassify / reword
-python3 $SD/findings.py drop <t> --iid <n>                                          # not worth raising (kept as dropped; `set <t> --state reset` undoes it)
+python3 $SD/findings.py drop <t> [--why '…'] --iid <n>                              # not worth raising (kept as dropped; `set <t> --state reset` undoes it)
 python3 $SD/findings.py merge <into> <other…> --iid <n>                             # same point (→ source 👥; see below)
 python3 $SD/findings.py add --file … --line … --summary … --source human --iid <n>  # the user's own find
 ```
+
+**A drop's `--why` is the user's reason, in a few English words**: pass it when they dropped
+the topic in the chat or said there why, and leave it out otherwise. The card of the topic
+ends on it (`You dropped it: …`).
 
 **A `--summary` is always English** — it is the one-line title of the topic, and it is what
 the user reads in the table and in every topic heading. The `· drafts <lang> · rest en` marker

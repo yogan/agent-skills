@@ -710,7 +710,7 @@ export const outcomeOf = (press: Press, stdout: string, now?: string, wasPosted 
   // A press that closed its topic: the scripts' closing line (lib/ui.py's `closed_md`), the
   // same words the topic's card ends on whenever it is drawn again.
   const closed = /^closed: (.+)$/m.exec(stdout)?.[1]
-  if (closed && (['resolve', 'ack', 'post'].includes(press.kind) || (press.kind === 'peer-next' && press.ack))) {
+  if (closed && (['resolve', 'ack', 'post', 'drop'].includes(press.kind) || (press.kind === 'peer-next' && press.ack))) {
     const step = STEP.exec(closed)
     const rest = step?.[3] ?? closed
     // Its thread's link, at its end, drawn as a link: the label without its icon, which

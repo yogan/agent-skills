@@ -4837,6 +4837,71 @@ class TestPressClose(ViewerCase):
         self.assertIn("you acked it", self.ack("llm"))
 
 
+class TestDropRecorded(ViewerCase):
+    """A drop records when, and the user's reason where one was given: the card of a dropped
+    topic ends on it, as a closed one ends on how it was closed."""
+
+    def setUp(self):
+        super().setUp()
+        env = patch.dict(os.environ, {"REVIEW_UI_DRAWN": "1"})
+        env.start()
+        self.addCleanup(env.stop)
+        self.state = new_state(topics=[{"id": "t2", "thread_ids": [], "summary": "stale cache key",
+                                        "why": "The key is stale. **Recommendation:** drop it."}])
+        self.t = self.state["topics"][0]
+
+    def card(self):
+        with patch.object(F, "_code_context", return_value=[]), redirect_stderr(io.StringIO()):
+            return F._render_quote(self.state, "t2").strip().splitlines()[-1]
+
+    def test_the_card_ends_on_when_it_was_dropped_and_why(self):
+        out, err, code = self.run_cli("drop", "t2", "--why", "the cache is gone next sprint", state=self.state)
+        self.assertIsNone(code, err)
+        line = rf"^\d\d:\d\d {F.ui.DROPPED_ICON} You dropped it: the cache is gone next sprint$"
+        self.assertRegex(self.card(), line)
+        # The press's outcome is the same line, printed once.
+        self.assertEqual(out.count("closed: "), 1)
+        self.assertRegex(out.split("closed: ", 1)[1].strip(), line)
+
+    def test_the_reason_is_asked_for_in_english_as_the_skill_asks_it(self):
+        """The card reads English whatever language the drafts are in, so the reason is
+        rephrased, not quoted: the flag's help says so, as SKILL.md does."""
+        out = io.StringIO()
+        with patch.object(sys, "argv", ["findings.py", "drop", "--help"]), \
+                redirect_stdout(out), self.assertRaises(SystemExit):
+            F.main()
+        self.assertIn("in a few English words", " ".join(out.getvalue().split()))
+
+    def test_a_drop_with_no_reason_says_only_that(self):
+        self.run_cli("drop", "t2", state=self.state)
+        self.assertRegex(self.card(), rf"^\d\d:\d\d {F.ui.DROPPED_ICON} You dropped it$")
+
+    def test_a_drop_from_before_the_record_says_it_without_a_time(self):
+        self.t["state"] = "dropped"
+        self.assertEqual(self.card(), f"{F.ui.DROPPED_ICON} You dropped it")
+
+    def test_set_state_dropped_records_it_too(self):
+        self.run_cli("set", "t2", "--state", "dropped", state=self.state)
+        self.assertRegex(self.card(), rf"^\d\d:\d\d {F.ui.DROPPED_ICON} You dropped it$")
+
+    def test_reset_clears_the_record(self):
+        self.run_cli("drop", "t2", "--why", "not worth it", state=self.state)
+        self.run_cli("set", "t2", "--state", "reset", state=self.state)
+        self.assertNotIn("drop", self.t)
+        self.assertNotIn("dropped it", self.card())
+
+    def test_a_posted_comment_dropped_ends_its_story_on_the_drop(self):
+        url = "http://gl/g/p/-/merge_requests/1#note_1"
+        self.state["threads"] = {"d1": {"mine": True, "file": "a.md", "line": 3, "url": url, "notes": [
+            {"body": "Nit.", "mine": True, "url": url, "at": "2026-11-10T16:39:00Z"}]}}
+        self.t["thread_ids"] = ["d1"]
+        self.run_cli("drop", "t2", "--why", "settled in person", state=self.state)
+        with patch.object(F, "_thread_context", return_value=[]), patch.object(F, "kept_fix", return_value=None):
+            lines = F._render_quote(self.state, "t2").strip().splitlines()
+        self.assertIn("posted the initial comment", lines[-2])
+        self.assertTrue(lines[-1].endswith(f"{F.ui.DROPPED_ICON} You dropped it: settled in person"), lines)
+
+
 class TestLeaveToAnotherThread(ViewerCase):
     """A watched thread's card goes on to the next of them (`leave --to`), marking one that
     needed the user read on the way (`--ack`), as Seen did."""
