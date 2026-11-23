@@ -821,6 +821,13 @@ def show_patch(path, label, cwd, owner=None, sleep=None):
 
     A patch session has no repository, so it is found by the owner mark alone
     (`find_session(None, …)`): one window per agent, reloaded for each diff it shows.
+
+    The viewer reloads a patch only from inside the git repository its window started in
+    (hunk 0.25: "refused patch file outside the initial Hunk root"), and the skills keep
+    their patches in their state folders, outside any repository. So a reload is tried, and
+    where it is refused this agent's window is closed and a new one opened beside the agent
+    with the patch. Nothing is lost by it: a caller whose window holds notes keeps and clears
+    them before loading anything.
     """
     if not installed() or not in_tmux():
         return None
@@ -833,9 +840,10 @@ def show_patch(path, label, cwd, owner=None, sleep=None):
         return None
     sid = find_session(None, owner)
     since = time.time()
-    if sid:
-        count = reload_patch(sid, path)
-    else:
+    count = reload_patch(sid, path) if sid else None
+    if count is None:
+        if sid and not close_session(sid, owner):
+            return None
         sid = spawn_session(cwd, label, owner, sleep=sleep,
                             cmd=f"hunk patch {shlex.quote(path)}")
         if not sid:

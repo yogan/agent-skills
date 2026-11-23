@@ -441,6 +441,25 @@ class TestShowPatch(unittest.TestCase):
         spawn = [c for c in fake.calls if c[:2] == ["tmux", "new-window"]][0]
         self.assertEqual(spawn[-1], f"hunk patch {path}")
 
+    def test_a_refused_reload_opens_a_new_window(self):
+        """The viewer reloads a patch only from inside the repository its window started in,
+        and the skills keep their patches outside one."""
+        fake = FakeRun([session("mine", repo=None, pane="%4")], owners={"%4": "me"},
+                       reload_ok=False, new_repo=None, loaded=self.loaded())
+        shown, _path = self.show(fake)
+        self.assertEqual(shown, ("new", "9 (!123)"))
+        self.assertIn(["tmux", "kill-window", "-t", "%4"], fake.calls)
+
+    def test_a_refused_reload_of_a_window_not_its_own_opens_nothing(self):
+        """Closing a window is checked against its owner mark again; one that fails it is
+        neither closed nor replaced by a second window beside it."""
+        fake = FakeRun([session("mine", repo=None, pane="%4")], owners={"%4": "me"},
+                       reload_ok=False, new_repo=None, loaded=self.loaded())
+        with patch.object(hunk, "close_session", lambda _sid, _owner: False):
+            shown, _path = self.show(fake)
+        self.assertIsNone(shown)
+        self.assertFalse([c for c in fake.calls if c[:2] == ["tmux", "new-window"]])
+
     def test_reloads_its_own_patch_window_with_the_new_patch(self):
         fake = FakeRun([session("mine", repo=None, pane="%4")], owners={"%4": "me"},
                        reload_files=len(self.loaded()), loaded=self.loaded())
