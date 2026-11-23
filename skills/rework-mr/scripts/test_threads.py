@@ -34,10 +34,14 @@ os.environ["REVIEW_UI_DRAWN"] = "0"   # the views as without the review-ui mod, 
 
 def setUpModule():
     """Never read the notes the keep-notes Hunk extension saved on this machine: a test of a
-    closed viewer says what was in its file."""
-    stub = mock.patch.object(T.hunk, "keep_dir", lambda: None)
-    stub.start()
-    unittest.addModuleCleanup(stub.stop)
+    closed viewer says what was in its file. And no test reaches the real diff viewer or
+    tmux: every `hunk` and tmux call goes through `hunk._run`, which answers here as a
+    machine without them would, so a test whose fake misses a call cannot open a viewer
+    window in the tmux the suite runs in. A test that wants a viewer fakes the call it makes."""
+    for stub in (mock.patch.object(T.hunk, "keep_dir", lambda: None),
+                 mock.patch.object(T.hunk, "_run", lambda *a, **k: (1, ""))):
+        stub.start()
+        unittest.addModuleCleanup(stub.stop)
 
 
 def _spec():
@@ -1365,6 +1369,33 @@ class TestCodeContext(unittest.TestCase):
         self.assertNotIn("· [reply", out)
         # Nothing says the topic waits: nothing waits on the reviewer.
         self.assertNotIn("Waits on", out)
+
+    def test_the_pushed_fix_on_a_press_is_its_commit_range_in_a_view_window(self):
+        """Not the working-diff window of this checkout (`hunk.find_view`), and not a patch
+        the viewer could not reload: the two commits kept in git, as a range."""
+        self._write("\n".join(f"const line{i} = {i}" for i in range(1, 30)) + "\nconst line30 = 300\n")
+        state = self.pushed_state()
+        try:
+            self._git("commit", "-qam", "fix")
+            after = subprocess.run(["git", "rev-parse", "HEAD"], cwd=self.repo, capture_output=True,
+                                   text=True).stdout.strip()
+            T.fix_refs.keep(self.repo, "rework-mr", 3, "t1/push1", self.sha, after)
+            state["topics"][0]["pushes"] = [{"before": self.sha, "start": self.sha, "after": after,
+                                             "url": "http://gl/d", "clean": True}]
+            with mock.patch.object(T.hunk, "show_view", return_value=("sid", "9 (x)")) as show, \
+                    mock.patch.object(T.hunk, "focus_window"), \
+                    mock.patch.object(sys, "argv", ["threads.py", "hunk-show", "t1", "--pushed"]), \
+                    mock.patch.object(T, "resolve_state", return_value=({"slug": "g-p"}, 3, "/state", state)), \
+                    redirect_stdout(io.StringIO()) as out:
+                T.main()
+        finally:
+            T.fix_refs.drop(self.repo, "rework-mr", 3)
+            self._git("reset", "-q", "--hard", self.sha)
+        args, stat, name, repo = show.call_args[0]
+        self.assertEqual((args, stat, name), (["diff", f"{self.sha}..{after}"], [(self.file, 1, 1)],
+                                              T.viewer_name(state, "t1")))
+        self.assertEqual(os.path.realpath(repo), os.path.realpath(self.repo))
+        self.assertIn("window 9 (x)", out.getvalue())
 
     def test_once_its_reply_is_posted_it_waits_on_the_reviewer(self):
         # The link the Post press stored, over the thread's last comment of the user's.

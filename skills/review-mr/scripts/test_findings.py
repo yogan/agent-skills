@@ -31,6 +31,16 @@ os.environ.setdefault("AGENT_TAB_OFF", "1")
 os.environ["REVIEW_UI_DRAWN"] = "0"   # the views as without the review-ui mod, whatever session runs this (lib/ui.py)
 
 
+def setUpModule():
+    """No test reaches the real diff viewer or tmux: every `hunk` and tmux call goes through
+    `hunk._run`, which answers here as a machine without them would. A test that wants a
+    viewer fakes the call it makes. Without this, a test whose fake missed a renamed call
+    opened a viewer window in the tmux the suite ran in."""
+    stub = patch.object(F.hunk, "_run", lambda *a, **k: (1, ""))
+    stub.start()
+    unittest.addModuleCleanup(stub.stop)
+
+
 def gate_signature(key):
     """The marker strings the Stop hook looks for in a given gated command's output —
     read from the shipped spec so a render and its gate cannot drift apart silently.
@@ -931,7 +941,7 @@ class TestTopicDiff(unittest.TestCase):
         with patch.object(F, "mr_head", return_value="NEW1"), \
              patch.object(F, "versions", return_value=[{"id": 2}]), \
              patch.object(F, "_compare", return_value=diffs), \
-             patch.object(F.hunk, "show_patch", return_value=viewer), \
+             patch.object(F.hunk, "show_view", return_value=viewer), \
              patch.object(F, "state_file", side_effect=self.scratch), \
              patch.object(F, "get_worktree", return_value=None):
             return F.render_topic_diff(state, {"enc": "x", "slug": "s"}, 1, "t1", show)
@@ -4133,8 +4143,10 @@ class ViewerCase(unittest.TestCase):
     def kept(self):
         return F._kept_notes(F.kept_notes_path(self.CTX, 1, make=False))
 
-    def shows(self, topic="t2", patch_file="/d/diff-t2.patch", text="old patch", **more):
-        return {"iid": 1, "topic": topic, "patch": patch_file, "digest": F._digest([text]), **more}
+    LOAD = ["patch", "/d/diff-t2.patch"]
+
+    def shows(self, topic="t2", load=LOAD, text="old patch", **more):
+        return {"iid": 1, "topic": topic, "load": load, "digest": F._digest([text]), **more}
 
     def run_cli(self, *argv, state=None):
         """`findings.py <argv> --iid 1`: (stdout, stderr, exit code or None)."""
@@ -4162,7 +4174,7 @@ class TestViewerMovesOn(ViewerCase):
     def test_the_users_notes_are_kept_with_their_topic_and_the_window_cleared(self):
         w = FakeViewer([self.USER, self.AGENT], shows=self.shows())
         with w.patches():
-            F.clear_notes_before_load(self.CTX, 1, "/d/diff-t3.patch", "new patch")
+            F.clear_notes_before_load(self.CTX, 1, ["patch", "/d/diff-t3.patch"], "new patch")
         self.assertEqual(w.notes, [])
         self.assertEqual([(n["topic"], n["file"], n["line"], n["text"]) for n in self.kept()],
                          [("t2", "src/basket.py", 4, "why a list here?")])
@@ -4172,20 +4184,28 @@ class TestViewerMovesOn(ViewerCase):
         with w.patches():
             for _ in range(2):
                 with self.assertRaises(F.NotesNotCleared):
-                    F.clear_notes_before_load(self.CTX, 1, "/d/diff-t3.patch", "new patch")
+                    F.clear_notes_before_load(self.CTX, 1, ["patch", "/d/diff-t3.patch"], "new patch")
         self.assertEqual(len(self.kept()), 1)
 
     def test_the_same_patch_again_keeps_every_note(self):
         w = FakeViewer([self.USER, self.AGENT], shows=self.shows())
         with w.patches():
-            F.clear_notes_before_load(self.CTX, 1, "/d/diff-t2.patch", "old patch")
+            F.clear_notes_before_load(self.CTX, 1, self.LOAD, "old patch")
         self.assertEqual(len(w.notes), 2)
         self.assertEqual(self.kept(), [])
+
+    def test_the_same_diff_loaded_another_way_keeps_the_notes_first(self):
+        """A patch window cannot be reloaded to a commit range: it is closed for one, and
+        notes left in it only in the window would go with it."""
+        w = FakeViewer([self.USER], shows=self.shows())
+        with w.patches():
+            F.clear_notes_before_load(self.CTX, 1, ["diff", "a1..b2", "--", "src/basket.py"], "old patch")
+        self.assertEqual([n["text"] for n in self.kept()], ["why a list here?"])
 
     def test_a_viewer_that_does_not_answer_is_not_loaded_over(self):
         w = FakeViewer([self.USER], shows=self.shows(), answers=False)
         with w.patches(), self.assertRaises(F.NotesNotCleared):
-            F.clear_notes_before_load(self.CTX, 1, "/d/diff-t3.patch", "new patch")
+            F.clear_notes_before_load(self.CTX, 1, ["patch", "/d/diff-t3.patch"], "new patch")
         self.assertEqual(w.cleared, 0)
 
     def test_shown_inline_when_the_viewer_notes_cannot_be_cleared(self):
@@ -4198,7 +4218,7 @@ class TestViewerMovesOn(ViewerCase):
                 patch.object(F, "versions", return_value=[{"id": 2}]), \
                 patch.object(F, "_compare", return_value=[
                     {"old_path": "a.py", "new_path": "a.py", "diff": "@@ -1 +1 @@\n-a\n+b\n"}]), \
-                patch.object(F.hunk, "show_patch", side_effect=AssertionError("loaded")):
+                patch.object(F.hunk, "show_view", side_effect=AssertionError("loaded")):
             out = F.render_topic_diff(state, self.CTX, 1, "t1", True)
         self.assertIn("the diff viewer did not answer", out)
         self.assertIn("```diff", out)
@@ -4206,13 +4226,14 @@ class TestViewerMovesOn(ViewerCase):
     def test_a_shown_diff_records_its_topic_on_the_window(self):
         w = FakeViewer()
         state = new_state(topics=[{"id": "t3", "thread_ids": [], "summary": "Retry with backoff"}])
-        with w.patches(), patch.object(F.hunk, "show_patch", return_value=("s1", "9 (◈ !1)")) as show, \
+        with w.patches(), patch.object(F.hunk, "show_view", return_value=("s1", "9 (◈ !1)")) as show, \
                 patch.object(F, "get_worktree", return_value=None):
             F._show_in_viewer(state, self.CTX, 1, "t3", [{"old_path": "a.py", "new_path": "a.py",
-                                                          "diff": "@@ -1 +1 @@\n-a\n+b\n"}])
+                                                          "diff": "@@ -1 +1 @@\n-a\n+b\n"}],
+                              ("OLD1", "NEW1"))
         self.assertEqual((w.shows()["iid"], w.shows()["topic"]), (1, "t3"))
         # The window is named after the topic it now shows: its title, its id meanwhile.
-        self.assertEqual(show.call_args[0][1], ("Retry with backoff", "t3"))
+        self.assertEqual(show.call_args[0][2], ("Retry with backoff", "t3"))
 
     def test_the_authors_fix_on_a_press_moves_the_window_on_too(self):
         """A press's output never reaches the model: the kept copy is how the notes do."""
@@ -4228,7 +4249,7 @@ class TestViewerMovesOn(ViewerCase):
         self.assertEqual(w.notes, [])
         self.assertEqual([n["text"] for n in self.kept()], ["why a list here?"])
         self.assertEqual(w.shows()["topic"], "t3")
-        self.assertEqual(show.call_args[0][3], ("Retry with backoff", "t3"))   # the window's name
+        self.assertEqual(show.call_args[0][2], ("Retry with backoff", "t3"))   # the window's name
 
     def test_the_authors_fix_on_a_press_is_not_loaded_over_notes_not_cleared(self):
         w = FakeViewer([self.USER], shows=self.shows(), answers=False)
@@ -4248,8 +4269,7 @@ class TestPointingOut(ViewerCase):
         with w.patches():
             out, _, code = self.run_cli("point", "t2", "src/basket.py", "12", "the total is summed here")
         self.assertIsNone(code)
-        self.assertEqual(w.pointed, [("src/basket.py", 12, "new", "agent",
-                                      ["patch", "/d/diff-t2.patch"])])
+        self.assertEqual(w.pointed, [("src/basket.py", 12, "new", "agent", self.LOAD)])
         self.assertIn("pointed out src/basket.py:12 on", out)
 
     def test_a_removed_line_is_pointed_at_on_the_old_side(self):
@@ -4395,6 +4415,209 @@ class TestAckClearsTheViewer(ViewerCase):
             out, _, code = self.run_cli("set", "t2", "--state", "acked")
         self.assertIsNone(code)
         self.assertNotIn("viewer", out)
+
+
+class WorktreeCase(ViewerCase):
+    """A review worktree with a real repository in it: `start` the code a topic was
+    commented on, `cur` the head after the author's push, which changed the topic's line,
+    renamed a file with a change in it, and deleted another."""
+
+    def setUp(self):
+        super().setUp()
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.wt = tmp.name
+        self.git("init", "-q")
+        # The repository's own setting must not leave the diff without its prefixes.
+        for k, v in (("user.email", "t@example.invalid"), ("user.name", "t"),
+                     ("commit.gpgsign", "false"), ("diff.noprefix", "true")):
+            self.git("config", k, v)
+        self.write("basket.py", "total = 0\n")
+        self.write("old_cart.py", "".join(f"line {i}\n" for i in range(12)))
+        self.write("gone.py", "x\ny\n")
+        self.start = self.commit("base")
+        self.write("basket.py", "total = sum(items)\n")
+        self.git("mv", "old_cart.py", "cart.py")
+        self.write("cart.py", "".join(f"line {i}\n" for i in range(11)) + "line eleven\n")
+        self.git("rm", "-q", "gone.py")
+        self.cur = self.commit("the author's push")
+        self.views = []
+        stub = patch.object(F, "get_worktree", lambda slug, iid: self.wt)
+        stub.start()
+        self.addCleanup(stub.stop)
+
+    def git(self, *a):
+        return subprocess.run(["git", "-C", self.wt, *a], check=True, capture_output=True,
+                              text=True).stdout.strip()
+
+    def write(self, path, text):
+        with open(os.path.join(self.wt, path), "w") as fh:
+            fh.write(text)
+
+    def commit(self, msg):
+        self.git("add", "-A")
+        self.git("commit", "-qm", msg)
+        return self.git("rev-parse", "HEAD")
+
+    BASKET = {"old_path": "basket.py", "new_path": "basket.py",
+              "diff": "@@ -1 +1 @@\n-total = 0\n+total = sum(items)\n"}
+    CART = {"old_path": "old_cart.py", "new_path": "cart.py", "renamed_file": True,
+            "diff": "@@ -10,2 +10,2 @@\n line 10\n-line 11\n+line eleven\n"}
+    GONE = {"old_path": "gone.py", "new_path": "gone.py", "deleted_file": True,
+            "diff": "@@ -1,2 +0,0 @@\n-x\n-y\n"}
+
+    def show_view(self, args, stat, name, cwd, **_kw):
+        """The viewer window, holding whatever it is asked to: what it was asked."""
+        self.views.append({"args": list(args), "stat": sorted(stat), "name": name, "cwd": cwd})
+        return ("s1", f"9 (◈ {name[1]})")
+
+    def state(self):
+        return new_state(topics=[{"id": "t2", "thread_ids": [], "summary": "Sum the basket"},
+                                 {"id": "t3", "thread_ids": [], "summary": "Name the cart"}])
+
+
+class TestRangeOrPatch(WorktreeCase):
+    """A topic's diff is shown as the commit range it is in the review's worktree wherever
+    the worktree has both its commits and the range holds exactly GitLab's diff; else as
+    GitLab's diff written to a patch."""
+
+    def test_a_range_the_worktree_has_holds_gitlabs_diff_renames_and_deletions_too(self):
+        args, text = F.topic_range(self.wt, (self.start, self.cur), [self.BASKET, self.CART, self.GONE])
+        self.assertEqual(args, ["diff", f"{self.start}..{self.cur}", "--",
+                                "basket.py", "cart.py", "gone.py", "old_cart.py"])
+        self.assertEqual(sorted(F.hunk.diff_stat(text)),
+                         [("basket.py", 1, 1), ("cart.py", 1, 1), ("gone.py", 0, 2)])
+
+    def test_a_baseline_the_worktree_no_longer_has_is_a_patch(self):
+        """A force-push pruned it; nothing is fetched to get it back."""
+        self.assertIsNone(F.topic_range(self.wt, ("0" * 40, self.cur), [self.BASKET]))
+
+    def test_no_worktree_is_a_patch(self):
+        self.assertIsNone(F.topic_range(None, (self.start, self.cur), [self.BASKET]))
+        self.assertIsNone(F.topic_range(os.path.join(self.wt, "pruned"), (self.start, self.cur),
+                                        [self.BASKET]))
+
+    def test_a_range_that_differs_from_gitlabs_diff_is_a_patch(self):
+        """GitLab sent no lines for a file too big for it: the window would show more than
+        the patch does."""
+        self.assertIsNone(F.topic_range(self.wt, (self.start, self.cur), [{**self.BASKET, "diff": ""}]))
+
+    def test_the_topics_diff_goes_up_as_its_range_in_the_worktree(self):
+        w = FakeViewer()
+        with w.patches(), patch.object(F.hunk, "show_view", self.show_view):
+            out = F._show_in_viewer(self.state(), self.CTX, 1, "t2", [self.BASKET], (self.start, self.cur))
+        self.assertIn("_Full diff in tmux window 9 (◈ t2):_", out[0])
+        (v,) = self.views
+        self.assertEqual((v["args"], v["cwd"], v["stat"]),
+                         (["diff", f"{self.start}..{self.cur}", "--", "basket.py"], self.wt,
+                          [("basket.py", 1, 1)]))
+        self.assertEqual(w.shows()["load"], v["args"])
+
+    def test_a_baseline_gone_moves_the_window_to_a_patch_with_the_notes_kept(self):
+        """The range window cannot reload to a patch, so it is closed for one
+        (`hunk.show_view`): the user's notes in it are kept first."""
+        w = FakeViewer()
+        with w.patches(), patch.object(F.hunk, "show_view", self.show_view):
+            F._show_in_viewer(self.state(), self.CTX, 1, "t2", [self.BASKET], (self.start, self.cur))
+            w.notes.append(FakeViewer.note("user:1", "user", "why sum here?", file="basket.py", line=1))
+            F._show_in_viewer(self.state(), self.CTX, 1, "t2", [self.BASKET], ("0" * 40, self.cur))
+        self.assertEqual(self.views[1]["args"][0], "patch")
+        with open(self.views[1]["args"][1]) as fh:
+            self.assertEqual(F.hunk.diff_stat(fh.read()), [("basket.py", 1, 1)])
+        self.assertEqual([(n["topic"], n["text"]) for n in self.kept()], [("t2", "why sum here?")])
+        self.assertEqual(w.notes, [])
+        self.assertEqual(w.shows()["load"], self.views[1]["args"])
+
+    def test_fix_press_then_the_topics_diff_then_another_fix_press(self):
+        """Each load names the window after its topic, and moving on keeps the notes of
+        the load before; loading the same again keeps them in the window."""
+        state = self.state()
+        ends = (self.start, self.cur)
+        w = FakeViewer()
+        fixes = {"t2": {"ends": ends, "paths": ["basket.py"]},
+                 "t3": {"ends": ends, "paths": ["cart.py", "old_cart.py"]}}
+        with w.patches(), patch.object(F.hunk, "show_view", self.show_view), \
+                patch.object(F, "picked_fix", lambda st, t, n=None: fixes[t["id"]]), \
+                patch.object(F.hunk, "focus_window"):
+            self.assertIsNone(self.run_cli("hunk-show", "t2", state=state)[2])
+            w.notes.append(FakeViewer.note("user:1", "user", "and empty?", file="basket.py", line=1))
+            self.assertIsNone(self.run_cli("hunk-show", "t2", state=state)[2])   # the same again
+            self.assertEqual(len(w.notes), 1)
+            F._show_in_viewer(state, self.CTX, 1, "t2", [self.BASKET, self.GONE], ends)
+            w.notes.append(FakeViewer.note("user:2", "user", "gone for good?", file="gone.py", line=1))
+            self.assertIsNone(self.run_cli("hunk-show", "t3", state=state)[2])
+        self.assertEqual([v["name"][1] for v in self.views], ["t2", "t2", "t2", "t3"])
+        self.assertEqual([v["args"][-1] for v in self.views],
+                         ["basket.py", "basket.py", "gone.py", "old_cart.py"])
+        self.assertEqual({v["cwd"] for v in self.views}, {self.wt})
+        self.assertEqual([(n["topic"], n["text"]) for n in self.kept()],
+                         [("t2", "and empty?"), ("t2", "gone for good?")])
+        self.assertEqual(w.shows()["topic"], "t3")
+
+
+class TestView(WorktreeCase):
+    """`view <t> <from>..<to> [-- <file>…]`: any commits of the review's worktree."""
+
+    def view(self, *argv):
+        state = self.state()
+        code = None
+        with patch.object(F, "resolve_state", return_value=(self.CTX, 1, "/s", state)), \
+                patch.object(F, "save"), patch.object(F.hunk, "show_view", self.show_view), \
+                patch.object(sys, "argv", ["findings.py", "view", *argv]), \
+                redirect_stdout(io.StringIO()) as out, redirect_stderr(io.StringIO()) as err:
+            try:
+                F.main()
+            except SystemExit as e:
+                code = e.code
+        return out.getvalue(), err.getvalue(), code
+
+    def test_a_range_by_its_refs_shows_with_the_windows_mark(self):
+        self.git("tag", "pushed")
+        w = FakeViewer()
+        with w.patches():
+            out, _, code = self.view("t3", "HEAD~1..pushed", "--iid", "1", "--", "cart.py", "old_cart.py")
+        self.assertIsNone(code)
+        (v,) = self.views
+        self.assertEqual(v["args"], ["diff", f"{self.start}..{self.cur}", "--", "cart.py", "old_cart.py"])
+        self.assertEqual((v["stat"], v["name"]), ([("cart.py", 1, 1)], ("Name the cart", "t3")))
+        self.assertEqual((w.shows()["topic"], w.shows()["load"]), ("t3", v["args"]))
+        self.assertIn("_Full diff in tmux window 9 (◈ t3):_", out)
+
+    def test_an_unknown_ref_is_refused_by_name(self):
+        _, err, code = self.view("t2", "HEAD~1..no-such-branch", "--iid", "1")
+        self.assertEqual(code, 1)
+        self.assertIn("`no-such-branch` is no commit the review's worktree has", err)
+        self.assertEqual(self.views, [])
+
+    def test_not_a_range_is_refused(self):
+        for bad in ("HEAD", "HEAD~1...HEAD", "..HEAD"):
+            _, err, code = self.view("t2", bad, "--iid", "1")
+            self.assertEqual(code, 1, bad)
+            self.assertIn("is not a range of two commits", err)
+        self.assertEqual(self.views, [])
+
+    def test_files_the_range_leaves_alone_open_no_empty_window(self):
+        with FakeViewer().patches():
+            _, err, code = self.view("t2", f"{self.start}..{self.cur}", "--iid", "1", "--", "README.md")
+        self.assertEqual(code, 1)
+        self.assertIn("changes nothing in README.md: there is no diff to show", err)
+        self.assertEqual(self.views, [])
+
+    def test_a_topic_the_review_does_not_have_is_refused(self):
+        _, err, code = self.view("t9", f"{self.start}..{self.cur}", "--iid", "1")
+        self.assertEqual(code, 1)
+        self.assertIn("no topic t9", err)
+
+    def test_without_a_worktree_it_says_so(self):
+        with patch.object(F, "get_worktree", lambda slug, iid: None):
+            _, err, code = self.view("t2", f"{self.start}..{self.cur}", "--iid", "1")
+        self.assertEqual(code, 1)
+        self.assertIn("no review worktree", err)
+
+    def test_an_iid_after_the_files_marker_is_named(self):
+        _, err, code = self.view("t2", f"{self.start}..{self.cur}", "--", "basket.py", "--iid", "1")
+        self.assertEqual(code, 1)
+        self.assertIn("give it before the `--`", err)
 
 
 class TestIidEitherSide(unittest.TestCase):

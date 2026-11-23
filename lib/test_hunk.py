@@ -498,7 +498,8 @@ class TestWindowName(HunkCase):
         self.addCleanup(os.unlink, fh.name)
         with patch.dict(os.environ, {"TMUX": "/tmp/x", "CLAUDE_CODE_SESSION_ID": "me"}), \
                 patch.object(hunk, "installed", lambda: True), patch.object(hunk, "_run", fake):
-            self.assertEqual(hunk.show_patch(fh.name, self.T5, "/w"), ("mine", f"9 ({self.V} t5)"))
+            self.assertEqual(hunk.show_view(["patch", fh.name], loaded, self.T5, "/w"),
+                             ("mine", f"9 ({self.V} t5)"))
 
     def test_a_window_the_user_renamed_keeps_their_name(self):
         renamed = dict(self.ours(f"{self.V} payment retry"), window_name="logs")
@@ -517,7 +518,7 @@ class TestWindowName(HunkCase):
 
 
 class TestShowPatch(unittest.TestCase):
-    """review-mr's window: a patch file, found by owner alone since it has no repository."""
+    """The view window holding a patch file, which has no repository."""
 
     PATCH = SAMPLE_DIFF
 
@@ -528,7 +529,8 @@ class TestShowPatch(unittest.TestCase):
         with patch.dict(os.environ, {"TMUX": "/tmp/x", "CLAUDE_CODE_SESSION_ID": "me"}), \
                 patch.object(hunk, "installed", lambda: True), \
                 patch.object(hunk, "_run", fake):
-            return hunk.show_patch(fh.name, NAME, "/w", sleep=lambda _s: None), fh.name
+            return hunk.show_view(["patch", fh.name], self.loaded(), NAME, "/w",
+                                  sleep=lambda _s: None), fh.name
 
     def loaded(self):
         return hunk.diff_stat(self.PATCH)
@@ -579,7 +581,99 @@ class TestShowPatch(unittest.TestCase):
 
     def test_outside_tmux_it_is_inline(self):
         with patch.dict(os.environ, {}, clear=True):
-            self.assertIsNone(hunk.show_patch("/nonexistent", NAME, "/w"))
+            self.assertIsNone(hunk.show_view(["patch", "/nonexistent"], self.loaded(), NAME, "/w"))
+
+
+class TestShowView(unittest.TestCase):
+    """The agent's view window: a commit range of a repository, or a patch, one window per
+    agent, reloaded in place where the viewer can take the new input there."""
+
+    RANGE = ["diff", "a1..b2", "--", "src/a.ts"]
+    STAT = [("src/a.ts", 2, 1)]
+
+    def show(self, fake, args=RANGE, cwd=REPO):
+        with patch.dict(os.environ, {"TMUX": "/tmp/x", "CLAUDE_CODE_SESSION_ID": "me"}), \
+                patch.object(hunk, "installed", lambda: True), patch.object(hunk, "_run", fake):
+            return hunk.show_view(args, self.STAT, NAME, cwd, sleep=lambda _s: None)
+
+    @staticmethod
+    def spawned(fake):
+        return [c for c in fake.calls if c[:2] == ["tmux", "new-window"]]
+
+    @staticmethod
+    def reloads(fake):
+        return [c for c in fake.calls if c[:3] == ["hunk", "session", "reload"]]
+
+    def test_a_range_opens_in_the_repository_marked_as_a_view(self):
+        fake = FakeRun(loaded=self.STAT)
+        self.assertEqual(self.show(fake), ("new", "9 (!123)"))
+        (spawn,) = self.spawned(fake)
+        self.assertEqual(spawn[-3:], ["-c", REPO, "hunk diff a1..b2 -- src/a.ts"])
+        self.assertIn(f"{hunk.KEEP_TAG_ENV}=me{hunk.VIEW_TAG}", spawn)
+        self.assertEqual(fake.opts["%9"][hunk.VIEW_OPT], "1")
+
+    def test_the_next_range_reloads_the_same_window(self):
+        fake = FakeRun([session("mine", pane="%4")], owners={"%4": "me"},
+                       opts={"%4": {hunk.VIEW_OPT: "1"}}, loaded=self.STAT)
+        self.assertEqual(self.show(fake), ("mine", "9 (!123)"))
+        self.assertEqual(self.reloads(fake)[0][-4:], self.RANGE)
+        self.assertEqual(self.spawned(fake), [])
+
+    def test_a_patch_window_gives_way_to_a_range_without_a_doomed_reload(self):
+        """The viewer never reloads a patch window to repository input; it is closed and
+        the range opens in a window of its own, so the agent never has two."""
+        fake = FakeRun([session("mine", repo=None, pane="%4")], owners={"%4": "me"},
+                       loaded=self.STAT)
+        self.assertEqual(self.show(fake), ("new", "9 (!123)"))
+        self.assertEqual(self.reloads(fake), [])
+        self.assertIn(["tmux", "kill-window", "-t", "%4"], fake.calls)
+
+    def test_a_range_window_gives_way_to_a_patch(self):
+        fake = FakeRun([session("mine", pane="%4")], owners={"%4": "me"},
+                       opts={"%4": {hunk.VIEW_OPT: "1"}}, new_repo=None, loaded=self.STAT)
+        self.assertEqual(self.show(fake, args=["patch", "/s/diff-t2.patch"]), ("new", "9 (!123)"))
+        self.assertIn(["tmux", "kill-window", "-t", "%4"], fake.calls)
+        self.assertEqual(self.spawned(fake)[0][-1], "hunk patch /s/diff-t2.patch")
+
+    def test_a_range_of_another_repository_opens_anew(self):
+        fake = FakeRun([session("mine", repo="/w/elsewhere", pane="%4")], owners={"%4": "me"},
+                       opts={"%4": {hunk.VIEW_OPT: "1"}}, loaded=self.STAT)
+        self.assertEqual(self.show(fake), ("new", "9 (!123)"))
+        self.assertEqual(self.reloads(fake), [])
+        self.assertIn(["tmux", "kill-window", "-t", "%4"], fake.calls)
+
+    def test_the_working_diff_window_of_the_same_checkout_is_left_alone(self):
+        """rework-mr's working diff is in the same repository as its pushed fix: taking it
+        over would swap the diff a push is about to be approved against."""
+        fake = FakeRun([session("work", pane="%4")], owners={"%4": "me"}, loaded=self.STAT)
+        self.assertEqual(self.show(fake), ("new", "9 (!123)"))
+        self.assertFalse([c for c in fake.calls if "%4" in c and c[:2] != ["tmux", "show-options"]])
+
+    def test_the_working_diff_lookup_never_finds_the_view(self):
+        fake = FakeRun([session("view", pane="%4")], owners={"%4": "me"},
+                       opts={"%4": {hunk.VIEW_OPT: "1"}})
+        with patch.object(hunk, "_run", fake):
+            self.assertIsNone(hunk.find_session(REPO, "me"))
+            self.assertEqual(hunk.find_view("me"), ("view", REPO))
+
+    def test_a_window_the_user_opened_in_the_worktree_is_never_touched(self):
+        fake = FakeRun([session("theirs", pane="%4")], owners={},
+                       opts={"%4": {hunk.VIEW_OPT: "1"}}, loaded=self.STAT)
+        self.assertEqual(self.show(fake), ("new", "9 (!123)"))
+        self.assertFalse([c for c in fake.calls if "%4" in c and c[:2] != ["tmux", "show-options"]])
+        self.assertFalse([c for c in fake.calls if "theirs" in c])
+
+    def test_a_window_holding_anything_else_after_the_reload_is_refused(self):
+        fake = FakeRun([session("mine", pane="%4")], owners={"%4": "me"},
+                       opts={"%4": {hunk.VIEW_OPT: "1"}}, loaded=[("src/a.ts", 3, 1)])
+        self.assertIsNone(self.show(fake))
+
+    def test_nothing_to_show_opens_nothing(self):
+        fake = FakeRun()
+        with patch.dict(os.environ, {"TMUX": "/tmp/x", "CLAUDE_CODE_SESSION_ID": "me"}), \
+                patch.object(hunk, "installed", lambda: True), patch.object(hunk, "_run", fake):
+            self.assertIsNone(hunk.show_view(self.RANGE, [], NAME, REPO))
+        self.assertEqual(fake.calls, [])
 
 
 class TestNotes(unittest.TestCase):

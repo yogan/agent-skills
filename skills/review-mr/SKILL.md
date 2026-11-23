@@ -636,7 +636,18 @@ the topic and survives force-pushes.
 When the user asks to see it ("show me the diff"), run `diff <t> --show` and paste its output
 verbatim. It puts the diff in your own viewer window when you run in tmux with `hunk` installed —
 the output then names the window and lists each file's `+/−` counts — and inline otherwise
-(just the compare URL when it is too big). On the user's word:
+(just the compare URL when it is too big). When they ask to see commits `diff` does not cover
+(another file of the push, an earlier push, the range between two commits), run `view <t>
+<from>..<to> --iid <n> [-- <file>...]` — any two commits or refs the review's worktree has — and
+paste its output the same way.
+
+**Never drive `hunk` yourself**: no `hunk session …` call, no `hunk diff` or `hunk patch` in a
+pane, no restarting the viewer's pane. Every view goes through `diff <t> --show`, the Show fix
+in hunk button, or `view`: only they check that the window holds exactly what you say it holds, keep the
+user's notes before it loads something else, and record what it shows for `point`, `notes` and
+`reply`.
+
+On the user's word:
 
 ```bash
 python3 $SD/findings.py set <t> --state acked --iid <n>               # ● you're satisfied, or agreed to leave it
@@ -722,6 +733,6 @@ details can be collapsed or hidden.
 `glab` authenticated; a review worktree (or willingness to create one); run inside the target
 repo. `python3`. (`clip.sh` copies to the clipboard via macOS `pbcopy`; where that is
 missing the copy is skipped and nothing else changes.) Build blocks: the `explain-branch` and `review-branch`
-skills installed. `findings.py` subcommands: sync·todo·present·resume·updates·bodies·quote·draft·diff·point·notes·reply·candidates·
+skills installed. `findings.py` subcommands: sync·todo·present·resume·updates·bodies·quote·draft·diff·view·point·notes·reply·candidates·
 import·add·set·drop·merge·link·posted·own-review·propose·verdict·peer·head·base·branch·set-head·worktree·explainer·seed·prune·path·begun·lang
 (run any with `-h`).

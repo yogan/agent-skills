@@ -111,17 +111,25 @@ def stat(repo, ends, paths=None):
     return hunk.diff_stat(patch(repo, ends, paths))
 
 
-def show(repo, ends, path, name, paths=None):
-    """Write the fix to `path` and put it in this agent's diff viewer window, named `name`
-    ((title, meanwhile), see `hunk.rename`): (session_id, where), or None where it could not
-    be shown there (see `hunk.show_patch`)."""
-    text = patch(repo, ends, paths)
-    if not text.strip():
+def view_args(ends, paths=None):
+    """What the diff viewer loads for the fix, as `hunk session reload` takes it: the commit
+    range in the repository the ends are kept in. It holds exactly `patch`: the viewer
+    detects renames as `-M` does, and takes `paths` as the same pathspec (measured with hunk
+    0.25 on a rename with and without a change, a deletion, a new, a binary and a mode-only
+    file; a renamed file named by its new path alone is an added file in both)."""
+    before, after = ends
+    return ["diff", f"{before}..{after}", *(["--", *paths] if paths else [])]
+
+
+def show(repo, ends, name, paths=None):
+    """Put the fix in this agent's diff viewer window, as the commit range it is in `repo`
+    (`view_args`), named `name` ((title, meanwhile), see `hunk.rename`): (session_id,
+    where), or None where it could not be shown there (see `hunk.show_view`). A pushed fix
+    is always a plain range, a rebased push included: its start is kept already rebased."""
+    expect = stat(repo, ends, paths)
+    if not expect:
         return None
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    with open(path, "w") as fh:
-        fh.write(text)
-    return hunk.show_patch(path, name, repo)
+    return hunk.show_view(view_args(ends, paths), expect, name, repo)
 
 
 def drop(repo, skill, iid):

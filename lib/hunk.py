@@ -31,9 +31,12 @@ diff needs showing, reloaded for each further round on that topic, and closed on
 lands — at which point the fixup and rebase have left the working tree clean and the viewer
 would otherwise sit there showing a diff that no longer exists.
 
-review-mr's window is a patch window instead (`show_patch`): a topic's server-side diff,
-shown when the user asks to see it in full, and reloaded for the next one. Nothing it shows
-is ever pushed, so nothing closes it; the user does, whenever they like.
+A view window (`show_view`) shows a change that is already committed: a commit range of a
+repository, or a diff that exists only as text, as a patch. review-mr shows every topic's
+change and the author's fixes in one, rework-mr a fix it pushed. One per agent, reloaded
+from one view to the next. Nothing it shows is ever pushed, so nothing closes it; the user
+does, whenever they like. It is marked as a view (`VIEW_OPT`), so the working-diff window
+of the same agent in the same repository is never taken for it, nor it for that one.
 
 self-review's window (`show_review`) holds the author's own review of their change, one
 commit or the uncommitted change at a time. There the notes are the point: the author's
@@ -58,6 +61,11 @@ from lib import diffsize, tab, tmux
 # Marks a tmux window as belonging to one agent session. See the module docstring for why
 # this lives on the window rather than in a file.
 OWNER_OPT = "@agent-skills-owner"
+# Marks this agent's view window (`show_view`) among its windows, on the window for the
+# same reason.
+VIEW_OPT = "@agent-skills-view"
+# Added to the owner in a view window's keep-notes tag (`spawn_session`).
+VIEW_TAG = ":view"
 
 # The most diff notes the agent may anchor on one topic's diff. A note on every hunk would
 # bury the diff it annotates. Notes are for the places the user would not otherwise spot —
@@ -167,7 +175,8 @@ def find_session(repo, owner):
     themselves, or one belonging to another agent in the same checkout, must never be
     reloaded out from under them.
 
-    `repo=None` finds a patch window (`show_patch`), which has no repository.
+    This agent's view window (`find_view`) is never the one found: rework-mr opens both in
+    the same checkout, and the working-diff window's notes are what hold a push.
 
     An empty `owner` matches nothing. Without that guard it would match everything: an
     unmarked window — precisely the user's own — reads back as the empty string too, so an
@@ -180,16 +189,38 @@ def find_session(repo, owner):
         if s.get("repoRoot") != repo:
             continue
         pane = _pane_of(s)
-        if pane and _owner_of(pane) == owner:
+        if pane and _owner_of(pane) == owner and not _is_view(s, pane):
             return s.get("sessionId")
     return None
 
 
-def spawn_session(repo, label, owner, sleep=None, cmd="hunk diff HEAD"):
+def _is_view(session, pane):
+    """Whether a window is a view window (`show_view`): marked as one when it was opened, or
+    a patch window, which has no repository and is only ever a view."""
+    if session.get("repoRoot") is None:
+        return True
+    rc, out = _run(["tmux", "show-options", "-w", "-t", pane, "-v", VIEW_OPT])
+    return rc == 0 and bool(out.strip())
+
+
+def find_view(owner):
+    """(session id, its repository root or None for a patch) of this agent's view window
+    (`show_view`), or None. Found by the owner mark, as `find_session`, and never a
+    working-diff or self-review window of the same agent."""
+    if not owner:
+        return None
+    for s in sessions():
+        pane = _pane_of(s)
+        if pane and _owner_of(pane) == owner and _is_view(s, pane):
+            return s.get("sessionId"), s.get("repoRoot")
+    return None
+
+
+def spawn_session(repo, label, owner, sleep=None, cmd="hunk diff HEAD", view=False):
     """Open a viewer for `repo` in a new background tmux window and return its session id.
 
-    `cmd` is what the window runs: the working diff by default, or `hunk patch <file>`
-    for a diff that exists only as text (see `show_patch`).
+    `cmd` is what the window runs: the working diff by default. `view` marks the window as
+    this agent's view window (`show_view`), whose `cmd` is what it first shows.
 
     The window is created first and marked before the viewer is looked for, so the mark is
     in place no matter how the startup race resolves, and the new session is identified by
@@ -205,10 +236,12 @@ def spawn_session(repo, label, owner, sleep=None, cmd="hunk diff HEAD"):
     # identified, which only leaves the placement to tmux's default.
     here = _window_of_pane(_own_pane())
     place = ["-a", "-t", here] if here else []
-    # The tag lets `closed_viewer_notes` tell this agent's viewers' files (the keep-notes
-    # extension's) from those of a viewer the user opened by hand in the same repository.
+    # The tag lets `closed_viewer_notes` tell this agent's working-diff viewers' files (the
+    # keep-notes extension's) from those of a viewer the user opened by hand in the same
+    # repository, and from its own view window's, whose notes hold no push.
+    tag = f"{owner}{VIEW_TAG}" if view else owner
     rc, out = _run(["tmux", "new-window", "-d", "-P", "-F", "#{pane_id}"] + place
-                   + ["-e", f"{KEEP_TAG_ENV}={owner}", "-n", label, "-c", repo, cmd])
+                   + ["-e", f"{KEEP_TAG_ENV}={tag}", "-n", label, "-c", repo, cmd])
     pane = out.strip()
     if rc != 0 or not pane:
         return None
@@ -219,6 +252,9 @@ def spawn_session(repo, label, owner, sleep=None, cmd="hunk diff HEAD"):
     # through `find_session`) would never close any of them. Unrecoverable without closing
     # windows by hand, so the window is closed now instead.
     rc, _ = _run(["tmux", "set-option", "-w", "-t", pane, OWNER_OPT, owner])
+    if rc == 0 and view:
+        # Unmarked, a view in a repository would be taken for the working-diff window.
+        rc, _ = _run(["tmux", "set-option", "-w", "-t", pane, VIEW_OPT, "1"])
     if rc != 0:
         _run(["tmux", "kill-window", "-t", pane])
         return None
@@ -821,53 +857,44 @@ def drop_note(session_id, note_id):
     return rc == 0
 
 
-def reload_patch(session_id, path):
-    """Swap the session onto the patch at `path`; return how many files it loaded, or None
-    if the reload did not happen."""
-    data = _json(["hunk", "session", "reload", session_id, "--json", "--", "patch", path])
-    if not data:
-        return None
-    return (data.get("result") or {}).get("fileCount")
+def show_view(args, expect_stat, name, cwd, owner=None, sleep=None):
+    """Put `hunk <args>` in this agent's view window; return (session_id, where), or None to
+    mean "show the diff inline instead".
 
+    `args` is what the window loads, as `hunk session reload` takes it: `["diff", "a..b",
+    "--", paths…]` for a commit range of the repository `cwd`, `["patch", path]` for a diff
+    that exists only as text — review-mr's server-side compare of a topic, where the review's
+    worktree does not hold it as a commit range. The same guarantee as `show_working_diff`
+    holds: the window must come back holding exactly `expect_stat`, the files and line
+    counts of the caller's own diff, or no pointer is given. `name` is (title, meanwhile) of
+    what it shows (see `rename`).
 
-def show_patch(path, name, cwd, owner=None, sleep=None):
-    """Put the patch at `path` in this agent's own window; return (session_id, where) or
-    None to mean "show the diff inline instead".
-
-    For a diff that exists only as text — review-mr's is GitLab's server-side compare, which
-    survives the force-pushes that prune its baseline locally, so there is no working tree
-    or revision range to point the viewer at. The same guarantee as `show_working_diff`
-    holds: the window must come back holding exactly the files and line counts of the
-    patch, or no pointer is given.
-
-    A patch session has no repository, so it is found by the owner mark alone
-    (`find_session(None, …)`): one window per agent, reloaded for each diff it shows.
-    `name` is (title, meanwhile) of what it shows (see `rename`).
-
-    The viewer reloads a patch only from inside the git repository its window started in
-    (hunk 0.25: "refused patch file outside the initial Hunk root"), and the skills keep
-    their patches in their state folders, outside any repository. So a reload is tried, and
-    where it is refused this agent's window is closed and a new one opened beside the agent
-    with the patch. Nothing is lost by it: a caller whose window holds notes keeps and clears
-    them before loading anything.
+    One view window per agent, found by its marks (`find_view`) and reloaded in place. The
+    viewer cannot always reload it to the new input (hunk 0.25): never a patch window to a
+    commit range ("requires repository-backed input to stay inside the initial Hunk root"),
+    never a range to another repository, and a patch only from where its window started
+    ("refused patch file outside the initial Hunk root"). So a window that cannot hold the
+    new input, or refuses it, is closed and a new one opened beside the agent. Nothing is
+    lost by it: a caller whose window holds notes keeps and clears them before loading
+    anything.
     """
     if not installed() or not in_tmux():
         return None
     owner = owner or owner_id()
-    if not owner:
+    expect = sorted(tuple(f) for f in expect_stat)
+    if not owner or not expect:
         return None
-    with open(path) as fh:
-        expect = sorted(tuple(f) for f in diff_stat(fh.read()))
-    if not expect:
-        return None
-    sid = find_session(None, owner)
+    repo = None if args[:1] == ["patch"] else os.path.realpath(cwd)
+    found = find_view(owner)
+    sid, count = found[0] if found else None, None
     since = time.time()
-    count = reload_patch(sid, path) if sid else None
+    if found and (found[1] and os.path.realpath(found[1])) == repo:
+        count = reload_review(sid, args)
     if count is None:
         if sid and not close_session(sid, owner):
             return None
         sid = spawn_session(cwd, tab.viewer_label(*name), owner, sleep=sleep,
-                            cmd=f"hunk patch {shlex.quote(path)}")
+                            cmd=shlex.join(["hunk", *args]), view=True)
         if not sid:
             return None
         count = len(loaded_stat(sid) or [])

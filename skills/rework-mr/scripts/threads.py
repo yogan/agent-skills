@@ -4162,14 +4162,13 @@ def main():
             print(f"{tref(args.topic)} is pushed, and its next card is the user's: end the "
                   "turn here, and never post or resolve for them.")
     elif cmd == "hunk-show" and args.pushed:
-        # The pushed fix, from the two commits kept in git: written as a patch, opened in
-        # this session's diff viewer window.
+        # The pushed fix, from the two commits kept in git: their range, in this session's
+        # view window (never the working-diff window of the same checkout, `hunk.find_view`).
         t = topic_for(state, args.topic) or die(f"no topic {args.topic}")
         root = (_git("rev-parse", "--show-toplevel") or "").strip()
         ends = kept_fix(state, t, args.push) or die(f"{tref(args.topic)} has no pushed fix kept "
                                                     "in git to show: its diff link is all there is")
-        shown = fix_refs.show(root, ends, state_file(STATE_ROOT, ctx["slug"], iid, f"fix-{args.topic}.patch"),
-                              viewer_name(state, args.topic))
+        shown = fix_refs.show(root, ends, viewer_name(state, args.topic))
         if not shown:
             die(hunk.not_shown())
         hunk.focus_window(shown[0])

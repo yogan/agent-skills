@@ -52,6 +52,8 @@ each only on a person's press):
   draft <t>      the draft's comment body ONLY — the paste/post payload (no meta)
   diff <t>       the author's change for one topic since you posted it, for YOU to summarise;
                  `--show` when the user asks to see it (viewer window, or inline)
+  view <t> <from>..<to> [-- <file>…]   any commits of the review's worktree in the viewer
+                 window, for <t>, when the user asks to see a change `diff` does not cover
   point <t> <file> <line> <text> [--old]   on the user's request only: your note on that
                  line of <t>'s diff in the viewer window, brought into view
   notes          the user's notes in the viewer window, numbered, and those from diffs it
@@ -3263,7 +3265,7 @@ def render_topic_diff(state, ctx, iid, tid, show=False, inline_limit=80):
         return "\n".join(out)
     if show:
         try:
-            viewer = _show_in_viewer(state, ctx, iid, tid, picked)
+            viewer = _show_in_viewer(state, ctx, iid, tid, picked, (start, cur))
         except NotesNotCleared as e:
             viewer = None
             out += ["", f"_{e}; the diff is here instead._"]
@@ -3279,9 +3281,11 @@ def render_topic_diff(state, ctx, iid, tid, show=False, inline_limit=80):
 
 
 def topic_patch(picked):
-    """The compare API's per-file diffs as one git-style patch, which is what the viewer
-    reads. GitLab hands back each file's hunks without headers, so they are written here —
-    rename lines included, so the viewer shows a renamed file under its new name."""
+    """The compare API's per-file diffs as one git-style patch: what the viewer reads where
+    the review's worktree does not hold them as a commit range (`topic_range`), and what
+    such a range must match. GitLab hands back each file's hunks without headers, so they
+    are written here — rename lines included, so the viewer shows a renamed file under its
+    new name."""
     out = []
     for d in picked:
         old, new = d.get("old_path"), d.get("new_path")
@@ -3302,33 +3306,103 @@ def viewer_name(state, tid):
     return (topic_for(state, tid) or {}).get("summary"), tid
 
 
-def _show_in_viewer(state, ctx, iid, tid, picked):
-    """The pointer lines when the topic's diff is now in this agent's viewer window, or
-    None to show it inline — no tmux, no viewer, or a window that came back holding
-    anything but exactly this patch's files and line counts (see `hunk.show_patch`).
-    Raises `NotesNotCleared` where the window could not be cleared for it
-    (`clear_notes_before_load`)."""
-    patch = topic_patch(picked)
-    path = state_file(STATE_ROOT, ctx["slug"], iid, f"diff-{tid}.patch")
-    clear_notes_before_load(ctx, iid, path, patch)
-    with open(path, "w") as fh:
-        fh.write(patch)
-    shown = hunk.show_patch(path, viewer_name(state, tid),
-                            get_worktree(ctx["slug"], iid) or os.getcwd())
+def topic_range(wt, ends, picked):
+    """(viewer args, diff text) of the topic's change as the commit range it is in the
+    review's worktree `wt`, or None where it is not one there: no worktree, a commit of
+    `ends` it does not have (a force-push pruned the baseline; nothing is fetched for it),
+    or a local diff that differs from GitLab's `picked` in any file's line counts (a file
+    too big for GitLab to send, say). A renamed file is asked for by both its names, as
+    GitLab pairs them; by its new name alone git would show it added."""
+    if not (wt and os.path.isdir(wt) and all(fix_refs.has_commit(wt, e) for e in ends)):
+        return None
+    paths = sorted({p for d in picked for p in (d.get("old_path"), d.get("new_path")) if p})
+    text = fix_refs.patch(wt, ends, paths)
+    gitlab = sorted(hunk.diff_stat(topic_patch(picked)))
+    if not text.strip() or sorted(hunk.diff_stat(text)) != gitlab:
+        return None
+    return fix_refs.view_args(ends, paths), text
+
+
+def _show_in_viewer(state, ctx, iid, tid, picked, ends):
+    """The pointer lines when the topic's diff (GitLab's `picked`, from `ends`) is now in
+    this agent's viewer window, or None to show it inline — no tmux, no viewer, or a window
+    that came back holding anything but exactly its files and line counts (see
+    `hunk.show_view`). As a commit range of the review's worktree wherever it is one there
+    (`topic_range`), else as a patch. Raises `NotesNotCleared` where the window could not be
+    cleared for it (`clear_notes_before_load`)."""
+    wt = get_worktree(ctx["slug"], iid)
+    got = topic_range(wt, ends, picked)
+    if got:
+        args, text = got
+    else:
+        text = topic_patch(picked)
+        args = ["patch", state_file(STATE_ROOT, ctx["slug"], iid, f"diff-{tid}.patch")]
+    return show_load(state, ctx, iid, tid, args, text,
+                     wt if wt and os.path.isdir(wt) else os.getcwd())
+
+
+def show_load(state, ctx, iid, tid, args, text, cwd):
+    """Load `args` — a commit range of the worktree `cwd`, or `["patch", path]`, with
+    `text` the diff it holds (a patch is written to `path` here) — in this agent's viewer
+    window for topic `tid`: the notes in the window kept and cleared first where it moves
+    on (`clear_notes_before_load`), the window marked with what it holds (`mark_shown`).
+    The pointer lines, or None where the window could not be made to hold exactly `text`."""
+    clear_notes_before_load(ctx, iid, args, text)
+    if args[0] == "patch":
+        with open(args[1], "w") as fh:
+            fh.write(text)
+    stat = hunk.diff_stat(text)
+    shown = hunk.show_view(args, stat, viewer_name(state, tid), cwd)
     if not shown:
         return None
-    mark_shown(shown[0], iid, tid, path, patch)
-    stat = hunk.diff_stat(patch)
+    mark_shown(shown[0], iid, tid, args, text)
     head = f"_Full diff in tmux window {shown[1]}:_ {diffsize.of_stat(stat)}"
     # The only line naming where the diff is, so it must not be the one a paste may drop.
     critical_manifest.mark(head)
     return [head, "", fence("\n".join(hunk.stat_rows(stat)), "yaml")]
 
 
+def view_range(state, ctx, iid, tid, rng, files):
+    """`view`: the commits `rng` (`<from>..<to>`) of the review's worktree, only `files`
+    where any are named, in this agent's viewer window for topic `tid` — with every
+    guarantee of `diff <t> --show` (`show_load`). The pointer lines; dies with what is
+    wrong where nothing was loaded."""
+    if "--iid" in files:
+        die("`--iid` after `--` is taken for a file: give it before the `--`")
+    wt = get_worktree(ctx["slug"], iid)
+    if not (wt and os.path.isdir(wt)):
+        die(f"!{iid} has no review worktree to show commits from")
+    frm, sep, to = rng.partition("..")
+    if not (sep and frm and to) or to.startswith("."):
+        die(f"`{rng}` is not a range of two commits: give it as <from>..<to>")
+
+    def commit(ref):
+        r = subprocess.run(["git", "-C", wt, "rev-parse", "--verify", "--quiet",
+                            "--end-of-options", f"{ref}^{{commit}}"],
+                           capture_output=True, text=True)
+        return r.stdout.strip() if r.returncode == 0 and r.stdout.strip() else None
+    ends = tuple(commit(r) or die(f"`{r}` is no commit the review's worktree has (fetch it, "
+                                  "or name another)") for r in (frm, to))
+    text = fix_refs.patch(wt, ends, files)
+    if not text.strip():
+        die(f"`{rng}` changes nothing" + (f" in {', '.join(files)}" if files else "")
+            + ": there is no diff to show")
+    try:
+        shown = show_load(state, ctx, iid, tid, fix_refs.view_args(ends, files), text, wt)
+    except NotesNotCleared as e:
+        die(str(e))
+    if not shown:
+        die(hunk.not_shown())
+    return "\n".join([f"**{tref(tid)}** — `{frm}..{to}` (`{ends[0][:12]}` → `{ends[1][:12]}`)",
+                      ""] + shown)
+
+
 # What this agent's diff viewer window shows, recorded on the window (`hunk.set_mark`) as
-# JSON: the MR, the topic, the patch file and a digest of its text; and which of the user's
-# notes in it `notes` has printed (their numbers, in that order) and `reply` has answered.
-# On the window because all of it is true only for as long as the window is.
+# JSON: the MR, the topic, what it loaded (`load`, as `hunk session reload` takes it: a
+# commit range of the review's worktree, or a patch file) and a digest of the diff that
+# holds; and which of the user's notes in it `notes` has printed (their numbers, in that
+# order) and `reply` has answered. On the window because all of it is true only for as long
+# as the window is.
 VIEWER_MARK = "@review-mr-shown"
 
 
@@ -3342,7 +3416,8 @@ def viewer_window():
     no window of this agent's open."""
     if not hunk.installed() or not hunk.in_tmux():
         return None
-    return hunk.find_session(None, hunk.owner_id())
+    found = hunk.find_view(hunk.owner_id())
+    return found[0] if found else None
 
 
 def no_viewer(then):
@@ -3365,8 +3440,8 @@ def _set_shows(sid, shows):
     return hunk.set_mark(sid, VIEWER_MARK, json.dumps(shows, separators=(",", ":")))
 
 
-def _same_patch(shows, path, text):
-    return shows.get("patch") == path and shows.get("digest") == _digest([text])
+def _same_load(shows, args, text):
+    return shows.get("load") == list(args) and shows.get("digest") == _digest([text])
 
 
 def kept_notes_path(ctx, iid, make=True):
@@ -3383,15 +3458,17 @@ def _kept_notes(path):
     return [n for n in data if isinstance(n, dict)] if isinstance(data, list) else []
 
 
-def clear_notes_before_load(ctx, iid, path, text):
-    """Ready this agent's diff viewer window to load the patch `text` at `path`.
+def clear_notes_before_load(ctx, iid, args, text):
+    """Ready this agent's diff viewer window to load `args` (see `VIEWER_MARK`), which holds
+    the diff `text`.
 
     The viewer re-anchors its notes by line number when it loads another diff, so a note
     left on one topic's diff would land on unrelated code in the next: every note goes. The
     user's are kept first (`kept_notes_path`, with the topic they were written on), because
     a load is often a person's press, whose output never reaches the model; the kept copy
-    is then the only way their notes still do. Loading the same patch again moves nothing,
-    and every note stays.
+    is then the only way their notes still do. Loading the same again moves nothing, and
+    every note stays. A load the window cannot take closes it (`hunk.show_view`), which
+    is why the notes are kept first whatever comes next.
 
     Raises `NotesNotCleared` where the viewer cannot say which notes it holds, or cannot clear
     them: the window is then left as it is, and nothing is to be loaded into it."""
@@ -3399,7 +3476,7 @@ def clear_notes_before_load(ctx, iid, path, text):
     if not sid:
         return
     shows = viewer_shows(sid)
-    if _same_patch(shows, path, text):
+    if _same_load(shows, args, text):
         return
     got = hunk.user_notes(sid)
     if got is None:
@@ -3424,12 +3501,13 @@ def keep_viewer_notes(ctx, iid, topic, notes):
     _save(path, data)
 
 
-def mark_shown(sid, iid, tid, path, text):
-    """Record on the window that it now shows topic `tid`'s patch at `path`. The same patch
-    loaded again keeps the record of which notes were printed and answered."""
+def mark_shown(sid, iid, tid, args, text):
+    """Record on the window that it now shows `args` for topic `tid`, holding the diff
+    `text`. The same loaded again keeps the record of which notes were printed and
+    answered."""
     prev = viewer_shows(sid)
-    shows = {"iid": iid, "topic": tid, "patch": path, "digest": _digest([text])}
-    if _same_patch(prev, path, text):
+    shows = {"iid": iid, "topic": tid, "load": list(args), "digest": _digest([text])}
+    if _same_load(prev, args, text):
         shows.update({k: prev[k] for k in ("printed", "answered") if k in prev})
     _set_shows(sid, shows)
 
@@ -3440,11 +3518,10 @@ def point_out(iid, tid, path, line, text, side):
     the window holds at that line."""
     sid = viewer_window() or die(no_viewer(f"show the diff first with `diff {tid} --show`"))
     shows = viewer_shows(sid)
-    if shows.get("iid") != iid or shows.get("topic") != tid or not shows.get("patch"):
+    if shows.get("iid") != iid or shows.get("topic") != tid or not shows.get("load"):
         die(f"the diff viewer does not show {tid}'s diff; show it first with "
             f"`diff {tid} --show`")
-    if not hunk.point(sid, path, line, text, "agent", side=side,
-                      args=["patch", shows["patch"]]):
+    if not hunk.point(sid, path, line, text, "agent", side=side, args=shows["load"]):
         die(f"{path}:{line} cannot carry a note: it is not a line {tid}'s diff in the viewer "
             "shows (or it is hidden there as read). Name that place in the chat instead.")
     return f"pointed out {_where(path, side, line)} on {tref(tid)} in window {hunk.window_of(sid)}"
@@ -3508,7 +3585,7 @@ def reply_note(number, text):
         die("the diff viewer did not answer; nothing was posted")
     note = next((n for n in live if n[4] == nid), None) or die(
         f"note #{ref} is no longer in the diff viewer; answer it in the chat")
-    if shows.get("patch") and not hunk.show_unread(sid, [note[0]], ["patch", shows["patch"]]):
+    if shows.get("load") and not hunk.show_unread(sid, [note[0]], shows["load"]):
         die(f"#{ref} is on {note[0]}, which the window hides as read and could not show "
             "again: Hunk takes no reply there. Answer it in the chat")
     if not hunk.reply(sid, nid, text):
@@ -4112,7 +4189,7 @@ def set_lang(slug, lang):
 # The commands that only read the state: they run alongside any other, since a write is
 # whole or nothing (`save`). The mod asks for these after every view and on every move.
 READ_ONLY = ("state", "code", "draft", "path", "begun", "proposal", "bodies", "judge-prompt", "hunk-show",
-             "point", "notes", "reply")
+             "view", "point", "notes", "reply")
 
 
 def resolve_state(args):
@@ -4308,6 +4385,12 @@ def main():
     ph.add_argument("--push", type=int, help="which of the author's fixes (1-based); the latest "
                     "where none is given")
     ph.add_argument("--iid", type=int)
+    pv = sub.add_parser("view", help="any commits of the review's worktree in your viewer "
+                        "window, for <t>: `view <t> <from>..<to> --iid <n> [-- <file>...]`")
+    pv.add_argument("topic")
+    pv.add_argument("range", help="<from>..<to>: two commits or refs the worktree has")
+    pv.add_argument("files", nargs="*", help="after `--`: only these files")
+    pv.add_argument("--iid", type=int)
     pt = sub.add_parser("point", help="on the user's request only: your note on a line of "
                         "<t>'s diff in your viewer window, brought into view")
     pt.add_argument("topic")
@@ -4485,18 +4568,22 @@ def main():
         f = picked_fix(state, t, args.push)
         ends = (f or {}).get("ends") or die(f"{tref(args.topic)} has no push of the author's "
                                             "kept in git to show")
-        fix = state_file(STATE_ROOT, ctx["slug"], iid, f"fix-{args.topic}.patch")
+        load = fix_refs.view_args(ends, f.get("paths"))
         text = fix_refs.patch(wt, ends, f.get("paths"))
         try:
-            clear_notes_before_load(ctx, iid, fix, text)
+            clear_notes_before_load(ctx, iid, load, text)
         except NotesNotCleared as e:
             die(str(e))
-        shown = fix_refs.show(wt, ends, fix, viewer_name(state, args.topic), f.get("paths"))
+        shown = fix_refs.show(wt, ends, viewer_name(state, args.topic), f.get("paths"))
         if not shown:
             die(hunk.not_shown())
-        mark_shown(shown[0], iid, args.topic, fix, text)
+        mark_shown(shown[0], iid, args.topic, load, text)
         hunk.focus_window(shown[0])
         print(f"the author's fix for {tref(args.topic)} is in the diff viewer, window {shown[1]}")
+        return
+    if cmd == "view":
+        topic_for(state, args.topic) or die(f"no topic {args.topic}")
+        print(view_range(state, ctx, iid, args.topic, args.range, args.files))
         return
     if cmd == "point":
         topic_for(state, args.topic) or die(f"no topic {args.topic}")

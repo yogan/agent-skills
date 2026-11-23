@@ -9,6 +9,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -86,6 +87,25 @@ class TestFixRefs(unittest.TestCase):
         self.assertIn("+++ b/src/new_name.ts", text)
         self.assertEqual(sorted(fix_refs.stat(self.repo, (self.before, self.after))),
                          [("notes.md", 1, 0), ("src/new_name.ts", 1, 1)])
+
+    def test_the_fix_is_shown_as_its_commit_range_against_the_patchs_counts(self):
+        """The viewer loads the range in the repository, and must come back holding exactly
+        what the patch holds: a rename under its new name, with its one changed line."""
+        ends = (self.before, self.after)
+        with patch.object(fix_refs.hunk, "show_view", return_value=("s1", "9 (x)")) as show:
+            self.assertEqual(fix_refs.show(self.repo, ends, ("Rename it", "t1")), ("s1", "9 (x)"))
+        self.assertEqual(show.call_args[0], (["diff", f"{self.before}..{self.after}"],
+                                             fix_refs.stat(self.repo, ends), ("Rename it", "t1"),
+                                             self.repo))
+        with patch.object(fix_refs.hunk, "show_view") as show:
+            fix_refs.show(self.repo, ends, ("x", "t1"), ["notes.md"])
+        self.assertEqual(show.call_args[0][:2], (["diff", f"{self.before}..{self.after}", "--",
+                                                  "notes.md"], [("notes.md", 1, 0)]))
+
+    def test_a_fix_that_changes_nothing_opens_nothing(self):
+        with patch.object(fix_refs.hunk, "show_view") as show:
+            self.assertIsNone(fix_refs.show(self.repo, (self.after, self.after), ("x", "t1")))
+        show.assert_not_called()
 
     def test_drop_removes_the_mrs_fixes_only(self):
         fix_refs.keep(self.repo, "rework-mr", 3, "t1", self.before, self.after)

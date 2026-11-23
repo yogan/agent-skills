@@ -617,6 +617,9 @@ diff opens in a tmux window of its own — placed directly right of the one you 
 in — instead of filling the chat; `hunk-notes` reads back what the user wrote on the lines
 there, and `hunk-close` closes the window once the push lands. Without either, `diff-view.sh`
 prints the diff inline exactly as before — nothing to configure, and nothing else changes.
+**Never drive `hunk` yourself** (no `hunk session …`, no `hunk diff` in a pane, no restarting the
+viewer's pane): every view goes through `diff-view.sh` or the card's buttons, which check that
+the window holds exactly the fix and keep the notes the push waits on.
 `diff-url.py` (baseline·url), `clip.sh` (guards + copies), `guard-reply.sh` (topic-handle gate
 for the clipboard path),
 `change-view` (trivial-topic change illustration piped in, one paste — write the change with
