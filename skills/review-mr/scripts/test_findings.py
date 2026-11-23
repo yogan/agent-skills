@@ -4657,6 +4657,30 @@ class TestAckClearsTheViewer(ViewerCase):
         self.assertNotIn("viewer", out)
 
 
+class TestPressClose(ViewerCase):
+    """The `closed:` line a press prints is the outcome the review-ui mod adds to the card."""
+
+    def state(self, source):
+        return new_state(
+            threads={"d1": {"body": "x", "file": "a.py", "line": 3, "url": "u", "resolved": True,
+                            "resolved_by": "Robin Example", "resolved_username": "robin",
+                            "resolved_at": "2026-01-05T10:00:00Z", "notes": []}},
+            topics=[{"id": "t2", "thread_ids": ["d1"], "source": source}])
+
+    def ack(self, source):
+        with patch.object(F, "viewer_window", lambda: None):
+            return self.run_cli("set", "t2", "--state", "acked", state=self.state(source))[0]
+
+    def test_another_reviewers_resolve_is_not_said_again_as_the_acks_outcome(self):
+        """It is already the last line of the card's story: as the outcome too, it stood on
+        the dimmed card twice."""
+        self.assertNotIn("closed:", self.ack("peer"))
+
+    def test_an_ack_of_ones_own_topic_says_how_it_closed(self):
+        self.assertIn("closed: ", self.ack("llm"))
+        self.assertIn("you acked it", self.ack("llm"))
+
+
 class WorktreeCase(ViewerCase):
     """A review worktree with a real repository in it: `start` the code a topic was
     commented on, `cur` the head after the author's push, which changed the topic's line,

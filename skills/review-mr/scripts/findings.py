@@ -1421,6 +1421,18 @@ def closing_line(state, t):
     return ui.step_md(e["icon"], e["text"], e["at"]) if e else None
 
 
+def press_close(state, t):
+    """The closing line a press that closed `t` prints (`closed: …`), which the review-ui mod
+    adds to the card as that press's outcome; None where the close was not this press's.
+
+    Only a close made here says what the press did. One resolved on GitLab and not closed
+    here (another reviewer's thread the user acked, say) names the resolve, already the last
+    line of the card's story: added again as the outcome, it stood on the card twice. Without
+    it the mod says what the press did in its own words."""
+    e = closing_event(state, t)
+    return closing_line(state, t) if e and e.get("last") else None
+
+
 def closing_event(state, t):
     """What closed a posted topic, once it is closed here or its threads are resolved: by
     whom, how and when, as one of its story's events (`story_steps`); None while neither.
@@ -5077,8 +5089,9 @@ def main():
             # A follow-up answers the thread as it stands now (`drop_stale_drafts`).
             t["draft_on"] = answer_mark(state, t)
         save(path, state)
-        if args.state == "acked" and closing_line(state, t):
-            print(f"closed: {closing_line(state, t)}")
+        closing = press_close(state, t) if args.state == "acked" else None
+        if closing:
+            print(f"closed: {closing}")
         tidied = tidy_viewer(iid, args.topic) if args.state == "acked" else None
         if tidied:
             print(tidied)
@@ -5289,7 +5302,9 @@ def main():
         t["closed"] = {"how": "accepted", "at": t["acked_at"]}
         save(path, state)
         print(f"resolved and acked {tref(args.topic)}")
-        print(f"closed: {closing_line(state, t)}")
+        closing = press_close(state, t)
+        if closing:
+            print(f"closed: {closing}")
         tidied = tidy_viewer(iid, args.topic)
         if tidied:
             print(tidied)
@@ -5302,9 +5317,10 @@ def main():
                       lambda: sync(state, fetch_threads(ctx, iid, me, author), ctx, iid))
         save(path, state)
         print(f"posted {tref(args.topic)}: {url}")
-        closing = args.resolve and closing_line(state, topic_for(state, args.topic))
-        if closing:
-            print(f"closed: {closing}")
+        if args.resolve:
+            closing = press_close(state, topic_for(state, args.topic))
+            if closing:
+                print(f"closed: {closing}")
             tidied = tidy_viewer(iid, args.topic)
             if tidied:
                 print(tidied)
