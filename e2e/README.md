@@ -18,6 +18,7 @@ Talk-day checklist and run of show: [RUNBOOK.md](RUNBOOK.md).
 | `mock_model.py` | the model's stand-in: replays a recorded run's replies to a real claude, the mod's own model calls among them, and cuts recordings from transcripts |
 | `recordings/` | one recording per scenario, played by default; made from a passing real-model run (`--record`) |
 | `timing.py` | where a verify run's time went (reset, claude's start, each kind of step), and one set of runs against another |
+| `timing_baseline.json` | what each scenario cost at the last re-recording, by part, and the push level's wall clock for them; `check_push.py` compares against it |
 | `screenshot.py` | a colour capture (`.ansi`) as a PNG drawn as Ghostty draws it, the whole screen or the sidebar alone |
 | `transcript.py` | what a session ran, from its transcript: prompts, replies, calls, results, engine notes; a failed verify run keeps it as `transcript.txt` |
 | `news.py` | the MRs change from outside while a session works on them, as the other people on them would: MR !1's author answers and pushes (`reply`, `push`, `fix`, `both`), `main` moves and MR !2 is rebased onto it with a fix (`main`, `rebase-fix`), MR !3 is approved, settled, given a pipeline, reopened, merged, MR !5 gets two fix commits on top and another reviewer resolves a thread of theirs (`fixes-on-top`, `peer-resolve`). Each command checks everything before it changes anything, runs once, and says which commands exclude each other (`python3 news.py help`) |
@@ -241,6 +242,21 @@ every 12 s instead of every 3 minutes (`REVIEW_UI_TICK_MS`). There is no slower 
 scenario to choose, since a recording plays only at the pace it was made at. Every run leaves a `timing.json`;
 `python3 timing.py` adds them up by part, and `python3 timing.py BEFORE AFTER` compares two
 `--out` folders (its docstring is the method).
+
+**The scenarios' time is tracked like the diagram engine's.** `timing_baseline.json` holds
+each scenario's seconds by part from one passing push-level run, that run's wall clock for its
+scenarios and how many ran at a time, and the machine, date and commit. `check_push.py` keeps
+its scenarios' captures in `.runs/push-<time>/` and prints, after them, what got slower or
+faster than the baseline beyond noise (20% or 3 s: one run beside two others is noisier than
+a best of several alone), what is new or gone, and the wall clock against the baseline's. It
+informs and never fails the push, and covers only the scenarios it ran. The baseline is
+re-recorded in the same commit as a change that moves scenario time — a new scenario, a slower
+step: `python3 timing.py --update` takes it from the last passing push-level run (it runs
+nothing; on another machine it needs `--force`), and a scenario that run did not reach keeps
+its entry. A tree that differs from one that passed only in this file counts as passed,
+for `check_push.py` and the pre-push hook alike, so folding it into the commit costs no second
+run; with any other file beside it, it does. `git log -p e2e/timing_baseline.json` is the
+history.
 
 **showcase** opens a window in the tmux session you are in (or `--session NAME`), with your
 settings, on the recording, and waits for Enter before each step; the recording stops

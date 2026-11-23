@@ -276,6 +276,13 @@ it; the push level runs everything on the Mac (`run_tests.py --host`), because L
 shell tools are not the Mac's. `testbox.py` lists what runs there and why; a test file not on
 its list runs on the Mac, so put a new one on the list only once it passes there.
 
+**The scenarios' time has a baseline too**, `e2e/timing_baseline.json`, and `check_push.py`
+prints each scenario it ran against it (it informs, never fails). Re-record it in the same
+commit as a change that moves scenario time — a new scenario, a slower step — with
+`python3 e2e/timing.py --update`, which takes the last passing push-level run; a commit
+whose tree differs from a passed one only in that file counts as passed, so folding it in costs
+no second run. `git log -p e2e/timing_baseline.json` is the history. `e2e/README.md` says what it holds.
+
 `.githooks/pre-commit` is the commit level; `.githooks/pre-push` refuses a push whose top
 commit's tree has no recorded pass of `check_push.py`. Enable both once per clone with
 `git config core.hooksPath .githooks`. `check_push.py --dry-run` says which scenarios a change

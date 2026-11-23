@@ -6,6 +6,7 @@
     python3 check_push.py --scenarios none # no scenario (say so when you report)
     python3 check_push.py --jobs 1         # the scenarios one after another (default: 3 at once)
     python3 check_push.py --dry-run        # say what would run, run nothing
+    python3 check_push.py --again          # run it all again on a tree that passed (to re-measure)
     python3 check_push.py --verify SHA...  # the pre-push hook: has each of these passed?
 
 The repo's checks come in three levels, so that the expensive ones are paid once and not in
@@ -19,7 +20,8 @@ every loop (CLAUDE.md, "Testing"):
     reach (`e2e/drive.py verify`).
 
 A pass is recorded against the top commit's TREE, so an amend that changes nothing, or a
-second run, is free; and after an amend that does change something, the scenarios are picked
+second run, is free, and so is one that only folds in the scenario times re-recorded from it
+(`e2e/timing_baseline.json`, alone: with any other file it is a new tree like any other); and after an amend that does change something, the scenarios are picked
 from what changed since the last tree that passed. `.githooks/pre-push` refuses a push whose
 commit has no recorded pass (`git push --no-verify` overrides it, as for any hook).
 
@@ -35,6 +37,12 @@ recording, so a pass stays a pass; any commit or amend that changes the tree sta
 It checks the committed tree, so it refuses to start with uncommitted changes: a pass would
 otherwise be recorded for something else than what gets pushed. For the same reason it records
 nothing, not even a scenario's pass, once the checkout has changed under it during the run.
+
+After its scenarios it prints how long each took against `e2e/timing_baseline.json`: what
+got slower or faster beyond noise, what is new or gone, and their wall clock. That informs and
+never fails the push; it covers only the scenarios this run ran, and their times go into the
+pass record, from which `python3 e2e/timing.py --update` re-records the baseline (its
+docstring is the method).
 
 Which scenarios a change reaches: a scenario reaches the skills whose slash command its steps
 type; a skill's scripts reach the `lib/` modules they import. The mod, the e2e harness and the
@@ -56,6 +64,7 @@ sys.path.insert(0, str(HERE))
 sys.path.insert(0, str(HERE / "e2e"))
 
 import run_tests  # noqa: E402
+import timing  # noqa: E402
 
 from lib import parallel  # noqa: E402
 
@@ -73,7 +82,8 @@ DOC = run_tests.DOCS
 UNREACHED = (
     re.compile(r"^(?:run_tests|check_commits|check_push|measure_speed|measure_checks|"
                r"compare_figures|show_limits|fails_without|private_terms)\.py$"),
-    re.compile(r"^(?:speed_baseline\.json|ruff\.toml|\.gitignore|LICENSE)$"),
+    re.compile(r"^(?:speed_baseline\.json|e2e/timing_baseline\.json|ruff\.toml|\.gitignore|"
+               r"LICENSE)$"),
     re.compile(r"^(?:\.githooks|docs|prototypes)/"),
     re.compile(r"^skills/(?:visualize|explain-diff|split-handoff|self-review)/"),
     re.compile(r"(?:^|/)test_[^/]*\.py$"),
@@ -176,6 +186,20 @@ def passed_trees():
     return {p["tree"] for p in load_record()["passed"]}
 
 
+# The one file a tree may differ in from a tree that passed and still count as passed: the
+# scenario times re-recorded from that very pass, folded into the commit afterwards. Nothing
+# runs it and nothing reads it but the comparison, so re-checking would test the same code.
+TIMES_ONLY = "e2e/timing_baseline.json"
+
+
+def has_passed(tree, known=None):
+    """Whether `tree` passed, or differs from a tree that did only in TIMES_ONLY."""
+    known = passed_trees() if known is None else known
+    if tree in known:
+        return True
+    return any(git("diff", "--name-only", "--no-renames", t, tree) == TIMES_ONLY for t in known)
+
+
 def starting_point(base):
     """(revision, why) the scenarios are picked from: the newest tree that passed, else `base`.
     Not a pass told to run no scenarios (`--scenarios none`): it lets its own tree be pushed,
@@ -216,7 +240,7 @@ def record_pass(tree, commit, ran):
 def verify(shas):
     """For the pre-push hook: 0 when every commit to be pushed has a recorded pass."""
     known = passed_trees()
-    missing = [s for s in shas if set(s) != {"0"} and tree_of(s) not in known]
+    missing = [s for s in shas if set(s) != {"0"} and not has_passed(tree_of(s), known)]
     if missing:
         print(f"pre-push: {', '.join(s[:12] for s in missing)} has not passed the push level.\n"
               "  run: python3 check_push.py    (git push --no-verify skips this check)",
@@ -247,6 +271,22 @@ def run(step, argv):
     return r.returncode == 0
 
 
+def timed(runs, todo, passing, wall, jobs, existing):
+    """What this run's scenarios took, for the pass record, after printing it against the
+    baseline. Only the ones it ran and that passed; the wall clock only when every one of them
+    passed, since a failure cuts it short. Time never fails the push, so neither may this."""
+    try:
+        parts = timing.fastest(runs) if runs.is_dir() else {}
+        took = {"scenarios": {n: parts[n] for n, good in zip(todo, passing) if good and n in parts},
+                "ran": list(todo), "jobs": jobs, "wall": round(wall, 1) if all(passing) else None}
+        print("\n" + timing.comparison(timing.load_baseline(), took, existing,
+                                       now=timing.machine()), flush=True)
+        return took
+    except Exception as err:                          # noqa: BLE001 — informs, never fails
+        print(f"\n    scenario time: not compared ({type(err).__name__}: {err})", flush=True)
+        return None
+
+
 def main(argv):
     if argv[:1] == ["--verify"]:
         return verify(argv[1:])
@@ -260,7 +300,10 @@ def main(argv):
               "so what passes is what gets pushed.", file=sys.stderr)
         return 2
     head, tree = git("rev-parse", "HEAD"), tree_of("HEAD")
-    if tree in passed_trees() and not dry:
+    # `--again`: every check of a tree that passed run once more, for numbers taken anew (a
+    # time baseline whose first run paid for something once, like a rebuilt rig).
+    again = "--again" in argv
+    if has_passed(tree) and not dry and not again:
         print(f"check_push: {head[:12]}'s tree has already passed; nothing to run.")
         return 0
     base = git("rev-parse", "--abbrev-ref", "@{u}") or "origin/main"
@@ -283,16 +326,18 @@ def main(argv):
     # On the Mac, every file: the test box is Linux, and this is the one run in the real thing.
     ok = run("the whole unit suite, on the Mac", [sys.executable, "run_tests.py", "--host"]) and ok
     # Each on its own, noted as it passes: see the docstring.
-    before, started = scenarios_passed(tree), time.monotonic()
+    before, started = set() if again else scenarios_passed(tree), time.monotonic()
     for name in picked:
         if name in before:
             print(f"\n==> scenario {name}: passed for this tree already, not run again")
     todo = [n for n in picked if n not in before]
     noting = threading.Lock()
+    # This run's captures in a folder of their own, so its times are read from its runs alone.
+    runs = HERE / "e2e" / ".runs" / f"push-{time.strftime('%Y%m%d-%H%M%S')}"
 
     def scenario(name):
-        r = subprocess.run([sys.executable, "e2e/drive.py", "verify", name], cwd=HERE,
-                           capture_output=True, text=True)
+        r = subprocess.run([sys.executable, "e2e/drive.py", "verify", name, "--out", str(runs)],
+                           cwd=HERE, capture_output=True, text=True)
         with noting:
             print(f"\n==> scenario {name}: {'ok' if r.returncode == 0 else 'FAILED'}\n"
                   + (r.stdout + r.stderr).rstrip(), flush=True)
@@ -301,10 +346,15 @@ def main(argv):
         return r.returncode == 0
 
     jobs = int(argv[argv.index("--jobs") + 1]) if "--jobs" in argv else JOBS
-    ok = all(parallel.each(scenario, todo, workers=jobs)) and ok
+    passing = parallel.each(scenario, todo, workers=jobs)
+    ok = all(passing) and ok
+    took = None
     if picked:
+        wall = time.monotonic() - started
         print(f"\n    {len(picked)} scenario(s), {len(before & set(picked))} of them passed before, "
-              f"{jobs} at a time: {time.monotonic() - started:.0f}s", flush=True)
+              f"{jobs} at a time: {wall:.0f}s", flush=True)
+        if todo:
+            took = timed(runs, todo, passing, wall, jobs, [n for n, *_ in scens])
     if not ok:
         print("\ncheck_push: FAILED — nothing recorded")
         return 1
@@ -312,7 +362,8 @@ def main(argv):
         print("\ncheck_push: the checkout changed while the checks ran, so what passed is not "
               f"{head[:12]}'s tree — nothing recorded; run it again once nothing else is editing")
         return 1
-    record_pass(tree, head, {"scenarios": picked, "since": why, "mode": mode})
+    record_pass(tree, head, {"scenarios": picked, "since": why, "mode": mode,
+                             **({"timing": took} if took else {})})
     print(f"\ncheck_push: {head[:12]} passed; recorded, the pre-push hook will let it through")
     return 0
 

@@ -8,10 +8,11 @@ Run: `python3 test_check_push.py` (no scenario runs, no push).
 import io
 import json
 import os
+import subprocess
 import sys
 import tempfile
 import unittest
-from contextlib import redirect_stdout
+from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from unittest import mock
 
@@ -138,6 +139,36 @@ class TestTheRecord(unittest.TestCase):
             cp.record_pass("T-three", "c3" * 6, {})       # a record from before modes: a full pass
             self.assertEqual(cp.starting_point("origin/main")[0], "T-three")
 
+    def test_a_tree_that_only_adds_the_scenario_times_to_a_passed_one_has_passed(self):
+        """Folding the times re-recorded from a pass into its commit changes no code; any
+        other file changed with it, or alone, does."""
+        repo = Path(cp.RECORD).parent / "repo"
+        (repo / "e2e").mkdir(parents=True)
+
+        def tree(**files):
+            for name, text in files.items():
+                (repo / name).write_text(text)
+            subprocess.run(["git", "add", "-A"], cwd=repo, check=True)
+            return subprocess.run(["git", "write-tree"], cwd=repo, check=True,
+                                  capture_output=True, text=True).stdout.strip()
+
+        subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
+        passed = tree(**{"code.py": "a", "e2e/timing_baseline.json": "{}"})
+        times = tree(**{"e2e/timing_baseline.json": '{"new": 1}'})
+        times_and_code = tree(**{"code.py": "b"})
+        tree(**{"e2e/timing_baseline.json": "{}"})
+        code = tree()                                   # code.py "b" alone against the pass
+        with mock.patch.object(cp, "HERE", repo):
+            cp.record_pass(passed, "c1" * 20, {})
+            self.assertTrue(cp.has_passed(passed))
+            self.assertTrue(cp.has_passed(times))
+            self.assertFalse(cp.has_passed(times_and_code))
+            self.assertFalse(cp.has_passed(code))
+            with mock.patch.object(cp, "tree_of", {"s1": times, "s2": code}.get), \
+                    redirect_stderr(io.StringIO()):
+                self.assertEqual(cp.verify(["s1"]), 0)
+                self.assertEqual(cp.verify(["s2"]), 1)
+
     def test_deleting_a_branch_needs_no_pass(self):
         self.assertEqual(cp.verify(["0" * 40]), 0)
 
@@ -172,9 +203,63 @@ class TestTheRecord(unittest.TestCase):
                                                              moved_after=99), 0)
         self.assertEqual(cp.passed_trees(), {"T-start"})
 
+    def test_again_runs_a_tree_that_passed_and_every_scenario_it_noted(self):
+        """Taken anew, a time baseline needs every scenario timed on this run: one skipped as
+        passed before has no time of its own here."""
+        cp.record_pass("T-start", "c" * 40, {})
+        cp.record_scenario("T-start", "smoke")
+        with mock.patch.object(cp.parallel, "each", side_effect=lambda f, xs, workers: [f(x) for x in xs]) as each:
+            self._main_while_the_checkout_moves(["--scenarios", "all"], moved_after=99)
+            self.assertFalse(each.called)
+            self._main_while_the_checkout_moves(["--scenarios", "all", "--again"], moved_after=99)
+            self.assertEqual(each.call_args[0][1], ["smoke"])
+
     def test_a_scenario_is_not_noted_when_the_checkout_changed_before_it_passed(self):
         self._main_while_the_checkout_moves(["--scenarios", "all", "--jobs", "1"], moved_after=1)
         self.assertEqual(cp.scenarios_passed("T-start"), set())
+
+    def test_a_run_compares_and_records_the_times_of_only_the_scenarios_it_ran(self):
+        """One noted as passed before is not run, so it has no time here: comparing it, or
+        recording it, would pass off the baseline's number as this run's."""
+        home = Path(cp.RECORD).parent
+        baseline = home / "timing_baseline.json"
+        entry = {"seconds": 30.0, **dict.fromkeys(cp.timing.PARTS, 0.0), "prompt": 30.0}
+        baseline.write_text(json.dumps({
+            "recorded": "2026-01-01", "commit": "b" * 40, "machine": {}, "jobs": 3,
+            "wall_seconds": 60.0, "wall_scenarios": ["review-1", "smoke"],
+            "scenarios": {"smoke": entry, "review-1": entry}}))
+
+        def ran(argv, **_):
+            if "e2e/drive.py" in argv:
+                folder = Path(argv[argv.index("--out") + 1]) / argv[argv.index("verify") + 1]
+                folder.mkdir(parents=True)
+                (folder / "timing.json").write_text(json.dumps({
+                    "scenario": folder.name, "reset": 5.0, "start": 3.0, "passed": True,
+                    "steps": [{"kind": "expect", "seconds": 40.0}]}))
+            return mock.Mock(returncode=0, stdout="", stderr="")
+
+        git = {("rev-parse", "HEAD"): "c" * 40,
+               ("rev-parse", "--abbrev-ref", "@{u}"): "origin/main"}
+        cp.record_scenario("T-start", "smoke")
+        out = io.StringIO()
+        with mock.patch.object(cp, "HERE", home), \
+                mock.patch.object(cp.timing, "BASELINE", baseline), \
+                mock.patch.object(cp.timing, "machine", lambda: {}), \
+                mock.patch.object(cp, "dirty", lambda: ""), \
+                mock.patch.object(cp, "tree_of", lambda rev: "T-start"), \
+                mock.patch.object(cp, "git", lambda *a: git.get(a, "")), \
+                mock.patch.object(cp, "scenarios", lambda: [("smoke", set(), [], None),
+                                                            ("review-1", set(), [], None)]), \
+                mock.patch.object(cp, "run", lambda step, argv: True), \
+                mock.patch.object(cp.subprocess, "run", side_effect=ran), \
+                redirect_stdout(out):
+            self.assertEqual(cp.main(["--scenarios", "all"]), 0)
+        took = json.loads(cp.RECORD.read_text())["passed"][-1]["ran"]["timing"]
+        self.assertEqual((list(took["scenarios"]), took["ran"]), (["review-1"], ["review-1"]))
+        self.assertEqual(took["scenarios"]["review-1"]["expect"], 40.0)
+        self.assertRegex(out.getvalue(), r"slower\s+review-1\s+30\.0s\s+->\s+48\.0s")
+        self.assertNotRegex(out.getvalue(), r"(?:slower|faster|new)\s+smoke")
+        self.assertIn("1 scenario(s) in the baseline not run here", out.getvalue())
 
     def test_the_record_keeps_the_newest_passes(self):
         for i in range(cp.KEEP + 5):
