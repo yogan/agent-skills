@@ -226,6 +226,7 @@ export const buttonsFor = (review: ReviewState | null): BandButton[] => {
   // Another reviewer's thread has a way on of its own, through the others (`peerButtons`).
   if (!topic || buttons === null || review?.skill !== 'review-mr' || buttons.some(b => b.key === 'peer-next')) return ordered(buttons ?? [])
   // The author's push that changed its lines, to look at: never the recommendation.
+  // (Another reviewer's thread offers it among its own, `peerButtons`.)
   const look = topic.fix_kept && !topic.peer ? [showFix] : []
   return ordered([...buttons, ...look, ...(hasNext(review, topic.id) ? [{ key: 'next', label: 'Next', press: { kind: 'next' } } as BandButton] : [])])
 }
@@ -442,7 +443,10 @@ const peerButtons = (review: ReviewState | null, topic: ReviewTopic): BandButton
   const order = needs && view?.advice === 'merge' ? [...merge, reply, way]
     : needs && view?.advice === 'reply' ? [reply, way] : [way, reply]
   const analyse: BandButton = { key: 'explain', label: 'Analyse', press: ask(peerAnalysePrompt(t)) }
-  return [...order.map((b, i) => (i === 0 ? { ...b, isPrimary: true as const } : b)), analyse]
+  // The author's push that changed its lines, to look at, as on the person's own topics:
+  // after the answers, never the recommendation.
+  const look = topic.fix_kept ? [showFix] : []
+  return [...order.map((b, i) => (i === 0 ? { ...b, isPrimary: true as const } : b)), ...look, analyse]
 }
 
 // A comment the person posted by hand that the agent found no longer holds: its corrected

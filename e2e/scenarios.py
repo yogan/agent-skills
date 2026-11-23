@@ -670,7 +670,7 @@ SCENARIOS = [
             Prompt("/rework-mr !4", timeout=600),
             Panel(True),
             Expect(current("t1"), region="panel", wait=60),
-            # Thirteen topics in a quarter of the sidebar: the list has its scrollbar.
+            # Thirteen topics in a fifth of the sidebar: the list has its scrollbar.
             THUMB,
             # The mod's model call sorts every other topic: waited for, so the session left
             # to try has its sidebar settled, and the recording the call.

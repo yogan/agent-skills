@@ -77,9 +77,11 @@ How it fits together:
   rework-mr the comments on the MR itself. A pushed fix kept in git takes the fix's files'
   place: every file it changed ("Your fix", in review-mr "Author's fix"), the diff viewer's
   key in its line. Every area but the file's has a height it grows
-  to (the list a quarter of the pane, a folded area five rows, opened a third) and scrolls
-  inside itself past it, by its arrows at its right corners or the wheel over it; the file
-  takes the rest, so the sidebar fits its pane. It opens by itself; its ✕ (or ctrl+x x
+  to (the list a fifth of the pane, a fix's files an eighth, a folded area five rows, opened
+  a third) and scrolls inside itself past it, by its arrows at its right corners or the
+  wheel over it; the file takes the rest, so the sidebar fits its pane. Inside the file's
+  area the thread box grows to half of it where its comments need that, the code keeping
+  the other half, and scrolls on its own past it. It opens by itself; its ✕ (or ctrl+x x
   while it has the keys) closes it, and the band's Show sidebar button brings it back.
 - Whatever scrolls has a scrollbar like an IDE's: the pointer over its track shows the thumb
   where a press would put it, at its full length; a press puts it there, and the thumb drags.

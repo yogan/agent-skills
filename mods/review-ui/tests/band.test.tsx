@@ -571,7 +571,7 @@ test('the list is in groups of one look: the round in the topics\' own order, wa
     { ...topic('t5', 'acked'), peer: true, watching: true }, topic('t6', 'acked'),
   ], { in_round: true, round: ['t3', 't1'], author: 'Alex' })])
   await openReview($, w, view('t3'))
-  // Tall enough for every row: a list over a quarter of the height scrolls (its own test).
+  // Tall enough for every row: a list over a fifth of the height scrolls (its own test).
   const ui = await $.ui.mount({ ...PANEL, props: { ...PANEL.props, scroll: { offset: 0, bodyRows: 60 } }, surface: 'terminal' })
   const texts = (await ui.findAll({})).filter(t => t.type === 'Text' || t.type === 'Button').map(t => String(t.type === 'Button' ? t.props.label : t.text))
   const at = (re: RegExp) => texts.findIndex(t => re.test(t))
@@ -587,18 +587,18 @@ test('the list is in groups of one look: the round in the topics\' own order, wa
   await ui.unmount()
 })
 
-test('a list over a quarter of the sidebar scrolls inside its area, the current topic in view', async ($, on) => {
+test('a list over a fifth of the sidebar scrolls inside its area, the current topic in view', async ($, on) => {
   const ids = Array.from({ length: 12 }, (_, i) => `t${i + 1}`)
   const w = world(on, [stateOf('t10', ids.map(id => topic(id, 'open')))])
   await openReview($, w, view('t10'))
-  const ui = await $.ui.mount({ ...PANEL, surface: 'terminal' })        // 30 rows: the list gets 7
+  const ui = await $.ui.mount({ ...PANEL, surface: 'terminal' })        // 30 rows: the list gets 6
   const shown = async () => (await ui.findAll({ type: 'Text' })).map(t => String(t.text)).filter(t => / summary of t\d+$/.test(t))
-  expect(await shown()).toHaveLength(7)
+  expect(await shown()).toHaveLength(6)
   expect((await shown()).some(t => t.endsWith('summary of t10'))).toBe(true)
   expect((await shown()).some(t => t.endsWith('summary of t1'))).toBe(false)
-  // Its scrollbar: 7 cells, the thumb 7 of 15 rows long, away from the top.
+  // Its scrollbar: 6 cells, the thumb 6 of 15 rows long, away from the top.
   const before = await bar(ui, 'list')
-  expect(before).toHaveLength(7)
+  expect(before).toHaveLength(6)
   expect(before?.[0]).toBe('above')
   await page(ui, 'list', 'up')                                            // a window up: the top
   expect((await shown()).some(t => t.endsWith('summary of t1'))).toBe(true)
@@ -612,7 +612,8 @@ test('news in a folded group is marked on its header; a scrolled list marks none
     { ...topic('t13', 'acked'), inbox: 'new' }]
   const w = world(on, [stateOf('t10', topics)])
   await openReview($, w, view('t10'))
-  const ui = await $.ui.mount({ ...PANEL, surface: 'terminal' })
+  // Tall enough for the list to show the folded group's header below the current topic.
+  const ui = await $.ui.mount({ ...PANEL, props: { ...PANEL.props, scroll: { offset: 0, bodyRows: 35 } }, surface: 'terminal' })
   const news = '\u{f09de}'
   // Closed is folded: its header carries the mark its row would.
   expect((await ui.findAll({ type: 'Text' })).some(t => t.text === ` ${news}` && t.props.color === 'yellow')).toBe(true)
@@ -1302,6 +1303,20 @@ test("another reviewer's thread opened for your information offers Close after t
   expect(w.ran.map(r => r.argv.slice(2).join(' '))).toContain('leave --iid 42')
 })
 
+test("another reviewer's thread whose lines the author's push changed offers that push in the diff viewer, on the card and over its files", async ($, on) => {
+  const peer = { ...topic('t6', 'acked'), source: 'peer', peer: true, watching: true, fix_kept: true, peer_view: { says: 'fyi' as const, advice: 'seen' as const } }
+  const code = codeOf(20, [3, 3], { mode: 'pushed', file: 'src/queue.ts', commented: 'src/queue.ts', fix_files: [['src/queue.ts', 2, 1], ['src/worker.ts', 1, 0]] })
+  const w = world(on, [stateOf('t6', [peer])], { code: { stdout: JSON.stringify(code) } })
+  await openReview($, w, view('t6'))
+  const ui = await mountStep($, 'terminal')
+  // After the answers, never the recommendation.
+  expect(await labels(ui)).toEqual(['Close', 'Reply…', 'Show fix in hunk', 'Analyse', 'Show sidebar'])
+  await ui.unmount()
+  const panel = await $.ui.mount({ ...PANEL, surface: 'terminal' })
+  expect(JSON.stringify((await panel.find({ type: 'Box', key: 'files-line' }))?.children ?? [])).toContain('files-hunk')
+  await panel.unmount()
+})
+
 test("Next on another reviewer's thread goes to the next of them in the sidebar's order, never the round's", async ($, on) => {
   const fyi = (id: string) => ({ ...topic(id, 'acked'), source: 'peer', peer: true, watching: true, peer_view: { says: 'fyi' as const, advice: 'seen' as const } })
   // t2 needs the user and is the round's next; t5 is the next of the other reviewers' threads.
@@ -1460,6 +1475,37 @@ test('a thread taller than its room keeps five lines of the file above and below
   await page(ui, 'box', 'up')
   expect(await md()).not.toContain('paragraph 60')
   expect(await lines()).toEqual(file)
+  await ui.unmount()
+})
+
+test("a long thread on many lines takes up to half the file's area, whole in view under the last of them", async ($, on) => {
+  const code = codeOf(120, [46, 64], { mode: 'pushed', commented: 'src/cache.ts',
+    fix_files: Array.from({ length: 6 }, (_, i) => [`src/part${i + 1}.ts`, 2, 1]) })
+  const body = Array.from({ length: 40 }, (_, i) => `paragraph ${i + 1}`).join('\n\n')
+  const thread = [{ url: 'u', file: 'src/cache.ts', line: 64, notes: [{ author: 'Kim', body, url: 'http://gl/x#note_2' }] }]
+  const ids = Array.from({ length: 14 }, (_, i) => `t${i + 1}`)
+  const w = world(on, [stateOf('t1', ids.map(id => ({ ...topic(id, 'open'), fix_kept: true } as Topic)), { thread })], { code: { stdout: JSON.stringify(code) } })
+  await openReview($, w, view('t1'))
+  const ui = await $.ui.mount({ ...PANEL, props: { ...PANEL.props, scroll: { offset: 0, bodyRows: 50 } }, surface: 'terminal' })
+  await ui.press({ key: 'thread-open' })                    // folded at first under a fix
+  const md = async () => (await ui.findAll({ type: 'Markdown' })).map(m => m.props.text as string).filter(t => /^paragraph \d+$/.test(t))
+  const lines = async () => (await ui.findAll({ type: 'Code' })).flatMap(c => String(c.props.source).split('\n').slice(1))
+  // The box's scrollbar is its body's height: about half of the file's area, not the three
+  // rows the lines and their context left it.
+  const box = await bar(ui, 'box')
+  expect(box?.length).toBeGreaterThanOrEqual(10)
+  // Whole in view: its newest comment is shown, the last of the lines it is on right above
+  // it, and the file's lines before it leave the box's rows and borders inside the area
+  // (whatever passes its foot is clipped, so drawn is not seen).
+  expect(await md()).toContain('paragraph 40')
+  expect(await lines()).toContain(' const line64 = 64')
+  expect(await lines()).not.toContain(' const line65 = 65')
+  const area = Number((await ui.find({ type: 'Box', key: 'code' }))?.props.height) - 1
+  const shown = (await lines()).length
+  expect(shown + (box?.length ?? 0) + 2).toBeLessThanOrEqual(area)
+  // The code keeps the other half, the commented lines in it before any around them.
+  expect(shown).toBeGreaterThanOrEqual(Math.floor(area / 2) - 1)
+  expect(await lines()).not.toContain(' const line45 = 45')
   await ui.unmount()
 })
 
@@ -2835,16 +2881,16 @@ test('rework-mr: a topic with news is marked in the list, as in review-mr, and t
   await panel.unmount()
 })
 
-test("rework-mr: a fix's files are an area of a sixth of the sidebar, scrolling past that, with no fold, the diff viewer's key opening its line", async ($, on) => {
+test("rework-mr: a fix's files are an area of an eighth of the sidebar, scrolling past that, with no fold, the diff viewer's key opening its line", async ($, on) => {
   const listed = Array.from({ length: 12 }, (_, i) => [`src/f${i + 1}.ts`, 1, 1])
   const fix = codeOf(20, [3, 3], { mode: 'fix', file: 'src/f1.ts', commented: 'src/f1.ts', fix_files: listed })
   const w = world(on, [reworkState('t1', [reworkTopic('t1', 'fixed', { checks: 'passed' })])], { code: { stdout: JSON.stringify(fix) } })
   await openRework($, w, reworkView('t1'))
   const panel = await $.ui.mount({ ...PANEL, surface: 'terminal' })
   const files = async () => (await panel.findAll({ type: 'Text' })).map(t => String(t.text ?? '')).filter(t => /^src\/f\d+\.ts$/.test(t))
-  expect(await files()).toHaveLength(5)                                  // a sixth of 30 rows
+  expect(await files()).toHaveLength(4)                                  // an eighth of 30 rows, at least 4
   expect(await panel.find({ type: 'Button', key: 'files-open' })).toBeUndefined()
-  expect(await bar(panel, 'files')).toHaveLength(5)
+  expect(await bar(panel, 'files')).toHaveLength(4)
   expect(String((await panel.find({ type: 'Button', key: 'files-hunk' }))?.props.label)).toMatch(/Review in hunk$/)
   expect((await panel.find({ type: 'Text', text: 'unpushed' }))?.props.color).toBe('yellow')
   // The viewer's key opens the line, a chip between its caps, the rule after it.

@@ -863,7 +863,7 @@ def seed_mr3_threads(iid):
 
 # MR !4: frank's own again, made for trying the review-ui sidebar's scrollbars. Every area
 # that can scroll gets more than it shows, and most threads stay short, so areas without a
-# bar are on screen beside them: a topic list longer than its quarter of the sidebar, a long
+# bar are on screen beside them: a topic list longer than its fifth of the sidebar, a long
 # file with a long thread on it, a thread on the MR as a whole and comments on the MR that
 # each outgrow their area.
 MR4_BRANCH = "chore/feature-flags-and-docs"

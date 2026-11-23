@@ -118,8 +118,8 @@ const boxAt = atom({ plugin: 'review-ui', key: 'box-at' } as const, {} as Record
 const GAP = 1
 // The cells an area that scrolls keeps at its right: a space and its scrollbar.
 const BAR = 2
-// The rows an area under the file (a fix's files, the comments on the MR) takes at least and
-// at most, as the sidebar's height allows.
+// The rows a fix's files, under the file, take at least and at most, as the sidebar's height
+// allows.
 const SMALL_LEAST = 4
 const SMALL_MOST = 10
 // The update check: a tick every 30 seconds, GitLab asked every sixth (every tick while the
@@ -2456,9 +2456,10 @@ export const register: Register = on => {
     // height it grows to and scrolls inside itself past; the file takes what is left, so the
     // sidebar fits its pane and never scrolls as a whole.
     const H = isDocked ? rowsAll : 24
-    // The list: up to a quarter of the height, past that a window that keeps the current
-    // item in view until the person scrolls it.
-    const listCap = Math.max(3, Math.floor(H / 4))
+    // The list: up to a fifth of the height, past that a window that keeps the current
+    // item in view until the person scrolls it. Kept that small so the file's area under it,
+    // where the code and its thread are read, has most of the sidebar.
+    const listCap = Math.max(3, Math.floor(H / 5))
     const isFolded = await read($, folded)
     const sections = phase === 'own' ? [] : sectionsOf(r)
     const listCount = phase === 'own'
@@ -2680,10 +2681,10 @@ export const register: Register = on => {
         </Box>
       ))
 
-    // The rows an area under the file takes at most (a fix's files, the comments on the MR):
-    // a sixth of the height, at least SMALL_LEAST rows and at most SMALL_MOST, so a tall pane
-    // gives it a few more while most of it stays the code's. Past that it scrolls.
-    const smallCap = Math.max(SMALL_LEAST, Math.min(SMALL_MOST, Math.floor(H / 6)))
+    // The rows a fix's files take at most, under the file: an eighth of the height, at least
+    // SMALL_LEAST rows and at most SMALL_MOST, so a tall pane gives it a few more while most
+    // of it stays the code's and its thread's. Past that it scrolls.
+    const smallCap = Math.max(SMALL_LEAST, Math.min(SMALL_MOST, Math.floor(H / 8)))
     // rework-mr: the comments on the MR itself, an area at the sidebar's foot, a box each (they
     // are separate comments, not a thread), in full. Folded to its line at first, and as the
     // person last left it for that MR; its line says how many there are and how many are new.
@@ -2762,13 +2763,17 @@ export const register: Register = on => {
     }
     const mrRows = mrComments.length === 0 ? 0 : GAP + 1 + mrShown
     const rest = Math.max(4, H - listArea - GAP - filesArea - mrRows - footRows)
-    // The thread box's room: what leaves the lines it is on, and up to five lines of the file
-    // above and below them (fewer where the file ends first). Taller, it scrolls on its own.
-    // With no file, the box is all its area holds: its line and the box's two borders apart.
+    // The thread box's room: what leaves the lines it is on (up to ten of them), and up to
+    // five lines of the file above and below them (fewer where the file ends first). Where
+    // its comments need more, the box may grow to half of the file's area (the file's line,
+    // its code and the box), the code keeping the other half: the commented lines first,
+    // fewer lines around them. Taller still, it scrolls on its own. With no file, the box is
+    // all its area holds: its line and the box's two borders apart.
     const at = code?.view.at ?? null
     const boxCap = code && at && openRows.length > 0
       ? Math.max(3, rest - 1 - 1
-        - Math.min(10, at[1] - at[0] + 1) - Math.min(5, at[0] - 1) - Math.min(5, code.view.rows.length - at[1]) - 2)
+        - Math.min(10, at[1] - at[0] + 1) - Math.min(5, at[0] - 1) - Math.min(5, code.view.rows.length - at[1]) - 2,
+      Math.floor(rest / 2) - 2 - (code.view.mode === 'since' ? 1 : 0))
       : !code ? Math.max(3, rest - 1 - 2) : Infinity
     // A box taller than its room scrolls on its own, its scrollbar in its right padding: its
     // rows keep their width. Laid out again, narrower, where the file beside it scrolls.
@@ -2883,7 +2888,12 @@ export const register: Register = on => {
       const B = hasBox ? boxRows : 0
       const H = room + boxRows
       const maxStart = Math.max(1, N + B - H + 1)
-      const start = Math.min(maxStart, Math.max(1, offsets[code.key] ?? firstOffset(v, room)))
+      // Where the window opens: the file's own first view of the lines, moved down where that
+      // leaves the thread box short of its foot, as with more commented lines than the code's
+      // share of the area holds. The box then stands whole, as many of those lines above it
+      // as fit.
+      const opening = Math.max(firstOffset(v, room), hasBox ? anchor + B - H + 1 : 1)
+      const start = Math.min(maxStart, Math.max(1, offsets[code.key] ?? opening))
       // The file's rows before the box, the box's rows cut from its head, and the rows after it.
       const before = Math.max(0, Math.min(anchor, start + H - 1) - start + 1)
       const cut = Math.max(0, Math.min(B, start - anchor - 1))
@@ -2958,7 +2968,7 @@ export const register: Register = on => {
       // rows they take, in the window or out of it, as an IDE marks the selection on its
       // ruler; a press on the mark brings them back to where the file first showed them. A
       // topic with no thread yet has its lines marked too: they are what the area is about.
-      const topicRows = !isOtherFile && v.at ? { lo: v.at[0] - 1, hi: v.at[1] - 1 + B, to: firstOffset(v, room) - 1 } : undefined
+      const topicRows = !isOtherFile && v.at ? { lo: v.at[0] - 1, hi: v.at[1] - 1 + B, to: opening - 1 } : undefined
       // Each row's diff sign at its place on the bar, the thread box's rows after the lines it
       // is on, as no line at all (''). None for a file the MR adds or removes whole: one
       // colour from top to bottom marks nothing, as in the file itself.
