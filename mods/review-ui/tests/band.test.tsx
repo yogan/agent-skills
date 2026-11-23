@@ -1331,6 +1331,15 @@ test('Analyse more asks whether the kind and severity still fit', () => {
   expect(kindCheck('t2')).toContain('`set t2 --kind … --severity …`')
 })
 
+test('Analyse more decides the verdict afresh and ends on the one it stored or kept', () => {
+  const review = JSON.parse(stateOf('t2', [{ ...topic('t2', 'needs_ack'), verdict: 'more' }]))
+  const prompt = (buttonsFor(review).find(b => b.label === 'Analyse more')?.press as { prompt: string }).prompt
+  expect(prompt).toContain('decide the verdict afresh from what you find, not from the stored one')
+  expect(prompt).toContain('`settled` where nothing is left to ask the author for')
+  expect(prompt).toContain('ends on the verdict you stored or kept')
+  expect(prompt).not.toContain('still holds')
+})
+
 test('a later comment that is a draft posted by hand is linked to its topic', async ($, on) => {
   const proposal = { thread: 'd9', into: 't2', summary: 'x', where: 'db.ts:59', comment: 'c', why: 'Same words as the draft.', recommend: 'link' as const }
   const w = world(on, [stateOf(null, [topic('t2', 'draft', 'v1')], { own_review: 'done', proposals: [proposal], own_threads: [{ id: 'd9', file: 'db.ts', line: 59, where: 'db.ts:59', text: 'c', topic: null, proposal: 't2' }] })])

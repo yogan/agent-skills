@@ -3452,6 +3452,50 @@ class TestWatchedThreads(unittest.TestCase):
         self.state["threads"]["d1"]["last_at"] = "2026-11-05T10:00:00Z"
         self.assertEqual(F.needs_verdict(self.state), ["t1"])
 
+    def resolve(self, by="Robin", username="robin.l"):
+        self.state.update(author="Robin Lee", author_username="robin.l")
+        self.state["threads"]["d1"].update(
+            resolved=True, resolved_by=by, resolved_username=username,
+            resolved_at="2026-11-05T11:00:00Z", awaiting="you", last_at="2026-11-05T10:00:00Z",
+            notes=[{"author": "Kim", "body": "b", "mine": False},
+                   {"author": "Robin Lee", "body": "Fixed.", "mine": False}])
+
+    def test_resolved_it_closes_by_itself_with_no_verdict(self):
+        """Nothing in it is the user's: resolved, by the MR author or anybody, it is closed,
+        with no verdict asked for or shown, and its card ends on who resolved it."""
+        for by, username in (("Robin Lee", "robin.l"), ("Kim", "kim")):
+            with self.subTest(by=by):
+                self.resolve(by, username)
+                self.assertEqual(F.topic_status(self.state, self.t), "acked")
+                self.assertEqual(F.needs_verdict(self.state), [])
+                self.assertIsNone(F.inbox_of(self.state, self.t))
+                row = F.state_json(self.state)["topics"][0]
+                self.assertEqual((row["state"], row["verdict"], row["peer"], row["watching"]),
+                                 ("done", None, False, False))
+                self.assertEqual(F.closing_event(self.state, self.t)["text"],
+                                 f"{by.split()[0]} resolved it")
+
+    def test_a_verdict_stored_on_it_before_does_not_keep_it_open(self):
+        self.resolve()
+        for says in ("more", "wait"):
+            with self.subTest(says=says):
+                self.t["verdict"] = {"says": says, "case": "partly-fixed", "text": "t",
+                                     "on": F.answer_mark(self.state, self.t)}
+                self.assertEqual(F.topic_status(self.state, self.t), "acked")
+                self.assertIsNone(F.inbox_of(self.state, self.t))
+                self.assertIsNone(F.state_json(self.state)["topics"][0]["verdict"])
+                card = F.render_quote(self.state, "t1")
+                self.assertNotIn("Verdict", card)
+                self.assertTrue(card.endswith(f"{F.ui.STEP_DONE_ICON} Robin resolved it"))
+
+    def test_reopened_it_is_watched_again_and_once_you_spoke_it_is_yours(self):
+        self.resolve()
+        self.state["threads"]["d1"]["resolved"] = False
+        self.assertTrue(F.peer_waiting(self.state, self.t))
+        self.assertEqual(F.needs_verdict(self.state), ["t1"])
+        self.state["threads"]["d1"].update(resolved=True, you_spoke=True)
+        self.assertEqual(F.topic_status(self.state, self.t), "needs_ack")
+
     def test_a_new_comment_asks_for_a_new_view(self):
         self.view("fyi")
         self.t["state"] = "acked"

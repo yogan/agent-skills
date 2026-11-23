@@ -332,7 +332,7 @@ const stepButtons = (review: ReviewState | null): BandButton[] | null => {
         ? { ...ack, label: label.replace(' + resolve', '') }
         : { key: 'resolve', label, press: { kind: 'resolve' } })
       const analyse: BandButton = { key: 'explain', label: 'Analyse more',
-        press: ask(`Analyse ${t} more: read the answer and the change again, deeper than the verdict on its card, and say whether the verdict still holds and why. Where it does not, store the new one (\`verdict\`, with its \`--case\` where it is \`more\`): its output is a card of the change, and the buttons follow it. Do not show the topic again; your reply gives the details. ${kindCheck(t)}`) }
+        press: ask(`Analyse ${t} more: read the whole thread (\`bodies ${t}\`) and the change since the comment (\`diff ${t}\`) again, deeper than the verdict on its card, and decide the verdict afresh from what you find, not from the stored one: \`settled\` where nothing is left to ask the author for, \`more\` where something is, \`wait\` where they agreed and the change is still to come. Where yours differs from the stored one, store it (\`verdict\`, with its \`--case\` where it is \`more\`): its output is a card of the change, and the buttons follow it. Do not show the topic again; your reply gives the details and ends on the verdict you stored or kept, in its word, which your reasoning must bear out. ${kindCheck(t)}`) }
       if (topic?.verdict === 'settled') {
         return [
           { ...accept('Accept + resolve'), isPrimary: true },

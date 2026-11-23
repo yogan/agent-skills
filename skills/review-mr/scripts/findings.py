@@ -410,6 +410,8 @@ def topic_status(state, t):
     if t.get("kind") == "praise":                # no ack loop: resolved ⇒ done
         return "acked" if all(x.get("resolved") for x in thr) else "open"
     ov = t.get("state")
+    if peer_resolved(state, t, thr):
+        return "acked"
     if peer_waiting(state, t, thr):
         # Another reviewer's thread is theirs to settle: the user watches it, and it needs
         # them only where the agent judged so (`peer_view_of`), until they mark it seen. One
@@ -442,15 +444,29 @@ def topic_status(state, t):
     return "open" if waits_on_author(state, t) else "needs_ack"
 
 
+def _watched(state, t, thr):
+    """`t`'s threads where `t` is another reviewer's thread, or the MR author's own, that the
+    user has said nothing in, where the mod draws; else None."""
+    if t.get("source") not in ("peer", "author") or not ui.drawn():
+        return None
+    thr = thr if thr is not None else [x for x in (state["threads"].get(i) for i in t["thread_ids"]) if x]
+    return thr if thr and not any(x.get("you_spoke") for x in thr) else None
+
+
 def peer_waiting(state, t, thr=None):
     """Whether another reviewer's thread, or the MR author's own, is one the user watches:
     they have said nothing in it and it is still open. Where the mod draws, the agent judges
     whether it needs them (`peer_view_of`); without the mod it stays the author's, as before."""
-    if t.get("source") not in ("peer", "author") or not ui.drawn():
-        return False
-    thr = thr if thr is not None else [x for x in (state["threads"].get(i) for i in t["thread_ids"]) if x]
-    return bool(thr) and not any(x.get("you_spoke") for x in thr) \
-        and not all(x.get("resolved") for x in thr)
+    thr = _watched(state, t, thr)
+    return bool(thr) and not all(x.get("resolved") for x in thr)
+
+
+def peer_resolved(state, t, thr=None):
+    """Whether a thread the user watches (`peer_waiting`) is resolved on GitLab: it closes by
+    itself, whoever resolved it. Nothing in it was the user's, so there is no answer to judge
+    or ack; a verdict stored on it before is no longer read. Reopened, it is watched again."""
+    thr = _watched(state, t, thr)
+    return bool(thr) and all(x.get("resolved") for x in thr)
 
 
 def peer_closed(t, thr):
@@ -2344,7 +2360,8 @@ def waits_on_author(state, t):
     """Whether `t`'s answer was judged to leave the next move to the author, and that
     answer still stands."""
     v = t.get("verdict") or {}
-    return v.get("says") == "wait" and v.get("on") == answer_mark(state, t)
+    return v.get("says") == "wait" and v.get("on") == answer_mark(state, t) \
+        and not peer_resolved(state, t)
 
 
 # What is wrong with an answer that does not settle its topic, as the verdict's heading

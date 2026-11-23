@@ -368,7 +368,8 @@ watches it: its card shows your stored view, `Next` goes on to the next of the o
 reviewers' threads (`Close` after the last; one you judged `needs` is marked read on the way),
 `Reply…` is theirs to write, and `Merge into tN` is there where you advised it. After that
 press, their prompt asks what the thread adds to tN: at most 2 lines, then re-judge tN's kind
-and severity (below).
+and severity (below). Resolved on GitLab, by anyone, a thread the user never wrote in closes by
+itself: no verdict, no ack. Once the user writes in it, it is their topic like any other.
 
 **"Analyse"** on such a card reaches you as their prompt: read the whole thread (`bodies <t>`)
 and the code it is on, then say in a few lines whether its point holds and whether it touches
@@ -745,8 +746,9 @@ that repeats one of their topics: `--advice merge --into <t>`), its `--why` endi
 `**Recommendation:**` sentence. Nothing the user does there resolves it. The user's buttons follow the verdict, its own answer first: settled → `Accept +
 resolve` (resolves the GitLab thread and closes the topic; theirs to press; just `Accept`
 where the thread is resolved already) / `Not enough…` (their reply, which you draft) / `Analyse more`; more → `Send follow-up` / `Wait for
-author` / `Resolve` / `Analyse more`. On `Analyse more`, a verdict you change
-prints a card of the change itself: leave the topic unshown, your reply carries the details. A verdict lasts until a new answer arrives, and so
+author` / `Resolve` / `Analyse more`. On `Analyse more`, decide the verdict afresh from the
+thread and the change, not from the stored one (nothing left to ask for is `settled`), and end
+your reply on the verdict you stored or kept. A verdict you change prints a card of the change itself: leave the topic unshown, your reply carries the details. A verdict lasts until a new answer arrives, and so
 does a follow-up draft: a newer answer, or `wait`, drops it.
 
 **Approving is the user's press alone.** Where cards are drawn, once every topic is settled

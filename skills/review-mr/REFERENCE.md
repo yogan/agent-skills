@@ -202,8 +202,9 @@ A review spans days; the state file persists across sessions. Each check:
 tables and needs-ack flow — you're not blind to a discussion just because someone else started
 it. A thread that is **already resolved** the first time `sync` sees it is left out: it was
 settled without you, and taking it on would cost a summary and an ack per old discussion. One
-adopted while open **stays** when it is resolved later — that resolution is yours to ack — and
-one reopened later is adopted then:
+adopted while open **stays** when it is resolved later — that resolution is yours to ack, except
+where the mod draws and you never wrote in it: then it closes by itself — and one reopened later
+is adopted then:
 
 - **💬 peer** — another reviewer's thread. First-class: you can ack it, push back, or `merge`
   it into one of your findings when it's the same point (merge sets source 👥).
