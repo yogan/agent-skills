@@ -972,7 +972,8 @@ const autoOpened = new Set<string>()
 // The thread box's rows of it too, where the box scrolls on its own: the wheel over them
 // moves the box.
 // The other areas that scroll inside themselves (the list, the fix's other files, the comments
-// on the MR, a thread with no file) too, each by its own rows.
+// on the MR, a thread with no file) too, each by its own rows, and also while they fit, so the
+// wheel over one does nothing there rather than move the sidebar.
 type CodeArea = {
   top: number; bottom: number; key: string; rows: number; start: number; max?: number; view?: CodeView
   box?: { top: number; bottom: number; key: string; max: number }
@@ -2287,7 +2288,7 @@ export const register: Register = on => {
     const row = e.pointer.row + Math.min(last, Math.max(0, e.offset - e.by))
     const list = area.lists?.find(x => row >= x.top && row < x.bottom)
     if (list) {
-      await update($, areaAt, m => ({ ...m, [list.key]: { at: Math.min(list.max, Math.max(0, list.at + e.by)), on: list.on } }))
+      if (list.max > 0) await update($, areaAt, m => ({ ...m, [list.key]: { at: Math.min(list.max, Math.max(0, list.at + e.by)), on: list.on } }))
       return {}
     }
     const box = area.box
@@ -2454,7 +2455,9 @@ export const register: Register = on => {
       const moved = scrollAt[key]
       const from = Math.min(max, Math.max(0, moved && moved.on === item ? moved.at : at))
       const isScrolled = max > 0
-      if (isScrolled) lists.push({ top, bottom: top + n, key, max, at: from, on: item })
+      // In the wheel's map whether it scrolls or not: the wheel over an area moves that area
+      // or nothing, as over the file, never the sidebar as a whole.
+      lists.push({ top, bottom: top + n, key, max, at: from, on: item })
       const move = (to: number) => update($, areaAt, m => ({ ...m, [key]: { at: Math.min(max, Math.max(0, to)), on: item } }))
       const shown = Array.isArray(rows) ? rows.slice(from, from + n) : rows.draw(from, n)
       if (!isScrolled) return <Box key={`${tag}-rows`} flexDirection="column" flexShrink={0}>{shown}</Box>
@@ -3079,7 +3082,9 @@ export const register: Register = on => {
               <Text {...base}>{name}</Text>
             </Button>
             {isCommented && <Text color={ACCENT}>{` ${COMMENTED}`}</Text>}
-            <Text>{' '.repeat(Math.max(1, nameWidth - cells(name) - (isCommented ? 2 : 0)) + 2)}</Text>
+            {/* The path's room left over, then the two cells before the size. A cut path fills
+                its room exactly, so nothing is added to it: one cell more and the row wraps. */}
+            <Text>{' '.repeat(Math.max(0, nameWidth - cells(name) - (isCommented ? 2 : 0)) + 2)}</Text>
             {sizeOfFix(a, d, `file-size-${f}`)}
           </Box>
         )

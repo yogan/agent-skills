@@ -2808,6 +2808,53 @@ test("a fix's total stands over its files' sizes, every number right-aligned in 
   await panel.unmount()
 })
 
+// A path cut to its room took one cell more than a whole one, and the row wrapped: the
+// size's last digit stood on a line of its own.
+test("every row of a fix's files is one line: a cut path leaves the size its column, as a whole one does", async ($, on) => {
+  const files = [['src/short.ts', 23, 0], ['src/deeply/nested/fixtures/for/the/parser/sideways_sample.json', 274, 0],
+    ['src/deeply/nested/fixtures/for/the/parser/sideways_sample.bin', 0, 0], ['docs/notes.md', 5, 0]]
+  const code = codeOf(20, [3, 3], { mode: 'pushed', file: 'src/short.ts', commented: 'src/short.ts', fix_files: files })
+  const w = world(on, [reworkState('t1', [reworkTopic('t1', 'reply', { pushed: true, fix_kept: true, pushes: 1 })])], { code: { stdout: JSON.stringify(code) } })
+  await openRework($, w, reworkView('t1'))
+  const panel = await $.ui.mount({ ...PANEL, surface: 'terminal' })
+  const text = async (key: string) => [...JSON.stringify(await panel.find({ type: 'Box', key })).matchAll(/"text":"([^"]*)"/g)]
+    .map(m => m[1]).join('')
+  const rows = await Promise.all(files.map(([f]) => text(`file-${f}`)))
+  // Each row as wide as the pane, its size at the right edge (the list fits: no scrollbar).
+  expect(rows.map(x => [...x].length)).toEqual(files.map(() => PANEL.props.bodyColumns))
+  expect(rows[1]).toMatch(/….*sideways_sample\.json {2}\+274 −0$/)
+  expect(rows[2]).toMatch(/\.bin {4}\+0 −0$/)
+  await panel.unmount()
+})
+
+// The wheel over a fix's files that fit their room went on to the engine, which scrolled the
+// whole sidebar wherever its tree was a row taller than the pane.
+for (const count of [4, 6]) {
+  test(`the wheel over a fix's files moves that list alone, or nothing where it fits (${count} files)`, async ($, on) => {
+    const files = Array.from({ length: count }, (_, i) => [`src/f${i + 1}.ts`, 1, 1])
+    const code = codeOf(40, [3, 3], { mode: 'pushed', file: 'src/f1.ts', commented: 'src/f1.ts', fix_files: files })
+    const w = world(on, [reworkState('t1', [reworkTopic('t1', 'reply', { pushed: true, fix_kept: true, pushes: 1 })])], { code: { stdout: JSON.stringify(code) } })
+    const fell: number[] = []
+    on('ui.scroll', (_$, e) => { fell.push(e.pointer?.row ?? -1); return {} })
+    await openRework($, w, reworkView('t1'))
+    const panel = await $.ui.mount({ ...PANEL, surface: 'terminal' })
+    const H = PANEL.props.scroll.bodyRows
+    const wheel = (row: number, by: number) => $.ui.scroll({ component: 'Pane', requestId: PANEL.requestId, offset: by, by,
+      bodyRows: H, contentRows: H, origin: { kind: 'person' }, pointer: { column: 10, row } })
+    const shown = async () => (await panel.findAll({ type: 'Button' })).map(b => String(b.key ?? '')).filter(k => k.startsWith('file-pick-'))
+    const before = await shown()
+    // The list ends the pane: its rows are the last four (an eighth of 30, at least four).
+    // Each tick is read from the drawing it follows, as the engine draws between them.
+    for (const row of [H - 4, H - 1]) { await wheel(row, 1); await shown() }
+    expect(fell).toEqual([])
+    expect(await shown()).toEqual(count > 4 ? ['file-pick-src/f3.ts', 'file-pick-src/f4.ts', 'file-pick-src/f5.ts', 'file-pick-src/f6.ts'] : before)
+    // Its line, just above the rows, is not the list's.
+    await wheel(H - 5, -1)
+    expect(await shown()).toEqual(count > 4 ? ['file-pick-src/f3.ts', 'file-pick-src/f4.ts', 'file-pick-src/f5.ts', 'file-pick-src/f6.ts'] : before)
+    await panel.unmount()
+  })
+}
+
 test("a fix of one file has no total over it: the file's own size says it", async ($, on) => {
   const code = codeOf(20, [3, 3], { mode: 'pushed', file: 'src/a.ts', commented: 'src/a.ts', fix_files: [['src/a.ts', 2, 1]] })
   const w = world(on, [reworkState('t1', [reworkTopic('t1', 'reply', { pushed: true, fix_kept: true, pushes: 1 })])], { code: { stdout: JSON.stringify(code) } })
