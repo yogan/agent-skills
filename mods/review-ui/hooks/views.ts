@@ -410,17 +410,20 @@ export const sizeOf = (text: string): { before: string; size: DiffSize; after: s
 // draws in their colours (`people`, and "You").
 // `aside`: a run in italics, set apart by spaces (`_(includes t2 + rebase)_`), the small
 // print of a step (lib/ui.py's `push_aside_md`): drawn dim.
-export type InlineRun = { kind: 'plain' | 'code' | 'bold' | 'name' | 'size' | 'aside'; text: string } | { kind: 'link'; text: string; url: string }
+// `topic`: a topic's id (`t7`), drawn in the colour of the id in a card's title.
+export type InlineRun = { kind: 'plain' | 'code' | 'bold' | 'name' | 'topic' | 'size' | 'aside'; text: string } | { kind: 'link'; text: string; url: string }
+// A topic's id as the scripts write one in a card's text, bare (lib/mr_common.py's `tref`).
+const TOPIC_ID = /\bt\d+\b/u
 const INLINE = /`([^`]+)`|\*\*([^*]+)\*\*|\[([^\]]+)\]\((\S+?)\)|(\u{f4d2} \d+ files? {1,2}\+\d+ {1,2}−\d+)|(?<=^|\s)_([^_\n]+)_(?=$|\s)/gu
 export const inlineOf = (md: string, people: readonly string[] = []): InlineRun[] => {
   const out: InlineRun[] = []
   const names = ['You', ...people].filter(Boolean).map(n => n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
-  const named = new RegExp(`\\b(?:${names.join('|')})\\b`, 'gu')
+  const named = new RegExp(`\\b(?:${names.join('|')})\\b|${TOPIC_ID.source}`, 'gu')
   const plain = (text: string) => {
     let at = 0
     for (const m of text.matchAll(named)) {
       if ((m.index ?? 0) > at) out.push({ kind: 'plain', text: text.slice(at, m.index) })
-      out.push({ kind: 'name', text: m[0] })
+      out.push({ kind: new RegExp(`^${TOPIC_ID.source}$`, 'u').test(m[0]) ? 'topic' : 'name', text: m[0] })
       at = (m.index ?? 0) + m[0].length
     }
     if (at < text.length) out.push({ kind: 'plain', text: text.slice(at) })
@@ -455,7 +458,16 @@ export const withOutcome = (md: string, o: { when?: string | null; icon?: string
   return body ? `${body}${STEP_LINE.test(last) ? '\n' : '\n\n'}${line}` : line
 }
 
-export type SizeRun = ({ md: string } | { before: string; size: DiffSize; after: string } | CommitRun | WordsRun | DraftHeadRun | StepRun) & { gap?: true }
+export type SizeRun = ({ md: string } | { before: string; size: DiffSize; after: string } | CommitRun | WordsRun | DraftHeadRun | StepRun | ItalicRun) & { gap?: true }
+// A line in italics alone that names a topic outside its code (`_Changed since the comment,
+// by the fix for t7 (…):_`): drawn inline, so the id takes its colour, which Markdown cannot
+// give a word.
+export type ItalicRun = { italic: string }
+const ITALIC_LINE = /^_([^_\n]+)_$/
+const italicNamingTopic = (line: string): string | undefined => {
+  const m = ITALIC_LINE.exec(line.trim())
+  return m && TOPIC_ID.test((m[1] as string).replace(/`[^`]*`/g, '')) ? m[1] : undefined
+}
 // A line of a topic's story (lib/ui.py's `step_md`): when, an icon, who did what. The card
 // draws the time dim, in a column as wide as the card's widest, so the icons line up.
 export type StepRun = { step: { when: string | null; indent: number; icon: string; rest: string } }
@@ -551,6 +563,12 @@ export const sizeRunsOf = (md: string): SizeRun[] => {
     if (fence === null && !open && DRAFT_HEAD.test(line.trim())) {
       flushRun()
       push({ draftHead: line.trim() })
+      continue
+    }
+    const italic = fence === null && !open ? italicNamingTopic(line) : undefined
+    if (italic !== undefined) {
+      flushRun()
+      push({ italic })
       continue
     }
     const step = fence === null && !open ? STEP_LINE.exec(line) : null

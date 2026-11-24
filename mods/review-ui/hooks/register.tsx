@@ -1317,7 +1317,8 @@ const spaced = (Box: ReturnType<EngineInterface['ui']['resolve']>['Box'], r: Siz
   r.gap ? <Box key={`gap-${key}`} marginTop={1}>{el}</Box> : el
 
 // What a step says after its time and icon, as one text that wraps under its own first
-// word: people's names in their colours, code spans, links and a diff's size inline.
+// word: people's names in their colours, topic ids in the title's, code spans, links and a
+// diff's size inline.
 const stepText = (els: Pick<ReturnType<EngineInterface['ui']['resolve']>, 'Text'> & { Link: (p: { href: string; label?: string }) => JSX.Element }, rest: string, key: string, isDim?: boolean, people: readonly string[] = []) => {
   const { Link, Text } = els
   return (
@@ -1326,6 +1327,7 @@ const stepText = (els: Pick<ReturnType<EngineInterface['ui']['resolve']>, 'Text'
         : r.kind === 'code' ? <Text key={`c${n}`} color={dimOr(isDim, CODE_COLOR)}>{r.text}</Text>
         : r.kind === 'bold' ? <Text key={`b${n}`} bold>{r.text}</Text>
         : r.kind === 'name' ? <Text key={`n${n}`} bold color={dimOr(isDim, personColor(r.text, people))}>{r.text}</Text>
+        : r.kind === 'topic' ? <Text key={`t${n}`} color={dimOr(isDim, ACCENT)}>{r.text}</Text>
         : r.kind === 'link' ? <Link key={`l${n}`} href={r.url} label={r.text} />
         : r.kind === 'aside' ? <Text key={`a${n}`} color={DIM_COLOR} italic>{r.text}</Text>
         : <Text key={`s${n}`}>{drawSize(Text, (sizeOf(r.text) as { size: DiffSize }).size, isDim)}</Text>))}
@@ -1357,6 +1359,9 @@ const drawParts = ($: EngineInterface, e: Parameters<EngineInterface['ui']['reso
                 {stepText({ Link, Text }, r.step.rest, `step-text-${at}-${j}-${k}`, isDim, people)}
               </Box>
             )
+          : 'italic' in r
+            // A line in italics that names a topic: its id in the title's colour.
+            ? <Text key={`italic-${at}-${j}-${k}`} italic>{stepText({ Link, Text }, r.italic, `italic-text-${at}-${j}-${k}`, isDim, people)}</Text>
           : 'draftHead' in r
             // A draft's heading, its Copy beside it where the card can copy it.
             ? (

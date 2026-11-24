@@ -808,6 +808,22 @@ test("a push's small print is its own run, and a name with underscores is not on
   expect(inlineOf('Robin renamed my_var_name').map(r => r.kind)).toEqual(['plain'])
 })
 
+test("a topic's id in a card's text is a run of its own, drawn as the title draws it", () => {
+  expect(inlineOf('by the fix for t7 (Rename `t8x`)')).toEqual([
+    { kind: 'plain', text: 'by the fix for ' }, { kind: 'topic', text: 't7' }, { kind: 'plain', text: ' (Rename ' },
+    { kind: 'code', text: 't8x' }, { kind: 'plain', text: ')' },
+  ])
+  expect(inlineOf('the first2 lines').map(r => r.kind)).toEqual(['plain'])
+})
+
+test('a line in italics that names a topic is drawn inline; one that names none stays Markdown', () => {
+  const runs = sizeRunsOf('_Changed since the comment, by the fix for t7 (Rename `x`):_\n\n```diff\n-a\n+b\n```')
+  expect(runs[0]).toEqual({ italic: 'Changed since the comment, by the fix for t7 (Rename `x`):' })
+  expect(sizeRunsOf('_Changed since the comment:_')).toEqual([{ md: '_Changed since the comment:_' }])
+  // A topic id only inside its code is no topic named.
+  expect(sizeRunsOf('_Renamed `t7` here:_')).toEqual([{ md: '_Renamed `t7` here:_' }])
+})
+
 test("a posted draft leaves its card, and the story under it stays", () => {
   // Posted, the card ended on "You replied" alone: taking the draft out took everything up
   // to the next heading, the comment, the plan and the push with it.
