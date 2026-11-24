@@ -7,7 +7,7 @@ import {
   type BandButton, type InboxLine,
 } from './review.ts'
 import {
-  boxRowsOf, fitTitle, plainTitle, INBOX_ICON, MR_COLOR, INBOX_WORD, inboxMark, kindSlot, legendFor, oneLineNote, reflow, sectionsOf, STATE_ICON,
+  boxRowsOf, fitTitle, plainTitle, INBOX_ICON, MR_COLOR, INBOX_WORD, inboxMark, kindOf, kindSlot, legendFor, oneLineNote, reflow, sectionsOf, STATE_ICON, stateIconOf,
   whenOf, personColor, YOU, YOU_COLOR, type BoxRow, type Row,
 } from './panel.ts'
 import { blocksOf, type DiffSize, type SizeRun, inPresses, inlineOf, namesPresses, withEmoji, withOutcome, withoutDraft, isPostCommand, isViewCommand, partsOf, sizeOf, sizeRunsOf, withoutPasted, withSuggestions, manifestOf, titleOf, viewOf, withNote, withoutExcerpt, withoutExcerptLabel, withoutThread } from './views.ts'
@@ -1273,8 +1273,8 @@ const dimOr = (isDim: boolean | undefined, color?: string) => (isDim ? DIM_COLOR
 // engine's markdown gives a code span.
 const CODE_COLOR = 'permission'
 type LabelOf = { state: string; id: string; kind?: { icon: string; color?: string; isDim?: boolean } }
-const labelOf = (t: ReviewState['topics'][number], isReview: boolean): LabelOf =>
-  ({ state: STATE_ICON[t.state] ?? '', id: t.id, kind: isReview ? kindSlot(t) : undefined })
+const labelOf = (t: ReviewState['topics'][number], r: ReviewState): LabelOf =>
+  ({ state: stateIconOf(r, t), id: t.id, kind: kindOf(r, t) })
 const drawLabel = (
   Text: ReturnType<EngineInterface['ui']['resolve']>['Text'], l: LabelOf, props: { bold?: boolean; dimColor?: boolean } = {},
 ) => (
@@ -1783,7 +1783,7 @@ const drawPending = async ($: EngineInterface, e: Parameters<EngineInterface['ui
   const { Box, Text } = $.ui.resolve(e)
   const { r } = await known($)
   const topic = r?.topics.find(t => t.id === tid)
-  const label: LabelOf = { state: STATE_ICON[topic?.state ?? ''] ?? ' ', id: tid, kind: topic ? kindSlot(topic) : undefined }
+  const label: LabelOf = { state: topic ? stateIconOf(r, topic) : ' ', id: tid, kind: topic ? kindOf(r, topic) : undefined }
   const what = r?.skill === 'rework-mr' ? 'what the reviewer wrote' : topic?.peer ? 'this thread' : `${r?.author ?? 'the author'}'s answer`
   return (
     <Box borderStyle="round" borderColor={DIM_COLOR} paddingX={1} flexDirection="column" width="100%">
@@ -2503,7 +2503,8 @@ export const register: Register = on => {
       // longest), severity or kind, and the source at the end. The title takes the rest, cut
       // to it, so a row is always one line and the source column lines up.
       const idWidth = Math.max(2, ...r.topics.map(t => t.id.length))
-      // review-mr: bar, mark, handle, severity; rework-mr: bar, mark, state, handle.
+      // review-mr: bar, mark, severity or kind, handle; rework-mr: bar, mark, state (praise's
+      // icon in its place for praise), handle.
       const room = Math.max(12, cols - 6 - idWidth - listReserve)
       const row = (x: Row) => {
         // Where the topic stands in the inbox (news, being judged, put off), in a slot of
@@ -2525,7 +2526,7 @@ export const register: Register = on => {
                 under the pointer the button inverts, and a coloured glyph inside it would
                 turn into a block of its colour. Its colour is what the list is scanned by,
                 so it keeps it on every open row (a dim colour is drawn plain grey). */}
-            {x.kind ? <Text {...base} color={x.isClosed ? undefined : x.kind.color} dimColor={(x.isClosed && !x.isCurrent) || x.kind.isDim || undefined}>{`${x.kind.icon} `}</Text> : ''}
+            {isReview && x.kind ? <Text {...base} color={x.isClosed ? undefined : x.kind.color} dimColor={(x.isClosed && !x.isCurrent) || x.kind.isDim || undefined}>{`${x.kind.icon} `}</Text> : ''}
             <Button key={`row-${x.id}`} plain onPress={() => (x.isCurrent && isLeavable ? leave() : showTopic($, s, x.id))}>
               {!isReview && <Text {...base}>{`${x.icon} `}</Text>}
               <Text {...base} color={ACCENT}>{x.id.padEnd(idWidth)}</Text>

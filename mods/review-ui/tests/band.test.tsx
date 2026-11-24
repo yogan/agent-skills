@@ -3047,14 +3047,66 @@ test("a press's line goes once the model takes a turn", async ($, on) => {
   await band.unmount()
 })
 
-test('rework-mr: a comment that asks nothing is seen, not planned', async ($, on) => {
-  const w = world(on, [reworkState('t1', [reworkTopic('t1', 'plan', { proposal: { says: 'fyi' } })])])
+test('rework-mr: a comment that asks nothing is resolved as it is, or replied to, never planned', async ($, on) => {
+  const t1 = reworkTopic('t1', 'plan', { proposal: { says: 'fyi' }, kind: 'praise' })
+  const w = world(on, [reworkState('t1', [t1]), reworkState(null, [{ ...t1, status: 'done', state: 'done', resolved: true }])],
+    { resolve: { stdout: 'resolved t1\nclosed: 14:02 \u{F012C} You resolved it\n' } })
+  await openRework($, w, reworkView('t1'))
+  const ui = await mountStep($, 'terminal')
+  expect(await labels(ui)).toEqual(['Resolve', 'Reply…', 'Next', 'Show sidebar'])
+  await ui.unmount()
+  const card = await $.ui.mount(cardRow('tu-open', reworkView('t1')))
+  // Resolve is the recommendation: the accent fill, Reply… the muted one.
+  const fills = (await card.findAll({ type: 'Text' })).map(t => t.props.backgroundColor).filter(Boolean)
+  expect(fills[0]).not.toBe(fills[1])
+  await card.press({ key: 'resolve' })
+  await card.unmount()
+  const ran = w.ran.find(r => r.argv[2] === 'resolve')
+  expect(ran?.argv.slice(2).join(' ')).toBe('resolve t1 --iid 42')
+  expect(await isPress(w, ran?.env)).toBe(true)
+  // The card ends on the script's closing line, in rework-mr's words, not review-mr's.
+  const again = await $.ui.mount(cardRow('tu-open', reworkView('t1')))
+  const texts = (await again.findAll({ type: 'Text' })).map(t => JSON.stringify(t))
+  expect(texts.some(t => t.includes('You resolved it'))).toBe(true)
+  expect(texts.some(t => t.includes('accepted the answer'))).toBe(false)
+  await again.unmount()
+})
+
+test('rework-mr: a comment that asks nothing on a thread resolved already is closed with Seen, nothing left to resolve', async ($, on) => {
+  const w = world(on, [reworkState('t1', [reworkTopic('t1', 'plan', { proposal: { says: 'fyi' }, resolved: true })])])
   await openRework($, w, reworkView('t1'))
   const ui = await mountStep($, 'terminal')
   expect(await labels(ui)).toEqual(['Seen', 'Reply…', 'Next', 'Show sidebar'])
   await ui.press({ key: 'handled-Seen' })
   await ui.unmount()
   expect(w.ran.map(r => r.argv.slice(2).join(' '))).toContain('wait t1 --iid 42')
+  expect(w.ran.some(r => r.argv[2] === 'resolve')).toBe(false)
+})
+
+test('rework-mr: praise carries review-mr\'s praise icon in place of the state, in the sidebar\'s row; no other topic gets one, and no column is added', async ($, on) => {
+  const w = world(on, [reworkState('t1', [
+    reworkTopic('t1', 'plan', { proposal: { says: 'fyi' }, kind: 'praise' }), reworkTopic('t2', 'plan'),
+  ], { in_round: true, round: ['t1', 't2'] })])
+  await openRework($, w, reworkView('t1'))
+  const ui = await $.ui.mount({ ...PANEL, props: { ...PANEL.props, scroll: { offset: 0, bodyRows: 60 } }, surface: 'terminal' })
+  const row = async (key: string) => (await ui.findAll({ type: 'Button', key })).length
+    ? JSON.stringify(await ui.find({ type: 'Button', key })) : ''
+  const praise = await row('row-t1')
+  const plain = await row('row-t2')
+  expect(praise).toContain('\u{f194b}')
+  expect(praise.indexOf('\u{f194b}')).toBeLessThan(praise.indexOf('summary of t1'))
+  expect(praise).not.toContain('\u{f0182}')                  // the state icon it replaces
+  expect(plain).toContain('\u{f0182}')
+  expect(plain).not.toContain('\u{f194b}')
+  // One slot for both: as many parts in each row, none added for praise.
+  const parts = (row: string) => (row.match(/"type":"Text"/g) ?? []).length
+  expect(parts(praise)).toBe(parts(plain))
+  // No other kind or severity mark in rework-mr: no dim minus for an unset severity.
+  expect(plain).not.toContain('\u{f0374}')
+  // The legend names it, as review-mr's does.
+  await ui.press({ key: 'legend' })
+  expect((await ui.findAll({ type: 'Text' })).some(t => String(t.text ?? '').endsWith(' praise'))).toBe(true)
+  await ui.unmount()
 })
 
 test('rework-mr: a fix offers Ack and push, and the diff viewer; nothing to put off', async ($, on) => {

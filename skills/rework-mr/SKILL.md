@@ -233,7 +233,10 @@ propose a plan…`): research it with the code at hand, store the proposal and s
   ```
   `--outcome fix` for every plan that changes code, a push-back that also adds a comment
   included: only a fix gets Fix it and a push. The others are for a plan that only replies.
-  `--says fyi` (no outcome, no plan) for a comment that asks nothing of you. `--answer-now` on
+  `--says fyi` (no outcome, no plan) for a comment that asks nothing of you, with `--praise`
+  where the reviewer likes something you did: resolving it then puts a 🙏 on their comment
+  first, so its `--why` ends on a recommendation that says so, as an action and not a button
+  ("**Recommendation:** Resolve it: that thanks Robin with a 🙏 on the comment."). `--answer-now` on
   a fix whose plan answers the reviewer ahead of it (they asked a question, or offered options
   and the plan picks one): the card then recommends agreeing with a reply up front. The `--change` is
   the change the user agrees to: the fix is compared with it once made, so it takes the place

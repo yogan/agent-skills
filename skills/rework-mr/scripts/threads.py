@@ -78,6 +78,7 @@ from lib.gitlab import (
     after_posting,
     api,
     api_post,
+    api_try,
     context,
     current_user,
     remember_user,
@@ -546,12 +547,27 @@ def ui_state(state, t, status=None):
 
 def title_md(state, t, summ):
     """A topic's title, bold, and where the mod draws, its state icon in front (the icon is
-    the topic marker there). Mirrors findings.py's `title_md`."""
+    the topic marker there). Mirrors findings.py's `title_md`, whose every topic has a kind
+    or severity: here praise alone is marked, review-mr's praise icon in place of the state
+    (the list's group says where a praise topic stands)."""
     if ui.drawn():
-        # The topic's label as the panel and the band draw it: state, then handle.
-        return (f"{ui.STATE_ICON[ui_state(state, t)]} **{t['id']}**"
-                + (f" **{summ}**" if summ else ""))
+        # The topic's label as the panel and the band draw it: state (or praise), then handle.
+        icon = ui.KIND_ICON["praise"] if is_praise(t) else ui.STATE_ICON[ui_state(state, t)]
+        return f"{icon} **{t['id']}**" + (f" **{summ}**" if summ else "")
     return f"**{tref(t['id'])}" + (f" — {summ}**" if summ else "**")
+
+
+def is_praise(t):
+    """Whether `t` is a reviewer's praise: it liked something and asked nothing."""
+    return t.get("kind") == "praise"
+
+
+def mark_praise(t, praise):
+    """Mark `t` as praise, or no longer as praise: a new judgment of it says which."""
+    if praise:
+        t["kind"] = "praise"
+    else:
+        t.pop("kind", None)
 
 
 def render_table(state, scope="all", show_done=False):
@@ -1901,6 +1917,8 @@ def state_json(state):
         topics.append({
             "id": t["id"], "status": topic_status(state, t), "state": ui_state(state, t),
             "summary": t.get("summary"), "file": _loc_cell(state, t).strip("`") or None,
+            # Praise alone has a kind here: review-mr's praise icon marks it.
+            "kind": "praise" if is_praise(t) else None,
             "posted": True, "draft": reply_version(draft_of(state, t)) if draft_holds(state, t) else None,
             "inbox": inbox_of(state, t), "news": kinds, "news_at": news_at,
             "step": step_of(state, t),
@@ -2799,7 +2817,8 @@ def judge_prompt(state, iid, skip=()):
             "what the reviewer said>\"}. `fyi` where the latest words ask nothing of the user (a "
             "thank-you, an OK on what they did); `needs` for anything they have to answer, "
             "decide or change: the user then works out the plan with the code at hand, so say "
-            "no more than what is asked."
+            "no more than what is asked. An `fyi` that is praise (the reviewer likes something "
+            "the user did, and asks nothing) also takes `\"praise\": true`."
             + (" A topic whose plan was agreed before (" + ", ".join(agreed) + ") takes "
                "`\"says\": \"keep\"` where the new comment only acknowledges that plan (\"sounds "
                "good\", a thank-you) and changes nothing about it; anything else asked there is "
@@ -2827,7 +2846,12 @@ def judge_store(state, item, a):
     summary = judge.text(a, "summary", required=not t.get("summary"))
     if summary and not t.get("summary"):
         t["summary"] = summary          # named once, as `propose` names a topic
+    praise = a.get("praise", False)
+    if praise not in (True, False):
+        raise judge.Malformed(f"praise is {praise!r}, not true or false")
     mark = reviewer_mark(state, t)
+    if says != "keep":
+        mark_praise(t, says == "fyi" and praise)
     if says == "keep":
         keep_plan(state, t, why)
     elif says == "fyi":
@@ -3050,6 +3074,47 @@ def post_reply(state, ctx, iid, tid, expect, fixed=False, resolve=False, failed=
                        "note": ui.note_key(url)}
         t.setdefault("closed_with", {})[ui.note_key(url) or url] = t["closed"]["how"]
     return url
+
+
+def resolve_topic(state, ctx, iid, tid, failed):
+    """Resolve `tid`'s threads on GitLab and close the topic, with no reply: a comment that
+    asks nothing of the user. Praise the user has not answered in its thread is thanked
+    first, with a :pray: on the reviewer's comment. The user's press alone (lib/press.py).
+    Returns whether the topic closed.
+
+    A failed reaction or resolve is kept in `failed`, as `post_reply`'s resolve keeps it;
+    a reaction GitLab already has (from an earlier press) is none."""
+    if not press.claimed():
+        die("resolving is the user's press, on the topic's card (Resolve); nothing else "
+            "resolves. Show the card and name the button to press.")
+    t = topic_for(state, tid) or die(f"no topic {tid}")
+    if not t["thread_ids"]:
+        die(f"{tref(tid)} has no thread to resolve")
+    disc = f"projects/{ctx['enc']}/merge_requests/{iid}/discussions"
+    threads = [(x, state["threads"].get(x) or {}) for x in t["thread_ids"]]
+    replied = any(n.get("mine") for _, th in threads for n in th.get("notes") or [])
+    first, th = threads[0]
+    note = ui.note_key(((th.get("notes") or [{}])[0]).get("url") or th.get("url"))
+    if is_praise(t) and not replied and note:
+        # On the MR's notes, not under its thread: GitLab has no emoji under `discussions/`.
+        _, why = api_try(f"projects/{ctx['enc']}/merge_requests/{iid}/notes/{note}/award_emoji", {"name": "pray"})
+        if why and "already" not in why.lower():
+            failed.append(f"reacting on the praise failed: {why}")
+    before = len(failed)
+    for x, th in threads:
+        if not th.get("resolved") and not th.get("gone"):
+            n = len(failed)
+            after_posting(failed, "resolving its thread", api_post,
+                          f"{disc}/{x}?resolved=true", {}, method="PUT")
+            if len(failed) == n and x in state["threads"]:
+                th["resolved"] = True    # until the threads are read back
+    if len(failed) > before:
+        return False                     # still open on GitLab: not closed here either
+    t["state"] = "waiting"
+    t.pop("waiting_on", None)
+    # How the user closed it, for the line its card ends on (`closing_line`).
+    t["closed"] = {"how": "resolved", "at": datetime.datetime.now(datetime.timezone.utc).isoformat()}
+    return True
 
 
 # Where this skill keeps what is its own in a repository (`lib/fix_refs.py`).
@@ -3753,6 +3818,8 @@ def main():
     pq2.add_argument("--iid", type=int)
     pq2.add_argument("--says", choices=("needs", "fyi"), required=True)
     pq2.add_argument("--why", required=True)
+    pq2.add_argument("--praise", action="store_true",
+                     help="with --says fyi: the reviewer praises something and asks nothing")
     pq2.add_argument("--summary", help="an English one-liner for a topic that has no name yet; "
                      "a topic that has one keeps it")
     pq2.add_argument("--outcome", choices=OUTCOMES)
@@ -3762,6 +3829,11 @@ def main():
     pq2.add_argument("--answer-now", action="store_true",
                      help="with a fix: the plan answers the reviewer now, ahead of the fix "
                      "(they asked a question or offered options)")
+    prs = sub.add_parser("resolve", help="on a person's press only: resolve <t>'s threads "
+                         "with no reply and close it; praise you did not answer gets a :pray: "
+                         "first")
+    prs.add_argument("topic")
+    prs.add_argument("--iid", type=int)
     ppo = sub.add_parser("post", help="on a person's press only: post <t>'s reply")
     ppo.add_argument("topic")
     ppo.add_argument("--iid", type=int)
@@ -4113,6 +4185,9 @@ def main():
             # is known by its name, and the latest comment on it is its story's to tell.
             # Renaming is the chat's, on the user's word (`set --summary`).
             t["summary"] = args.summary
+        if args.praise and args.says != "fyi":
+            die("--praise marks a comment that asks nothing of the user: it takes --says fyi")
+        mark_praise(t, args.praise)
         t["proposal"] = {"says": args.says, "why": args.why, "outcome": args.outcome,
                          "plan": args.plan, "change": change, "on": reviewer_mark(state, t)}
         if args.answer_now:
@@ -4140,6 +4215,17 @@ def main():
             print(f"closed: {closing}")
         if failed:
             posted_but(f"posted {tref(args.topic)}: {url}", failed)
+    elif cmd == "resolve":
+        failed = []
+        closed = resolve_topic(state, ctx, iid, args.topic, failed)
+        after_posting(failed, "reading the threads back", resync, state, ctx, iid)
+        save(path, state)
+        print(f"resolved {tref(args.topic)}" if closed else f"{tref(args.topic)} is still open")
+        closing = closed and closing_line(state, topic_for(state, args.topic))
+        if closing:
+            print(f"closed: {closing}")
+        if failed:
+            posted_but(f"resolved {tref(args.topic)}" if closed else "nothing was resolved", failed)
     elif cmd == "push":
         by_press = pressed = press.claimed()
         if ui.drawn() and not pressed:

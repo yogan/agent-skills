@@ -94,6 +94,7 @@ export const CLOSED = ['done', 'wontfix', 'dropped']
 
 // One row, every column in a fixed slot: an empty slot stays a slot, so no mark ever
 // shifts a title. `kind` is the slot severity and kind share; review-mr alone has it.
+// rework-mr's praise takes the state's slot instead (`stateIconOf`).
 export type Row = {
   id: string
   state: string
@@ -110,13 +111,21 @@ export const kindSlot = (t: ReviewTopic): NonNullable<Row['kind']> => {
   return icon ? { icon, color: SEVERITY_COLOR[t.severity as string] } : { icon: NO_SEVERITY, isDim: true }
 }
 
+// The kind slot as the topic's skill fills it: review-mr's every topic, none in rework-mr.
+export const kindOf = (review: Pick<ReviewState, 'skill'> | null | undefined, t: ReviewTopic): Row['kind'] =>
+  review?.skill === 'review-mr' ? kindSlot(t) : undefined
+
+// A topic's state icon, and in rework-mr review-mr's praise icon in its place for praise:
+// the list's group says where a praise topic stands.
+export const stateIconOf = (review: Pick<ReviewState, 'skill'> | null | undefined, t: Pick<ReviewTopic, 'state' | 'kind'>): string =>
+  review?.skill !== 'review-mr' && t.kind === 'praise' ? KIND_ICON.praise as string : STATE_ICON[t.state] ?? ' '
+
 export const rowOf = (review: ReviewState, t: ReviewTopic): Row => {
-  const isReview = review.skill === 'review-mr'
   return {
     id: t.id,
     state: t.state,
-    icon: STATE_ICON[t.state] ?? ' ',
-    kind: isReview ? kindSlot(t) : undefined,
+    icon: stateIconOf(review, t),
+    kind: kindOf(review, t),
     title: plainTitle(t.summary ?? '(no summary yet)'),
     isCurrent: t.id === review.current,
     isClosed: CLOSED.includes(t.state),
@@ -184,13 +193,14 @@ export const sectionsOf = (review: ReviewState): Section[] => {
 }
 
 // What the panel's icons mean, one group per slot, in the order a row reads them. Rework
-// has the state slot alone. Where colour is drawn, a severity's word takes its colour.
+// has the state slot, praise's icon standing in it for praise. Where colour is drawn, a
+// severity's word takes its colour.
 export type LegendItem = { icon: string; word: string; color?: string }
 export const legend = (isReview: boolean): LegendItem[][] => {
   const states = Object.keys(STATE_ICON)
     .filter(s => isReview || s !== 'dropped')
     .map(s => ({ icon: STATE_ICON[s] as string, word: STATE_WORD[s] as string }))
-  if (!isReview) return [states]
+  if (!isReview) return [states, [{ icon: KIND_ICON.praise as string, word: 'praise' }]]
   // review-mr's rows carry no state or source: the group says where a topic stands, and who
   // raised it is the card's to say.
   return [[

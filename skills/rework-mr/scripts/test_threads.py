@@ -4578,5 +4578,168 @@ class TestStateRootFromTheEnvironment(unittest.TestCase):
         self.assertEqual(self.root(), os.path.expanduser("~/.claude/rework-mr"))
 
 
+class TestPraise(unittest.TestCase):
+    """A reviewer's comment that asks nothing may be praise: marked on its topic, by the
+    mod's model call or the agent's `propose`, and drawn with review-mr's praise icon."""
+
+    def setUp(self):
+        mock.patch.dict(os.environ, {"REVIEW_UI_DRAWN": "1"}).start()
+        self.addCleanup(mock.patch.stopall)
+        T._WORKING.clear()
+        self.addCleanup(T._WORKING.clear)
+        self.state = TestRounds.state(2)
+        self.t1 = T.topic_for(self.state, "t1")
+        mock.patch.object(T, "working_diff", return_value="").start()
+
+    def judge(self, reply):
+        with mock.patch.object(T, "render_code_context", return_value="(the code)"):
+            ask = T.judge_prompt(self.state, 1) or {}
+        return T.judge.store_all(ask.get("items") or {}, json.dumps(reply),
+                                 lambda i, m: T.judge_fresh(self.state, i, m),
+                                 lambda i, a: T.judge_store(self.state, i, a))
+
+    def propose(self, *argv):
+        with mock.patch.object(sys, "argv", ["threads.py", "propose", *argv, "--iid", "1"]), \
+                mock.patch.object(T, "load", return_value=self.state), mock.patch.object(T, "save"), \
+                mock.patch.object(T, "hold"), mock.patch.object(T, "state_file", return_value="/state"), \
+                mock.patch.object(T, "context", return_value={"slug": "g-p", "enc": "g%2Fp", "web": "https://gl/g/p"}), \
+                mock.patch("sys.stdout", new_callable=io.StringIO):
+            T.main()
+
+    def test_the_judge_marks_praise_and_a_later_judgment_takes_it_back(self):
+        with mock.patch.object(T, "render_code_context", return_value="(the code)"):
+            self.assertIn('"praise": true', T.judge_prompt(self.state, 1)["prompt"])
+        done = self.judge({"t1": {"says": "fyi", "why": "Robin likes the cache.", "praise": True},
+                           "t2": {"says": "fyi", "why": "Robin says OK."}})
+        self.assertEqual(done["stored"], ["t1", "t2"])
+        self.assertEqual(self.t1.get("kind"), "praise")
+        self.assertIsNone(T.topic_for(self.state, "t2").get("kind"))
+        self.assertEqual([x["kind"] for x in T.state_json(self.state)["topics"]], ["praise", None])
+        # The reviewer writes again, asking for something: no longer praise.
+        self.state["threads"]["d1"]["notes"].append(
+            {"author": "Robin", "body": "Could you also add a test?", "at": "2026-02-01T00:00:00Z", "mine": False})
+        self.judge({"t1": {"says": "needs"}})
+        self.assertNotIn("kind", self.t1)
+
+    def test_a_praise_that_is_not_true_or_false_is_no_answer(self):
+        done = self.judge({"t1": {"says": "fyi", "why": "w", "praise": "yes"}, "t2": {"says": "needs"}})
+        self.assertNotIn("t1", done["stored"])
+        self.assertNotIn("kind", self.t1)
+
+    def test_propose_marks_praise_only_on_a_comment_that_asks_nothing(self):
+        self.propose("t1", "--says", "fyi", "--why", "Robin likes it.", "--praise")
+        self.assertEqual(self.t1["kind"], "praise")
+        self.propose("t1", "--says", "fyi", "--why", "Robin says OK.")
+        self.assertNotIn("kind", self.t1)
+        with mock.patch("sys.stderr", new_callable=io.StringIO) as err, self.assertRaises(SystemExit):
+            self.propose("t1", "--says", "needs", "--why", "w", "--outcome", "fix", "--plan", "p", "--praise")
+        self.assertIn("--says fyi", err.getvalue())
+
+    def test_praise_has_review_mrs_praise_icon_in_place_of_the_state_and_nothing_else_has_one(self):
+        self.t1["kind"] = "praise"
+        state_icon = T.ui.STATE_ICON["new"]
+        self.assertEqual(T.title_md(self.state, self.t1, "Nice cache"),
+                         f"{T.ui.KIND_ICON['praise']} **t1** **Nice cache**")
+        self.assertEqual(T.title_md(self.state, T.topic_for(self.state, "t2"), "Rename it"),
+                         f"{state_icon} **t2** **Rename it**")
+
+
+class TestResolveWithNoReply(unittest.TestCase):
+    """Resolve on a comment that asks nothing: its threads resolved and the topic closed,
+    praise the user never answered thanked with a :pray: on the reviewer's comment first."""
+
+    CTX = {"enc": "g%2Fp", "web": "https://gl/g/p"}
+    DISC = "projects/g%2Fp/merge_requests/1/discussions"
+
+    def setUp(self):
+        mock.patch.dict(os.environ, {"REVIEW_UI_DRAWN": "1"}).start()
+        mock.patch.object(T.press, "claimed", return_value=True).start()
+        self.addCleanup(mock.patch.stopall)
+        T._WORKING.clear()
+        self.addCleanup(T._WORKING.clear)
+        self.state = TestRounds.state(1)
+        self.state["threads"]["d1"]["notes"][0]["url"] = "https://gl/g/p/-/merge_requests/1#note_41"
+        self.t1 = T.topic_for(self.state, "t1")
+        self.t1["kind"] = "praise"
+        self.post = mock.patch.object(T, "api_post", return_value={}).start()
+        self.react = mock.patch.object(T, "api_try", return_value=({"id": 5}, None)).start()
+
+    def resolve(self):
+        failed = []
+        return T.resolve_topic(self.state, self.CTX, 1, "t1", failed), failed
+
+    def test_praise_with_no_reply_of_yours_is_thanked_then_resolved(self):
+        order = []
+        self.react.side_effect = lambda *a, **k: order.append("react") or ({"id": 5}, None)
+        self.post.side_effect = lambda *a, **k: order.append("resolve") or {}
+        closed, failed = self.resolve()
+        self.assertTrue(closed)
+        self.assertEqual(failed, [])
+        self.assertEqual(order, ["react", "resolve"])
+        # On the MR's notes: GitLab answers 404 for an emoji under `discussions/`.
+        self.react.assert_called_once_with("projects/g%2Fp/merge_requests/1/notes/41/award_emoji", {"name": "pray"})
+        self.post.assert_called_once_with(f"{self.DISC}/d1?resolved=true", {}, method="PUT")
+        self.assertEqual(self.t1["closed"]["how"], "resolved")
+        self.assertEqual(T.closing_event(self.state, self.t1)["text"], "You resolved it")
+
+    def test_no_reaction_where_you_replied_or_it_is_not_praise(self):
+        for case in ("replied", "not praise"):
+            with self.subTest(case):
+                self.setUp()
+                if case == "replied":
+                    self.state["threads"]["d1"]["notes"].append(
+                        {"author": "Kim", "body": "Danke!", "at": "2026-02-01T00:00:00Z", "mine": True})
+                else:
+                    self.t1.pop("kind")
+                closed, _ = self.resolve()
+                self.assertTrue(closed)
+                self.react.assert_not_called()
+                self.post.assert_called_once()
+
+    def test_a_reaction_that_fails_is_said_and_the_thread_is_resolved_all_the_same(self):
+        self.react.return_value = (None, "403 Forbidden")
+        closed, failed = self.resolve()
+        self.assertTrue(closed)
+        self.assertEqual(failed, ["reacting on the praise failed: 403 Forbidden"])
+        self.post.assert_called_once()
+
+    def test_a_reaction_given_already_is_no_failure(self):
+        self.react.return_value = (None, "name has already been taken")
+        closed, failed = self.resolve()
+        self.assertTrue(closed)
+        self.assertEqual(failed, [])
+
+    def test_a_resolve_that_fails_leaves_the_topic_open(self):
+        self.post.side_effect = lambda *a, **k: T.die("glab api PUT failed: 403 Forbidden")
+        closed, failed = self.resolve()
+        self.assertFalse(closed)
+        self.assertEqual(failed, ["resolving its thread failed: glab api PUT failed: 403 Forbidden"])
+        self.assertNotIn("closed", self.t1)
+        self.assertFalse(self.state["threads"]["d1"]["resolved"])
+
+    def test_only_on_a_press(self):
+        T.press.claimed.return_value = False
+        with mock.patch("sys.stderr", new_callable=io.StringIO) as err, self.assertRaises(SystemExit):
+            self.resolve()
+        self.assertIn("user's press", err.getvalue())
+        self.post.assert_not_called()
+        self.react.assert_not_called()
+
+    def test_the_command_prints_the_closing_line_and_says_what_failed(self):
+        self.react.return_value = (None, "403 Forbidden")
+        with mock.patch.object(sys, "argv", ["threads.py", "resolve", "t1", "--iid", "1"]), \
+                mock.patch.object(T, "load", return_value=self.state), mock.patch.object(T, "save"), \
+                mock.patch.object(T, "hold"), mock.patch.object(T, "state_file", return_value="/state"), \
+                mock.patch.object(T, "resync"), \
+                mock.patch.object(T, "context", return_value={"slug": "g-p", **self.CTX}), \
+                mock.patch("sys.stdout", new_callable=io.StringIO) as out, \
+                mock.patch("sys.stderr", new_callable=io.StringIO) as err, self.assertRaises(SystemExit) as ex:
+            T.main()
+        self.assertEqual(ex.exception.code, 4)                  # done, with a warning
+        self.assertIn("closed: ", out.getvalue())
+        self.assertIn("You resolved it", out.getvalue())
+        self.assertIn("reacting on the praise failed: 403 Forbidden", err.getvalue())
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

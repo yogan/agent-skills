@@ -11,7 +11,9 @@ export type Press =
   | { kind: 'ask'; prompt: string }
   // Puts the start of a prompt in the box for the person to finish.
   | { kind: 'fill'; text: string }
-  | { kind: 'resolve' }
+  // Resolves the topic's threads and closes it. `did`: rework-mr's, what the model reads it did
+  // (review-mr's accepts an answer).
+  | { kind: 'resolve'; did?: string }
   // A comment the person posted by hand, edited on GitLab to the corrected version stored.
   | { kind: 'apply-edit' }
   // The previous or next of the person's own comments, in the sidebar.
@@ -515,7 +517,12 @@ const reworkButtons = (review: ReviewState): BandButton[] => {
       // Still being judged: whether it asks anything of the person is not known yet.
       if (!p && review.judge?.topics.includes(t) && !(review.unjudged ?? []).includes(t)) return []
       if (p?.says === 'fyi') {
-        bs = [handled('Seen', 'saw it; it asks nothing of them'), { key: 'reply', label: 'Reply…', press: { kind: 'fill', text: `Draft my reply for ${t}${lang}: ` } }]
+        // Asks nothing: resolved as it is, or answered first. Where its thread is resolved
+        // already there is nothing to resolve, and Seen closes it here.
+        const close: BandButton = topic.resolved
+          ? handled('Seen', 'saw it; it asks nothing of them')
+          : { key: 'resolve', label: 'Resolve', isPrimary: true, press: { kind: 'resolve', did: `resolved its thread on GitLab and closed the topic, which asked nothing of them${topic.kind === 'praise' ? ' (praise: unless they had replied in its thread, a :pray: reaction on it came first)' : ''}` } }
+        bs = [close, { key: 'reply', label: 'Reply…', press: { kind: 'fill', text: `Draft my reply for ${t}${lang}: ` } }]
       } else if (p && p.outcome && p.outcome !== 'fix') {
         // The plan is a reply (decline, push back, answer): agreeing it is drafting it, and
         // the other answer is doing what was asked after all.
@@ -743,7 +750,7 @@ export const outcomeOf = (press: Press, stdout: string, now?: string, wasPosted 
     case 'apply-edit':
       return said('Apply edit', 'You edited it on GitLab', { label: 'comment' })
     case 'resolve':
-      return said('Accept + resolve', 'You accepted the answer and resolved it')
+      return press.did ? said('Resolve', 'You resolved it') : said('Accept + resolve', 'You accepted the answer and resolved it')
     case 'agree':
       return said('Agree plan', 'You agreed the plan')
     case 'drop':
@@ -767,6 +774,7 @@ export const outcomeOf = (press: Press, stdout: string, now?: string, wasPosted 
 
 export const didText = (press: Press, topic: string, into?: string): string => {
   if (press.kind === 'handled') return `${topic}: ${press.did}`
+  if (press.kind === 'resolve' && press.did) return `${topic}: ${press.did}`
   if (press.kind === 'agree') return `${topic}: agreed the proposed plan${press.reply ? '; a reply ahead of the fix comes next' : press.draft ? '; its reply is drafted next' : ''}`
   if (press.kind === 'post' && press.early) return `${topic}: posted the reply ahead of its fix; the fix follows`
   if (press.kind === 'hunk') return `${topic}: opened the fix in the diff viewer`
