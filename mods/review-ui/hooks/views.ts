@@ -324,7 +324,8 @@ export const blocksOf = (text: string): Block[] => {
 // `loc` (a proposal's change): the block says where it is itself, one line above its hunks
 // with the file and the lines they span, as the sidebar heads its file. Every other block
 // sits where its card already says where (an excerpt, a suggestion in a comment).
-export type Part = { md: string } | { path: string; at?: number; hunks: string[]; isQuoted: boolean; loc?: string }
+// `isApart`: text after a diff that a blank line set apart from it, which the card keeps.
+export type Part = { md: string; isApart?: boolean } | { path: string; at?: number; hunks: string[]; isQuoted: boolean; loc?: string }
 const DIFF_OPEN = /^(> ?)?```diff path=(\S+)(?: at=(\d+))?( loc)?[ \t]*$/
 
 // The lines of the file as it is now that hunks span: `path:60–67`, or `path:60` for one.
@@ -344,8 +345,11 @@ export const partsOf = (text: string): Part[] => {
   const flush = () => {
     // A quote's own bar line left at the edge of a run would draw an empty quoted row.
     while (md.length && /^>?\s*$/.test(md[md.length - 1] as string)) md.pop()
+    // Text after a diff keeps the blank line that stood between them; a quote's own (`>`)
+    // is left out, as a gap there would cut the quote's bar.
+    const isApart = out.length > 0 && md.length > 0 && !(md[0] as string).trim()
     while (md.length && /^>?\s*$/.test(md[0] as string)) md.shift()
-    if (md.length) out.push({ md: md.join('\n') })
+    if (md.length) out.push({ md: md.join('\n'), ...(isApart ? { isApart } : {}) })
     md = []
   }
   const lines = text.split('\n')

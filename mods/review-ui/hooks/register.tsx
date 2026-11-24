@@ -1342,7 +1342,7 @@ const drawParts = ($: EngineInterface, e: Parameters<EngineInterface['ui']['reso
     return { p, runs, whenWidth }
   }).map(({ p, runs, whenWidth }, j) => 'md' in p
     ? (
-      <Box key={`md-${at}-${j}`} flexDirection="column">
+      <Box key={`md-${at}-${j}`} flexDirection="column" marginTop={p.isApart ? 1 : 0}>
         {runs.map((r, k) => spaced(Box, r, `${at}-${j}-${k}`, 'md' in r
           ? <Markdown key={`md-${at}-${j}-${k}`} text={withEmoji(r.md)} dimColor={isDim || undefined} />
           : 'step' in r

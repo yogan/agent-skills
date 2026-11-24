@@ -652,6 +652,12 @@ test('a diff block is drawn apart from the markdown around it, quoted or not', (
   ])
 })
 
+test('text a blank line set apart from the diff above it stays apart', () => {
+  const card = ['```diff path=a.ts', '@@ -1,1 +1,1 @@', '-a', '+A', '```', '', '11:13 \u{F012C} You agreed the plan'].join('\n')
+  expect(partsOf(card)[1]).toEqual({ md: '11:13 \u{F012C} You agreed the plan', isApart: true })
+  expect(partsOf(card.replace('```\n\n', '```\n'))[1]).toEqual({ md: '11:13 \u{F012C} You agreed the plan' })
+})
+
 test('a card with code in diff form, in a quote or not, draws each hunk as a diff', async ($, on) => {
   engineRow(on)
   await reviewing($)
