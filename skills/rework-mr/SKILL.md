@@ -36,7 +36,9 @@ your recommendation instead, or on what you just did. The passes run as rounds t
 **Card text is markdown, written to the person reading the card.** Whatever you store for a
 card to show (`--why`, `--plan`, `--did`) has every identifier, path, value and `file:line` in
 backticks, so the card draws it as code, and speaks to its reader as "you", or names nobody:
-"You chose her option 2", or "Option 2".
+"You chose her option 2", or "Option 2". "You" is the user, the MR's author, and only them:
+what a reviewer asked is theirs, by name ("Robin asks for real test files"), never "you
+asked".
 
 **A card ends your reply.** The user decides on the card, so it is the last thing they read.
 Whatever you have to say (the answer to the user's question, what you did and why) goes
