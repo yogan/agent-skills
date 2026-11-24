@@ -30,6 +30,12 @@ class TestPosted(unittest.TestCase):
         self.assertEqual((d["discussion"], d["note"], d["fix"]), ("d1", "2", "Option B, the fix follows.\n"))
         self.assertEqual(d["posted"], "Option A, the fix follows.")
 
+    def test_a_correction_starts_from_the_text_gitlab_holds_not_the_shown_one(self):
+        s, t = state()
+        s["threads"]["d1"]["notes"][1].update(body="[a](https://gl/g/p/uploads/1/a)", source="[a](/uploads/1/a)")
+        posted.store_differs(s, t, "v", "fix", last=False)
+        self.assertEqual(t["post_differs"]["posted"], "[a](/uploads/1/a)")
+
     def test_only_a_note_posted_after_the_draft_counts(self):
         s, t = state()
         for n, at in zip(s["threads"]["d1"]["notes"], ("2026-11-10T16:00:00Z", "2026-11-10T16:10:00Z", "2026-11-10T16:20:00Z")):

@@ -1071,6 +1071,19 @@ class TestSync(unittest.TestCase):
         self.assertEqual(t["draft"], "new follow-up")
 
 
+class TestFetchThreads(unittest.TestCase):
+    def test_an_attachment_links_to_the_project(self):
+        """GitLab keeps it as `/uploads/…`, which a terminal opens as a local file."""
+        note = {"id": 5, "resolvable": True, "author": {"name": "Robin", "username": "robin"},
+                "body": "See [notes.pdf](/uploads/00aa11bb/notes.pdf)", "position": {}, "project_id": 7}
+        with patch.object(F, "api", return_value=[{"id": "d1", "notes": [note]}]):
+            x = F.fetch_threads({"enc": "x", "web": "https://gl/g/p", "path": "g/p"}, 3, "me")["d1"]
+        # Under the project's id, where current GitLab serves it: under its path is a 404.
+        want = "See [notes.pdf](https://gl/-/project/7/uploads/00aa11bb/notes.pdf)"
+        self.assertEqual((x["body"], x["last_body"], x["notes"][0]["body"]), (want, want, want))
+        self.assertEqual(x["notes"][0]["source"], note["body"])
+
+
 class TestSyncBackfillsMissingBaseline(unittest.TestCase):
     """A topic linked before this fix existed has `start_sha=None` and is never
     revisited by `adopt_inbound` (its thread is already in `linked`) — without a

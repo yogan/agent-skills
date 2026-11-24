@@ -57,7 +57,7 @@ def store_differs(state, t, verdict, fix, last, since=None):
         raise ValueError("--differs takes the corrected text on --fix")
     t["post_differs"] = {"verdict": verdict.strip(), "fix": fix.strip() + "\n",
                          "discussion": disc, "note": nid.group(1), "url": note.get("url"),
-                         "posted": (note.get("body") or "").strip()}
+                         "posted": (note.get("source") or note.get("body") or "").strip()}
 
 
 def card_md(t, word, code=None):

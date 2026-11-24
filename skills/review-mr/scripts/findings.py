@@ -117,7 +117,7 @@ if _REPO_ROOT not in sys.path:
 
 from lib import code_view, critical_manifest, diffsize, fix_refs, focus, hunk, judge, posted, press, tab, ui  # noqa: E402
 from lib.fences import (LINK_ICON, SUGGESTION_INFO, YOU, block_lang, fence, suggestion_reach, suggestion_repeat,  # noqa: E402
-                        diff_info, lang_for, note_md, quoted_fence, segments,
+                        diff_info, gitlab_note_body, lang_for, note_md, quoted_fence, segments, upload_links, uploads_at,
                         suggestion_diff, when_of)
 from lib.cli import iid_option  # noqa: E402
 from lib.gitlab import (after_posting, api, api_post, approve, context, current_user, die, file_at, mr_base,  # noqa: E402
@@ -249,7 +249,7 @@ def fetch_threads(ctx, iid, me, author=None):
             # Every comment of the thread, for the sidebar, each with its own link.
             "notes": [{"author": (n.get("author") or {}).get("name")
                        or (n.get("author") or {}).get("username"),
-                       "body": n.get("body"), "at": n.get("created_at"),
+                       **gitlab_note_body(n.get("body"), uploads_at(ctx, n)), "at": n.get("created_at"),
                        "mine": bool(me) and (n.get("author") or {}).get("username") == me,
                        "url": f"{ctx['web']}/-/merge_requests/{iid}#note_{n.get('id')}"}
                       for n in notes],
@@ -258,7 +258,7 @@ def fetch_threads(ctx, iid, me, author=None):
             "side": "new" if pos.get("new_line") is not None else "old",
             "head_sha": pos.get("head_sha"),
             "base_sha": pos.get("start_sha") or pos.get("base_sha"),
-            "body": first.get("body"),
+            "body": upload_links(first.get("body"), uploads_at(ctx, first)),
             "resolved": resolved,
             "resolved_by": resolved_by,
             # Whether it was the user, and when: what a closed topic's card ends on.
@@ -269,7 +269,7 @@ def fetch_threads(ctx, iid, me, author=None):
             "note_count": len(notes),
             "last_author": (last.get("author") or {}).get("name") or last_user,
             "last_username": last_user,
-            "last_body": last.get("body"),
+            "last_body": upload_links(last.get("body"), uploads_at(ctx, last)),
             # When the author last spoke. Needed to tell "the author replied and I have
             # not looked yet" from "the author replied, I read it, and I acked" — see
             # topic_status(). Without it an ack can never stick on an unresolved thread.
@@ -5704,7 +5704,7 @@ def main():
             check = t.get("post_check") or {}
             _disc, shown = posted.own_note(state, t, last=bool(check.get("follow_up")), since=check.get("since"))
             print("Drafted:\n\n" + (check.get("draft") or "(no draft kept)").strip())
-            print("\nPosted:\n\n" + (shown.get("body") if shown else "(not on GitLab yet: nothing of the "
+            print("\nPosted:\n\n" + ((shown.get("source") or shown.get("body")) if shown else "(not on GitLab yet: nothing of the "
                                          "user's came after the draft)").strip())
     elif cmd == "link":
         t = topic_for(state, args.topic) or die(f"no topic {args.topic}")

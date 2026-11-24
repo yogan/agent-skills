@@ -120,6 +120,9 @@ from lib.mr_common import (
 from lib.fences import (  # noqa: E402
     FENCE_RE,
     YOU,
+    gitlab_note_body,
+    upload_links,
+    uploads_at,
     block_lang,
     code_block,
     diff_info,
@@ -231,7 +234,7 @@ def fetch_threads(ctx, iid, me, mr_comments=None):
         first = notes[0]
         if not first.get("resolvable"):
             if mr_comments is not None:
-                mr_comments += [_note(n, me, f"{ctx['web']}/-/merge_requests/{iid}#note_{n.get('id')}")
+                mr_comments += [_note(n, me, f"{ctx['web']}/-/merge_requests/{iid}#note_{n.get('id')}", uploads_at(ctx, n))
                                 for n in notes]
             continue
         resolvable = [n for n in notes if n.get("resolvable")]
@@ -262,7 +265,7 @@ def fetch_threads(ctx, iid, me, mr_comments=None):
             # moved on since.
             "head_sha": pos.get("head_sha"),
             "base_sha": pos.get("start_sha") or pos.get("base_sha"),
-            "body": first.get("body"),
+            "body": upload_links(first.get("body"), uploads_at(ctx, first)),
             "resolved": resolved,
             # Who resolved it and when, for the line a topic's card ends on (`closing_line`).
             "resolved_by": ((by or {}).get("resolved_by") or {}).get("name")
@@ -272,23 +275,24 @@ def fetch_threads(ctx, iid, me, mr_comments=None):
             "url": f"{ctx['web']}/-/merge_requests/{iid}#note_{first.get('id')}",
             "note_count": len(notes),
             "last_author": (last.get("author") or {}).get("name") or last_user,
-            "last_body": last.get("body"),
+            "last_body": upload_links(last.get("body"), uploads_at(ctx, last)),
             "awaiting": "reviewer" if (me and last_user == me) else "you",
             # full thread in order, so `quote` can show the whole discussion
             # (original + every reply), not just first + last.
-            "notes": [_note(n, me, f"{ctx['web']}/-/merge_requests/{iid}#note_{n.get('id')}")
+            "notes": [_note(n, me, f"{ctx['web']}/-/merge_requests/{iid}#note_{n.get('id')}", uploads_at(ctx, n))
                       for n in notes],
         }
     return out
 
 
-def _note(n, me, url=None):
+def _note(n, me, url=None, web=None):
     """One comment as the views and the review-ui panel read it: who wrote it (and
-    whether that is you), when, what it says, and its link."""
+    whether that is you), when, what it says (its attachments linked under `web`, see
+    `uploads_at`), and its link."""
     username = (n.get("author") or {}).get("username")
     return {
         "author": (n.get("author") or {}).get("name") or username,
-        "body": n.get("body"),
+        **gitlab_note_body(n.get("body"), web),
         "at": n.get("created_at"),
         "mine": bool(me) and username == me,
         "url": url,
@@ -4083,7 +4087,7 @@ def main():
             save(path, state)
             _disc, mine = posted.own_note(state, t, last=True, since=t.get("reply_at"))
             print("Drafted:\n\n" + (draft_of(state, t) or "(no draft kept)").strip())
-            print("\nPosted:\n\n" + (mine.get("body") if mine else "(not on GitLab yet: nothing of the "
+            print("\nPosted:\n\n" + ((mine.get("source") or mine.get("body")) if mine else "(not on GitLab yet: nothing of the "
                                         "user's came after the draft)").strip())
     elif cmd == "keep-plan":
         t = topic_for(state, args.topic) or die(f"no topic {args.topic}")

@@ -738,6 +738,13 @@ test('a bare URL in a thread box is a short link, never broken across rows', () 
   expect((kept[1] as { text: string }).text).toBe('`https://x.example/a` and [docs](https://x.example/b)')
 })
 
+test('an attached image, as the scripts link it, stays one link with its label whole', () => {
+  const image = '[\u{f02e9} login form on a phone](https://gitlab.example/group/app/uploads/0a1b2c/login.png)'
+  const rows = boxRowsOf([`Was ich meine:\n\n${image}`], 24, (i, b) => `k:${i}:${b}`, () => false, b => b, 'ts')
+  const md = rows.filter(r => r.kind === 'md').map(r => (r as { text: string }).text)
+  expect(md).toContain(image)
+})
+
 test('a comment that is only a suggestion shows it open; one beside prose stays folded, and a click folds either', () => {
   const folds = (body: string, opened: Record<string, boolean> = {}) =>
     boxRowsOf([body], 60, (i, b) => `k:${i}:${b}`, (k, byDefault) => opened[k] ?? byDefault, b => b, 'ts')

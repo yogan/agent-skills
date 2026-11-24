@@ -153,6 +153,49 @@ class TestNoteRendering(unittest.TestCase):
         )
 
 
+class TestUploadLinks(unittest.TestCase):
+    WEB = "https://gl.example/acme/shop"
+    IMG = "/uploads/0a1b2c3d4e5f60718293a4b5c6d7e8f9/login_form.png"
+    PDF = "/uploads/f9e8d7c6b5a4938271605f4e3d2c1b0a/pricing_sheet.pdf"
+
+    def test_an_image_is_a_short_link_to_where_gitlab_serves_it(self):
+        body = f"Look here:\n\n![login_form]({self.IMG}){{width=513 height=600}}\n"
+        self.assertEqual(fences.upload_links(body, self.WEB),
+                         f"Look here:\n\n[{fences.IMAGE_ICON} login_form]({self.WEB}{self.IMG})\n")
+
+    def test_an_attached_file_links_to_the_project_not_the_disk(self):
+        self.assertEqual(fences.upload_links(f"[pricing_sheet.pdf]({self.PDF})", self.WEB),
+                         f"[pricing_sheet.pdf]({self.WEB}{self.PDF})")
+
+    def test_an_image_without_alt_text_is_labelled_with_its_file(self):
+        self.assertEqual(fences.upload_links(f"![]({self.IMG})", self.WEB),
+                         f"[{fences.IMAGE_ICON} login_form.png]({self.WEB}{self.IMG})")
+
+    def test_code_and_other_links_stay_as_written(self):
+        body = "\n".join([
+            f"`![x]({self.IMG})` and [docs](https://example.org/uploads/a/b.png)",
+            f"[abs]({self.WEB}{self.PDF}) [rel](/acme/shop/-/issues/3)",
+            "```md", f"![x]({self.IMG}){{width=1}}", "```",
+        ])
+        self.assertEqual(fences.upload_links(body, self.WEB), body)
+
+    def test_attachments_are_served_under_the_project_id_where_the_comment_names_it(self):
+        ctx = {"web": self.WEB, "path": "acme/shop"}
+        self.assertEqual(fences.uploads_at(ctx, {"project_id": 4711}), "https://gl.example/-/project/4711")
+        self.assertEqual(fences.uploads_at(ctx, {}), self.WEB)
+        self.assertEqual(fences.upload_links(f"[f]({self.PDF})", fences.uploads_at(ctx, {"project_id": 4711})),
+                         f"[f](https://gl.example/-/project/4711{self.PDF})")
+
+    def test_a_link_beside_a_code_span_is_still_fixed(self):
+        self.assertEqual(fences.upload_links(f"`a` [f]({self.PDF}) `b`", self.WEB),
+                         f"`a` [f]({self.WEB}{self.PDF}) `b`")
+
+    def test_the_shown_text_keeps_what_gitlab_holds_where_it_differs(self):
+        raw = f"![x]({self.IMG})"
+        self.assertEqual(fences.gitlab_note_body(raw, self.WEB)["source"], raw)
+        self.assertEqual(fences.gitlab_note_body("plain", self.WEB), {"body": "plain"})
+
+
 class TestSuggestionDiff(unittest.TestCase):
     SOURCE = [f"line {i}" for i in range(1, 11)]
 

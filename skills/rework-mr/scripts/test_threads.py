@@ -963,6 +963,13 @@ class TestSyncRefreshesThreads(unittest.TestCase):
         T.sync(state, self.live(position=single))
         self.assertNotIn("line_start", state["threads"]["d1"])
 
+    def test_an_attachment_links_to_the_project(self):
+        """GitLab keeps it as `/uploads/…`, which a terminal opens as a local file."""
+        x = self.live(body="See ![shot](/uploads/00aa11bb/shot.png){width=10 height=20}")["d1"]
+        want = "See [\U000f02e9 shot](http://gl/uploads/00aa11bb/shot.png)"
+        self.assertEqual((x["body"], x["last_body"], x["notes"][0]["body"]), (want, want, want))
+        self.assertIn("/uploads/00aa11bb/shot.png){width", x["notes"][0]["source"])
+
     def test_a_thread_gone_upstream_is_marked_resolved(self):
         state = self.old_shaped_state()
         state["threads"]["dead"] = {"resolved": False, "file": "src/y.ts", "line": 1}

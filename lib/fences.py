@@ -378,6 +378,71 @@ def quoted_fence(content, lang=""):
 # (Nerd Fonts md-open_in_new).
 LINK_ICON = "\U000f03cc"
 
+# An image a comment carries, drawn as a link to it (Nerd Fonts md-image).
+IMAGE_ICON = "\U000f02e9"
+
+# A file attached to a comment, as GitLab stores it: a link (an image's with a `!`) to
+# `/uploads/<hash>/<file>`, relative to the project's web page, an image's size in braces
+# behind it. A terminal has no page to resolve that against and opens it as a local path.
+_UPLOAD_LINK = re.compile(r"(!?)\[([^\]\n]*)\]\((/uploads/[^)\s]+)\)(\{[^}\n]*\})?")
+_CODE_SPAN = re.compile(r"(`+)[^`].*?\1|(`+)")
+
+
+def upload_links(body, web):
+    """A comment's attachments as links to where GitLab serves them, under `web`
+    (`uploads_at`): an image as a link labelled with its alt text (the file's name without one),
+    its `{width=… height=…}` dropped, since a terminal draws no image and showed the whole
+    markup raw. Code spans and fenced code are left as written, and so is every other link."""
+    if not body or not web or "/uploads/" not in body:
+        return body
+
+    def link(m):
+        image, label, path = m.group(1), m.group(2), m.group(3)
+        label = label.strip() or path.rsplit("/", 1)[-1]
+        return f"[{IMAGE_ICON} {label}]({web}{path})" if image else f"[{label}]({web}{path})"
+
+    def prose(line):
+        out, at = [], 0
+        for c in _CODE_SPAN.finditer(line):
+            out += [_UPLOAD_LINK.sub(link, line[at:c.start()]), c.group(0)]
+            at = c.end()
+        return "".join(out + [_UPLOAD_LINK.sub(link, line[at:])])
+
+    out, close = [], None
+    for line in body.split("\n"):
+        if close:
+            if close.match(line):
+                close = None
+            out.append(line)
+            continue
+        m = FENCE_RE.match(line)
+        if m:
+            close = re.compile(r"^\s*`{%d,}\s*$" % len(m.group(2)))
+            out.append(line)
+            continue
+        out.append(prose(line))
+    return "\n".join(out)
+
+
+def uploads_at(ctx, note):
+    """Where GitLab serves the files attached to `note`, for `upload_links`: under its
+    project's id (`<host>/-/project/<id>`), as current GitLab serves them, a link under the
+    project's path giving a 404 there; under the path (`ctx["web"]`) for a comment that comes
+    without its project's id."""
+    pid = (note or {}).get("project_id")
+    web, path = ctx["web"], ctx.get("path") or ""
+    if not pid or not path or not web.endswith("/" + path):
+        return web
+    return f"{web[:-len(path)]}-/project/{pid}"
+
+
+def gitlab_note_body(raw, web):
+    """A GitLab comment's text for a skill's state: `body` as it is shown (`upload_links`),
+    and where that differs, `source` as GitLab holds it — what a correction to a posted
+    comment starts from, so the shown form is never written back."""
+    shown = upload_links(raw, web)
+    return {"body": shown, **({"source": raw} if shown != raw else {})}
+
 
 # What a comment of the user's own is signed with where the review-ui mod draws: the same word
 # everywhere, so their own comments can be picked out at a glance (the mod colours it).
