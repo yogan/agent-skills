@@ -1495,6 +1495,20 @@ test('a thread sits under the lines it is about, in full, and its fold key folds
   await ui.unmount()
 })
 
+test('a comment on the whole file stands above its first line', async ($, on) => {
+  const thread = [{ url: 'u', file: 'src/cache.ts', line: null, notes: [{ author: 'Kim', body: 'merge these tests into one', url: 'http://gl/x#note_2' }] }]
+  const w = world(on, [stateOf('t1', [topic('t1', 'open')], { thread })], { code: { stdout: JSON.stringify(codeOf(50, null)) } })
+  await openReview($, w, view('t1'))
+  const ui = await $.ui.mount({ ...PANEL, surface: 'terminal' })
+  const all = await ui.findAll({})
+  const said = all.findIndex(x => x.type === 'Markdown' && x.props.text === 'merge these tests into one')
+  const first = all.findIndex(x => x.type === 'Code' && String(x.props.source).includes('const line1 = 1'))
+  expect(said).toBeGreaterThan(-1)
+  expect(first).toBeGreaterThan(said)
+  expect(await ui.find({ type: 'Box', key: 'box-at' })).toBeDefined()
+  await ui.unmount()
+})
+
 test('a thread taller than its room keeps five lines of the file above and below, and scrolls on its own', async ($, on) => {
   const code = codeOf(50, [20, 20])
   const body = Array.from({ length: 60 }, (_, i) => `paragraph ${i + 1}`).join('\n\n')

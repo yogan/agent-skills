@@ -338,6 +338,8 @@ class TestView(unittest.TestCase):
         # above line 9, and lands on the rewrite's first line.
         self.assertEqual(code_view.place_now(repo, {**thread, "line": 2}), "moved.md:1")
         self.assertEqual(code_view.place_now(repo, {"file": None}), "")
+        # A comment on the whole file: its path alone, no colon left hanging.
+        self.assertEqual(code_view.place_now(repo, {**thread, "line": None}), "moved.md")
         fence = code_view.since_fence(repo, base, "t.md", 2, 2)
         self.assertEqual(fence[0], "```diff path=moved.md")
         self.assertIn("+rewritten 2", fence)

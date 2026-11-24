@@ -2768,8 +2768,9 @@ export const register: Register = on => {
     // its comments need more, the box may grow to half of the file's area (the file's line,
     // its code and the box), the code keeping the other half: the commented lines first,
     // fewer lines around them. Taller still, it scrolls on its own. With no file, the box is
-    // all its area holds: its line and the box's two borders apart.
-    const at = code?.view.at ?? null
+    // all its area holds: its line and the box's two borders apart. A comment on the whole
+    // file has no lines: its box stands above the first, with the lines after it.
+    const at = code ? code.view.at ?? [1, 0] : null
     const boxCap = code && at && openRows.length > 0
       ? Math.max(3, rest - 1 - 1
         - Math.min(10, at[1] - at[0] + 1) - Math.min(5, at[0] - 1) - Math.min(5, code.view.rows.length - at[1]) - 2,
@@ -2883,8 +2884,10 @@ export const register: Register = on => {
       // lies there, a box cut at its foot by the area's edge or at its head by moving it up
       // under it. The offset kept is a row of all that (from 1), not of the file alone.
       const N = v.rows.length
-      const hasBox = boxRows > 0 && !isOtherFile && v.at !== null
-      const anchor = hasBox && v.at ? v.at[1] : N
+      // With no lines (a comment on the whole file), right above the file's first line, where
+      // GitLab shows such a comment.
+      const hasBox = boxRows > 0 && !isOtherFile
+      const anchor = !hasBox ? N : v.at ? v.at[1] : 0
       const B = hasBox ? boxRows : 0
       const H = room + boxRows
       const maxStart = Math.max(1, N + B - H + 1)
@@ -2968,7 +2971,9 @@ export const register: Register = on => {
       // rows they take, in the window or out of it, as an IDE marks the selection on its
       // ruler; a press on the mark brings them back to where the file first showed them. A
       // topic with no thread yet has its lines marked too: they are what the area is about.
-      const topicRows = !isOtherFile && v.at ? { lo: v.at[0] - 1, hi: v.at[1] - 1 + B, to: opening - 1 } : undefined
+      const topicRows = isOtherFile ? undefined
+        : v.at ? { lo: v.at[0] - 1, hi: v.at[1] - 1 + B, to: opening - 1 }
+        : hasBox ? { lo: 0, hi: B - 1, to: opening - 1 } : undefined
       // Each row's diff sign at its place on the bar, the thread box's rows after the lines it
       // is on, as no line at all (''). None for a file the MR adds or removes whole: one
       // colour from top to bottom marks nothing, as in the file itself.

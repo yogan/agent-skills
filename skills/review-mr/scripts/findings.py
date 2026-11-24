@@ -655,7 +655,8 @@ def _loc(state, t, full=False):
     f, line = topic_file(state, t)
     if not f:
         return ""
-    return f"{f if full else os.path.basename(f)}:{line or ''}"
+    name = f if full else os.path.basename(f)
+    return f"{name}:{line}" if line else name
 
 
 def loc_link_md(state, loc):
@@ -684,14 +685,14 @@ def _place(state, x):
     wt = get_worktree(state.get("slug") or "", state.get("iid")) if ui.drawn() else None
     if wt and os.path.isdir(wt):
         return code_view.place_now(wt, x)
-    return f"{x['file']}:{x.get('line') or ''}"
+    return (f"{x['file']}:{x['line']}" if x.get('line') else x['file'])
 
 
 def _thread_loc(x):
     """`basename:line` for a thread's diff position, or "" when it has none — a
     discussion on the merge request itself carries no position, and every caller has
     to say so in its own words rather than print a stray separator."""
-    return f"{os.path.basename(x['file'])}:{x.get('line') or ''}" if x.get("file") else ""
+    return (f"{os.path.basename(x['file'])}:{x['line']}" if x.get('line') else os.path.basename(x['file'])) if x.get("file") else ""
 
 
 def _rows(state, scope):

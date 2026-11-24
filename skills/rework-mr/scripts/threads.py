@@ -430,7 +430,7 @@ def _loc(state, t):
     thr = [state["threads"].get(x, {}) for x in t["thread_ids"]]
     return next(
         (
-            f"{os.path.basename(x['file'])}:{x.get('line') or ''}"
+            (f"{os.path.basename(x['file'])}:{x['line']}" if x.get('line') else os.path.basename(x['file']))
             for x in thr
             if x.get("file")
         ),
@@ -1112,7 +1112,7 @@ def render_quote(state, tid, remember=True):
         # print — `None:` is what an unguarded f-string produced there.
         # Where the mod draws, under the file's name now: the sidebar follows a rename.
         path = (code_view.place_now((_git("rev-parse", "--show-toplevel") or "").strip(), x)
-                if ui.drawn() else f"{x['file']}:{x.get('line') or ''}") if x.get("file") else ""
+                if ui.drawn() else (f"{x['file']}:{x['line']}" if x.get('line') else x['file'])) if x.get("file") else ""
         if i == 0:
             title = title_md(state, t, summ)
             out.append(f"{title} · {loc_md(path)}")
@@ -2198,7 +2198,7 @@ def render_bodies(state):
         for th in t["thread_ids"]:
             x = state["threads"].get(th, {})
             loc = (
-                f"{os.path.basename(x['file'])}:{x.get('line') or ''}"
+                (f"{os.path.basename(x['file'])}:{x['line']}" if x.get('line') else os.path.basename(x['file']))
                 if x.get("file")
                 else MR_LEVEL
             )
@@ -2757,7 +2757,7 @@ def _whole_threads(state, t):
 
 
 def _loc_of(x):
-    return f"{x['file']}:{x.get('line') or ''}" if x.get("file") else MR_LEVEL
+    return (f"{x['file']}:{x['line']}" if x.get('line') else x['file']) if x.get("file") else MR_LEVEL
 
 
 def judge_prompt(state, iid, skip=()):

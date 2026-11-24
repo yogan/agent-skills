@@ -654,7 +654,8 @@ def place_now(repo, thread):
     its name now and the line carried through the changes since the comment, as the sidebar
     beside the card shows them. A card naming the old path, or the line as posted, beside a
     sidebar that follows both reads as another place. A comment on a removed line, and one
-    git cannot follow, keeps the place it was posted on. "" for a comment on no file."""
+    git cannot follow, keeps the place it was posted on; one on the whole file is its path alone.
+    "" for a comment on no file."""
     path, line = thread.get("file"), thread.get("line")
     if not path:
         return ""
@@ -666,7 +667,7 @@ def place_now(repo, thread):
                 line = carry(diff, int(line))[0]
             except (TypeError, ValueError):
                 pass
-    return f"{now}:{line or ''}"
+    return f"{now}:{line}" if line else now
 
 
 def fix_view(repo, thread, files, pick=None, base="HEAD", commit=None, moved=()):
