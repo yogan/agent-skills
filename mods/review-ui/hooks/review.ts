@@ -51,6 +51,11 @@ export type Press =
   | { kind: 'leave' }
   // On to the round's next topic from one that needs nothing in this pass: nothing counted.
   | { kind: 'next' }
+  // From a card with nothing left on it and no other topic in its round: the topic left as
+  // it is, and the round the sidebar's box would open opened, as its button does (`openerOf`).
+  // `to`: where the box leads (a topic, or `yours`); `open`: the topic the press opens, none
+  // for where the script's round starts.
+  | { kind: 'open-round'; to: string; open?: string }
   // review-mr, another reviewer's thread: on to the next of them, as the sidebar lists them
   // (`to`), or its card closed after the last. `ack`: marked read on the way, for one the
   // agent judged needs the person.
@@ -104,9 +109,9 @@ export const stepOf = (topic: ReviewTopic | undefined): Step => {
 
 const ask = (prompt: string): Press => ({ kind: 'ask', prompt })
 
-// Whether the round has another topic to go on to: the way on is offered only then. A card
-// with none left, or opened while no round runs, is closed with its ✕ instead
-// (register.tsx's `drawCard`).
+// Whether the round has another topic to go on to: Next is offered only then. A card with
+// none left, or opened while no round runs, is closed with its ✕ (register.tsx's `drawCard`),
+// or, with nothing left on it, offers the round the sidebar's box would open (`wayOnSettled`).
 export const hasNext = (review: ReviewState | null, tid: string): boolean =>
   review?.in_round !== false && (!review?.round || review.round.some(id => id !== tid))
 
@@ -230,6 +235,7 @@ export const buttonsFor = (review: ReviewState | null): BandButton[] => {
   // The author's push that changed its lines, to look at: never the recommendation.
   // (Another reviewer's thread offers it among its own, `peerButtons`.)
   const look = topic.fix_kept && !topic.peer ? [showFix] : []
+  if (stepOf(topic) === 'none') return ordered(wayOnSettled(review, topic, look))
   return ordered([...buttons, ...look, ...(hasNext(review, topic.id) ? [{ key: 'next', label: 'Next', press: { kind: 'next' } } as BandButton] : [])])
 }
 
@@ -399,8 +405,9 @@ const stepButtons = (review: ReviewState | null): BandButton[] | null => {
     }
     case 'none':
       // Nothing to decide: the sidebar's inbox says what waits, and the update check notes
-      // what arrives.
-      return null
+      // what arrives. A topic of the person's opened to look at (one closed, say) has only
+      // the way on; another reviewer's thread has its own (`peerButtons`).
+      return topic && !topic.peer ? [] : null
   }
 }
 
@@ -488,6 +495,18 @@ export const earlyPrompt = (t: string): string => `Draft a reply for ${t}'s thre
 const wayOn = (review: ReviewState, topic: ReviewTopic): BandButton[] => (hasNext(review, topic.id)
   ? [{ key: 'next', label: 'Next', press: { kind: 'next' } }]
   : [])
+
+// The way on from a card with nothing of the person's left on it, in both skills: the round's
+// next topic; with none left in this round, the round the sidebar's box between rounds would
+// open, under the box's own name and pressed as the box is; nothing where there is neither
+// (the round's end is the sidebar's to show). Alone on its card, it is the recommendation.
+const wayOnSettled = (review: ReviewState, topic: ReviewTopic, others: BandButton[]): BandButton[] => {
+  const o = hasNext(review, topic.id) ? null : openerOf(review, inboxOf(review))
+  const way: BandButton[] = o && o.to !== topic.id
+    ? [{ key: 'next', label: o.label, press: { kind: 'open-round', to: o.to, ...(o.open ? { open: o.open } : {}) } }]
+    : wayOn(review, topic)
+  return [...others, ...(others.length === 0 ? way.map(b => ({ ...b, isPrimary: true as const })) : way)]
+}
 
 const reworkButtons = (review: ReviewState): BandButton[] => {
   const topic = currentTopic(review)
@@ -620,7 +639,7 @@ const reworkButtons = (review: ReviewState): BandButton[] => {
     default:
       // Nothing of the person's to do on it: a pushed fix can still be looked at, which
       // answers nothing, so it is no recommendation.
-      return topic.fix_kept ? [showFix, ...wayOn(review, topic)] : []
+      return wayOnSettled(review, topic, topic.fix_kept ? [showFix] : [])
   }
   // The person wrote last on GitLab by hand (a question back): the topic may wait for the
   // reviewer's answer, one press.
@@ -786,6 +805,7 @@ export const didText = (press: Press, topic: string, into?: string): string => {
   if (press.kind === 'post' && press.reply) return `${topic}: posted the reply in its thread`
   if (press.kind === 'merge') return `merged ${topic} into ${into ?? press.into}`
   if (press.kind === 'peer-next') return `${topic}: ${press.ack ? 'marked it read' : 'saw it'}; it is its reviewer's to settle${press.to ? `; on to ${press.to}, the next of the other reviewers' threads` : ''}`
+  if (press.kind === 'open-round') return `${topic}: left it as it is, and opened the next round`
   if (press.kind === 'own-done') return 'their own review is done; the topics start'
   if (press.kind === 'explainer') return press.how === 'skip' ? 'skipped the explainer' : 'chose to generate an explainer'
   if (press.kind === 'no-follow-up') return `${topic}: nothing to add to their comment`
@@ -1092,4 +1112,17 @@ export const inboxOf = (review: ReviewState | null, judging: { topics: string[];
     : box.own.length ? `Decide ${box.own.length}`
     : box.first ? 'Start the round' : null
   return { lines, more: topicLines.length - shown.length, count, hasNews: lines.length > 0, since: box.since, first: box.first, firstNew, button }
+}
+
+// Where the box's button goes and what it is named: the first topic flagged new, exactly
+// that one; else where the script's round starts, or a comment of the person's own whose
+// match waits (`yours`). `open`: the topic the press opens, none for the script's own first.
+// Null where it leads nowhere. A card with nothing left on it offers the same (`wayOnSettled`).
+export type Opener = { to: string; label: string; open?: string }
+export const openerOf = (review: ReviewState | null, box: Inbox | undefined): Opener | null => {
+  const to = box?.firstNew ?? box?.first ?? (review?.inbox?.own.length ? 'yours' : null)
+  if (!to) return null
+  const isOver = review?.mr?.state === 'merged' || review?.mr?.state === 'closed'
+  const label = box?.firstNew ? box.button as string : isOver ? 'Check the answers' : box?.button ?? (to === 'yours' ? 'Open your comment' : 'Start the round')
+  return { to, label, ...(box?.firstNew ? { open: box.firstNew } : {}) }
 }

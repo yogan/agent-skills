@@ -3306,6 +3306,80 @@ test('rework-mr: a pushed topic that waits on its reviewer offers its fix to loo
   await ui.unmount()
 })
 
+// The plan pass's last topic, its reply posted by hand and checked: nothing of the person's is
+// left on it, and its card had no button at all, the fix pass's first topic one press away.
+test('rework-mr: a topic with nothing left on it offers Next where its round has another topic', async ($, on) => {
+  const posted = reworkTopic('t8', 'none', { status: 'waiting', state: 'waiting' })
+  const at = reworkState('t8', [reworkTopic('t1', 'fix'), posted], { in_round: true, pass: 'fix', round: ['t1'], inbox: inbox({ first: 't1' }) })
+  expect(buttonsFor(JSON.parse(at))).toEqual([{ key: 'next', label: 'Next', press: { kind: 'next' }, isPrimary: true }])
+  const w = world(on, [at, reworkState('t1', [reworkTopic('t1', 'fix'), posted], { in_round: true, pass: 'fix', round: ['t1'] })])
+  await openRework($, w, reworkView('t8'))
+  const ui = await mountStep($, 'terminal')
+  expect(await labels(ui)).toEqual(['Next', 'Show sidebar'])
+  await ui.press({ key: 'next' })
+  await ui.unmount()
+  expect(w.ran.map(r => r.argv.slice(2).join(' '))).toContain('leave --iid 42')
+  expect(w.ran.map(r => r.argv.slice(2).join(' '))).toContain('quote t1 --iid 42')
+})
+
+// No other topic in its round, the next round's work waiting: the card offers what the
+// sidebar's box between rounds would, under the box's name, and its press is the box's.
+test("rework-mr: a topic with nothing left on it and none after it in its round opens the next round, as the box's button", async ($, on) => {
+  const done = reworkTopic('t3', 'none', { status: 'waiting', state: 'waiting' })
+  const at = reworkState('t3', [reworkTopic('t1', 'fix'), done], { in_round: false, pass: 'fix', round: ['t1'], inbox: inbox({ first: 't1' }) })
+  expect(buttonsFor(JSON.parse(at))).toEqual([{ key: 'next', label: 'Start fixing', press: { kind: 'open-round', to: 't1' }, isPrimary: true }])
+  // A pushed fix to look at comes first, and the way on is no longer the only button.
+  const kept = reworkState('t3', [reworkTopic('t1', 'fix'), { ...done, fix_kept: true }], { in_round: false, pass: 'fix', inbox: inbox({ first: 't1' }) })
+  expect(buttonsFor(JSON.parse(kept)).map(b => [b.label, !!b.isPrimary])).toEqual([['Show fix in hunk', false], ['Start fixing', false]])
+  const left = reworkState(null, [reworkTopic('t1', 'fix'), done], { in_round: false, pass: 'fix', inbox: inbox({ first: 't1' }) })
+  const opened = reworkState('t1', [reworkTopic('t1', 'fix'), done], { in_round: true, pass: 'fix', round: ['t1'] })
+  const w = world(on, [at, left, opened])
+  await openRework($, w, reworkView('t3'))
+  const ui = await mountStep($, 'terminal')
+  expect(await labels(ui)).toEqual(['Start fixing', 'Show sidebar'])
+  const before = w.placed.length
+  await ui.press({ key: 'next' })
+  await ui.unmount()
+  const ran = w.ran.map(r => r.argv.slice(2).join(' '))
+  expect(ran.filter(x => /^(leave|open)\b/.test(x))).toEqual(['leave --iid 42', 'open --iid 42'])
+  expect(ran).toContain('quote t1 --iid 42')
+  expect(w.placed.length).toBe(before + 1)
+  expect(JSON.stringify(w.rows.appended())).toContain('t1 is the current topic now')
+})
+
+test("rework-mr: news waiting, the card's way on opens the topic flagged new, named after it", () => {
+  const done = reworkTopic('t3', 'none', { status: 'waiting', state: 'waiting' })
+  const news = { ...reworkTopic('t2', 'plan'), inbox: 'new', news: ['reply'] }
+  const at = JSON.parse(reworkState('t3', [reworkTopic('t1', 'fix'), news, done], {
+    in_round: false, pass: 'fix', inbox: inbox({ replies: ['t2'], first: 't1' }) }))
+  expect(buttonsFor(at)).toEqual([{ key: 'next', label: 'Open t2', press: { kind: 'open-round', to: 't2', open: 't2' }, isPrimary: true }])
+})
+
+test('rework-mr: a topic with nothing left on it and nothing to do anywhere offers no way on', () => {
+  const done = reworkTopic('t3', 'none', { status: 'waiting', state: 'waiting' })
+  expect(buttonsFor(JSON.parse(reworkState('t3', [done], { in_round: true, round: [], inbox: inbox() })))).toEqual([])
+  expect(buttonsFor(JSON.parse(reworkState('t3', [done], { in_round: false, round: [], inbox: inbox() })))).toEqual([])
+})
+
+test('rework-mr: a fix not pushed holds its topic: the way on opens nothing', async ($, on) => {
+  const done = reworkTopic('t3', 'none', { status: 'waiting', state: 'waiting' })
+  const held = reworkTopic('t1', 'fixed', { checks: 'passed' })
+  const w = world(on, [reworkState('t3', [held, done], { in_round: false, pass: 'fix', inbox: inbox({ first: 't2' }) })])
+  await openRework($, w, reworkView('t3'))
+  const ui = await mountStep($, 'terminal')
+  await ui.press({ key: 'next' })
+  await ui.unmount()
+  expect(w.ran.map(r => r.argv[2])).not.toContain('leave')
+  expect(w.ran.map(r => r.argv[2])).not.toContain('open')
+})
+
+test('review-mr: a settled topic opened to look at offers the way on, as a rework one does', () => {
+  const at = (extra: object) => JSON.parse(stateOf('t1', [topic('t1', 'acked'), topic('t2', 'needs_ack')], extra))
+  expect(buttonsFor(at({ in_round: true, round: ['t2'] })).map(b => b.label)).toEqual(['Next'])
+  expect(buttonsFor(at({ in_round: false, round: [], inbox: inbox({ first: 't2' }) }))).toEqual([{ key: 'next', label: 'Start the round', press: { kind: 'open-round', to: 't2' }, isPrimary: true }])
+  expect(buttonsFor(at({ in_round: true, round: ['t1'], inbox: inbox() }))).toEqual([])
+})
+
 test('rework-mr: no way on to a next topic while no round runs', async ($, on) => {
   const w = world(on, [reworkState('t1', [reworkTopic('t1', 'reply', { pushed: true }), reworkTopic('t2', 'plan')], { in_round: false, round: ['t1', 't2'] })])
   await openRework($, w, reworkView('t1'))

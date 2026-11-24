@@ -3,7 +3,7 @@ import type { EngineInterface, Register } from 'claude-code'
 
 import type { ReviewCard, ReviewHost, ReviewOutcome, ReviewJudging, ReviewNote, ReviewNotice, ReviewPlaced, ReviewSession, ReviewState } from '../types'
 import {
-  argsFor, boxLookOf, buttonsFor, checkPrompt, judgingOf, endOf, hasNext, iconOf, isHeldTopic, isMergeWatched, outcomeOf, earlyPrompt, proposePrompt, replyPrompt, clockOf, currentTopic, didText, inboxOf, sentenceOf, noteForModel, ownMergedPrompt, peerMergedPrompt, stepOf, untilOf, waitingLine, waitingOf,
+  argsFor, boxLookOf, buttonsFor, checkPrompt, judgingOf, endOf, hasNext, iconOf, isHeldTopic, isMergeWatched, outcomeOf, earlyPrompt, proposePrompt, replyPrompt, clockOf, currentTopic, didText, inboxOf, openerOf, sentenceOf, noteForModel, ownMergedPrompt, peerMergedPrompt, stepOf, untilOf, waitingLine, waitingOf,
   type BandButton, type InboxLine,
 } from './review.ts'
 import {
@@ -1895,6 +1895,24 @@ const stepControls = async ($: EngineInterface, s: ReviewSession, r: ReviewState
         await update($, notice, () => null)
         await $.prompt.fill({ text: b.press.text })
         return
+      case 'open-round': {
+        // The round's last topic, nothing left on it: the topic is left as it is, then the
+        // round opened as the sidebar's box between rounds opens it, in one press.
+        const { to, open } = b.press
+        if (await isHeld($, r, to === 'yours' ? undefined : to)) return
+        await clearError($)
+        const ran = await runScript($, s, ['leave'])
+        if (ran.exitCode !== 0) {
+          await update($, notice, () => ({ text: lastLine(ran.stderr) || `${b.label} failed`, isError: true }))
+          return
+        }
+        await once(() => startRound($, s, open))
+        const now = await read($, review)
+        await $.session.append({
+          message: { type: 'user', content: [{ type: 'text', text: noteForModel(didText(b.press, t), t, now?.current ?? null) }] },
+        })
+        return
+      }
       case 'push': {
         // The script's alone: the checks ran when the fix was made. What it cannot finish
         // (files changed since, notes in the diff viewer, a conflict) goes to the model,
@@ -3275,14 +3293,14 @@ export const register: Register = on => {
     const checkLine = checkWords && (when.failed
       ? <Text color="yellow">{checkWords}</Text>
       : <Text dimColor>{checkWords}</Text>)
-    // Where the box's button goes: the first topic flagged new, exactly that one; else where
-    // the script's round starts, or a comment of the person's own whose match waits.
-    const opener = box?.firstNew ?? box?.first ?? (r.inbox?.own.length ? 'yours' : null)
+    // Where the box's button goes, and its name (`openerOf`).
+    const opens = openerOf(r, box)
+    const opener = opens?.to ?? null
     // Never while a round's step waits: the box is not drawn then (`waiting`).
     const end = waiting ? endOf(r, waiting.count === 0) : undefined
     const boxWhen = Math.max(0, ...(box?.lines ?? []).map(l => (l.at ? [...whenOf(l.at)].length : 0)))
     const cleaned = waiting ? await read($, cleanedUp) : null
-    const openerLabel = box?.firstNew ? box.button as string : isOver ? 'Check the answers' : box?.button ?? (opener === 'yours' ? 'Open your comment' : 'Start the round')
+    const openerLabel = opens?.label ?? ''
     // When GitLab is asked next, and a small press to ask it now, at the sidebar's foot while
     // the box is drawn: rarely pressed, so out of the box and out of the way. Merged or
     // closed, GitLab is not asked again: no word of checks, no press for one.
