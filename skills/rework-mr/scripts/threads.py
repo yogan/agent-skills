@@ -709,7 +709,7 @@ def _anchor_span(x, n, last):
     return a, b, b > a
 
 
-def render_code_context(x, base=None, drift=True):
+def render_code_context(x, base=None, drift=True, by=None):
     """The code the reviewer's comment hangs on, ready to show ABOVE their note.
 
     Without it the user is asked to judge a comment about code they cannot see, and the
@@ -723,7 +723,8 @@ def render_code_context(x, base=None, drift=True):
     is on, what changed on them follows as a diff; a change elsewhere in the file, or one
     that only moved them, says nothing (`_since_comment`). Falls back to the working tree
     for threads stored before the shas were recorded. None when there is nothing
-    trustworthy to show. `drift=False` leaves that diff to the caller (`fix_since`).
+    trustworthy to show. `drift=False` leaves that diff to the caller (`fix_since`); `by`
+    names another topic's fix that made it (`_since_comment`).
 
     What gets shown follows the reviewer: their selected range first (marked `┃`), else the
     single anchor line (marked `►`). The marker is never a `►` on one line of a span — it
@@ -768,7 +769,7 @@ def render_code_context(x, base=None, drift=True):
         else:
             lang = ""
     where = f"{path}:{a}–{b}" if span else f"{path}:{n}"
-    drift = _since_comment(sha, path, a, b) if drift and on_new and source != "working tree" else []
+    drift = _since_comment(sha, path, a, b, by) if drift and on_new and source != "working tree" else []
     # The MR as the comment saw it is its diff up to the commit it was posted on, whichever
     # side the comment is on.
     diff = _diff_context(path, x.get("head_sha"), base, "new" if on_new else "old", lo, hi, a, b)
@@ -802,10 +803,49 @@ def render_code_context(x, base=None, drift=True):
     return "\n".join(out + drift)
 
 
-def _since_comment(sha, path, first, last):
+def changed_by(state, t, sha, path, first, last):
+    """The other topics whose pushed fixes changed lines `first`..`last` of `path` at commit
+    `sha` (the code `t`'s comment is on), in the order listed. A fix for one topic often
+    touches another's lines in passing (a rename through the line a different comment is
+    on), and its card must not read as if that change answered its own comment. Each push
+    is checked by itself: the lines followed to where they stood before it, then whether it
+    rewrote them."""
+    root = (_git("rev-parse", "--show-toplevel") or "").strip()
+    out = []
+    for o in state["topics"]:
+        if o is t:
+            continue
+        for p in o.get("pushes") or []:
+            before, after = p.get("before"), p.get("after")
+            if not (root and sha and before and after):
+                continue
+            to_before = code_view._diff_since(root, sha, path, commit=before)
+            if to_before is None:
+                continue
+            _, a, b = code_view.touched(to_before, first, last)
+            there = code_view.now_at(root, sha, path, before)
+            hit, _, _ = code_view.touched(code_view._diff_since(root, before, there, commit=after) or "", a, b)
+            if hit:
+                out.append(o)
+                break
+    return out
+
+
+def _by_md(topics):
+    """`by the fix for t7 (Rename markVerticalText)`: whose change it was, each topic with
+    the first clause of its summary, so the card says what that change was about."""
+    def gist(o):
+        clause = re.split(r", | — |; ", (o.get("summary") or "").strip(), maxsplit=1)[0]
+        return _gist(clause, 60).rstrip(".")
+    named = [tref(o["id"]) + (f" ({gist(o)})" if gist(o) else "") for o in topics]
+    return f"by the fix{'es' if len(topics) > 1 else ''} for {' and '.join(named)}"
+
+
+def _since_comment(sha, path, first, last, by=None):
     """What your working tree changed on lines `first`..`last` of `path` since commit `sha`
     (the code the comment is on), as lines to put under the code: nothing where those lines
-    are untouched, which is also the answer whenever git cannot tell."""
+    are untouched, which is also the answer whenever git cannot tell. `by(sha, path, first,
+    last)` names the other topics whose fixes made the change, said in its heading."""
     root = (_git("rev-parse", "--show-toplevel") or "").strip()
     if not (root and sha):
         return []
@@ -825,7 +865,10 @@ def _since_comment(sha, path, first, last):
     # reply comes) already, where "in your working tree" would send the reader looking for
     # files that are clean.
     pending = bool((_git("diff", "--no-color", "HEAD", "--", path) or "").strip())
-    head = "Changed since the comment, in your working tree:" if pending else "Changed since the comment:"
+    others = by(sha, path, first, last) if by else []
+    head = ("Changed since the comment, in your working tree:" if pending
+            else f"Changed since the comment, {_by_md(others)}:" if others
+            else "Changed since the comment:")
     return ["", *moved, *([""] if moved else []), f"_{head}_", "", *lines]
 
 
@@ -1153,7 +1196,8 @@ def render_quote(state, tid, remember=True):
         # what changed on them is that fix, which the card's steps link and the sidebar and
         # the diff viewer show whole: a diff of it here would be a second, partial copy.
         made = ui.drawn() and (t.get("diff_url") or step_of(state, t) == "fixed")
-        code = render_code_context(x, state.get("diff_base"), drift=not made)
+        code = render_code_context(x, state.get("diff_base"), drift=not made,
+                                   by=lambda *at: changed_by(state, t, *at))
         if code:
             out += ["", code]
         # The file, anchor and the file as the comment saw it let a reviewer's

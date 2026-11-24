@@ -1333,6 +1333,35 @@ class TestCodeContext(unittest.TestCase):
         finally:
             self._git("reset", "-q", "--hard", self.sha)
 
+    def test_a_change_another_topic_s_fix_made_says_which_topic_and_what_about(self):
+        """A rename for t7 went through the line t9's comment is on: t9's card showed it as
+        "Changed since the comment", reading as if the push had answered t9."""
+        def commit(i, text, msg):
+            lines = open(os.path.join(self.repo, self.file)).read().splitlines()
+            lines[i - 1] = text
+            self._write("\n".join(lines) + "\n")
+            self._git("commit", "-qam", msg)
+            return subprocess.run(["git", "rev-parse", "HEAD"], cwd=self.repo, capture_output=True,
+                                  text=True, check=True).stdout.strip()
+        a = commit(20, "const line20 = 200", "t8's fix, elsewhere in the file")
+        b = commit(10, "const renamed10 = 10", "t7's fix, through t9's line")
+        try:
+            t9 = {"id": "t9", "summary": "Guard it", "thread_ids": ["d9"]}
+            state = {"topics": [
+                {"id": "t8", "summary": "Raise line 20", "pushes": [{"before": self.sha, "after": a}]},
+                {"id": "t7", "summary": "Rename `line10`, since it is not a line", "pushes": [{"before": a, "after": b}]},
+                t9]}
+            out = T.render_code_context(self.thread(), by=lambda *at: T.changed_by(state, t9, *at))
+            self.assertIn(f"_Changed since the comment, by the fix for {T.tref('t7')} (Rename `line10`):_", out)
+            self.assertNotIn("t8", out)
+            # The topic's own fix is no other topic's: the plain heading.
+            own = {**t9, "pushes": [{"before": a, "after": b}]}
+            state = {"topics": [own]}
+            out = T.render_code_context(self.thread(), by=lambda *at: T.changed_by(state, own, *at))
+            self.assertIn("_Changed since the comment:_", out)
+        finally:
+            self._git("reset", "-q", "--hard", self.sha)
+
     def pushed_state(self, **topic):
         return {"iid": 3, "topics": [{"id": "t1", "summary": "x", "thread_ids": ["d1"], "decision": "y",
                                       "plan": "Make it 100, as the reviewer asked, and say so in the docs too.",
