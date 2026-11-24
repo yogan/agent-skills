@@ -2,7 +2,7 @@ import type { On } from 'claude-code'
 import type { Engine } from 'claude-code/testing'
 import { expect, test } from 'claude-code/testing'
 
-import { boxRowsOf, inboxMark, plainTitle, reflow, rowOf, sectionsOf, urlLabel, whenOf, personColor, PEOPLE_COLORS } from '../hooks/panel.ts'
+import { boxRowsOf, inboxMark, oneLineNote, plainTitle, reflow, rowOf, sectionsOf, urlLabel, whenOf, personColor, PEOPLE_COLORS } from '../hooks/panel.ts'
 import { withEmoji } from '../hooks/views.ts'
 import { blocksOf, inlineOf, inPresses, isPostCommand, isViewCommand, namesPresses, NOTE, partsOf, sizeRunsOf, withOutcome, withoutDraft } from '../hooks/views.ts'
 
@@ -832,4 +832,10 @@ test("a press's line goes on under the card's steps, and stands apart from anyth
   const closed = { when: '14:03', icon: '\u{F012C}', text: 'You resolved it' }
   expect(withOutcome('13:55 \u{F012C} You posted the initial comment\n\u{F051F} Waits on Alex', closed, '\u{F03CC}'))
     .toBe('13:55 \u{F012C} You posted the initial comment\n14:03 \u{F012C} You resolved it')
+})
+
+test('a comment folded to one line keeps what fits of a code span it is cut in', () => {
+  const body = 'We have real cases in `tests/assets/edge_cases_of_all_kinds`. Add two more.'
+  expect(oneLineNote(body, 30)).toEqual({ text: 'We have real cases in `tests/…`', isCut: true })
+  expect(oneLineNote(body, 12)).toEqual({ text: 'We have rea…', isCut: true })
 })

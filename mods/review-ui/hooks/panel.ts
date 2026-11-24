@@ -287,9 +287,9 @@ export const oneLineNote = (body: string, room: number): { text: string; isCut: 
   if (text.length > room) {
     isCut = true
     text = text.slice(0, Math.max(0, room - 1))
-    // A cut inside inline code would leave its backtick open and colour the rest.
-    if ((text.match(/`/g) ?? []).length % 2 === 1) text = text.slice(0, text.lastIndexOf('`'))
-    text = `${text.trimEnd()}…`
+    // A cut inside inline code closes it after the ellipsis, so what fits of it (a long path,
+    // often the point of the comment) is read; left open, its backtick would colour the rest.
+    text = (text.match(/`/g) ?? []).length % 2 === 1 ? `${text}…\`` : `${text.trimEnd()}…`
   }
   return { text, isCut }
 }
