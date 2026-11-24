@@ -12,22 +12,25 @@
     prompt        the UserPromptSubmit hook: names the session as a skill asked
                   (`tab.take`), in its output; settings.json starts it only where a name
                   waits for this pane
-    end           the SessionEnd hook: a skill's hold on the tab ends, and a window this
-                  named gets back what it had before Claude Code started in it, from a
-                  detached copy of itself, since a slow SessionEnd hook is cancelled at quit
+    end           the SessionEnd hook: leaves the terminal's shell a note of what the
+                  session was (`hooks/last_session.py`), in tmux or not; then, in tmux, a
+                  skill's hold on the tab ends, and a window this named gets back what it
+                  had before Claude Code started in it, from a detached copy of itself,
+                  since a slow SessionEnd hook is cancelled at quit
 
-`start` and `end` act only for the Claude Code process the window belongs to: a `claude`
-run inside a session's pane fires them too, with its own session and pid.
+`start` and `end` act on the window only for the Claude Code process it belongs to: a
+`claude` run inside a session's pane fires them too, with its own session and pid.
 
 Linked from ~/.claude/hooks/tmux-tab.py; settings.json and the status line call it only
-where that link exists, so a machine without this repository runs as before. Outside tmux,
-and inside the shortener's own `claude -p`, it does nothing.
+where that link exists, so a machine without this repository runs as before. Outside tmux
+it only leaves that note; inside the shortener's own `claude -p` it does nothing.
 """
 import json
 import os
 import sys
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.realpath(__file__))))
+HERE = os.path.dirname(os.path.realpath(__file__))
+sys.path[:0] = [HERE, os.path.dirname(HERE)]              # last_session beside it, and lib
 
 
 def repo_name(cwd):
@@ -61,22 +64,31 @@ def main(argv, env=None, stdin=None, detach=False):
     if not argv:
         return 0
     cmd = argv[0]
-    if not pane and cmd != "shorten":     # outside tmux; `shorten` may only fill the cache
-        return 0
+    data = {}
     if cmd in ("start", "end"):
         try:
             data = json.load(stdin or sys.stdin)
         except ValueError:
-            data = {}
+            pass
+    # Claude Code gives its SessionEnd hooks 1.5s together while it quits, and cancels one
+    # still running then; on a loaded Mac whose security software inspects every process,
+    # each process started costs a large part of that. So the hook returns before anything
+    # that costs but the note: before the imports below, any tmux call, or another Python.
+    quitting = cmd == "end" and data.get("reason") != "clear"
+    # The note the shell prints once Claude Code is gone, in any terminal, so before the
+    # check for tmux, and before the fork: the detached copy may not have run by the time
+    # the prompt comes back. Not where lib/tab.py's OFF_ENV (tests) or SHORTENER_ENV is set.
+    if quitting and not env.get("AGENT_TAB_OFF") and not env.get("AGENT_TAB_SHORTENER"):
+        import last_session
+        last_session.leave_note(env, data)
+    if not pane and cmd != "shorten":     # outside tmux; `shorten` may only fill the cache
+        return 0
+    if cmd in ("start", "end"):
         # The Claude Code process the hook runs for: it sets CLAUDE_PID to its own pid, also
         # in a `claude` started inside another session's pane, which fires these hooks too.
         pid = env.get("CLAUDE_PID", "")
         pid = int(pid) if pid.isdigit() else os.getppid()
-    # Claude Code gives its SessionEnd hooks 1.5s together while it quits, and cancels one
-    # still running then; on a loaded Mac whose security software inspects every process,
-    # each process started costs a large part of that. So the hook returns before anything
-    # else that costs: before the imports below, any tmux call, or starting another Python.
-    if cmd == "end" and data.get("reason") != "clear" and detach and _detach():
+    if quitting and detach and _detach():
         return 0
     from lib import tab
     if env.get(tab.SHORTENER_ENV) or env.get(tab.OFF_ENV):

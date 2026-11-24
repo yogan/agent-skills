@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Tests for `lib/tab.py` and `hooks/tmux-tab.py`: agent windows' names.
+"""Tests for `lib/tab.py` and `hooks/tmux-tab.py`: agent windows' names, and the note at quit.
 
 Run: `python3 lib/test_tab.py` (stdlib only). tmux is a fake holding one window's name and
 options; the model is never asked.
@@ -21,6 +21,7 @@ from lib import tab  # noqa: E402
 _spec = importlib.util.spec_from_file_location("tmux_tab", os.path.join(ROOT, "hooks", "tmux-tab.py"))
 hook = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(hook)
+import last_session  # noqa: E402 — beside the hook, which put its folder on sys.path
 
 R = tab.AGENT_ICON
 
@@ -136,13 +137,16 @@ class Rig(unittest.TestCase):
         self.addCleanup(patch.stop)
         os.environ.pop(tab.OFF_ENV, None)
         self.later = mock.patch.object(tab, "spawn").start()
+        # Both Claude Code processes below run in one terminal; no test reaches the real ps.
+        terminals = {os.getpid(): (os.getppid(), "ttys999"), os.getppid(): (1, "ttys999")}
+        mock.patch.object(last_session, "_ps", lambda pid: terminals.get(pid, (0, ""))).start()
         self.addCleanup(mock.patch.stopall)
 
     # The session's Claude Code process, and a `claude` run inside its pane: both still run.
     OUTER, NESTED = {"CLAUDE_PID": str(os.getpid())}, {"CLAUDE_PID": str(os.getppid())}
 
     def run_hook(self, *argv, data=None, env=None):
-        env = {"TMUX_PANE": "%999999", **self.OUTER, **(env or {})}
+        env = {"TMUX_PANE": "%999999", "XDG_CACHE_HOME": self.tmp.name, **self.OUTER, **(env or {})}
         return hook.main(list(argv), env, io.StringIO(json.dumps(data or {})))
 
 
@@ -280,6 +284,85 @@ class TestQuit(Rig):
         self.run_hook("start", data={"source": "startup", "cwd": ROOT})
         self.run_hook("end", data={"reason": "prompt_input_exit"})
         self.assertEqual(self.t.name, "srv")
+
+
+class TestNote(Rig):
+    """At quit, the terminal's shell is left a note of what the session was, to print under
+    Claude Code's own "Resume this session with", in tmux and outside it. What goes into the
+    note is hooks/test_last_session.py's."""
+
+    SID = "0d8d3b78-aaaa-bbbb-cccc-000000000001"
+
+    def setUp(self):
+        super().setUp()
+        self.repo = os.path.join(self.tmp.name, "repo")
+        os.makedirs(os.path.join(self.repo, ".git"))
+        self.write(os.path.join(self.repo, ".git", "HEAD"), "ref: refs/heads/feat/offline-flag\n")
+        self.note = os.path.join(self.tmp.name, "agent-skills", "last-session", "ttys999")
+
+    def write(self, path, text):
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w") as fh:
+            fh.write(text)
+
+    def seen(self, title, sid=SID):
+        """The status line's record of the title it handed over for `sid` in this pane."""
+        self.write(os.path.join(self.tmp.name, "agent-skills", "tab-seen", f"{sid}-999999"), title)
+
+    def titled(self, title):
+        """A transcript with the title Claude Code generated: all there is outside tmux."""
+        path = os.path.join(self.tmp.name, "t.jsonl")
+        self.write(path, json.dumps({"type": "ai-title", "aiTitle": title}) + "\n")
+        return path
+
+    def quit(self, env=None, **data):
+        data = {"reason": "prompt_input_exit", "session_id": self.SID, "cwd": self.repo, **data}
+        self.run_hook("end", data=data, env=env)
+
+    def read_note(self):
+        with open(self.note) as fh:
+            return fh.read()
+
+    def test_in_tmux_under_the_terminals_name(self):
+        self.seen("\U000f127b !1234 Offline viewing flag")
+        self.quit()
+        self.assertEqual(self.read_note(),
+                         f"\U000f127b !1234 Offline viewing flag · feat/offline-flag\n{self.SID}\n")
+
+    def test_outside_tmux_the_note_and_nothing_else(self):
+        calls = []
+        with mock.patch.object(tab, "_run", lambda argv: calls.append(argv) or (1, "")):
+            self.quit(env={"TMUX_PANE": ""}, transcript_path=self.titled("Generated title"))
+        self.assertEqual(self.read_note(), f"Generated title · feat/offline-flag\n{self.SID}\n")
+        self.assertEqual(calls, [])
+
+    def test_a_claude_run_in_the_sessions_shell_leaves_no_note_and_keeps_the_sessions(self):
+        # `claude -p` or `claude mcp list`: no status line ever titled it, its transcript has none.
+        self.seen("tab names")
+        self.quit()
+        self.quit(env=self.NESTED, session_id="0d8d3b78-aaaa-bbbb-cccc-000000000002", reason="other")
+        self.assertTrue(self.read_note().startswith("tab names · "))
+
+    def test_no_note_at_a_clear_nor_in_tests_nor_from_the_shortener(self):
+        self.seen("tab names")
+        self.quit(reason="clear")
+        self.quit(env={tab.OFF_ENV: "1"})
+        self.quit(env={tab.SHORTENER_ENV: "1"})
+        self.assertFalse(os.path.exists(self.note))
+
+    def test_the_note_is_there_before_the_hook_returns_at_quit(self):
+        # The shell prints it the moment Claude Code is gone; the detached copy may run later.
+        mock.patch.object(hook.os, "setsid").start()
+        mock.patch.object(hook.os, "dup2").start()
+        fork = mock.patch.object(hook.os, "fork", return_value=4242).start()
+        data = {"reason": "prompt_input_exit", "session_id": self.SID, "cwd": self.repo,
+                "transcript_path": self.titled("tab names")}
+        for pane in ("%999999", ""):
+            env = {"TMUX_PANE": pane, "XDG_CACHE_HOME": self.tmp.name, **self.OUTER}
+            self.assertEqual(hook.main(["end"], env, io.StringIO(json.dumps(data)), detach=True), 0)
+            self.assertTrue(self.read_note().startswith("tab names · feat/offline-flag\n"))
+            os.remove(self.note)
+        fork.assert_called_once()                     # outside tmux there is nothing to detach
 
 
 class TestSkills(Rig):
