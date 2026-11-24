@@ -1442,6 +1442,20 @@ test("the sidebar's thread draws a comment's emoji shortcode as the emoji, open 
   await ui.unmount()
 })
 
+test("an empty suggestion's fold row says how many lines it removes", async ($, on) => {
+  const thread = [{ url: 'u', file: 'src/cache.ts', line: 17, notes: [
+    { author: 'Kim', body: 'drop these\n\n```suggestion:-2+1\n```', url: 'http://gl/x#note_2' },
+  ] }]
+  const w = world(on, [stateOf('t1', [topic('t1', 'open')], { thread })], { code: { stdout: JSON.stringify(codeOf(50, [17, 17])) } })
+  await openReview($, w, view('t1'))
+  const ui = await $.ui.mount({ ...PANEL, props: { ...PANEL.props, scroll: { offset: 0, bodyRows: 60 } }, surface: 'terminal' })
+  expect((await ui.find({ type: 'Button', key: 'fold-0-0' }))?.props.label).toBe('\u{F460} suggestion · removes 4 lines')
+  await ui.press({ key: 'fold-0-0' })
+  const codes = (await ui.findAll({ type: 'Code' })).map(c => String(c.props.source))
+  expect(codes.some(t => t.includes('-const line15 = 15') && t.includes('-const line18 = 18') && !t.includes('\n+'))).toBe(true)
+  await ui.unmount()
+})
+
 test('a thread sits under the lines it is about, in full, and its fold key folds it to a line per comment', async ($, on) => {
   const code = codeOf(50, [17, 17])
   const long = `seems bad, ${'and more words '.repeat(20)}\n\n\`\`\`suggestion\nfixed()\n\`\`\``

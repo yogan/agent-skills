@@ -418,7 +418,12 @@ export const boxRowsOf = (
       const isWhole = isSuggestion && lines.every((ln, k) => (k >= j && k <= close) || !ln.trim())
       const shown = isFull || isOpen(key, isWhole)
       const lang = isSuggestion ? '' : info
-      const label = `${shown ? '\u{F47C}' : '\u{F460}'} ${isSuggestion ? 'suggestion' : 'code'}${lang ? ` · ${lang}` : ''} · ${code.length} line${code.length === 1 ? '' : 's'}`
+      // An empty suggestion deletes the lines it is on, which its range says (`suggestion:-A+B`
+      // is the comment's line and A above it, B below); counting its text would say "0 lines".
+      const range = /^suggestion:-(\d+)\+(\d+)$/.exec(info)
+      const removes = isSuggestion && !code.join('').trim() ? 1 + Number(range?.[1] ?? 0) + Number(range?.[2] ?? 0) : 0
+      const count = removes || code.length
+      const label = `${shown ? '\u{F47C}' : '\u{F460}'} ${isSuggestion ? 'suggestion' : 'code'}${lang ? ` · ${lang}` : ''} · ${removes ? 'removes ' : ''}${count} line${count === 1 ? '' : 's'}`
       if (!isFull) rows.push({ kind: 'fold', key, label, isOpen: shown })
       if (shown) {
         const fenced = (isSuggestion ? suggest(lines.slice(j, close + 1).join('\n')) : '').split('\n')
