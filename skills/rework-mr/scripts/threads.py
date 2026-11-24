@@ -1325,12 +1325,13 @@ def fixes_of(t):
     that link may show more than the fix (a push recorded before pushes were kept one by
     one, or one that carried a rebase or other commits along), `rebase` where the push came
     with a rebase, `differs` how the fix differed from the plan agreed, where the agent said
-    it did."""
+    it did, and `differs_at` when it said so."""
     out = []
     for n, p in enumerate(t.get("pushes") or [], 1):
         out.append({"pushes": [n], "before": p["before"], "start": p.get("start"),
                     "after": p["after"], "url": p.get("url"), "mixed": not p.get("clean"),
-                    "at": p.get("at"), "differs": p.get("differs"), "rebase": bool(p.get("rebase"))})
+                    "at": p.get("at"), "differs": p.get("differs"), "differs_at": p.get("differs_at"),
+                    "rebase": bool(p.get("rebase"))})
     return out
 
 
@@ -1499,9 +1500,11 @@ def story_steps(state, t, close=None):
         events.append({"at": f.get("at"), "icon": ui.PUSHED_ICON, "text": f"You pushed a fix{nth}{said(f)}"})
         if f.get("differs"):
             # What the fix did beyond or instead of the plan stays part of the story once it
-            # is pushed: the reviewer has not been told yet, and "Fixed" alone would not.
-            events.append({"at": f.get("at"), "icon": ui.DIFFERS_ICON, "indent": 1,
-                           "text": f"It differs from the plan agreed: {f['differs'].strip()}"})
+            # is pushed: the reviewer has not been told yet, and "Fixed" alone would not. By
+            # pushing it you accepted it, so it reads as a step like the others, not a warning,
+            # at the time it came up (before the push); a push kept without that time has its own.
+            events.append({"at": f.get("differs_at") or f.get("at"), "icon": ui.CHANGED_PLAN_ICON,
+                           "text": f"You changed the plan. {f['differs'].strip()}"})
     for d in t.get("dropped") or []:
         at = datetime.datetime.fromtimestamp(d["at"], datetime.timezone.utc).isoformat() if d.get("at") else None
         why = _gist(d.get("why"), 160)
@@ -3516,8 +3519,9 @@ def push_fix(ctx, iid, path, tid, committed=False, take_in=False):
                 "rebase": rebase, "at": datetime.datetime.now(datetime.timezone.utc).isoformat()}
         # How it differed from the plan agreed, kept with the push: its card's story says so
         # after the push too. This topic's plan, not the plans of the topics it carries.
+        compare = (t.get("fix") or {}).get("compare") or {}
         t.setdefault("pushes", []).append(
-            {**push, "differs": ((t.get("fix") or {}).get("compare") or {}).get("differs")})
+            {**push, "differs": compare.get("differs"), "differs_at": compare.get("at")})
         keys = [push_key(tid, len(t["pushes"]))]
         took(t)
         if url:
@@ -3961,7 +3965,10 @@ def main():
                     die(f"--carries names another topic of this MR whose fix is in this one, not {c!r}")
             t["fix"] = {"did": args.did, "fixup": args.fixup, "new": args.new_commit, "stat": diff_stat(diff),
                         "notes": notes, "carries": list(dict.fromkeys(args.carries)),
-                        "compare": {"as_agreed": bool(args.as_agreed), "differs": args.differs}}
+                        "compare": {"as_agreed": bool(args.as_agreed), "differs": args.differs,
+                                    # When the change of plan came up: its step in the story
+                                    # stands there, before the push that carried it.
+                                    "at": datetime.datetime.now(datetime.timezone.utc).isoformat()}}
             if drawn:
                 # Where the mod draws, the fix is a card and its diff the sidebar's: the diff
                 # viewer opens only on the user's press (`hunk-show`), with these notes.

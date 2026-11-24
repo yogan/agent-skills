@@ -3465,8 +3465,8 @@ class TestPushFix(unittest.TestCase):
         t2 = T.topic_for(self.state, "t2")
         self.assertEqual(t2["diff_url"], url)
         self.assertEqual(len(t2["pushes"]), 1)
-        self.assertEqual({k: v for k, v in t2["pushes"][0].items() if k != "differs"},
-                         {k: v for k, v in self.t1["pushes"][0].items() if k != "differs"})
+        self.assertEqual({k: v for k, v in t2["pushes"][0].items() if k not in ("differs", "differs_at")},
+                         {k: v for k, v in self.t1["pushes"][0].items() if k not in ("differs", "differs_at")})
         self.assertTrue(t2["pushes"][0]["rebase"])
         self.assertEqual(T.step_of(self.state, t2), "reply")
         with mock.patch.object(T, "_git", return_value=""):
@@ -3748,6 +3748,12 @@ class TestPushFix(unittest.TestCase):
         self.assertTrue(url.endswith("diff_id=7&start_sha=NEW"))
         self.assertEqual(T.step_of(self.state, self.t1), "reply")
 
+    def test_the_push_keeps_how_the_fix_differed_and_when_that_came_up(self):
+        self.t1["fix"]["compare"] = {"differs": "It also renames the file.", "at": "2026-02-01T11:40:00Z"}
+        self.push()
+        self.assertEqual({k: self.t1["pushes"][-1][k] for k in ("differs", "differs_at")},
+                         {"differs": "It also renames the file.", "differs_at": "2026-02-01T11:40:00Z"})
+
     def test_the_card_says_where_the_checks_stand(self):
         self.assertEqual(T.checks_line(self.t1), ["Checks passed: frontend checks."])
         T._WORKING.clear()
@@ -3779,9 +3785,9 @@ class TestFixPerPush(unittest.TestCase):
         _, t = self.topic(self.push("A", "B", 2), self.push("B", "C", 3))
         self.assertEqual(T.fixes_of(t), [
             {"pushes": [1], "before": "A", "start": "A", "after": "B", "url": "G/diffs?diff_id=2&start_sha=A",
-             "mixed": False, "at": None, "differs": None, "rebase": False},
+             "mixed": False, "at": None, "differs": None, "differs_at": None, "rebase": False},
             {"pushes": [2], "before": "B", "start": "B", "after": "C", "url": "G/diffs?diff_id=3&start_sha=B",
-             "mixed": False, "at": None, "differs": None, "rebase": False}])
+             "mixed": False, "at": None, "differs": None, "differs_at": None, "rebase": False}])
 
     def test_how_a_fix_differed_from_its_plan_stays_in_the_story_after_the_push(self):
         """Before the push its card said "Differs from the plan you agreed"; after it only
@@ -3792,8 +3798,23 @@ class TestFixPerPush(unittest.TestCase):
         with mock.patch.dict(os.environ, {"REVIEW_UI_DRAWN": "1"}), mock.patch.object(T, "_git", return_value=""):
             steps = T.story_steps(state, t)
         at = next(i for i, x in enumerate(steps) if "You pushed a fix" in x)
-        self.assertRegex(steps[at + 1], rf"^\S.*{T.ui.DIFFERS_ICON} It differs from the plan agreed: It also renames the file\.$")
+        # A step like the others: its icon in the column after the time, not indented, and
+        # no warning, as the push accepted it.
+        self.assertRegex(steps[at + 1], rf"^(?:[A-Z][a-z]{{2}} \d{{1,2}}, )?\d\d:\d\d {T.ui.CHANGED_PLAN_ICON} You changed the plan\. It also renames the file\.$")
         self.assertRegex(steps[at + 1], T._STEP.pattern)           # a step of the story, timed
+
+    def test_a_change_of_plan_is_told_when_it_came_up_not_at_the_push(self):
+        """It came up when the fix was shown, before the push: told at the push's time, it
+        read as if the plan had changed after the fix was already up."""
+        state, t = self.topic({**self.push("A", "B", 2), "at": "2026-02-01T12:00:00Z",
+                               "differs": "It also renames the file.", "differs_at": "2026-02-01T11:40:00Z"})
+        t.update(plan="Rename the factory.", decision="d", thread_ids=[])
+        with mock.patch.dict(os.environ, {"REVIEW_UI_DRAWN": "1"}), mock.patch.object(T, "_git", return_value=""):
+            steps = T.story_steps(state, t)
+        changed = next(i for i, x in enumerate(steps) if "You changed the plan" in x)
+        pushed = next(i for i, x in enumerate(steps) if "You pushed a fix" in x)
+        self.assertLess(changed, pushed)
+        self.assertIn(T.ui.at_md("2026-02-01T11:40:00Z"), steps[changed])
 
     def test_a_fix_as_agreed_adds_no_line(self):
         state, t = self.topic(self.push("A", "B", 2))

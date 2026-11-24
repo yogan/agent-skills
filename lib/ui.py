@@ -169,6 +169,9 @@ RESOLVED_ICON = "\U000f05e1"
 # rework-mr's fix card: a fix that differs from the plan agreed, headed as a warning
 # (md-alert_outline), so it is seen before the push.
 DIFFERS_ICON = "\U000f002a"
+# Once that fix is pushed you accepted it, so its story tells the change of plan as a plain
+# step, with the icon of the review-ui mod's Change plan button (md-swap_horizontal).
+CHANGED_PLAN_ICON = "\U000f04e1"
 # A fix made while another topic was current (md-run_fast): the agent went ahead.
 AHEAD_ICON = "\U000f046e"
 # rework-mr's fix card: the commits a fix goes into, one rewritten by a fixup
@@ -202,20 +205,18 @@ def at_md(value, today=None):
     return t.strftime("%H:%M") if t.date() == day else f"{t.strftime('%b')} {t.day}, {t.strftime('%H:%M')}"
 
 
-def step_md(icon, text, at=None, indent=0):
+def step_md(icon, text, at=None):
     """One line of a topic's story on its card, in both skills: when it happened, its icon,
     then who did what (`You replied`, `Robin pushed a fix`). The time leads, so the review-ui
     mod draws it dim in a column of its own and the icons of a card's steps line up; a step
-    with no time starts at its icon. `indent` sets a line under the one before it (a push of
-    several), by no-break spaces: a card's markdown drops the plain ones that lead a line."""
+    with no time starts at its icon."""
     when = at_md(at)
-    return (f"{when} " if when else "") + "\u00a0" * (2 * indent) + f"{icon} {text}"
+    return (f"{when} " if when else "") + f"{icon} {text}"
 
 
 def story_md(events):
     """A topic's story as its card tells it, in both skills: one `step_md` line per event,
-    in the order they happened. `events`: `{"at", "icon", "text"}` each (`indent` where one
-    belongs under the line before it), listed in any order. The whole story or none: a card
+    in the order they happened. `events`: `{"at", "icon", "text"}` each, listed in any order. The whole story or none: a card
     that picked one event out of several (the latest reply, with the comment and the push
     before it left out) gave nobody the means to check the verdict above it; and events
     grouped by kind ran backwards in time, a plan agreed at 19:26 above a push of 19:19.
@@ -233,7 +234,7 @@ def story_md(events):
         last = instant(e.get("at")) or last
         keyed.append((last, i, e))
     keyed.sort(key=lambda k: k[:2])
-    return [step_md(e["icon"], e["text"], e.get("at"), e.get("indent", 0)) for _when, _i, e in keyed]
+    return [step_md(e["icon"], e["text"], e.get("at")) for _when, _i, e in keyed]
 
 
 def note_key(url):
