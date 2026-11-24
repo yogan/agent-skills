@@ -174,6 +174,19 @@ class TestHook(Rig):
         self.shorten(self.LONG, says=None)
         self.assertEqual(self.t.name, f"{R} Add feature flag")
 
+    def test_a_resumed_session_has_its_title_handed_over_again(self):
+        """The status line hands a title over only when it differs from the one it noted for
+        the session and pane; quitting gave the window its old name back, so a resume in the
+        same pane kept the repository's name for good."""
+        os.makedirs(tab.SEEN)
+        noted = os.path.join(tab.SEEN, "s-resumed-999999")
+        other = os.path.join(tab.SEEN, "s-resumed-123")           # the same session, elsewhere
+        for p in (noted, other):
+            with open(p, "w") as f:
+                f.write("tab names")
+        self.run_hook("start", data={"source": "resume", "session_id": "s-resumed", "cwd": ROOT})
+        self.assertEqual((os.path.exists(noted), os.path.exists(other)), (False, True))
+
     def test_clear_and_compact_change_nothing(self):
         self.run_hook("start", data={"source": "compact", "cwd": ROOT})
         self.assertEqual(self.t.name, "fish")

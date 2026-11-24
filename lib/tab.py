@@ -431,6 +431,18 @@ def ask_model(title, run=None, timeout=60):
 SEEN = os.path.join(os.path.dirname(CACHE), "tab-seen")
 
 
+def forget_seen(session_id, pane, root=None):
+    """The status line's note on `session_id` in `pane`, gone: it then hands the title over
+    on its next refresh, as for a session it never saw. The status line names the note
+    `<session id><pane with its % as ->`."""
+    if not session_id or not pane:
+        return
+    try:
+        os.remove(os.path.join(root or SEEN, f"{session_id}{pane.replace('%', '-')}"))
+    except OSError:
+        pass
+
+
 def prune_seen(root=None, keep_days=30):
     """The status line's notes on sessions not heard from in `keep_days` go."""
     root = root or SEEN

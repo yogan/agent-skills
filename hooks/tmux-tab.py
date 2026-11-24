@@ -99,6 +99,10 @@ def main(argv, env=None, stdin=None, detach=False):
         if data.get("source", "startup") not in ("startup", "resume"):
             return 0
         tab.own(pane, pid)
+        # A resumed session's title is the status line's to hand over again: it hands one
+        # over only when it differs from the one it noted for this session and pane, and the
+        # window got back its old name when the session last quit.
+        tab.forget_seen(data.get("session_id"), pane)
         tab.show(pane, tab.AGENT_ICON, data.get("session_title") or repo_name(data.get("cwd")))
     elif cmd == "title" and len(argv) > 1:
         tab.prune_seen()
