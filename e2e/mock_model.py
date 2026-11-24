@@ -256,6 +256,19 @@ def seen_ids(lines, pattern=None):
 # now and then ("7998180"), which ID does not take for one, and the run's output and the
 # recording's then hold a different number of ids. Held side by side as these, they line up.
 HEX = re.compile(r"\b[0-9a-f]{7,40}\b")
+# A commit's full hash: what tells a short hash of all digits from a number (a count, a size),
+# which no full hash starts with.
+FULL_SHA = re.compile(r"\b[0-9a-f]{40}\b")
+
+
+def commits_in(*texts):
+    """Every full commit hash in `texts`, for `is_commit`."""
+    return {sha for t in texts for sha in FULL_SHA.findall(t)}
+
+
+def is_commit(token, shas):
+    """Whether `token` is a short hash of one of `shas`: a commit, all digits or not."""
+    return any(sha.startswith(token) for sha in shas)
 
 
 def _jsonl(path):
@@ -455,14 +468,23 @@ class Mock:
         one (a comment posted, a commit made) and every later reply has to use it."""
         recorded, renamed = stream.get("ids") or {}, {}
         hexes = stream.get("hexes")
+        # A pair of hex tokens counts where either side is an id, so a number that differs (a
+        # count, a size) is never taken for one; or where either side is a commit, whose short
+        # hash comes out all digits now and then (on both sides at once, one run in ~25), and
+        # is known for one by the full hash it is cut from, in the recording or in this run.
+        shas_then = commits_in(json.dumps(stream))
+        shas_now = commits_in(json.dumps(messages))
+
+        def pairs(a, z):
+            return a != z and bool(ID.fullmatch(a) or ID.fullmatch(z)
+                                   or is_commit(a, shas_then) or is_commit(z, shas_now))
         for reply, asked in zip(stream["replies"], prompts_before(messages)):
             if reply.get("prompt_hexes") is not None:
                 # Every hex token on both sides, as for a call's output below: a commit's short
                 # hash that came out all digits on either side does not shift the others.
                 then, now = reply["prompt_hexes"], HEX.findall(asked)
                 if len(then) == len(now):
-                    renamed.update((a, z) for a, z in zip(then, now)
-                                   if a != z and (ID.fullmatch(a) or ID.fullmatch(z)))
+                    renamed.update((a, z) for a, z in zip(then, now) if pairs(a, z))
                 continue
             then, now = reply.get("prompt_ids"), ID.findall(asked)
             if then and len(now) < len(then):
@@ -479,12 +501,10 @@ class Mock:
                 if not (isinstance(b, dict) and b.get("type") == "tool_result"):
                     continue
                 if hexes is not None:
-                    # Every hex token on both sides; a pair counts where either side is an id,
-                    # so a number that differs (a count, a size) is never taken for one.
+                    # Every hex token on both sides, paired as `pairs` says.
                     then, now = hexes.get(b.get("tool_use_id")), HEX.findall(_result_text(b))
                     if then and len(then) == len(now):
-                        renamed.update((a, z) for a, z in zip(then, now)
-                                       if a != z and (ID.fullmatch(a) or ID.fullmatch(z)))
+                        renamed.update((a, z) for a, z in zip(then, now) if pairs(a, z))
                     continue
                 text = _result_text(b)
                 then, now = recorded.get(b.get("tool_use_id")), ID.findall(text)

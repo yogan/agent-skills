@@ -335,6 +335,27 @@ class TestRunMadeIds(unittest.TestCase):
                                                                            "content": "index 3826373..fbee0f2\n7998180 feat"}])))
         self.assertEqual(got[0]["input"]["command"], "git commit --fixup=7998180")
 
+    def test_a_hash_all_digits_in_the_recording_and_now_is_followed_by_its_full_hash(self):
+        """Both short hashes all digits at once (one run in ~25): neither is an id, and the
+        recording's stale one went into the fixup. The recording's full hash of it says it is
+        a commit; a count beside it, which no full hash starts with, stays as it is."""
+        full = "84644714ef9cf35f90ae4b982e9e703e9046d92e"
+        lines = [user("go"), said("m1", call("tu0", "git rev-parse HEAD")),
+                 {"type": "user", "message": {"role": "user", "content": [
+                     {"type": "tool_result", "tool_use_id": "tu0", "content": full}]}},
+                 said("m2", call("tu1", "git log")),
+                 {"type": "user", "message": {"role": "user", "content": [
+                     {"type": "tool_result", "tool_use_id": "tu1", "content": "8464471 feat\n1234567 bytes"}]}},
+                 said("m3", call("tu2", "git commit --fixup=8464471 # 1234567 bytes"))]
+        mock = M.Mock({"streams": [{"name": "main", "first": "go", "replies": M.conversation(lines),
+                                    "ids": M.seen_ids(lines), "hexes": M.seen_ids(lines, M.HEX)}]})
+        got = mock.answer(request(
+            u("go"), a(call("tu0", "git rev-parse HEAD")),
+            u([{"type": "tool_result", "tool_use_id": "tu0", "content": "2190839" + "a" * 33}]),
+            a(call("tu1", "git log")),
+            u([{"type": "tool_result", "tool_use_id": "tu1", "content": "2190839 feat\n7654321 bytes"}])))
+        self.assertEqual(got[0]["input"]["command"], "git commit --fixup=2190839 # 1234567 bytes")
+
     def test_an_older_recording_follows_a_hash_that_came_out_all_digits_too(self):
         """A recording made before `hexes` holds only ids with a letter in them: a run whose
         new commit's short hash was all digits showed none, and the stale hash went on."""
