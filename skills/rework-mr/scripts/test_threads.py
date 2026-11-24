@@ -3816,6 +3816,17 @@ class TestFixPerPush(unittest.TestCase):
         self.assertLess(changed, pushed)
         self.assertIn(T.ui.at_md("2026-02-01T11:40:00Z"), steps[changed])
 
+    def test_the_draft_reply_sits_under_the_story_right_above_its_buttons(self):
+        """The draft is the text Copy and Post act on: a form above its buttons, not the
+        middle of the card with the timeline between it and them."""
+        state, t = self.topic({**self.push("A", "B", 2), "at": "2026-02-01T12:00:00Z"})
+        t.update(plan="Rename the factory.", decision="d", thread_ids=[], reply="Erledigt.")
+        with mock.patch.dict(os.environ, {"REVIEW_UI_DRAWN": "1"}), mock.patch.object(T, "_git", return_value=""), \
+                mock.patch.object(T, "step_of", return_value="reply"):
+            out = "\n".join(T._step_parts(state, t))
+        self.assertLess(out.index("You pushed a fix"), out.index("Draft reply"))
+        self.assertTrue(out.strip().endswith("> Fixed: G/diffs?diff_id=2&start_sha=A"), out)
+
     def test_a_fix_as_agreed_adds_no_line(self):
         state, t = self.topic(self.push("A", "B", 2))
         t.update(plan="Rename the factory.", decision="d", thread_ids=[])

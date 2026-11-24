@@ -1241,18 +1241,8 @@ def _step_parts(state, t):
             out += [*_change_blocks(body), ""]
     if st == "fixed":
         out += [*_fix_parts(state, t), ""]
-    x = state["threads"].get((t["thread_ids"] or [None])[0]) or {}
-    draft = draft_of(state, t)
-    if differs_now(state, t):
-        # A reply posted by hand that no longer holds: its correction takes the draft's place.
-        out += [posted.card_md(t, "reply"), ""]
-    elif draft and not (st == "fixed" and early_reply(t)):
-        # One meant to go up ahead of the fix says so, as one kept for after it does; an
-        # early one is no longer offered once the fix is made, which its push answers.
-        head = ("Draft reply, to post ahead of the fix" if early_reply(t) and st != "reply"
-                else "Draft reply, to post after the fix" if st in ("fix", "fixed")
-                else "Draft reply")
-        out += [ui.heading_md(ui.DRAFT_ICON, head), "", _quote_draft(draft, x.get("file")), ""]
+    # The story, then the draft: a draft is the text its Copy and Post buttons act on, so it
+    # sits right above them, as a form above its buttons. Mirrors findings.py's cards.
     if told:
         # What closed it is one of the story's events, at its time. The comment a press
         # closed it with is the story's own line saying so: not twice.
@@ -1265,6 +1255,18 @@ def _step_parts(state, t):
             out.insert(len(out) - 1, closing)
         else:
             out += [closing, ""]
+    x = state["threads"].get((t["thread_ids"] or [None])[0]) or {}
+    draft = draft_of(state, t)
+    if differs_now(state, t):
+        # A reply posted by hand that no longer holds: its correction takes the draft's place.
+        out += [posted.card_md(t, "reply"), ""]
+    elif draft and not (st == "fixed" and early_reply(t)):
+        # One meant to go up ahead of the fix says so, as one kept for after it does; an
+        # early one is no longer offered once the fix is made, which its push answers.
+        head = ("Draft reply, to post ahead of the fix" if early_reply(t) and st != "reply"
+                else "Draft reply, to post after the fix" if st in ("fix", "fixed")
+                else "Draft reply")
+        out += [ui.heading_md(ui.DRAFT_ICON, head), "", _quote_draft(draft, x.get("file")), ""]
     return out
 
 

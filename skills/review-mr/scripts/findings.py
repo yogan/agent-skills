@@ -1360,6 +1360,11 @@ def _render_quote(state, tid, refine=False):
             # on, and a card a press brings up has no model turn to write it in.
             if t.get("why"):
                 out += analysis_md(t["why"])
+        closing = closing_line(state, t)
+        if closing:
+            # How it was closed, the latest event: above the draft, which stays right over
+            # the buttons that copy and post it.
+            out += ["", closing if ui.drawn() else f"_({closing})_"]
         if draft_text(t):
             out += _draft_block(state, t, draft_text(t))
         elif topic_status(state, t) != "dropped":     # nothing left to draft for it
@@ -1388,10 +1393,6 @@ def _render_quote(state, tid, refine=False):
                       f"it; store the agreed draft with `set {t['id']} --draft '…'`, "
                       f"written in {state.get('lang') or DEFAULT_LANG}",
                       file=sys.stderr)
-        closing = closing_line(state, t)
-        if closing:
-            # How it was closed, the card's last line, as a posted topic's story ends.
-            out += ["", closing if ui.drawn() else f"_({closing})_"]
         return "\n".join(out).strip()
     v = verdict_of(state, t)
     if ui.drawn() and v and not refine and not peer_waiting(state, t):
@@ -1461,8 +1462,8 @@ def _render_quote(state, tid, refine=False):
         out += ["", ui.heading_md(ui.VERDICT_ICON, f"Verdict: {verdict_word(state, t, v)}"), "",
                 v["text"].strip()]
     # A card's order, the same in both skills: what is decided on (the analysis, the
-    # verdict), the draft that answers it, then the story, its latest event last.
-    out += _draft_block(state, t, t.get("draft"), follow_up=True)
+    # verdict), the story, its latest event last, then the draft that answers it, right
+    # above the buttons that copy and post it, as a form above its buttons.
     if is_own_posted:
         # The topic's whole story, as rework-mr's card tells its own: every comment, every
         # push of the author's and what closed it, each at its time, the latest event last;
@@ -1471,14 +1472,15 @@ def _render_quote(state, tid, refine=False):
         if not closing and topic_status(state, t) == "open":
             out.append(ui.step_md(ui.STEP_WAITS_ICON, f"Waits on {first_name(state.get('author')) or 'the author'}"))
     elif closing:
-        # The latest thing that happened to the topic, the card's last line.
+        # The latest thing that happened to the topic, last before any draft.
         out += ["", closing if ui.drawn() else f"_({closing})_"]
     if peer_waiting(state, t):
         # Another reviewer's thread, closed here or not, stays open on GitLab: whose it is to
-        # settle, as an own comment's card ends on whom it waits on.
+        # settle, as an own comment's story ends on whom it waits on.
         # A step of its story: under the closing line where there is one.
         out += ([] if closing else [""]) + [
             ui.step_md(ui.STEP_WAITS_ICON, f"{t.get('by') or 'Its reviewer'}'s to settle")]
+    out += _draft_block(state, t, t.get("draft"), follow_up=True)
     return "\n".join(out).strip()
 
 
@@ -1686,14 +1688,14 @@ def render_answered(state, t, summ, v):
         out += ["", ui.heading_md(ui.DID_ICON, f"What {author} did"), "", did]
     out += ["", ui.heading_md(ui.VERDICT_ICON, f"Verdict: {verdict_word(state, t, v)}"), "",
             v["text"].strip()]
-    # The follow-up that answers the verdict, then the topic's whole story and what closed
-    # it: one timeline, the latest event last, right above the buttons.
-    out += _draft_block(state, t, t.get("draft"), follow_up=True)
+    # The topic's whole story and what closed it, one timeline with the latest event last;
+    # then the follow-up that answers the verdict, right above the buttons that post it.
     steps = story_steps(state, t, None if close_in_story(state, t) else closing_event(state, t))
     if topic_status(state, t) == "open":
         steps.append(ui.step_md(ui.STEP_WAITS_ICON, f"Waits on {author}"))
     if steps:
         out += ["", *steps]
+    out += _draft_block(state, t, t.get("draft"), follow_up=True)
     t["shown"] = _digest(out)
     return "\n".join(out).strip()
 

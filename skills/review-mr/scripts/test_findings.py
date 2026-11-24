@@ -2729,6 +2729,19 @@ class TestVerdict(unittest.TestCase):
         self.assertRegex(lines[-2], r"You replied$")                 # the follow-up, in the story
         self.assertEqual(lines[-1], f"{F.ui.STEP_WAITS_ICON} Waits on Alex")
 
+    def test_a_judged_answer_s_follow_up_draft_comes_after_the_story(self):
+        self.state["author"] = "Alex Novak"
+        self.state["threads"]["d1"].update(mine=True, notes=[
+            {"author": "Ann", "body": "No staleTime.", "mine": True, "at": "2026-11-05T09:00:00Z"},
+            {"author": "Novak, Alex", "body": "In a follow-up MR.", "mine": False, "at": "2026-11-05T10:00:00Z"}])
+        self._judge(text="Nothing in this MR sets it.")
+        self.t["draft"] = "A cap would still help."
+        with self.drawn(), patch.object(F, "topic_status", return_value="open"):
+            card = F.render_quote(self.state, "t1")
+        self.assertIn("Verdict", card)
+        self.assertLess(card.index("Waits on Alex"), card.index("Draft follow-up"))
+        self.assertEqual(card.strip().splitlines()[-1], "> A cap would still help.")
+
     def test_the_view_and_the_state_name_the_same_face_and_news_changes_it(self):
         self._judge()
         with self.drawn(), patch.object(F.ui, "record"), \
@@ -4104,6 +4117,13 @@ class TestPostedCommentCard(unittest.TestCase):
         out = self.card()
         self.assertEqual(self.last_line(out), f"{F.ui.STEP_WAITS_ICON} Waits on Robin")
 
+    def test_a_follow_up_draft_sits_under_the_story_right_above_its_buttons(self):
+        """The draft is the text Copy and Post act on: a form above its buttons, not the
+        middle of the card with the timeline between it and them."""
+        out = self.card(topic={"draft": "Still stale, see line 3."})
+        self.assertLess(out.index("Waits on Robin"), out.index("Draft follow-up"))
+        self.assertEqual(self.last_line(out), "> Still stale, see line 3.")
+
     def test_the_author_resolving_says_whether_a_fix_is_pushed_and_asks_nothing(self):
         # Authors tick threads off while they work and push later: no push, no hint to ack.
         thread = {"resolved": True, "resolved_by": "Robin Lang", "resolved_username": "robin.l"}
@@ -5212,6 +5232,14 @@ class TestDropRecorded(ViewerCase):
                 redirect_stdout(out), self.assertRaises(SystemExit):
             F.main()
         self.assertIn("in a few English words", " ".join(out.getvalue().split()))
+
+    def test_a_closed_draft_keeps_its_text_right_above_the_buttons(self):
+        self.t.update(draft="The key is stale.", closed={"how": "resolved", "at": "2026-11-10T17:00:00Z"})
+        with patch.object(F, "_code_context", return_value=[]), patch.object(F, "closing_line", return_value="CLOSED"), \
+                redirect_stderr(io.StringIO()):
+            out = F._render_quote(self.state, "t2")
+        self.assertLess(out.index("CLOSED"), out.index("Draft comment"))
+        self.assertEqual(out.strip().splitlines()[-1], "> The key is stale.")
 
     def test_a_drop_with_no_reason_says_only_that(self):
         self.run_cli("drop", "t2", state=self.state)
