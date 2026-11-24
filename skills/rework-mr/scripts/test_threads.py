@@ -2479,6 +2479,14 @@ class TestOneCardHoldsTheWholeTopic(unittest.TestCase):
         at = [out.index(p) for p in parts]
         self.assertEqual(at, sorted(at), out)
 
+    def test_a_written_line_break_in_card_text_is_a_line_break(self):
+        """Passed as a quoted shell argument, a paragraph break comes as `\\n\\n`."""
+        self.run_cmd("propose", "t1", "--says", "needs", "--why",
+                     "It retries forever.\\n\\n**Recommendation:** cap it at `\\n`.",
+                     "--outcome", "reply", "--plan", "a plan")
+        self.assertEqual(self.state["topics"][0]["proposal"]["why"],
+                         "It retries forever.\n\n**Recommendation:** cap it at `\\n`.")
+
     def test_a_reply_s_card_keeps_the_analysis_it_was_agreed_on(self):
         self.propose("reply")
         self.run_cmd("agree", "t1", "--focus")

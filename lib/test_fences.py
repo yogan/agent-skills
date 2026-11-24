@@ -186,6 +186,11 @@ class TestUploadLinks(unittest.TestCase):
         self.assertEqual(fences.upload_links(f"[f]({self.PDF})", fences.uploads_at(ctx, {"project_id": 4711})),
                          f"[f](https://gl.example/-/project/4711{self.PDF})")
 
+    def test_a_written_line_break_is_a_line_break_outside_code(self):
+        self.assertEqual(fences.real_breaks("One.\\n\\n**Two** `a\\nb` three\\n"),
+                         "One.\n\n**Two** `a\\nb` three\n")
+        self.assertEqual(fences.real_breaks("as it is"), "as it is")
+
     def test_a_link_beside_a_code_span_is_still_fixed(self):
         self.assertEqual(fences.upload_links(f"`a` [f]({self.PDF}) `b`", self.WEB),
                          f"`a` [f]({self.WEB}{self.PDF}) `b`")

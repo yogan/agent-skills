@@ -436,6 +436,30 @@ def uploads_at(ctx, note):
     return f"{web[:-len(path)]}-/project/{pid}"
 
 
+# The command-line options that carry a card's markdown (an analysis, a plan, what was done).
+CARD_TEXT_OPTIONS = ("why", "decision", "plan", "did", "text")
+
+
+def real_breaks(text):
+    """`text` with each `\\n` written outside code made a line break. Card text is passed as a
+    quoted shell argument, where a break is awkward to type, so an agent writes `\\n\\n` for a
+    paragraph and the card showed it as written. In code (backticks: every identifier and
+    value on a card is in them) a `\\n` is someone's text and stays."""
+    if not text or "\\n" not in text:
+        return text
+    parts = text.split("`")
+    return "`".join(p if i % 2 else p.replace("\\n", "\n") for i, p in enumerate(parts))
+
+
+def card_text_args(args):
+    """`real_breaks` on every card-text option a parsed command line has (`CARD_TEXT_OPTIONS`)."""
+    for name in CARD_TEXT_OPTIONS:
+        v = getattr(args, name, None)
+        if isinstance(v, str):
+            setattr(args, name, real_breaks(v))
+    return args
+
+
 def gitlab_note_body(raw, web):
     """A GitLab comment's text for a skill's state: `body` as it is shown (`upload_links`),
     and where that differs, `source` as GitLab holds it — what a correction to a posted

@@ -121,6 +121,7 @@ from lib.mr_common import (
 from lib.fences import (  # noqa: E402
     FENCE_RE,
     YOU,
+    card_text_args,
     gitlab_note_body,
     upload_links,
     uploads_at,
@@ -3863,7 +3864,7 @@ def main():
     pm.add_argument("others", nargs="+")
     pm.add_argument("--iid", type=int)
     iid_option(ap, sub)
-    args = ap.parse_args()
+    args = card_text_args(ap.parse_args())
     cmd = args.cmd or "sync"
 
     if cmd == "check-handles":

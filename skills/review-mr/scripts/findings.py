@@ -117,7 +117,7 @@ if _REPO_ROOT not in sys.path:
 
 from lib import code_view, critical_manifest, diffsize, fix_refs, focus, hunk, judge, posted, press, tab, ui  # noqa: E402
 from lib.fences import (LINK_ICON, SUGGESTION_INFO, YOU, block_lang, fence, suggestion_reach, suggestion_repeat,  # noqa: E402
-                        diff_info, gitlab_note_body, lang_for, note_md, quoted_fence, segments, upload_links, uploads_at,
+                        card_text_args, diff_info, gitlab_note_body, lang_for, note_md, quoted_fence, segments, upload_links, uploads_at,
                         suggestion_diff, when_of)
 from lib.cli import iid_option  # noqa: E402
 from lib.gitlab import (after_posting, api, api_post, approve, context, current_user, die, file_at, mr_base,  # noqa: E402
@@ -5002,7 +5002,7 @@ def main():
     pl.add_argument("--start-sha", dest="start_sha")
     iid_option(ap, sub)
 
-    args = ap.parse_args()
+    args = card_text_args(ap.parse_args())
     cmd = args.cmd or "sync"
 
     # lang is repo-level (no MR needed) — it must be settable before any MR in the
