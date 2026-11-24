@@ -226,7 +226,7 @@ export type ReviewPlaced = Record<string, string>
 // A notice may carry one link, drawn inline after its text under a short label.
 // `moment`: where its topic stood when a press's line was said; the line goes once the topic
 // has moved on from it.
-export type ReviewNotice = { text: string; isError: boolean; isWarning?: boolean; topic?: string | null; url?: string | null; label?: string | null; moment?: string | null } | null
+export type ReviewNotice = { text: string; isError: boolean; isWarning?: boolean; topic?: string | null; url?: string | null; label?: string | null; isInline?: boolean; moment?: string | null } | null
 
 // What a press did to the card it was pressed on, said as the card's last line once the
 // card is done: a few words, and where to see it on GitLab.

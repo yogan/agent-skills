@@ -1563,7 +1563,7 @@ const copyDraft = async ($: EngineInterface, s: ReviewSession, r: ReviewState, t
   const where = s.skill === 'rework-mr' && t === r.current ? r.thread?.[0]?.url : undefined
   if (where && !(await read($, copyTold)).includes(t)) {
     await update($, copyTold, v => [...v, t])
-    await update($, notice, () => ({ text: `${t}: copied its draft · paste it in`, url: where, label: 'thread', isError: false, topic: t }))
+    await update($, notice, () => ({ text: `${t}: copied the draft to the clipboard, paste it in`, url: where, label: 'this thread', isInline: true, isError: false, topic: t }))
   }
   try {
     await $.clock.sleep(COPIED_MS)
@@ -3445,7 +3445,7 @@ export const register: Register = on => {
     if (e.props.hasSurvey) return next(e)
     const { s, r } = await known($)
     if (!s || !r) return next(e)
-    const { Box, Button, Text } = $.ui.resolve(e)
+    const { Box, Button, Markdown, Text } = $.ui.resolve(e)
     // Whether the panel is up is the engine's answer, never a value kept here: a pane can be
     // closed, or open and not shown, in ways no event of this mod hears about, and a toggle
     // trusting its own note then says "Hide" over nothing and does nothing when pressed.
@@ -3523,7 +3523,11 @@ export const register: Register = on => {
             {toggle}
           </Box>
         </Box>
-        {said && !doing && (!waiting || failed) && (said.url
+        {/* A link inside the sentence is drawn as a comment's link is, in the link colour,
+            so the eye finds it. */}
+        {said && !doing && (!waiting || failed) && (said.url && said.isInline
+          ? <Markdown text={`${sentenceOf(said.text)} [${said.label ?? 'open'} ${LINK_ICON}](${said.url})`} />
+          : said.url
           ? outcomeLine($, e, { text: sentenceOf(said.text), url: said.url, label: said.label })
           : <Text color={said.isWarning ? 'yellow' : said.isError ? 'red' : undefined} dimColor={!said.isError && !said.isWarning}>{sentenceOf(said.text)}</Text>
         )}

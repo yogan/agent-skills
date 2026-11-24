@@ -3586,7 +3586,9 @@ test("rework-mr: a draft's Copy sits beside its heading, reads Copied! a moment,
   expect((await card.findAll({ type: 'Button' })).some(b => b.key === 'copy-t1')).toBe(true)    // Copy again
   await card.unmount()
   const band = await $.ui.mount({ ...BAND, surface: 'terminal' })
-  expect((await band.find({ type: 'Link' }))?.props).toMatchObject({ href: 'https://gl/g/p/-/merge_requests/42#note_5', label: 'thread \u{f03cc}' })
+  // One sentence, the thread a link in it, drawn as a comment's link is (in the link colour).
+  expect((await band.find({ type: 'Markdown' }))?.props.text)
+    .toBe('t1: copied the draft to the clipboard, paste it in [this thread \u{f03cc}](https://gl/g/p/-/merge_requests/42#note_5)')
   await band.unmount()
 })
 
