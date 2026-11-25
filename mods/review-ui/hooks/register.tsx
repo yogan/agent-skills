@@ -2818,12 +2818,26 @@ export const register: Register = on => {
       }
     }
     let laid = layBox()
+    // The lines the topic is about wrap where the rest of the file is cut at the edge (see the
+    // code part below): each takes a row more for every width of the code's its text passes.
+    // The code's width is the area's less the gutter (the bar, the number in its column, the
+    // sign) and, where the file scrolls, its scrollbar. `wrapsOf` is the rows each of those
+    // lines takes past its first, in order; every count of the file's rows includes them.
+    const discussedRun = code && !isOtherFile && code.view.at
+      ? codeWindow(code.view, code.view.at[1] - code.view.at[0] + 1, code.view.at[0]).runs.find(run => run.isDiscussed)
+      : undefined
+    const numWidth = code ? String(Math.max(1, ...code.view.rows.map(row => row[2] ?? row[1] ?? 0))).length + 1 : 1
+    const codeWidthOf = (isBar: boolean) => Math.max(8, cols - 1 - numWidth - 2 - (isBar ? BAR : 0))
+    const rowsOfLines = (source: string, width: number) => source.split('\n').slice(1)
+      .map(line => Math.max(1, Math.ceil(cells(line.slice(1)) / width)))
+    const wrapsOf = (isBar: boolean) => (discussedRun ? rowsOfLines(discussedRun.source, codeWidthOf(isBar)).map(x => x - 1) : [])
+    const sum = (xs: number[]) => xs.reduce((a, x) => a + x, 0)
     // The file's lines: the area's rest once its line and the thread box have theirs.
     let room = Math.max(3, rest - 1 - laid.rows)
     // A file longer than its room has a scrollbar of its own at the area's right edge, BAR
     // cells the thread box set in among its lines then leaves free. Counted with the line
     // that says where a thread out of view is, which takes a row of the file's.
-    const isCodeScrolled = !!code && code.view.rows.length > room - 1
+    const isCodeScrolled = !!code && code.view.rows.length + sum(wrapsOf(true)) > room - 1
     if (isCodeScrolled && laid.rows > 0) {
       inner -= BAR
       short = shortAt(inner)
@@ -2906,10 +2920,11 @@ export const register: Register = on => {
       // is no stretch of its own. Drawn as one, its line numbers line up: each drawn stretch
       // pads its numbers to its own widest, so a split at line 9 and 10 shifts the code.
       const shape = isOtherFile ? { ...v, at: null } : v
-      // What scrolls is the file's rows with the thread box set in among them, its rows right
+      // What scrolls is the file's lines with the thread box set in among them, its rows right
       // after the last line it is on (`anchor`): the window (`H` rows, the area's) shows what
       // lies there, a box cut at its foot by the area's edge or at its head by moving it up
-      // under it. The offset kept is a row of all that (from 1), not of the file alone.
+      // under it. The offset kept is a place in all that (from 1), a line of the file or a row
+      // of the box, not a line of the file alone.
       const N = v.rows.length
       // With no lines (a comment on the whole file), right above the file's first line, where
       // GitLab shows such a comment.
@@ -2917,34 +2932,48 @@ export const register: Register = on => {
       const anchor = !hasBox ? N : v.at ? v.at[1] : 0
       const B = hasBox ? boxRows : 0
       const H = room + boxRows
-      const maxStart = Math.max(1, N + B - H + 1)
+      // A line the topic is about takes as many rows as it wraps to, every other place one. The
+      // file scrolls where they all pass the window's height, counted at the width the
+      // scrollbar leaves: narrower, they only take more rows, so the answer holds at it.
+      const barWraps = wrapsOf(true)
+      const isFileScrolled = N + B + sum(barWraps) > H
+      const wraps = isFileScrolled ? barWraps : wrapsOf(false)
+      const codeWidth = codeWidthOf(isFileScrolled)
+      const lo = shape.at?.[0] ?? 0
+      const rowsAt = (i: number) => 1 + (i >= lo ? wraps[i - lo] ?? 0 : 0)
+      // The rows of places `a` to `b`, and the rows above place `s`.
+      const rowsOf = (a: number, b: number) => b - a + 1 + sum(wraps.filter((_, k) => lo + k >= a && lo + k <= b))
+      const rowOf = (s: number) => rowsOf(1, s - 1)
+      // The window's offset with place `end` at its foot: the first from which the rows up to
+      // it fit. Where a wrapped line stands across the foot, the one past it, which leaves a
+      // row free under `end` rather than cut it.
+      const fitTo = (end: number) => {
+        let s = Math.max(1, end - H + 1)
+        while (s < end && rowsOf(s, end) > H) s += 1
+        return s
+      }
+      // Scrolled to the end, the file's last line or the box's foot is at the window's.
+      const maxStart = fitTo(N + B)
       // Where the window opens: the file's own first view of the lines, moved down where that
       // leaves the thread box short of its foot, as with more commented lines than the code's
       // share of the area holds. The box then stands whole, as many of those lines above it
       // as fit.
-      const opening = Math.max(firstOffset(v, room), hasBox ? anchor + B - H + 1 : 1)
+      const opening = Math.max(firstOffset(v, room), hasBox ? fitTo(anchor + B) : 1)
       const start = Math.min(maxStart, Math.max(1, offsets[code.key] ?? opening))
-      // The file's rows before the box, the box's rows cut from its head, and the rows after it.
+      // The file's lines before the box, the box's rows cut from its head, and the lines after
+      // it.
       const before = Math.max(0, Math.min(anchor, start + H - 1) - start + 1)
       const cut = Math.max(0, Math.min(B, start - anchor - 1))
       const boxShown = hasBox && start <= anchor + B && start + H - 1 > anchor ? B - cut : 0
-      const after = Math.max(0, Math.min(N - anchor, H - before - boxShown))
-      const firstAfter = Math.max(anchor + 1, start - B)
       const w1 = before > 0 ? codeWindow(shape, before, start) : null
-      // The rows a discussed line takes once wrapped: the code's own width is the area's less
-      // the gutter (the bar, the number in its column, the sign) and the scrollbar.
-      const numWidth = String(Math.max(1, ...v.rows.map(row => row[2] ?? row[1] ?? 0))).length + 1
-      const codeWidth = Math.max(8, cols - 1 - numWidth - 2 - (N + B > H ? BAR : 0))
-      const rowsOfLines = (source: string) => source.split('\n').slice(1)
-        .map(line => Math.max(1, Math.ceil(cells(line.slice(1)) / codeWidth)))
       // What wrapping adds to the stretch before the box comes off the stretch after it, so
       // the window keeps its height.
-      const wrapped = (w1?.runs ?? []).filter(run => run.isDiscussed)
-        .reduce((n, run) => n + rowsOfLines(run.source).reduce((a, x) => a + x - 1, 0), 0)
-      const w2 = after - wrapped > 0 ? codeWindow(shape, after - wrapped, firstAfter) : null
+      const wrapped = rowsOf(start, start + before - 1) - before
+      const after = Math.max(0, Math.min(N - anchor, H - before - wrapped - boxShown))
+      const firstAfter = Math.max(anchor + 1, start - B)
+      const w2 = after > 0 ? codeWindow(shape, after, firstAfter) : null
       const isBoxIn = boxShown > 0
       const move = (to: number) => update($, codeAt, m => ({ ...m, [code.key]: Math.min(maxStart, Math.max(1, to)) }))
-      const isFileScrolled = N + B > H
       // The runs of each stretch of the file. The lines the topic is about carry a bar in the
       // gutter, left of their numbers and over exactly them, in the topic's severity colour
       // (the accent where it has none): it points at the place and repeats nothing. No
@@ -2955,7 +2984,7 @@ export const register: Register = on => {
       const barColor = (isReview && about ? kindSlot(about).color : undefined) ?? ACCENT
       const runsOf = (w: ReturnType<typeof codeWindow> | null) => (w ? w.runs.map(run => {
         const marks = w.changed.slice(run.from - w.start, run.to - w.start + 1)
-        const spans = run.isDiscussed ? rowsOfLines(run.source) : marks.map(() => 1)
+        const spans = run.isDiscussed ? rowsOfLines(run.source, codeWidth) : marks.map(() => 1)
         return (
           <Box key={`run-${run.from}`} flexDirection="row" flexShrink={0}>
             <Box flexDirection="column">
@@ -2987,25 +3016,34 @@ export const register: Register = on => {
       const boxTop = top + before + wrapped
       codeAreas.set(sid, {
         top, bottom: top + H, key: code.key, rows: H, start, max: maxStart, view: v,
-        ...(isBoxScrolled && isBoxIn && cut === 0 && boxShown === B && before + B <= H
+        ...(isBoxScrolled && isBoxIn && cut === 0 && boxShown === B && before + wrapped + B <= H
           ? { box: { top: boxTop, bottom: boxTop + boxRows, key: boxKey, max: openRows.length - boxBody } } : {}),
         lists,
       })
       // The file's scrollbar, where it does not fit: the area's whole height, the thread box
-      // among its lines included, its thumb the share of the file's lines shown.
-      const jump = (to: number) => move(to + 1)
+      // among its lines included, its thumb the share of the file's rows shown. It counts in
+      // rows, wrapped ones too, so its thumb ends at the track's foot exactly at the end; a
+      // press on a row of it goes to the first place at or past that row.
+      const total = N + B + sum(wraps)
+      const jump = (to: number) => {
+        let s = 1
+        while (s < maxStart && rowOf(s) < to) s += 1
+        return move(s)
+      }
       // Where the topic's lines are and its thread under them, marked on the bar over all the
       // rows they take, in the window or out of it, as an IDE marks the selection on its
       // ruler; a press on the mark brings them back to where the file first showed them. A
       // topic with no thread yet has its lines marked too: they are what the area is about.
       const topicRows = isOtherFile ? undefined
-        : v.at ? { lo: v.at[0] - 1, hi: v.at[1] - 1 + B, to: opening - 1 }
-        : hasBox ? { lo: 0, hi: B - 1, to: opening - 1 } : undefined
-      // Each row's diff sign at its place on the bar, the thread box's rows after the lines it
-      // is on, as no line at all (''). None for a file the MR adds or removes whole: one
-      // colour from top to bottom marks nothing, as in the file itself.
+        : v.at ? { lo: rowOf(v.at[0]), hi: rowOf(v.at[1] + 1) - 1 + B, to: rowOf(opening) }
+        : hasBox ? { lo: 0, hi: B - 1, to: rowOf(opening) } : undefined
+      // Each row's diff sign at its place on the bar, a wrapped line's on each of its rows, the
+      // thread box's rows after the lines it is on as no line at all (''). None for a file the
+      // MR adds or removes whole: one colour from top to bottom marks nothing, as in the file
+      // itself.
       const signs = v.whole ? undefined
-        : [...v.rows.slice(0, anchor).map(row => row[0]), ...Array.from({ length: B }, () => ''), ...v.rows.slice(anchor).map(row => row[0])]
+        : [...v.rows.slice(0, anchor).flatMap((row, k) => Array.from({ length: rowsAt(k + 1) }, () => row[0])),
+          ...Array.from({ length: B }, () => ''), ...v.rows.slice(anchor).map(row => row[0])]
       // What the line says of the file, past its name: a word each, and only where the code
       // would otherwise look unexpected (or is the person's own, not pushed yet).
       const where = `${v.file}${v.line ? `:${v.start && v.start !== v.line ? `${v.start}–` : ''}${v.line}` : ''}`
@@ -3031,7 +3069,7 @@ export const register: Register = on => {
           <Box flexDirection="row" height={H} overflow="hidden">
             <Box flexDirection="column" flexGrow={1} flexShrink={1}>{runs}</Box>
             {isFileScrolled && <Text> </Text>}
-            {isFileScrolled && scrollBar('code', N + B, H, start - 1, H, jump,
+            {isFileScrolled && scrollBar('code', total, H, Math.min(total - H, rowOf(start)), H, jump,
               topicRows, signs)}
           </Box>
         </Box>

@@ -1823,6 +1823,59 @@ test("a thread on a line near the file's end is in view whenever its line is, sc
   await ui.unmount()
 })
 
+// The lines a topic is about wrap, and their extra rows were counted nowhere in how far the file
+// scrolls: under a comment at a file's end the box's foot could never be brought into view. The
+// box is a draft's, whose dashed sides are a text a row, so its rows can be counted.
+const wrappedAtEnd = async ($: Engine, on: Parameters<typeof world>[0], n: number) => {
+  const code = codeOf(n, [37, 41])
+  for (const i of [38, 39, 40]) (code.rows[i - 1] as unknown[])[3] = `const line${i} = '${'a long word '.repeat(6)}'`
+  const w = world(on, [stateOf('t1', [{ ...topic('t1', 'draft', 'v1'), line: 41 }], { draft_text: 'Nit: these could be one.' })],
+    { code: { stdout: JSON.stringify(code) } })
+  await openReview($, w, view('t1', 'v1'))
+  const ui = await $.ui.mount({ ...PANEL, surface: 'terminal' })
+  await page(ui, 'code', 'up')
+  await page(ui, 'code', 'down')                                            // to the end
+  expect((await bar(ui, 'code'))?.at(-1)).toBe('thumb')
+  const spec = await specOf(ui, 'code') as BarSpec
+  const area = Number((await ui.find({ type: 'Box', key: 'code' }))?.props.height) - 1
+  // The file's rows drawn are its gutter's cells, one each, a wrapped line's on all its rows.
+  const texts = await ui.findAll({ type: 'Text' })
+  const color = texts.find(t => t.text.trim() === '\u{f013f}')?.props.color          // the severity's, in the list
+  const gutter = texts.filter(t => (t.text === '▌' && t.props.color === color)
+    || (t.props.color === 'green' && (t.text === ' ' || t.text === '▎'))).length
+  const box = texts.filter(t => t.text === '┆ ').length + 2
+  const shift = Number((await ui.find({ type: 'Box', key: 'box-at' }))?.props.marginTop ?? 0)
+  const lines = (await ui.findAll({ type: 'Code' })).flatMap(c => String(c.props.source).split('\n').slice(1))
+  const sources = (await ui.findAll({ type: 'Code' })).map(c => String(c.props.source))
+  await ui.unmount()
+  return { area, gutter, box, shift, lines, sources, spec }
+}
+
+test("a comment on wrapped lines at a file's end scrolls into view whole, the window full", async ($, on) => {
+  const { area, gutter, box, shift, lines, sources, spec } = await wrappedAtEnd($, on, 41)
+  // Its lines wrapped, each on two rows.
+  expect(sources.some(s => s.includes("const line38 = 'a long word"))).toBe(true)
+  expect(gutter).toBeGreaterThan(lines.length)
+  // The box whole under the file's last line, and its foot at the window's.
+  expect(lines.at(-1)).toBe(' const line41 = 41')
+  expect(shift).toBe(0)
+  expect(gutter + box).toBe(area)
+  // The scrollbar counts the rows the lines wrap to: the file's 41 lines, the box's and the
+  // three wrapped lines' second rows, its window at the end of them.
+  expect(spec.count).toBe(41 + box + 3)
+  expect(spec.from + spec.shown).toBe(spec.count)
+})
+
+test('lines after a comment on wrapped lines still reach the file\'s end, the window full', async ($, on) => {
+  const { area, gutter, box, shift, lines } = await wrappedAtEnd($, on, 57)
+  expect(lines.at(-1)).toBe(' const line57 = 57')
+  // Scrolled past the first of its lines: the rest of them still wrap, and only they count.
+  expect(lines.some(l => l.startsWith(' const line38 ='))).toBe(false)
+  expect(lines.some(l => l.startsWith(' const line39 ='))).toBe(true)
+  // Every row the window has is drawn, and none past the file's end.
+  expect(gutter + box + shift).toBe(area)
+})
+
 test('a comment on a line the MR removed sits under that removed line, which keeps its old number', async ($, on) => {
   // Old line 23 removed; the line now numbered 23 is the one after it.
   const rows = [
