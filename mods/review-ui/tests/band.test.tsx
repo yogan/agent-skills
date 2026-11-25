@@ -1527,6 +1527,142 @@ test('a thread sits under the lines it is about, in full, and its fold key folds
   await ui.unmount()
 })
 
+// What a fold key opens comes into view. A comment on line 100 of a 200-line file, with a
+// suggestion beside its prose (folded at first); the file scrolled by the wheel so the window's
+// last row is the suggestion's fold row (the box's fifth: its top border, the comment's head,
+// its prose, a blank row). The file has no wrapped lines, so a row of the file's scrollbar is a
+// place of its window. In the sidebar's 30 rows the list takes 3, the file's area starts at
+// row 5 and shows 25.
+const foldAtFoot = async ($: Engine, on: Parameters<typeof world>[0], lines: number) => {
+  const thread = [{ url: 'u', file: 'src/cache.ts', line: 100, notes: [
+    { author: 'Kim', body: `rename it\n\n\`\`\`suggestion\n${Array.from({ length: lines }, (_, i) => `fixed${i}()`).join('\n')}\n\`\`\``, url: 'http://gl/x#note_2' },
+  ] }]
+  const w = world(on, [stateOf('t1', [topic('t1', 'open')], { thread })], { code: { stdout: JSON.stringify(codeOf(200, [100, 100])) } })
+  await openReview($, w, view('t1'))
+  const ui = await $.ui.mount({ ...PANEL, surface: 'terminal' })
+  const spec = async () => await specOf(ui, 'code') as BarSpec
+  // Each tick read from the drawing it follows, as the engine draws between them.
+  const wheel = async (by: number) => {
+    await $.ui.scroll({ component: 'Pane', requestId: PANEL.requestId, offset: by, by,
+      bodyRows: 30, contentRows: 30, origin: { kind: 'person' }, pointer: { column: 10, row: 5 } })
+    await spec()
+  }
+  // The window's last row, from 0; the box's first is right after line 100's.
+  const foot = async () => { const b = await spec(); return b.from + b.shown - 1 }
+  const fold = 100 + 4
+  await wheel(fold - await foot())
+  return { ui, wheel, spec, foot, fold }
+}
+
+test("a suggestion opened at the file area's foot scrolls the file the least that shows it whole", async ($, on) => {
+  const { ui, foot, fold } = await foldAtFoot($, on, 6)
+  expect(await foot()).toBe(fold)
+  await ui.press({ key: 'fold-0-0' })
+  // Its diff: the line it replaces and its six, right under the fold row; the last of them, and
+  // the box's bottom border under it, which closes the comment, at the window's foot.
+  expect((await ui.findAll({ type: 'Code' })).some(c => String(c.props.source).includes('+fixed5()'))).toBe(true)
+  expect(await foot()).toBe(fold + 7 + 1)
+  // Folded again, the file stays where it is.
+  await ui.press({ key: 'fold-0-0' })
+  expect(await foot()).toBe(fold + 8)
+  await ui.unmount()
+})
+
+test("a suggestion opened where it shows already moves nothing", async ($, on) => {
+  const { ui, wheel, foot, fold } = await foldAtFoot($, on, 2)
+  await wheel(8)                                                            // eight rows to spare under it
+  expect(await foot()).toBe(fold + 8)
+  await ui.press({ key: 'fold-0-0' })
+  expect(await foot()).toBe(fold + 8)
+  await ui.unmount()
+})
+
+test('a suggestion taller than the thread box opens with its fold row at the top of the box, the box in view', async ($, on) => {
+  const { ui, foot, spec } = await foldAtFoot($, on, 30)
+  await ui.press({ key: 'fold-0-0' })
+  // The box scrolls on its own now: its window starts at the fold row (its fourth row of text,
+  // from 0 the third), where it stood at the top before the press.
+  const box = await specOf(ui, 'box') as BarSpec
+  expect(box.from).toBe(3)
+  // And the file shows the box whole, its bottom border at the window's foot.
+  const b = await spec()
+  expect(await foot()).toBe(100 + (b.count - 200) - 1)
+  await ui.unmount()
+})
+
+test('a redraw after a suggestion opened leaves the file where the wheel then put it', async ($, on) => {
+  const { ui, wheel, foot, fold } = await foldAtFoot($, on, 6)
+  await ui.press({ key: 'fold-0-0' })
+  await wheel(-3)
+  expect(await foot()).toBe(fold + 5)
+  await ui.unmount()
+  const again = await $.ui.mount({ ...PANEL, surface: 'terminal' })
+  const b = await specOf(again, 'code') as BarSpec
+  expect(b.from + b.shown - 1).toBe(fold + 5)
+  await again.unmount()
+})
+
+test('a press on the scrollbar after a suggestion opened moves the file from where it came into view', async ($, on) => {
+  const { ui, foot, fold } = await foldAtFoot($, on, 6)
+  await ui.press({ key: 'fold-0-0' })
+  expect(await foot()).toBe(fold + 8)
+  await page(ui, 'code', 'up')
+  expect(await foot()).toBeLessThan(fold)
+  await ui.unmount()
+})
+
+test("a thread box opened from a line a comment at the file area's foot comes into view whole", async ($, on) => {
+  const long = `seems bad, ${'and more words '.repeat(20)}`
+  const thread = [{ url: 'u', file: 'src/cache.ts', line: 100, notes: [
+    { author: 'You', body: 'seems bad', mine: true, url: 'http://gl/x#note_1' },
+    { author: 'Kim', body: long, url: 'http://gl/x#note_2' },
+  ] }]
+  const w = world(on, [stateOf('t1', [topic('t1', 'open')], { thread })], { code: { stdout: JSON.stringify(codeOf(200, [100, 100])) } })
+  await openReview($, w, view('t1'))
+  const ui = await $.ui.mount({ ...PANEL, surface: 'terminal' })
+  const wheel = (by: number) => $.ui.scroll({ component: 'Pane', requestId: PANEL.requestId, offset: by, by,
+    bodyRows: 30, contentRows: 30, origin: { kind: 'person' }, pointer: { column: 10, row: 5 } })
+  const spec = async () => await specOf(ui, 'code') as BarSpec
+  const foot = async () => { const b = await spec(); return b.from + b.shown - 1 }
+  await ui.press({ key: 'thread-open' })                                   // folded: a line a comment
+  await wheel(100 + 1 - await foot())                                       // its first line at the foot
+  expect(await foot()).toBe(101)
+  await ui.press({ key: 'thread-open' })                                    // in full
+  // The box's last row, its bottom border, at the window's foot.
+  const b = await spec()
+  expect(await foot()).toBe(100 + (b.count - 200) - 1)
+  await ui.unmount()
+})
+
+test("a group of the list unfolded at the list's foot shows its rows, its header at the top where they are more than fit", async ($, on) => {
+  const closed = Array.from({ length: 8 }, (_, i) => topic(`t${i + 5}`, 'acked'))
+  const w = world(on, [stateOf('t1', [topic('t1', 'open'), topic('t2', 'open'), topic('t3', 'open'), topic('t4', 'open'), ...closed])])
+  await openReview($, w, view('t1'))
+  const ui = await $.ui.mount({ ...PANEL, surface: 'terminal' })              // 30 rows: the list gets 6
+  const shown = async () => (await ui.findAll({ type: 'Text' })).map(t => String(t.text)).filter(t => / summary of t\d+$/.test(t))
+  // Its header, the last of six rows, the list not scrolled yet.
+  expect(await bar(ui, 'list')).toBeNull()
+  await ui.press({ key: 'group-closed' })
+  // Eight rows under it, more than the six the list shows: the header at the top, five of them.
+  expect((await specOf(ui, 'list'))?.from).toBe(5)
+  expect((await shown()).map(t => t.trim())).toEqual(['summary of t5', 'summary of t6', 'summary of t7', 'summary of t8', 'summary of t9'])
+  // Folded again, the list stays put as far as its rows still reach.
+  await ui.press({ key: 'group-closed' })
+  expect(await bar(ui, 'list')).toBeNull()
+  await ui.unmount()
+})
+
+test("a group of the list unfolded at the list's foot scrolls the least that shows its last row", async ($, on) => {
+  const w = world(on, [stateOf('t1', [topic('t1', 'open'), topic('t2', 'open'), topic('t3', 'open'), topic('t4', 'open'),
+    topic('t5', 'acked'), topic('t6', 'acked')])])
+  await openReview($, w, view('t1'))
+  const ui = await $.ui.mount({ ...PANEL, surface: 'terminal' })
+  await ui.press({ key: 'group-closed' })
+  // Eight rows, six shown: down two, the last closed topic at the foot.
+  expect((await specOf(ui, 'list'))?.from).toBe(2)
+  await ui.unmount()
+})
+
 test('a comment on the whole file stands above its first line', async ($, on) => {
   const thread = [{ url: 'u', file: 'src/cache.ts', line: null, notes: [{ author: 'Kim', body: 'merge these tests into one', url: 'http://gl/x#note_2' }] }]
   const w = world(on, [stateOf('t1', [topic('t1', 'open')], { thread })], { code: { stdout: JSON.stringify(codeOf(50, null)) } })

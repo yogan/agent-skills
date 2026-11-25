@@ -81,7 +81,11 @@ How it fits together:
   a third) and scrolls inside itself past it, by its arrows at its right corners or the
   wheel over it; the file takes the rest, so the sidebar fits its pane. Inside the file's
   area the thread box grows to half of it where its comments need that, the code keeping
-  the other half, and scrolls on its own past it. It opens by itself; its ✕ (or ctrl+x x
+  the other half, and scrolls on its own past it. What a press unfolds (a group of the list,
+  a code block in a comment, the thread box opened from a line a comment) comes into view:
+  its area scrolls down the least that shows its last row, never so far that the row pressed
+  leaves the top, and a code block in a box that scrolls on its own is brought into the box
+  first. It opens by itself; its ✕ (or ctrl+x x
   while it has the keys) closes it, and the band's Show sidebar button brings it back.
 - Whatever scrolls has a scrollbar like an IDE's: the pointer over its track shows the thumb
   where a press would put it, at its full length; a press puts it there, and the thumb drags.

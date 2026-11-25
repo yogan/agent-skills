@@ -1,5 +1,5 @@
 import { expect, test } from 'claude-code/testing'
-import { barPaint, cellsOf, centredOn, changeKinds, eighthOf, fromTop, pressOf, previewOf, thumbOf } from '../hooks/sidebar.ts'
+import { barPaint, cellsOf, centredOn, changeKinds, eighthOf, fromTop, pressOf, previewOf, revealedAt, thumbOf } from '../hooks/sidebar.ts'
 import type { BarLook, BarSpec } from '../hooks/sidebar.ts'
 
 // Colours by name, so a drawing reads as words.
@@ -142,4 +142,29 @@ test("the topic's mark is the left half of its cells, over the thumb, the track 
   expect(cells[5]).toMatchObject({ glyph: '▌', color: 'topic', backgroundColor: 'added', isTopic: true })
   // Hovered, the mark shows where a press on it goes.
   expect(previewOf(spec({ topic: { cells: [7], to: 12 } }), { at: 60, drag: null })).toBe(12)
+})
+
+// What a press opened, brought into view: a window of 10 rows starting at row 20 (it shows
+// rows 20 to 29), the row pressed at 27.
+test('what opened past the foot moves the window down the least that shows its last row', async () => {
+  // Opened to row 32: its last row at the window's foot, the window from 23.
+  expect(revealedAt(20, 32 - 10 + 1, 27, 100)).toBe(23)
+})
+
+test('what opened taller than the window shows from the row pressed, at the top', async () => {
+  // Opened to row 45: its foot would want the window at 36, past the row pressed.
+  expect(revealedAt(20, 45 - 10 + 1, 27, 100)).toBe(27)
+})
+
+test('what opened and already shows moves nothing', async () => {
+  expect(revealedAt(20, 29 - 10 + 1, 27, 100)).toBe(20)
+  expect(revealedAt(20, 25 - 10 + 1, 21, 100)).toBe(20)
+})
+
+test('the window never goes past its last start, nor up, nor anywhere where it cannot scroll', async () => {
+  expect(revealedAt(20, 36, 27, 22)).toBe(22)
+  // The row pressed above the window (cut at its top): the window does not go up to it.
+  expect(revealedAt(20, 25, 18, 100)).toBe(20)
+  // An area that fits: its last start is its first.
+  expect(revealedAt(0, 4, 2, 0)).toBe(0)
 })

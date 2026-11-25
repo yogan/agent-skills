@@ -113,6 +113,17 @@ export const firstOffset = (v: CodeView, rows: number): number => {
 export const clampOffset = (v: CodeView, rows: number, offset: number): number =>
   Math.min(Math.max(1, offset), Math.max(1, v.rows.length - rows + 1))
 
+// Where an area that scrolls stands once something in it was opened by a press: moved down
+// the least that brings what opened into view to its last row, and never so far that the row
+// pressed leaves the top, so what is taller than the window shows from that row down. What
+// already shows, and an area that cannot move, stay put; it never moves up.
+//
+// In the area's own offsets: `from`, where its window starts; `fit`, the least start that has
+// the opened part's last row in the window; `toggle`, the start that puts the row pressed at
+// the window's top; `max`, the last start there is.
+export const revealedAt = (from: number, fit: number, toggle: number, max: number): number =>
+  fit <= from ? from : Math.min(max, Math.max(from, Math.min(fit, toggle)))
+
 // The `@@ -a,b +c,d @@` line of rows `lo`..`hi` (1-based): a side with no line in them
 // starts at the line before, as unified diff counts. Mirrors lib/code_view.py's hunk_header.
 export const hunkHeader = (rows: CodeRow[], lo: number, hi: number): string => {

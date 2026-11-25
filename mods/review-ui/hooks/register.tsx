@@ -12,7 +12,7 @@ import {
 } from './panel.ts'
 import { blocksOf, drawableDiff, type DiffSize, type SizeRun, inPresses, inlineOf, namesPresses, withEmoji, withOutcome, withoutDraft, isPostCommand, isViewCommand, partsOf, sizeOf, sizeRunsOf, withoutPasted, withSuggestions, manifestOf, titleOf, viewOf, withNote, withoutExcerpt, withoutExcerptLabel, withoutThread } from './views.ts'
 import {
-  askedFor, barPaint, cellsOf, changeKinds, clampOffset, codeArgsOf, codeWindow, currentOwn, firstOffset, phaseOf, pressOf, pushOf, stepOwn,
+  askedFor, barPaint, cellsOf, changeKinds, clampOffset, codeArgsOf, codeWindow, currentOwn, firstOffset, phaseOf, pressOf, pushOf, revealedAt, stepOwn,
   type BarLook, type BarSpec, type CodeView,
 } from './sidebar.ts'
 import { COMMENTED, iconOfFile } from './files.ts'
@@ -355,6 +355,7 @@ const refresh = async ($: EngineInterface, s: ReviewSession, how: 'state' | 'ref
 const check = async ($: EngineInterface) => {
   try {
     await flushSeen($)
+    await flushRevealed($)
     const { s, r } = await known($)
     // Never alongside a turn or a press: both write the state, and a check started next to
     // one would only queue behind it (the scripts take turns on the state file) and draw an
@@ -980,6 +981,45 @@ type CodeArea = {
   lists?: { top: number; bottom: number; key: string; max: number; at: number; on: string | null }[]
 }
 const codeAreas = new Map<string, CodeArea>()
+// What a press opened, per session, for the drawing that first shows it opened to bring into
+// view (`revealedAt`): a code block of a comment in the thread box under the file (by its fold
+// key, with where the box's own window stood at the press), the thread box itself (by its key),
+// or a group of the list (by its key, with where the list's window stood). Only that drawing
+// knows how tall the opened part came out, and a drawing may not write state: it leaves the
+// offsets it moved to in `revealed`, which every drawing after it uses as the area's own until
+// the next wheel, scrollbar press, fold press or update check writes them to the state
+// (`flushRevealed`). A press that folds asks for nothing, and a drawing nothing was pressed
+// for finds nothing asked, so it moves nothing.
+type Reveal =
+  | { area: 'block'; key: string; boxFrom: number }
+  | { area: 'thread'; key: string }
+  | { area: 'list'; key: string; from: number }
+const reveals = new Map<string, Reveal>()
+type Revealed = {
+  code?: { key: string; at: number }
+  box?: { key: string; at: number }
+  list?: { key: string; at: number; on: string | null }
+}
+const revealed = new Map<string, Revealed>()
+const flushRevealed = async ($: EngineInterface) => {
+  const sid = await $.session.id()
+  const got = revealed.get(sid)
+  if (!got) return
+  // Written before they are dropped here, so a drawing in between draws them either way.
+  const { code, box, list } = got
+  if (code) await update($, codeAt, m => ({ ...m, [code.key]: code.at }))
+  if (box) await update($, boxAt, m => ({ ...m, [box.key]: box.at }))
+  if (list) await update($, areaAt, m => ({ ...m, [list.key]: { at: list.at, on: list.on } }))
+  if (revealed.get(sid) === got) revealed.delete(sid)
+}
+// A press on a fold key: `isOpening` asks the next drawing to bring what opens into view.
+const pressFold = async ($: EngineInterface, isOpening: boolean, ask: Reveal, flip: () => Promise<unknown>) => {
+  await flushRevealed($)
+  const sid = await $.session.id()
+  if (isOpening) reveals.set(sid, ask)
+  else reveals.delete(sid)
+  await flip()
+}
 // What each scrollbar the sidebar last drew does with the row its own drawing posts (a press
 // on its track, a step of a drag), by the bar's key: set as it is drawn, since the post
 // carries plain data and the closure stays here.
@@ -2287,6 +2327,7 @@ export const register: Register = on => {
     const area = codeAreas.get(await $.session.id())
     if (!area || !e.pointer || e.origin.kind !== 'person') return next(e)
     await flushSeen($)
+    await flushRevealed($)
     // The row under the pointer in the sidebar's tree: the window's own offset (where it
     // stands before this move) plus the pointer's row in it.
     const last = Math.max(0, e.contentRows - e.bodyRows)
@@ -2315,6 +2356,7 @@ export const register: Register = on => {
     const jump = e.requestId === PANE ? barJumps.get(e.element) : undefined
     const to = (e.data as { to?: unknown } | null)?.to
     if (!jump || typeof to !== 'number' || !Number.isFinite(to)) return next(e)
+    await flushRevealed($)
     await jump(Math.max(0, Math.round(to)))
     return {}
   })
@@ -2361,6 +2403,13 @@ export const register: Register = on => {
     const scrollAt = await read($, areaAt)
     // Where each area that scrolls inside itself sits in the sidebar's tree, for the wheel.
     const lists: NonNullable<CodeArea['lists']> = []
+    // What a fold press asked this drawing to bring into view, and the offsets earlier drawings
+    // moved to for one, which stand for the state's until they are written to it (`reveals`).
+    const asked = reveals.get(sid)
+    const shownAt: Revealed = { ...revealed.get(sid) }
+    const keepShown = () => { revealed.set(sid, { ...shownAt }) }
+    // Where each area drawn by `areaRows` starts its window, for a press in it.
+    const areaFrom: Record<string, number> = {}
 
     // An area's line: its name and what it says (`segs`), a rule to the right edge, and its
     // own controls at the right (`right`, `width` cells). Where the line is too narrow, the
@@ -2446,7 +2495,7 @@ export const register: Register = on => {
             const cell = <Text color={c.color} backgroundColor={c.backgroundColor}>{c.glyph}</Text>
             return to === null
               ? <Box key={`${tag}-${c.at}-${i}`}>{cell}</Box>
-              : <Button key={`${tag}-${c.at}-${i}`} plain onPress={() => jump(to)}>{cell}</Button>
+              : <Button key={`${tag}-${c.at}-${i}`} plain onPress={() => flushRevealed($).then(() => jump(to))}>{cell}</Button>
           })}
         </Box>
       )
@@ -2457,9 +2506,10 @@ export const register: Register = on => {
       const n = Math.min(count, cap)
       const tag = key.split(':')[0] ?? key   // the area's name, which its keys are named by
       const max = count - n
-      const moved = scrollAt[key]
+      const moved = (shownAt.list?.key === key ? shownAt.list : undefined) ?? scrollAt[key]
       const from = Math.min(max, Math.max(0, moved && moved.on === item ? moved.at : at))
       const isScrolled = max > 0
+      areaFrom[key] = from
       // In the wheel's map whether it scrolls or not: the wheel over an area moves that area
       // or nothing, as over the file, never the sidebar as a whole.
       lists.push({ top, bottom: top + n, key, max, at: from, on: item })
@@ -2497,6 +2547,8 @@ export const register: Register = on => {
     // The list, as rows of one line each.
     const listRows: JSX.Element[] = []
     let currentRow = 0
+    // Each group's header, by its row in the list.
+    const groupRow: Record<string, number> = {}
     const judged = await read($, judging)
     const shownMarks = new Set<string>()
     if (phase === 'own') {
@@ -2574,10 +2626,12 @@ export const register: Register = on => {
         const hasNews = (x: Row) => r.topics.find(t => t.id === x.id)?.inbox === 'new'
         // Folded, a group with news says so on its header: its rows' marks are out of sight.
         const isHiding = isShut && g.rows.some(hasNews)
+        groupRow[g.key] = listRows.length
         listRows.push(
           <Box key={`group-${g.key}`} flexDirection="row">
             <Button key={`group-${g.key}`} plain dimColor label={isShut ? `${GLYPH.shut} ${g.title} (${g.rows.length})` : `${GLYPH.open} ${g.title}`}
-              onPress={() => update($, folded, m => ({ ...m, [g.key]: !isShut }))} />
+              onPress={() => pressFold($, isShut, { area: 'list', key: g.key, from: areaFrom.list ?? 0 },
+                () => update($, folded, m => ({ ...m, [g.key]: !isShut })))} />
             {isHiding && <Text color="yellow">{` ${INBOX_ICON.new}`}</Text>}
           </Box>,
         )
@@ -2690,8 +2744,9 @@ export const register: Register = on => {
           out.push(<Markdown key={`${tag}-${i}`} text={row.text} />)
         } else if (row.kind === 'fold') {
           const key = row.key
+          const flip = () => update($, codeOpen, m => ({ ...m, [key]: !row.isOpen }))
           out.push(<Button key={`${tag === 'box' ? '' : `${tag}-`}fold-${key.split(':').slice(-2).join('-')}`} plain dimColor label={row.label}
-            onPress={() => update($, codeOpen, m => ({ ...m, [key]: !row.isOpen }))} />)
+            onPress={() => (tag === 'box' ? pressFold($, !row.isOpen, { area: 'block', key, boxFrom }, flip) : flip())} />)
         } else if (row.kind === 'rule') {
           out.push(<Text key={`${tag}-${i}`} dimColor>{'─'.repeat(Math.max(1, ruleWidth))}</Text>)
         } else {
@@ -2813,7 +2868,8 @@ export const register: Register = on => {
         isScrolled, body,
         // At its end where the person has not moved it: the newest comment is what is new,
         // as a chat opens on its last message. Opened at the top, a reply stood cut off below.
-        from: Math.min(Math.max(0, openRows.length - body), boxScrollAt[boxKey] ?? Infinity),
+        from: Math.min(Math.max(0, openRows.length - body),
+          (shownAt.box?.key === boxKey ? shownAt.box.at : undefined) ?? boxScrollAt[boxKey] ?? Infinity),
         rows: notes.length === 0 ? 0 : 2 + body + (code?.view.mode === 'since' ? 1 : 0),
       }
     }
@@ -2845,14 +2901,57 @@ export const register: Register = on => {
       laid = layBox()
       room = Math.max(3, rest - 1 - laid.rows)
     }
-    const { isScrolled: isBoxScrolled, body: boxBody, from: boxFrom, rows: boxRows } = laid
+    const { isScrolled: isBoxScrolled, body: boxBody, rows: boxRows } = laid
+    let boxFrom = laid.from
+    // What a fold press opened in the box, as rows of the box (its top border the first), for
+    // the file around it to bring into view: a code block, from its fold row to its last line,
+    // or the box itself, opened from one line a comment. A block opened where the box scrolls
+    // on its own is brought into the box's window first, the box holding where it stood at the
+    // press (it otherwise stands at its end, which carries the row pressed up and away); the
+    // file then shows as much of it as the box does, which it already does where the box is
+    // whole in the file's window.
+    const sinceRow = code?.view.mode === 'since' ? 1 : 0
+    let openedInBox: { top: number; foot: number } | null = null
+    if (asked?.area === 'block') {
+      const at = openRows.findIndex(x => x.kind === 'fold' && x.key === asked.key)
+      const fold = openRows[at]
+      if (at < 0 || fold?.kind !== 'fold') reveals.delete(sid)
+      else if (fold.isOpen) {
+        reveals.delete(sid)
+        let foot = at
+        while (foot + 1 < openRows.length) {
+          const next = openRows[foot + 1] as BoxRow
+          if (next.kind !== 'code' || next.key !== asked.key) break
+          foot += 1
+        }
+        if (isBoxScrolled) {
+          const max = openRows.length - boxBody
+          const to = revealedAt(Math.min(max, Math.max(0, asked.boxFrom)), foot - boxBody + 1, at, max)
+          if (to !== boxFrom) {
+            shownAt.box = { key: boxKey, at: to }
+            keepShown()
+            boxFrom = to
+          }
+        }
+        // Where what opened ends the box's rows in view, the box's bottom border with it: the
+        // box closes under it rather than stand open at the area's edge.
+        const last = Math.min(foot, boxFrom + boxBody - 1)
+        openedInBox = { top: 1 + sinceRow + Math.max(0, at - boxFrom), foot: last === boxFrom + boxBody - 1 ? boxRows - 1 : 1 + sinceRow + last - boxFrom }
+      }
+    } else if (asked?.area === 'thread') {
+      if (asked.key !== boxKey || !code) reveals.delete(sid)
+      else if (isOpen) {
+        reveals.delete(sid)
+        openedInBox = { top: 0, foot: boxRows - 1 }
+      }
+    }
     const hasFoot = isShortened
     // Folding offered only where it leaves something out: its key on the box's top border at
     // the right, as a window's maximize and restore are, never among the box's text.
     // Never with no file: there the thread is always in full.
     const foldKey = !!code && hasFoot && (
       iconKey({ Button, Text }, 'thread-open', isOpen ? GLYPH.restore : GLYPH.maximize,
-        () => { void update($, threadOpen, m => ({ ...m, [boxKey]: !isOpen })) })
+        () => { void pressFold($, !isOpen, { area: 'thread', key: boxKey }, () => update($, threadOpen, m => ({ ...m, [boxKey]: !isOpen }))) })
     )
     const shownRows = isOpen ? drawBoxRows(openRows.slice(boxFrom, boxFrom + boxBody)) : closedRowsOf()
     const boxMax = openRows.length - boxBody
@@ -2959,7 +3058,18 @@ export const register: Register = on => {
       // share of the area holds. The box then stands whole, as many of those lines above it
       // as fit.
       const opening = Math.max(firstOffset(v, room), hasBox ? fitTo(anchor + B) : 1)
-      const start = Math.min(maxStart, Math.max(1, offsets[code.key] ?? opening))
+      let start = Math.min(maxStart, Math.max(1, (shownAt.code?.key === code.key ? shownAt.code.at : undefined) ?? offsets[code.key] ?? opening))
+      // What a fold press opened in the thread box, in view: the window moves down the least
+      // that shows its last row, never past the row pressed at its top (`revealedAt`). In
+      // places, as the offset is kept: the box's rows follow the last line it is on.
+      if (openedInBox && hasBox) {
+        const to = revealedAt(start, fitTo(anchor + 1 + openedInBox.foot), anchor + 1 + openedInBox.top, maxStart)
+        if (to !== start) {
+          shownAt.code = { key: code.key, at: to }
+          keepShown()
+          start = to
+        }
+      }
       // The file's lines before the box, the box's rows cut from its head, and the lines after
       // it.
       const before = Math.max(0, Math.min(anchor, start + H - 1) - start + 1)
@@ -3464,6 +3574,28 @@ export const register: Register = on => {
     )
     // The list's area: its line with the legend's key, the list, and the legend opened.
     const focusId = phase === 'own' ? own?.id ?? null : r.current
+    // A group just unfolded: its rows in view under its header. The list holds where it stood
+    // at the press (it otherwise follows the current topic, which can carry the header away),
+    // then moves down the least that shows the group's last row.
+    if (asked?.area === 'list') {
+      const g = sections.find(x => x.key === asked.key)
+      const isShutNow = !g || (isFolded[g.key] ?? g.key === 'closed')
+      const head = groupRow[asked.key] ?? -1
+      if (!g || head < 0) reveals.delete(sid)
+      else if (!isShutNow) {
+        reveals.delete(sid)
+        const n = Math.min(listRows.length, listCap)
+        const max = listRows.length - n
+        const from = Math.min(max, Math.max(0, asked.from))
+        const to = revealedAt(from, head + g.rows.length - n + 1, head, max)
+        const moved = scrollAt.list
+        const now = Math.min(max, Math.max(0, moved && moved.on === focusId ? moved.at : currentRow - Math.floor(listCap / 2)))
+        if (to !== now) {
+          shownAt.list = { key: 'list', at: to, on: focusId }
+          keepShown()
+        }
+      }
+    }
     const listPart = (
       <Box key="list" flexDirection="column">
         {heading}
