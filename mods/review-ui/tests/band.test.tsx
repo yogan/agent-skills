@@ -3462,6 +3462,47 @@ test('rework-mr: a reply drafted after the fix never resolves; one with no fix m
   await ui.unmount()
 })
 
+test('rework-mr: a pushed fix the reviewer accepted after its reply is resolved, or answered, never “Fixed” again', async ($, on) => {
+  const w = world(on, [reworkState('t1', [reworkTopic('t1', 'reply', { pushed: true, fix_replied: true, fix_accepted: true })])],
+    { resolve: { stdout: 'resolved t1\n' } })
+  await openRework($, w, reworkView('t1'))
+  const ui = await mountStep($, 'terminal')
+  expect(await labels(ui)).toEqual(['Resolve', 'Reply…', 'Next', 'Show sidebar'])
+  await ui.press({ key: 'resolve' })
+  await ui.unmount()
+  const ran = w.ran.find(r => r.argv[2] === 'resolve')
+  expect(ran?.argv.slice(2).join(' ')).toBe('resolve t1 --iid 42')
+  expect(await isPress(w, ran?.env)).toBe(true)
+})
+
+test('rework-mr: a pushed fix whose reply is up, not yet judged accepted, is answered, never “Fixed” again', async ($, on) => {
+  const w = world(on, [reworkState('t1', [reworkTopic('t1', 'reply', { pushed: true, fix_replied: true })])])
+  await openRework($, w, reworkView('t1'))
+  const ui = await mountStep($, 'terminal')
+  expect(await labels(ui)).toEqual(['Reply…', 'Next', 'Show sidebar'])
+  await ui.press({ key: 'reply' })
+  await ui.unmount()
+  expect(w.ran.some(r => r.argv[2] === 'post')).toBe(false)
+})
+
+test('rework-mr: a reply drafted after the fix\'s reply went up is best posted with a resolve', async ($, on) => {
+  const w = world(on, [reworkState('t1', [reworkTopic('t1', 'reply', { draft: 'v3', pushed: true, fix_replied: true })])])
+  await openRework($, w, reworkView('t1', 'v3'))
+  const ui = await mountStep($, 'terminal')
+  expect(await labels(ui)).toEqual(['Post + resolve', 'Post', 'Check my post', 'Next', 'Show sidebar'])
+  await ui.press({ key: 'post-resolve' })
+  await ui.unmount()
+  expect(w.ran.find(r => r.argv[2] === 'post')?.argv.slice(2).join(' ')).toBe('post t1 --expect v3 --resolve --iid 42')
+})
+
+test('rework-mr: a question drafted after the fix\'s reply went up still never resolves', async ($, on) => {
+  const w = world(on, [reworkState('t1', [reworkTopic('t1', 'reply', { draft: 'v3', pushed: true, fix_replied: true, outcome: 'question' })])])
+  await openRework($, w, reworkView('t1', 'v3'))
+  const ui = await mountStep($, 'terminal')
+  expect(await labels(ui)).toEqual(['Post', 'Check my post', 'Next', 'Show sidebar'])
+  await ui.unmount()
+})
+
 test('rework-mr: a topic opened from the sidebar, closed or not, gets a card of its own', async ($, on) => {
   const closed = reworkTopic('t3', 'none', { status: 'done', state: 'done' })
   const w = world(on, [reworkState('t2', [reworkTopic('t2', 'reply', { draft: 'v1' }), closed], { in_round: true }),

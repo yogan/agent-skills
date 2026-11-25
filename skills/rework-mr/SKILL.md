@@ -354,7 +354,9 @@ propose a plan…`): research it with the code at hand, store the proposal and s
   asked, the answer to their question). Never write the `Fixed:` line yourself: the card and
   the post end the reply on it (a link per fix the thread has not seen linked yet) where the
   plan that stands is a fix and it is pushed, and on nothing where the reply pushes back or
-  asks. It never resolves the thread: the reviewer reads it and resolves.
+  asks. It never resolves the thread: the reviewer reads it and resolves. Once that reply is
+  up and the reviewer writes again only to accept the fix, the card offers Resolve, or a
+  reply to them, which Post + resolve may close the thread with.
   Where a reply ahead of the fix went up, the reviewer has read what the fix does: the reply
   after it says only what is new since. With nothing new, draft nothing: tell the user in a
   line that the earlier reply said it and that "Fixed" on the card is the whole answer.

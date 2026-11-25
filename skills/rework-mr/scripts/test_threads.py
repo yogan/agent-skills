@@ -2622,6 +2622,111 @@ class TestReplyAfterTheFix(unittest.TestCase):
         self.assertEqual(self.post.call_count, 2)                     # the note, the resolve
 
 
+class TestFixAcceptedAfterItsReply(unittest.TestCase):
+    """The fix pushed, its "Fixed" posted, then the reviewer writes again, pleased ("nice
+    touch with the cached tiles"). The card offered a second "Fixed", which the script
+    refuses, and no way to resolve."""
+
+    CTX = {"enc": "g%2Fp", "web": "https://gl/g/p"}
+    PRAISE = "Nice touch with the cached tiles."
+
+    def setUp(self):
+        mock.patch.dict(os.environ, {"REVIEW_UI_DRAWN": "1"}).start()
+        mock.patch.object(T.press, "claimed", return_value=True).start()
+        self.addCleanup(mock.patch.stopall)
+        T._WORKING.clear()
+        self.addCleanup(T._WORKING.clear)
+        self.state = TestRounds.state(1)
+        T.start_round(self.state)
+        TestRounds.agree(self.state, "t1")
+        self.t1 = T.topic_for(self.state, "t1")
+        self.t1.update(diff_url="https://gl/g/p/-/merge_requests/1/diffs?diff_id=7")
+        self.post = mock.patch.object(T, "api_post", return_value={"id": 9}).start()
+        mock.patch.object(T, "working_diff", return_value="").start()
+        T.post_reply(self.state, self.CTX, 1, "t1", None, fixed=True)
+        th = self.state["threads"]["d1"]
+        th["notes"].append({"author": "Me", "body": f"Fixed: {self.t1['diff_url']}", "mine": True,
+                            "at": "2026-02-01T00:00:00Z", "url": "https://gl/g/p/-/merge_requests/1#note_9"})
+        th["notes"].append({"author": "Jan Doe", "body": self.PRAISE, "mine": False,
+                            "at": "2026-02-02T00:00:00Z", "url": "https://gl/g/p/-/merge_requests/1#note_10"})
+        th["awaiting"] = "you"
+        self.t1.pop("state", None)                     # sync's, once the reviewer wrote
+        self.post.reset_mock()
+
+    def judge(self, reply):
+        with mock.patch.object(T, "render_code_context", return_value="(the code)"):
+            ask = T.judge_prompt(self.state, 1) or {}
+        T.judge.store_all(ask.get("items") or {}, json.dumps(reply), lambda i, m: T.judge_fresh(self.state, i, m),
+                          lambda i, a: T.judge_store(self.state, i, a))
+        return ask.get("prompt", "")
+
+    def card(self):
+        return T.state_json(self.state)["topics"][0]
+
+    def test_the_judge_is_told_the_fix_and_its_reply_came_first(self):
+        self.assertEqual(T.step_of(self.state, self.t1), "plan")
+        prompt = self.judge({"t1": {"says": "keep", "why": "Jan likes the cached tiles."}})
+        self.assertIn("The user pushed the fix for that plan, and their reply about it", prompt)
+        self.assertIn("A topic whose fix was pushed and replied to before (t1) takes "
+                      "`\"says\": \"keep\"` where the reviewer accepts the fix and asks nothing more", prompt)
+        self.assertIn("(it is still wrong, a question, more changes) is `needs`", prompt)
+
+    def test_a_topic_with_no_reply_to_its_fix_is_told_nothing_of_one(self):
+        self.t1.pop("reply_posted_for")
+        prompt = self.judge({"t1": {"says": "keep", "why": "w"}})
+        self.assertNotIn("replied to before", prompt)
+        self.assertNotIn("their reply about it", prompt)
+
+    def test_accepted_it_is_only_to_resolve(self):
+        self.assertEqual((self.card()["fix_replied"], self.card()["fix_accepted"]), (True, False))
+        self.judge({"t1": {"says": "keep", "why": "Jan likes the cached tiles and asks for nothing more."}})
+        self.assertEqual(T.step_of(self.state, self.t1), "reply")
+        self.assertEqual((self.card()["fix_replied"], self.card()["fix_accepted"]), (True, True))
+
+    def test_asking_more_sends_it_back_to_planning(self):
+        self.judge({"t1": {"says": "needs"}})
+        self.assertEqual(T.step_of(self.state, self.t1), "plan")
+        self.assertFalse(self.card()["fix_accepted"])
+
+    def test_a_keep_from_before_the_reply_accepts_nothing(self):
+        self.judge({"t1": {"says": "keep", "why": "w"}})
+        self.t1["kept"]["at"] = "2026-01-20T00:00:00Z"
+        self.assertFalse(self.card()["fix_accepted"])
+
+    def test_a_later_push_has_no_reply_yet(self):
+        self.judge({"t1": {"says": "keep", "why": "w"}})
+        self.t1["diff_url"] = "https://gl/g/p/-/merge_requests/1/diffs?diff_id=8"
+        self.assertEqual((self.card()["fix_replied"], self.card()["fix_accepted"]), (False, False))
+
+    def test_the_reviewer_s_line_in_the_story_says_what_the_judge_found(self):
+        self.judge({"t1": {"says": "keep", "why": "likes the cached tiles."}})
+        card = T.render_quote(self.state, "t1")
+        self.assertIn(f"Jan {T.ui.said_md('replied', 'https://gl/g/p/-/merge_requests/1#note_10')}: "
+                      "likes the cached tiles.", card)
+        self.assertEqual(card.count("likes the cached tiles."), 1)
+
+    def test_a_reason_naming_the_reviewer_reads_without_the_name_twice(self):
+        # A reason judged before the prompt asked for none starts with the name the line has.
+        self.judge({"t1": {"says": "keep", "why": "Jan likes the cached tiles."}})
+        card = T.render_quote(self.state, "t1")
+        self.assertIn(f"Jan {T.ui.said_md('replied', 'https://gl/g/p/-/merge_requests/1#note_10')}: "
+                      "likes the cached tiles.", card)
+        self.assertNotIn("Jan likes", card)
+
+    def test_a_reply_to_the_reviewer_may_resolve_now(self):
+        self.judge({"t1": {"says": "keep", "why": "w"}})
+        self.t1["reply"] = "Thanks!\n"
+        T.post_reply(self.state, self.CTX, 1, "t1", None, resolve=True)
+        self.assertEqual(self.post.call_count, 2)                     # the note, the resolve
+        self.assertEqual(self.t1["closed"]["how"], "replied")
+
+    def test_a_question_back_still_never_resolves(self):
+        self.t1.update(outcome="question", reply="Which tiles?\n")
+        with mock.patch("sys.stderr", new_callable=io.StringIO), self.assertRaises(SystemExit):
+            T.post_reply(self.state, self.CTX, 1, "t1", None, resolve=True)
+        self.post.assert_not_called()
+
+
 class TestADraftBelongsToItsRound(unittest.TestCase):
     """A reply draft counts only in the round it was written for. Each of these once left a
     draft stored that came up again later, with Post under it: the question already posted

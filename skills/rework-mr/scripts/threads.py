@@ -1509,6 +1509,10 @@ def story_steps(state, t, close=None):
     a topic the reviewer reopened still tells its first plan, fix and reply. What the fix
     changed is the sidebar's and the diff viewer's to show, not a copy here."""
     done = ui.STEP_DONE_ICON
+    # The reviewer's comment that accepted the pushed fix says what the judge found in it,
+    # as review-mr's lines say their verdict.
+    kept = t.get("kept") or {}
+    accepted = (kept.get("at"), (kept.get("why") or "").strip()) if fix_accepted(state, t) else None
     comments = []
     for x in t["thread_ids"]:
         for i, n in enumerate((state["threads"].get(x) or {}).get("notes") or []):
@@ -1519,8 +1523,14 @@ def story_steps(state, t, close=None):
             how = mine and (t.get("closed_with") or {}).get(ui.note_key(n.get("url")))
             if how in ("fixed", "replied"):
                 verb = f"{how} and resolved it"
+            # The line names who wrote already: a reason that starts with their name too
+            # (as one judged before the prompt asked otherwise does) reads without it.
+            why = accepted[1] if accepted and not mine and n.get("at") == accepted[0] else ""
+            if who and why.startswith(f"{who} "):
+                why = why[len(who) + 1:]
+            verdict = f": {why}" if why else ""
             comments.append({"at": n.get("at"), "icon": done if mine else ui.STATE_ICON["answered"],
-                             "text": f"{who} {ui.said_md(verb, n.get('url'))}"})
+                             "text": f"{who} {ui.said_md(verb, n.get('url'))}{verdict}"})
     # Listed as a topic usually runs (the comment, the plan, the fix, the replies), which is
     # where an event with no time kept stays; the times put the rest in order.
     events = comments[:1]
@@ -1980,6 +1990,10 @@ def state_json(state):
             "outcome": t.get("outcome") or ("fix" if t.get("decision") else None),
             "pushed": bool(t.get("diff_url")),
             "diff_url": t.get("diff_url"),
+            # The reply about the pushed fix is posted (for its current push), and the
+            # reviewer accepted the fix since, asking nothing more: it is only to resolve.
+            "fix_replied": fix_replied(t),
+            "fix_accepted": fix_accepted(state, t),
             # The pushed fix kept in git, which Show fix in hunk opens (its latest push), and
             # how many pushes it has: the sidebar picks one of them where there are several.
             "fix_kept": bool(kept_fix(state, t, kept=kept)),
@@ -2366,6 +2380,29 @@ def wrote_since_plan(state, t):
     new = [n for n in theirs if _instant(n["at"]) > since] if since else theirs[-1:]
     who = list(dict.fromkeys(first_name(n.get("author")) or "The reviewer" for n in new))
     return who, (new[-1]["at"] if new else None)
+
+
+def fix_replied(t):
+    """Whether the reply about `t`'s pushed fix (a "Fixed" with its link, or a longer one) is
+    posted: for its current push, so a later push has none until one goes up for it."""
+    return bool(t.get("diff_url")) and t.get("reply_posted_for") == t["diff_url"]
+
+
+def fix_accepted(state, t):
+    """Whether the reviewer accepted `t`'s pushed fix: they wrote after the reply about it
+    went up (`fix_replied`), and the judge found their words keep the plan, asking nothing
+    more (`keep_plan`, on what they said last). Nothing is left but to resolve it."""
+    if not fix_replied(t):
+        return False
+    kept = t.get("kept") or {}
+    if not (kept.get("on") and kept["on"] == t.get("plan_on") == reviewer_mark(state, t)):
+        return False
+    key = ui.note_key(t.get("reply_posted"))
+    posted = next((_instant(n.get("at")) for x in t["thread_ids"]
+                   for n in (state["threads"].get(x) or {}).get("notes") or []
+                   if key and ui.note_key(n.get("url")) == key), None)
+    said = _instant(kept.get("at"))
+    return bool(posted and said and said > posted)
 
 
 def names_md(names):
@@ -2844,7 +2881,7 @@ def judge_prompt(state, iid, skip=()):
     out = [f"Reviewers wrote on GitLab merge request !{iid}, which the user wrote and is now "
            "reworking. Sort each topic below by what the reviewers' latest words ask of the "
            "user.", "", judge.RULES, ""]
-    items, agreed = {}, []
+    items, agreed, replied = {}, [], []
     for tid in todo:
         t = topic_for(state, tid)
         items[tid] = reviewer_mark(state, t)
@@ -2857,6 +2894,10 @@ def judge_prompt(state, iid, skip=()):
             agreed.append(tid)
             out += ["Its plan was agreed before the reviewer wrote again:",
                     judge.fenced("plan", "\n".join(x for x in (t.get("decision"), t.get("plan")) if x))]
+        if fix_replied(t):
+            replied.append(tid)
+            out += ["The user pushed the fix for that plan, and their reply about it (the "
+                    "fix's link, or more) went up before the reviewer wrote again."]
         x = state["threads"].get((t["thread_ids"] or [None])[0]) or {}
         code = render_code_context(x, drift=False)
         if code:
@@ -2873,6 +2914,13 @@ def judge_prompt(state, iid, skip=()):
                "`\"says\": \"keep\"` where the new comment only acknowledges that plan (\"sounds "
                "good\", a thank-you) and changes nothing about it; anything else asked there is "
                "`needs`." if agreed else "")
+            + (" A topic whose fix was pushed and replied to before (" + ", ".join(replied) + ") "
+               "takes `\"says\": \"keep\"` where the reviewer accepts the fix and asks nothing "
+               "more (an OK, a thank-you, praise of it): the user then only resolves it, and "
+               "`why` says what the reviewer said of the fix, starting with its verb and "
+               "without their name, which the card's line already shows (\"likes the "
+               "recorded values; asks for nothing more\"). Anything they ask there (it is "
+               "still wrong, a question, more changes) is `needs`." if replied else "")
             + " A topic marked *give summary* also takes \"summary\": \"<an English one-liner: "
             "the point the reviewer first made>\". Every identifier, path and value in "
             "backticks: the card draws them as code. " + judge.CARD_VOICE, "", judge.ANSWER]
@@ -2914,7 +2962,9 @@ def judge_store(state, item, a):
 def keep_plan(state, t, why):
     """`t`'s agreed plan holds after the reviewer's new comment, which only acknowledged it."""
     # What the reviewers said is the plan's again: it holds until they write once more.
-    # The card names who wrote since the plan (or its last keep), never the agent's reason.
+    # Before the fix's reply went up, the card names who wrote since the plan (or its last
+    # keep), not the agent's reason. After it, the keep is the reviewer accepting the fix
+    # (`fix_accepted`): that is a verdict, and their comment's line in the story carries it.
     who, at = wrote_since_plan(state, t)
     t["plan_on"] = reviewer_mark(state, t)
     t["kept"] = {"why": why, "on": t["plan_on"], "who": who, "at": at}
@@ -3086,9 +3136,10 @@ def post_reply(state, ctx, iid, tid, expect, fixed=False, resolve=False, failed=
         die(f"the reply drafted for {tref(tid)} "
             + ("asks the reviewer a question" if t["outcome"] == "question" else "pushes back")
             + ": post it without resolving; the thread is the reviewer's to close")
-    if resolve and not fixed and t.get("diff_url"):
+    if resolve and not fixed and t.get("diff_url") and not fix_replied(t):
         # A longer reply after the fix explains something: the reviewer reads it, and
-        # resolves the thread once they agree.
+        # resolves the thread once they agree. Once the fix's reply is up and the reviewer
+        # wrote again, a reply to that may close it.
         die(f"the reply drafted for {tref(tid)} explains its fix: post it without resolving")
     disc = f"projects/{ctx['enc']}/merge_requests/{iid}/discussions"
     note = api_post(f"{disc}/{t['thread_ids'][0]}/notes", {"body": body})

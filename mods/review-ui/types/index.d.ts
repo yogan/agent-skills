@@ -63,6 +63,10 @@ export type ReviewTopic = {
   outcome?: string | null
   pushed?: boolean
   diff_url?: string | null
+  // rework-mr: the reply about the pushed fix is posted (for its current push), and the
+  // reviewer accepted the fix since, asking nothing more: it is only to resolve.
+  fix_replied?: boolean
+  fix_accepted?: boolean
   // A pushed fix kept in git, which Show fix in hunk opens: rework-mr's own, review-mr's the
   // author's push that changed the topic's lines.
   fix_kept?: boolean

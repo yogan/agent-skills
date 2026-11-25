@@ -605,15 +605,26 @@ const reworkButtons = (review: ReviewState): BandButton[] => {
       // Posted by hand, often reworded: the agent checks it against the draft, as in review-mr.
       const replied: BandButton = { key: 'posted-check', label: 'Check my post', press: ask(reworkCheckPrompt(t)) }
       if (topic.draft) {
-        // Rewording is a prompt, or Copy and the person's own edit: no Redo. A reply after
-        // the fix explains it and never resolves: the reviewer reads it and resolves. Nor
-        // does a question, which waits for its answer, or a push-back, which waits for the
-        // reviewer's word: resolving with either closes the thread on them
+        // Rewording is a prompt, or Copy and the person's own edit: no Redo. The first reply
+        // after the fix explains it and never resolves: the reviewer reads it and resolves.
+        // One to the reviewer's word after that reply may close it, and is best posted so.
+        // Nor does a question resolve, which waits for its answer, or a push-back, which
+        // waits for the reviewer's word: resolving with either closes the thread on them
         // (threads.py's `post_reply` refuses the same).
-        const settles = !topic.pushed && topic.outcome !== 'question' && topic.outcome !== 'push-back'
-        bs = [{ key: 'post', label: 'Post', press: { kind: 'post', reply: true }, isPrimary: true },
-          ...(settles ? [{ key: 'post-resolve', label: 'Post + resolve', press: { kind: 'post', reply: true, resolve: true } } as BandButton] : []),
+        const isAfterFixReply = topic.pushed === true && topic.fix_replied === true
+        const settles = (!topic.pushed || isAfterFixReply) && topic.outcome !== 'question' && topic.outcome !== 'push-back'
+        bs = [{ key: 'post', label: 'Post', press: { kind: 'post', reply: true }, ...(settles && isAfterFixReply ? {} : { isPrimary: true as const }) },
+          ...(settles ? [{ key: 'post-resolve', label: 'Post + resolve', press: { kind: 'post', reply: true, resolve: true }, ...(isAfterFixReply ? { isPrimary: true as const } : {}) } as BandButton] : []),
           replied, ...(topic.fix_kept ? [showFix] : [])]
+      } else if (topic.pushed && topic.fix_replied) {
+        // The fix's reply is up, and the reviewer wrote again since: a second “Fixed” is
+        // refused (threads.py's `post_reply`). Accepted, asking nothing more, it is resolved
+        // as it is, or answered first; otherwise answered.
+        const answer: BandButton = { key: 'reply', label: 'Reply…', press: { kind: 'fill', text: `Draft my reply for ${t}${lang}: ` } }
+        bs = topic.fix_accepted
+          ? [{ key: 'resolve', label: 'Resolve', isPrimary: true, press: { kind: 'resolve', did: 'resolved its thread on GitLab and closed the topic: the reviewer accepted its pushed fix and asked nothing more' } }, answer]
+          : [answer]
+        bs = [...bs, ...(topic.fix_kept ? [showFix] : [])]
       } else if (topic.pushed && (topic.outcome ?? 'fix') === 'fix') {
         // After the push: a "Fixed" with its link, resolved or not, or a reply that says more.
         // A reply is the recommendation where there is something to say: the fix differs
