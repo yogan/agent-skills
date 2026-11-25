@@ -1442,6 +1442,38 @@ test("the sidebar's thread draws a comment's emoji shortcode as the emoji, open 
   await ui.unmount()
 })
 
+// The code element's diff form trims its source's trailing whitespace: a hunk ending on an
+// empty line of the file lost that line and was drawn as plain text.
+const endsBlank = (source: unknown) => /\n\s*$/.test(String(source))
+
+test("a stretch of the file ending on an empty line is drawn as a diff, the empty line left out", async ($, on) => {
+  const code = codeOf(20, [3, 3])
+  ;(code.rows[19] as unknown[])[3] = ''
+  const w = world(on, [stateOf('t1', [topic('t1', 'open')])], { code: { stdout: JSON.stringify(code) } })
+  await openReview($, w, view('t1'))
+  const ui = await $.ui.mount({ ...PANEL, props: { ...PANEL.props, scroll: { offset: 0, bodyRows: 60 } }, surface: 'terminal' })
+  const codes = (await ui.findAll({ type: 'Code' })).map(c => String(c.props.source))
+  expect(codes.at(-1)).toMatch(/^@@ -4,16 \+4,16 @@\n const line4 = 4\n[^]*\n const line19 = 19$/)
+  expect(codes.some(endsBlank)).toBe(false)
+  await ui.unmount()
+})
+
+test("a suggestion that keeps an empty line at its end is drawn as a diff, the empty line left out", async ($, on) => {
+  const code = codeOf(50, [17, 17])
+  ;(code.rows[17] as unknown[])[3] = ''
+  const thread = [{ url: 'u', file: 'src/cache.ts', line: 17, notes: [
+    { author: 'Kim', body: 'rename it\n\n```suggestion:-0+1\nfixed()\n\n```', url: 'http://gl/x#note_2' },
+  ] }]
+  const w = world(on, [stateOf('t1', [topic('t1', 'open')], { thread })], { code: { stdout: JSON.stringify(code) } })
+  await openReview($, w, view('t1'))
+  const ui = await $.ui.mount({ ...PANEL, props: { ...PANEL.props, scroll: { offset: 0, bodyRows: 60 } }, surface: 'terminal' })
+  await ui.press({ key: 'fold-0-0' })
+  const codes = (await ui.findAll({ type: 'Code' })).map(c => String(c.props.source))
+  expect(codes).toContain('@@ -17,1 +17,1 @@\n-const line17 = 17\n+fixed()')
+  expect(codes.some(endsBlank)).toBe(false)
+  await ui.unmount()
+})
+
 test("an empty suggestion's fold row says how many lines it removes", async ($, on) => {
   const thread = [{ url: 'u', file: 'src/cache.ts', line: 17, notes: [
     { author: 'Kim', body: 'drop these\n\n```suggestion:-2+1\n```', url: 'http://gl/x#note_2' },

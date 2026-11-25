@@ -10,7 +10,7 @@ import {
   boxRowsOf, fitTitle, plainTitle, INBOX_ICON, MR_COLOR, INBOX_WORD, inboxMark, kindOf, kindSlot, legendFor, oneLineNote, reflow, sectionsOf, STATE_ICON, stateIconOf,
   whenOf, personColor, YOU, YOU_COLOR, type BoxRow, type Row,
 } from './panel.ts'
-import { blocksOf, type DiffSize, type SizeRun, inPresses, inlineOf, namesPresses, withEmoji, withOutcome, withoutDraft, isPostCommand, isViewCommand, partsOf, sizeOf, sizeRunsOf, withoutPasted, withSuggestions, manifestOf, titleOf, viewOf, withNote, withoutExcerpt, withoutExcerptLabel, withoutThread } from './views.ts'
+import { blocksOf, drawableDiff, type DiffSize, type SizeRun, inPresses, inlineOf, namesPresses, withEmoji, withOutcome, withoutDraft, isPostCommand, isViewCommand, partsOf, sizeOf, sizeRunsOf, withoutPasted, withSuggestions, manifestOf, titleOf, viewOf, withNote, withoutExcerpt, withoutExcerptLabel, withoutThread } from './views.ts'
 import {
   askedFor, barPaint, cellsOf, changeKinds, clampOffset, codeArgsOf, codeWindow, currentOwn, firstOffset, phaseOf, pressOf, pushOf, stepOwn,
   type BarLook, type BarSpec, type CodeView,
@@ -2680,7 +2680,7 @@ export const register: Register = on => {
             <Box key={`${tag}-${i}`} flexDirection="row">
               <Box flexDirection="column" flexShrink={0}>{lines.map((_, k) => <Text key={`${tag}-${i}-bar-${k}`} dimColor>{'▎ '}</Text>)}</Box>
               {row.diff
-                ? <Code source={source} path={code?.view.file} format="diff" wrap="truncate-end" />
+                ? <Code source={drawableDiff(source)} path={code?.view.file} format="diff" wrap="truncate-end" />
                 : <Code source={source} language={row.lang || undefined} wrap="truncate-end" />}
             </Box>)
           i = j
@@ -2964,7 +2964,7 @@ export const register: Register = on => {
                 : <Text key={`mark-${run.from + i}-${k}`} color="green">{m ? '▎' : ' '}</Text>)))}
             </Box>
             <Box flexGrow={1}>
-              <Code source={run.source} path={v.file} format="diff" wrap={run.isDiscussed ? 'wrap' : 'truncate-end'} />
+              <Code source={drawableDiff(run.source)} path={v.file} format="diff" wrap={run.isDiscussed ? 'wrap' : 'truncate-end'} />
             </Box>
           </Box>
         )

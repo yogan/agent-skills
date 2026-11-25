@@ -339,6 +339,47 @@ export const locOf = (path: string, hunks: string[]): string => {
   return `${path}:${from}${to > from ? `–${to}` : ''}`
 }
 
+// A diff as the code element can draw it. Its diff form trims the source's trailing
+// whitespace, so a hunk ending on a blank line of context (a lone space) loses that line,
+// no longer holds as many lines as its `@@` line says, and is drawn as plain text. Each hunk
+// leaves out the blank context lines at its end, both its counts lowered by as many: a card
+// shows what a change does, and an empty row at its foot says nothing. A hunk that would be
+// left with no lines, or whose `@@` line does not parse, stays as it is; so does what stands
+// before the first hunk (a `---`/`+++` pair). An empty line at the end that the `@@` line
+// does not count (a newline the text ended on) is left out with the counts as they are: a
+// card's text loses a lone space on its way (`blocksOf`), so an empty line there can be
+// either.
+const HUNK_HEAD = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@(.*)$/
+const withoutEndBlanks = (hunk: string[]): string[] => {
+  const m = HUNK_HEAD.exec(hunk[0] as string)
+  if (!m) return hunk
+  let n = hunk.length
+  while (n > 1 && /^\s*$/.test(hunk[n - 1] as string)) n -= 1
+  if (n === hunk.length || n === 1) return hunk
+  const body = hunk.slice(1)
+  const old = Number(m[2] ?? 1)
+  const now = Number(m[4] ?? 1)
+  const uncounted = Math.max(0, Math.min(
+    body.filter(l => !l.startsWith('+') && !l.startsWith('\\')).length - old,
+    body.filter(l => !l.startsWith('-') && !l.startsWith('\\')).length - now))
+  const dropped = Math.max(0, hunk.length - n - uncounted)
+  if (old - dropped < 0 || now - dropped < 0) return hunk
+  return [dropped ? `@@ -${m[1]},${old - dropped} +${m[3]},${now - dropped} @@${m[5]}` : hunk[0] as string, ...hunk.slice(1, n)]
+}
+export const drawableDiff = (source: string): string => {
+  const out: string[] = []
+  let hunk: string[] = []
+  for (const line of source.split('\n')) {
+    if (line.startsWith('@@ ')) {
+      out.push(...withoutEndBlanks(hunk))
+      hunk = [line]
+    } else if (hunk.length) hunk.push(line)
+    else out.push(line)
+  }
+  out.push(...withoutEndBlanks(hunk))
+  return out.join('\n')
+}
+
 export const partsOf = (text: string): Part[] => {
   const out: Part[] = []
   let md: string[] = []
@@ -363,7 +404,9 @@ export const partsOf = (text: string): Part[] => {
     flush()
     const prefix = m[1] ?? ''
     const body = lines.slice(i + 1, close).map(ln => (ln.startsWith(prefix) ? ln.slice(prefix.length) : ln.replace(/^>/, '')))
-    const hunks = body.join('\n').split(/\n(?=@@ )/).filter(h => h.startsWith('@@ '))
+    // Trimmed here, not where they are drawn, so a quote's bar, the dim plain text and the
+    // heading's lines (`loc`) all count the rows the diff draws.
+    const hunks = body.join('\n').split(/\n(?=@@ )/).filter(h => h.startsWith('@@ ')).map(drawableDiff)
     out.push({ path: m[2] as string, at: m[3] ? Number(m[3]) : undefined, hunks, isQuoted: prefix !== '',
       ...(m[4] ? { loc: locOf(m[2] as string, hunks) } : {}) })
     i = close

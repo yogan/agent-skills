@@ -4,7 +4,7 @@ import { expect, test } from 'claude-code/testing'
 
 import { boxRowsOf, inboxMark, oneLineNote, plainTitle, reflow, rowOf, sectionsOf, urlLabel, whenOf, personColor, PEOPLE_COLORS } from '../hooks/panel.ts'
 import { withEmoji } from '../hooks/views.ts'
-import { blocksOf, inlineOf, inPresses, isPostCommand, isViewCommand, namesPresses, NOTE, partsOf, sizeRunsOf, withOutcome, withoutDraft } from '../hooks/views.ts'
+import { blocksOf, drawableDiff, inlineOf, inPresses, isPostCommand, isViewCommand, namesPresses, NOTE, partsOf, sizeRunsOf, withOutcome, withoutDraft } from '../hooks/views.ts'
 
 test('only a command that runs one of the scripts\' writes is the person\'s press; one that names it is not', () => {
   for (const ran of [
@@ -686,6 +686,49 @@ test("a proposal's change is headed by its file and the lines it spans, as the s
   expect(await ui.find({ type: 'Text', text: 'src/features/x.ts:60–71' })).toBeDefined()
   expect((await ui.findAll({ type: 'Markdown' })).map(m => m.props.text as string).join('\n')).not.toContain('@@')
   expect((await ui.findAll({ type: 'Code' })).length).toBe(2)
+  await ui.unmount()
+})
+
+// The code element's diff form trims its source's trailing whitespace: a hunk ending on a
+// blank line of context lost that line, no longer matched its `@@` line, and was drawn as
+// plain text.
+test("a hunk's blank context lines at its end are left out, its counts lowered to match", () => {
+  const proposal = [
+    '@@ -37,8 +37,4 @@', ' FONT_NAME = "x"', '-', '-', '-@functools.cache', '-def _font() -> Font:',
+    '-    """Doc."""', '-    return Font("y")', '+# Doc.', '+FONT = Font("y")', ' ',
+  ]
+  expect(drawableDiff(proposal.join('\n'))).toBe([
+    '@@ -37,7 +37,3 @@', ' FONT_NAME = "x"', '-', '-', '-@functools.cache', '-def _font() -> Font:',
+    '-    """Doc."""', '-    return Font("y")', '+# Doc.', '+FONT = Font("y")',
+  ].join('\n'))
+  // Every hunk of a source on its own, what stands before the first kept; a blank line
+  // inside a hunk stays, as do empty and whitespace-only ones at its end left out.
+  expect(drawableDiff(['--- a/m.py', '+++ b/m.py', '@@ -1,3 +1,3 @@ def go():', '-a', '+b', ' ', '@@ -9,5 +9,5 @@', ' c', ' ', '-d', '+e', '', '  \t'].join('\n')))
+    .toBe(['--- a/m.py', '+++ b/m.py', '@@ -1,2 +1,2 @@ def go():', '-a', '+b', '@@ -9,3 +9,3 @@', ' c', ' ', '-d', '+e'].join('\n'))
+  // A header with its counts left out counts one line; the source's own last newline is
+  // no line of the diff.
+  expect(drawableDiff('@@ -5 +5,2 @@\n+a\n \n')).toBe('@@ -5,0 +5,1 @@\n+a')
+  // Nothing to leave out, a hunk that would be left empty, and a header that does not parse
+  // stay as they are.
+  for (const same of [
+    '@@ -1,2 +1,2 @@\n-a\n+b\n c', '@@ -1,1 +1,1 @@\n ', '@@ -1,2 +1,2 @@\n \n ', '@@ x @@\n-a\n ', ' a\n ',
+  ]) expect(drawableDiff(same)).toBe(same)
+})
+
+const endsBlank = (source: unknown) => /\n\s*$/.test(String(source))
+
+test("a proposal's change ending on a blank line of context is drawn as a diff, its heading the lines drawn", async ($, on) => {
+  engineRow(on)
+  await reviewing($)
+  const text = [
+    '\u{f12c4} **t3** **x** · `a.py:38`', '',
+    '```diff path=src/fonts.py loc', '@@ -37,4 +37,3 @@', ' FONT_NAME = "x"', '-def _font():', '-    return Font("y")', '+FONT = Font("y")', ' ', '```',
+  ].join('\n')
+  const ui = await $.ui.mount({ ...row('python3 $SD/threads.py quote t3 --focus', text + manifest({ first: firstOf(text) })), surface: 'terminal' })
+  const codes = await ui.findAll({ type: 'Code' })
+  expect(codes.map(c => c.props.source)).toEqual(['@@ -37,3 +37,2 @@\n FONT_NAME = "x"\n-def _font():\n-    return Font("y")\n+FONT = Font("y")'])
+  expect(codes.some(c => endsBlank(c.props.source))).toBe(false)
+  expect(await ui.find({ type: 'Text', text: 'src/fonts.py:37–38' })).toBeDefined()
   await ui.unmount()
 })
 

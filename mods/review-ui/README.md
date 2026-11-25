@@ -150,6 +150,11 @@ says none of them.
   Markdown, which takes no colour and keeps its dim through the repaint, keeps `dimColor`
   (`band.test.tsx` guards every part of a card). The sidebar, a pane, is not repainted so:
   its `dimColor` stays dim under the pointer.
+- `Code`'s diff format trims its source's trailing whitespace, so a hunk ending on a blank
+  line of context (a lone space) loses that line, no longer matches its `@@` line's counts,
+  and is drawn as plain code, the `@@` line and all. Every source the mod hands it goes
+  through `drawableDiff` (`hooks/views.ts`) first, which drops such lines and lowers the
+  counts. The test kit's `Code` does not trim, so its tests check the source handed over.
 - A key chord bound in the `Global` context takes over its first key everywhere (ctrl+x
   stopped deleting in the session overview); bind in `Chat`.
 - A pane is reachable from the keyboard only when opened with `focus: true`. Consecutive shell
