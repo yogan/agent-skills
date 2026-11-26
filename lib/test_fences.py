@@ -231,11 +231,11 @@ class TestCompactNote(unittest.TestCase):
     the author's own line wrapping undone so the card wraps it."""
 
     def test_head_then_text_with_the_author_s_wrapping_undone(self):
-        out = note_md("Chidi Okafor", "couples the route table to a concrete client\n"
+        out = note_md("Clara Checker", "couples the route table to a concrete client\n"
                       "instance, in Storybook.\n\n- one\n- two", compact=True, url="u",
                       when="Nov 5, 11:38")
         self.assertEqual(out.splitlines(), [
-            f"> [{LINK_ICON}](u) **Chidi** _Nov 5, 11:38_",
+            f"> [{LINK_ICON}](u) **Clara** _Nov 5, 11:38_",
             "> couples the route table to a concrete client instance, in Storybook.",
             ">", "> - one", "> - two"])
 

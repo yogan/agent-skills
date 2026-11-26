@@ -87,10 +87,10 @@ DATES = {
     "mr5": "2024-05-09T15:40:00+02:00",
 }
 IDENT = {
-    "author-bot": ("Novak, Alex - CD67890", "author-bot@e2e.test"),
-    "reviewer-bot": ("Haas, Miriam - EF13579", "reviewer-bot@e2e.test"),
-    "peer-bot": ("Okonkwo, Chidi - GH24680", "peer-bot@e2e.test"),
-    "frank": ("Blendinger, Frank - AB12345", "frank@e2e.test"),
+    "author-bot": ("Alice Agent", "author-bot@e2e.test"),
+    "reviewer-bot": ("Bob Builder", "reviewer-bot@e2e.test"),
+    "peer-bot": ("Clara Checker", "peer-bot@e2e.test"),
+    "frank": ("Frank Blendinger", "frank@e2e.test"),
 }
 
 
@@ -474,7 +474,8 @@ instance instead?""",
 
 Reworked: `query-client.ts` now exports `createQueryClient()` plus a lazy
 `getQueryClient()` for the session, and the loaders call `getQueryClient()`.
-Tests build their own client."""},
+Tests build their own client, and logout calls `resetQueryClient()`, which clears
+the session's client and drops it, so the next user starts with an empty cache."""},
 
     {"key": "loader-errors", "state": "asked",
      "file": "src/routes/protected.tsx", "needle": "loader: async ({ params }",
@@ -996,7 +997,7 @@ def clone_mr4():
 
 # ---------------------------------------------------------------- MR !5
 
-# MR !5: Alex's again, a small one you have reviewed before (seeded as MR !2 is), with three
+# MR !5: Alice's again, a small one you have reviewed before (seeded as MR !2 is), with three
 # threads of other reviewers beside your two: for the cards of other reviewers' threads, and
 # for a push of fix commits on top, each commit the fix of one thread (news.py's
 # `fixes-on-top`). Every thread is on a file of its own but two, which share one line, so a
@@ -1017,7 +1018,7 @@ MR5_COMMENTS = "src/features/comments/components/CommentsList.tsx"
 MR5_DISCUSSIONS = "src/features/discussions/components/DiscussionsList.tsx"
 MR5_USERS = "src/features/users/components/UsersList.tsx"
 # The lines news.py's two commits change: the relative date (your first thread's), and the
-# comment's date (your second's, and Miriam's).
+# comment's date (your second's, and Bob's).
 MR5_RELATIVE = "export const formatRelative = (date: number) => dayjs(date).fromNow();"
 MR5_COMMENT_DATE = ('                <span className="text-xs font-semibold">'
                     '{formatRelative(comment.createdAt)}</span>\n')
@@ -1094,20 +1095,20 @@ MR5_PEER_THREADS = [
 `dayjs` directly gets `relativeTime` too once this file has loaded. Fine as it is, just
 something to know when a test imports `format.ts` on its own.""",
      "summary": "dayjs.extend is global, so the plugin reaches every dayjs import",
-     "why": "Chidi notes that `dayjs.extend` changes the global `dayjs`, so `relativeTime` "
+     "why": "Clara notes that `dayjs.extend` changes the global `dayjs`, so `relativeTime` "
             "reaches every module that imports it. A remark for the author; nothing in it asks "
             "anything of you."},
     {"user": "reviewer-bot", "file": MR5_COMMENTS, "needle": "{formatRelative(comment.createdAt)}",
      "body": """Small one: a `<time dateTime=…>` in place of the span would let screen readers
 and tests read the real date instead of "3 days ago".""",
      "summary": "a time element would give screen readers and tests the real date",
-     "why": "Miriam suggests a `<time dateTime>` element in place of the `span`, so assistive "
+     "why": "Bob suggests a `<time dateTime>` element in place of the `span`, so assistive "
             "technology and tests read the real date. A suggestion to the author; nothing in it "
             "asks anything of you."},
     {"user": "peer-bot", "file": MR5_FORMAT_TEST, "needle": "const DAY = 24 * 60 * 60 * 1000;",
      "body": "Nit: `DAY` could live in a shared test helper; the users tests will want it too.",
      "summary": "the DAY constant could move to a shared test helper",
-     "why": "Chidi suggests moving `DAY` to a shared test helper so other tests can use it. A nit "
+     "why": "Clara suggests moving `DAY` to a shared test helper so other tests can use it. A nit "
             "for the author; nothing in it asks anything of you."},
 ]
 
@@ -1124,7 +1125,7 @@ def replace_once(path, old, new):
 
 
 def build_mr5():
-    """One commit by Alex on the demo's main. Its fixes come later, from news.py."""
+    """One commit by Alice on the demo's main. Its fixes come later, from news.py."""
     step("MR !5 — relative dates (re-review target with other reviewers' threads)")
     git("checkout", "--quiet", "-B", MR5_BRANCH, build_main(), cwd=BUILD)
     for path, text in MR5_NEW.items():

@@ -830,9 +830,9 @@ test("a topic's story lines are steps: their time apart, and one under another w
 })
 
 test('each person has a colour of their own, by their place in the review; you have yours', () => {
-  const people = ['Robin', 'Miriam']
+  const people = ['Robin', 'Bob']
   expect(personColor('You', people)).toBe('magenta')
-  expect([personColor('Robin', people), personColor('Miriam', people)]).toEqual([PEOPLE_COLORS[0], PEOPLE_COLORS[1]])
+  expect([personColor('Robin', people), personColor('Bob', people)]).toEqual([PEOPLE_COLORS[0], PEOPLE_COLORS[1]])
   expect(personColor('Nobody', people)).toBeUndefined()
 })
 
@@ -872,9 +872,9 @@ test("a posted draft leaves its card, and the story under it stays", () => {
   // to the next heading, the comment, the plan and the push with it.
   const card = ['**\u{F0AAA} Recommendation**', '', 'Add it.', '',
     '**\u{F12C4} Draft reply**', '', '> Done, see below.', '>', '> Fixed: [diff](u)', '',
-    '09:18 \u{F09E1} Miriam commented', '09:32 \u{F0552} You pushed a fix', ''].join('\n')
+    '09:18 \u{F09E1} Bob commented', '09:32 \u{F0552} You pushed a fix', ''].join('\n')
   expect(withoutDraft(card)).toBe(['**\u{F0AAA} Recommendation**', '', 'Add it.', '',
-    '09:18 \u{F09E1} Miriam commented', '09:32 \u{F0552} You pushed a fix'].join('\n'))
+    '09:18 \u{F09E1} Bob commented', '09:32 \u{F0552} You pushed a fix'].join('\n'))
   // review-mr's says where it goes, in italics, above the quote.
   expect(withoutDraft('**\u{F12C4} Draft comment**\n_As a new thread on `a.ts:3`:_\n\n> Hallo\n\n13:55 \u{F012C} You agreed it'))
     .toBe('13:55 \u{F012C} You agreed it')
@@ -887,9 +887,9 @@ test("a press's line goes on under the card's steps, and stands apart from anyth
   const said = { when: '14:02', icon: '\u{F048A}', text: 'You', url: 'u', label: 'replied', isInline: true, after: 'and resolved it' }
   expect(withOutcome('**Draft**\n\nHallo', said, '\u{F03CC}')).toBe('**Draft**\n\nHallo\n\n14:02 \u{F048A} You [replied \u{F03CC}](u) and resolved it')
   // A card that ended on whom it waits on loses that line to the press's own: "Waits on
-  // Alex" above "You resolved it" said both.
+  // Alice" above "You resolved it" said both.
   const closed = { when: '14:03', icon: '\u{F012C}', text: 'You resolved it' }
-  expect(withOutcome('13:55 \u{F012C} You posted the initial comment\n\u{F051F} Waits on Alex', closed, '\u{F03CC}'))
+  expect(withOutcome('13:55 \u{F012C} You posted the initial comment\n\u{F051F} Waits on Alice', closed, '\u{F03CC}'))
     .toBe('13:55 \u{F012C} You posted the initial comment\n14:03 \u{F012C} You resolved it')
 })
 

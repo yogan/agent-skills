@@ -3,12 +3,12 @@
 people on them would: for trying the review-ui mod's News box and rounds by hand, and for the
 scenarios' checks.
 
-MR !1, which you review; Alex (author-bot) is its author:
+MR !1, which you review; Alice (author-bot) is its author:
 
-    python3 e2e/news.py reply   # Alex answers your thread on /auth/me (auth.ts): fix to come
-    python3 e2e/news.py push    # Alex pushes the missing await in comments.ts, with no word
-    python3 e2e/news.py fix     # Alex pushes the /auth/me fix and says in its thread it is fixed
-    python3 e2e/news.py both    # Alex answers your thread on loadDb (db.ts) and pushes its fix
+    python3 e2e/news.py reply   # Alice answers your thread on /auth/me (auth.ts): fix to come
+    python3 e2e/news.py push    # Alice pushes the missing await in comments.ts, with no word
+    python3 e2e/news.py fix     # Alice pushes the /auth/me fix and says in its thread it is fixed
+    python3 e2e/news.py both    # Alice answers your thread on loadDb (db.ts) and pushes its fix
                                 # at the same time: a reply and a push in one go
 
 `reply`, `fix` and `both` answer YOUR thread on that point. Where you have none (none of yours
@@ -17,37 +17,37 @@ makes, and say so: the answer then always fits the comment it answers.
 
 MR !2, which you re-review; main moves under it:
 
-    python3 e2e/news.py main        # Chidi (peer-bot) lands a docs change on main
-    python3 e2e/news.py rebase-fix  # Alex rebases !2 onto main and pushes one commit that fixes
+    python3 e2e/news.py main        # Clara (peer-bot) lands a docs change on main
+    python3 e2e/news.py rebase-fix  # Alice rebases !2 onto main and pushes one commit that fixes
                                     # t2 (the prefetch's errors) well and t4 (the repeated key)
                                     # only partly, and answers on t2 alone
 
-MR !3, your own; Miriam (reviewer-bot) reviews it:
+MR !3, your own; Bob (reviewer-bot) reviews it:
 
-    python3 e2e/news.py approve     # Miriam approves it
-    python3 e2e/news.py settle      # Miriam resolves its open threads and approves it
+    python3 e2e/news.py approve     # Bob approves it
+    python3 e2e/news.py settle      # Bob resolves its open threads and approves it
     python3 e2e/news.py pipeline running|success|failed   # a pipeline on its head
-    python3 e2e/news.py more        # Miriam reopens the naming thread and asks for more
-    python3 e2e/news.py doubt       # Miriam reopens it and doubts the pushed rename
-    python3 e2e/news.py suggest     # Miriam applies a suggestion of hers on GitLab: a commit
+    python3 e2e/news.py more        # Bob reopens the naming thread and asks for more
+    python3 e2e/news.py doubt       # Bob reopens it and doubts the pushed rename
+    python3 e2e/news.py suggest     # Bob applies a suggestion of his on GitLab: a commit
                                     # on !3's branch that your checkout does not have
     python3 e2e/news.py merge       # you merge it
 
-MR !5, which you re-review beside two other reviewers; Alex is its author:
+MR !5, which you re-review beside two other reviewers; Alice is its author:
 
-    python3 e2e/news.py fixes-on-top  # Alex pushes two fix commits on top at once: the first
+    python3 e2e/news.py fixes-on-top  # Alice pushes two fix commits on top at once: the first
                                       # fixes your thread on the relative date (format.ts) and
                                       # changes three files besides, the second your thread on
-                                      # the comment's date and Miriam's on the same line
+                                      # the comment's date and Bob's on the same line
                                       # (CommentsList.tsx), with no word in either thread
-    python3 e2e/news.py peer-resolve  # Chidi (peer-bot) resolves his own thread on dayjs.ts
+    python3 e2e/news.py peer-resolve  # Clara (peer-bot) resolves her own thread on dayjs.ts
 
 Which commands exclude each other:
 
 - Each runs once per rig. Run again, it refuses and changes nothing.
 - `reply` refuses after `fix`: it promises a fix that is pushed already.
 - `rebase-fix` needs `main` first: without it there is nothing to rebase onto.
-- `approve` refuses where Miriam approved already (`settle` approves too).
+- `approve` refuses where Bob approved already (`settle` approves too).
 - `more` and `doubt` go in either order; after `merge`, nothing on !3 does.
 - `suggest` changes a file no topic of !3 is about, so a fix pushed before or after it is
   still the fix; a push made after it stops until the commit is taken in.
@@ -69,6 +69,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import fixture as fx  # noqa: E402
 from lib.cli import die  # noqa: E402
+from lib.mr_common import first_name  # noqa: E402
 
 AGAIN = ("Each command runs once per rig; `fixture.py` (or `tmux-demo.sh --force`) starts over. "
          "Which commands exclude each other: `python3 e2e/news.py help`.")
@@ -211,7 +212,7 @@ def answer(iid, point, text, who, cmd):
     first, as you, where none of yours is about it. Refused where it was answered so already."""
     discs = discussions(iid)
     d = fitting_thread(discs, "frank", point["file"], point["about"])
-    name = fx.IDENT[who][0].split(", ")[1].split(" ")[0]
+    name = first_name(fx.IDENT[who][0])
     if d and said(d, who, text):
         raise Refused(f"{name} has answered your thread on {point['file']} with this already: "
                       f"`{cmd}` ran before.")
@@ -314,7 +315,7 @@ T2_REPLY = "Done: only a 404 becomes null now; anything else is rethrown and fai
 def plan_main():
     sha = tip("main")
     if README_LINE.strip() in file_at(sha, "README.md"):
-        raise Refused("main has Chidi's change already: `main` ran before.")
+        raise Refused("main has Clara's change already: `main` ran before.")
 
     def land(_s):
         b = fx.BUILD
@@ -322,7 +323,7 @@ def plan_main():
         with open(os.path.join(b, "README.md"), "a") as f:
             f.write(README_LINE)
         fx.git("commit", "--quiet", "-am", "docs: mention the quick source check", cwd=b, user="peer-bot")
-        # main is protected: only a maintainer pushes to it. The commit stays Chidi's.
+        # main is protected: only a maintainer pushes to it. The commit stays Clara's.
         fx.git("push", "--quiet", fx.push_url("root"), "HEAD:refs/heads/main", cwd=b)
         fx.info(f"main moved to {fx.git('rev-parse', 'HEAD', cwd=b).stdout.strip()[:8]} (peer-bot)")
     return [("", land)]
@@ -376,12 +377,12 @@ def approve_step():
 def plan_approve():
     open_mr3("approve")
     if approved_by_miriam():
-        raise Refused(f"Miriam has approved !{REWORK_IID} already (`approve` or `settle` ran).")
+        raise Refused(f"Bob has approved !{REWORK_IID} already (`approve` or `settle` ran).")
     return [approve_step()]
 
 
 def plan_settle():
-    """Miriam resolves every thread still open on MR !3, then approves it: every topic
+    """Bob resolves every thread still open on MR !3, then approves it: every topic
     settled, and the MR ready for the Done box's Merge."""
     open_mr3("settle")
     enc = fx.project_path_enc()
@@ -389,7 +390,7 @@ def plan_settle():
              if first_note(d).get("resolvable") and not first_note(d).get("resolved")]
     approved = approved_by_miriam()
     if not still and approved:
-        raise Refused(f"!{REWORK_IID} has no open thread and Miriam approved it: `settle` ran before.")
+        raise Refused(f"!{REWORK_IID} has no open thread and Bob approved it: `settle` ran before.")
 
     def resolve(_s):
         for did in still:
@@ -434,13 +435,13 @@ DOUBT = ("Thinking about it more, I'm not sure about the rename after all: every
 
 
 def plan_more(text, cmd):
-    """Miriam's follow-up in MR !3's thread on MORE_ON, reopened if resolved."""
+    """Bob's follow-up in MR !3's thread on MORE_ON, reopened if resolved."""
     open_mr3(cmd)
     d = thread_on(discussions(REWORK_IID), MORE_ON)
     if not d:
         raise Refused(f"no thread on {MORE_ON} in MR !{REWORK_IID}")
     if said(d, "reviewer-bot", text):
-        raise Refused(f"Miriam has written this in the thread on {MORE_ON} already: `{cmd}` ran before.")
+        raise Refused(f"Bob has written this in the thread on {MORE_ON} already: `{cmd}` ran before.")
     enc = fx.project_path_enc()
 
     def post(_s):
@@ -467,9 +468,9 @@ def plan_suggest():
 
 IID5 = 5
 
-# Alex's two fix commits on top, pushed at once: the first answers your thread on the
+# Alice's two fix commits on top, pushed at once: the first answers your thread on the
 # relative date and touches three files besides; the second answers your thread on the
-# comment's date, and Miriam's on the same line, in a file the first leaves alone.
+# comment's date, and Bob's on the same line, in a file the first leaves alone.
 RELATIVE_FIXED = ('// "3 days ago", from `now`: a list that stays open passes one that moves on.\n'
                   "export const formatRelative = (date: number, now: number = Date.now()) =>\n"
                   "  dayjs(date).from(now);")
@@ -513,12 +514,12 @@ FIX_COMMITS = (
     ("keep the exact date of a comment on hover", {
         fx.MR5_COMMENTS: [COMMENTS_IMPORT, (fx.MR5_COMMENT_DATE, COMMENT_DATE_FIXED)]}),
 )
-# Chidi's thread that he resolves himself: the first of the other reviewers' (fixture.py).
+# Clara's thread that she resolves herself: the first of the other reviewers' (fixture.py).
 RESOLVED_PEER = fx.MR5_PEER_THREADS[0]
 
 
 def plan_fixes_on_top():
-    """Alex's FIX_COMMITS, each a commit of its own on !5's branch, pushed together as one
+    """Alice's FIX_COMMITS, each a commit of its own on !5's branch, pushed together as one
     fast-forward push. Refused where the branch has them already."""
     branch = fx.MR5_BRANCH
     sha = tip(branch, "author-bot")
@@ -548,7 +549,7 @@ def plan_fixes_on_top():
 
 
 def plan_peer_resolve():
-    """Chidi resolves his own thread on RESOLVED_PEER's file: it closes by itself for you."""
+    """Clara resolves her own thread on RESOLVED_PEER's file: it closes by itself for you."""
     p = RESOLVED_PEER
     d = next((d for d in discussions(IID5)
               if (first_note(d).get("author") or {}).get("username") == p["user"]
@@ -557,7 +558,7 @@ def plan_peer_resolve():
         raise Refused(f"no thread of {p['user']}'s on {p['file']} in !{IID5}: it is not as "
                       "fixture.py seeds it.")
     if first_note(d).get("resolved"):
-        raise Refused(f"Chidi's thread on {p['file']} is resolved already: `peer-resolve` ran before.")
+        raise Refused(f"Clara's thread on {p['file']} is resolved already: `peer-resolve` ran before.")
     enc = fx.project_path_enc()
     return [(f"!{IID5}: {p['user']} resolved their thread on {p['file']}",
              lambda _s: fx.api(f"projects/{enc}/merge_requests/{IID5}/discussions/{d['id']}?resolved=true",

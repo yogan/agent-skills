@@ -13,7 +13,7 @@ import layout  # noqa: E402
 
 # The file's lines and the thread box among them, its scrollbar beside them all at the right.
 BODY = [" 1 -export const a = {", "  ╭──────────────────────────────────╮",
-        "  │ Miriam Naming: this one exports… │", "  ╰──────────────────────────────────╯",
+        "  │ Bob Naming: this one exports… │", "  ╰──────────────────────────────────╯",
         " 2  b;"]
 THUMB = ["▃", "█", "█", "\U0001fb82", " "]
 GOOD = "\n".join([

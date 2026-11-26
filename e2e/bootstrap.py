@@ -47,20 +47,21 @@ PASSWORD = "Ud5jH3-wN7cY2-qF4tM8"
 ROOT_PASSWORD = "Rk8xQ2-mT9zV4-pB6nL1"
 PAT_NAME = "e2e-fixture"
 
-# username -> (display name, project access level). Display names use the enterprise
-# "Last, First - ID" shape on purpose: lib/mr_common.py's first_name() has a parser for
-# exactly that, so the fixture exercises the real code path instead of a happy-path name.
-# frank needs Maintainer (40) to force-push MR !3's branch, which /rework-mr does on
-# every fixup; the bots only need Developer (30).
+# username -> (display name, project access level, avatar in avatars/). The names are plain
+# "First Last": the people on screen in the demo, the presenter under their own name and
+# avatar, and the others named for what they do there (Alice authors the MRs you review, Bob
+# reviews yours, Clara chimes in on others). frank needs Maintainer (40) to force-push MR
+# !3's branch, which /rework-mr does on every fixup; the others only need Developer (30).
 USERS = {
-    "frank": ("Blendinger, Frank - AB12345", 40),        # the live identity — you
-    "author-bot": ("Novak, Alex - CD67890", 30),          # authors MR !1 and !2
-    "reviewer-bot": ("Haas, Miriam - EF13579", 30),       # reviews MR !3
-    "peer-bot": ("Okonkwo, Chidi - GH24680", 30),         # one extra thread on MR !2
+    "frank": ("Frank Blendinger", 40, "frank.png"),      # the live identity — you
+    "author-bot": ("Alice Agent", 30, "alice.png"),     # authors MR !1, !2 and !5
+    "reviewer-bot": ("Bob Builder", 30, "bob.png"),     # reviews MR !3
+    "peer-bot": ("Clara Checker", 30, "clara.png"),     # other reviewers' threads, !2 and !5
 }
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ENV_FILE = os.path.join(HERE, ".env.local")
+AVATARS = os.path.join(HERE, "avatars")
 
 
 def root_token():
@@ -234,9 +235,11 @@ def find_user(username):
 
 
 def ensure_users():
+    """Each user there, with the name and the avatar USERS gives them: a re-run brings an
+    instance set up before either changed to what the repo says."""
     step("ensuring users")
     ids = {}
-    for uname, (dname, _lvl) in USERS.items():
+    for uname, (dname, _lvl, avatar) in USERS.items():
         u = find_user(uname)
         if not u:
             u = api("users", "POST", {
@@ -245,8 +248,32 @@ def ensure_users():
                 "can_create_group": False,
             })
             print(f"    created {uname}")
+        elif u["name"] != dname:
+            api(f"users/{u['id']}", "PUT", {"name": dname})
+            print(f"    renamed {uname} to {dname}")
+        ensure_avatar(u, os.path.join(AVATARS, avatar))
         ids[uname] = u["id"]
     return ids
+
+
+def ensure_avatar(user, path):
+    """Uploads `path` as the user's avatar unless GitLab already serves exactly that file."""
+    with open(path, "rb") as f:
+        want = f.read()
+    url = (user.get("avatar_url") or "").split("?")[0]
+    if "/uploads/" in url:
+        try:
+            with urllib.request.urlopen(url, timeout=30) as r:
+                if r.read() == want:
+                    return
+        except (urllib.error.URLError, OSError):
+            pass                        # unreadable: upload it again
+    r = subprocess.run(["curl", "-sS", "-f", "-X", "PUT", "-H", f"PRIVATE-TOKEN: {root_token()}",
+                        "-F", f"avatar=@{path}", f"{API}/users/{user['id']}"],
+                       capture_output=True, text=True)
+    if r.returncode:
+        die(f"avatar upload for {user['username']} failed: {r.stderr.strip()}")
+    print(f"    avatar set for {user['username']}")
 
 
 def token_valid(username, token):
@@ -313,7 +340,7 @@ def ensure_project(group_id):
 
 def ensure_members(project_id, ids):
     have = {m["username"]: m for m in api(f"projects/{project_id}/members") or []}
-    for uname, (_dname, level) in USERS.items():
+    for uname, (_dname, level, _avatar) in USERS.items():
         if uname in have and have[uname]["access_level"] >= level:
             continue
         if uname in have:

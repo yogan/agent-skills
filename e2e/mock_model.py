@@ -259,6 +259,8 @@ HEX = re.compile(r"\b[0-9a-f]{7,40}\b")
 # A commit's full hash: what tells a short hash of all digits from a number (a count, a size),
 # which no full hash starts with.
 FULL_SHA = re.compile(r"\b[0-9a-f]{40}\b")
+# The shortest a commit is named: git's own short hash.
+SHORT_SHA = 7
 
 
 def commits_in(*texts):
@@ -425,7 +427,8 @@ class Mock:
             return self.miss(f"{stream['name']}: reply {n + 1} answered {reply['prompts'][0][:80]!r}, "
                              f"this time the prompt is {asked[:80]!r}")
         content = from_placeholders(reply["content"])
-        for old, new in self.renamed(stream, messages).items():
+        # Longest first: a short hash is the start of its full one, which would be cut apart.
+        for old, new in sorted(self.renamed(stream, messages).items(), key=lambda p: -len(p[0])):
             content = _swap(content, old, new)
         return self.offered(content, body)
 
@@ -514,6 +517,12 @@ class Mock:
                     now = HEX.findall(text)
                 if then and len(then) == len(now):
                     renamed.update((a, z) for a, z in zip(then, now) if a != z)
+        # A commit followed in full is followed in its short forms too: a reply may name it
+        # short (a fixup), cut from a full hash it saw, which no output showed short.
+        for a, z in list(renamed.items()):
+            if FULL_SHA.fullmatch(a) and FULL_SHA.fullmatch(z):
+                for n in range(SHORT_SHA, len(a)):
+                    renamed.setdefault(a[:n], z[:n])
         return renamed
 
     def offered(self, content, body):

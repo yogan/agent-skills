@@ -356,6 +356,21 @@ class TestRunMadeIds(unittest.TestCase):
             u([{"type": "tool_result", "tool_use_id": "tu1", "content": "2190839 feat\n7654321 bytes"}])))
         self.assertEqual(got[0]["input"]["command"], "git commit --fixup=2190839 # 1234567 bytes")
 
+    def test_a_full_hash_followed_is_followed_in_its_short_form_too(self):
+        """The recording saw two commits' full hashes (`git show --stat`) and wrote them short
+        into a fixup: the run's commits were followed in full, never in the short form, and
+        the fixup named a commit this run does not have."""
+        then, now = "789884cc0227791933fa0bd8850dc9ae25126b95", "57cb575deceb1870669f15e4c42d5f7ff4058d07"
+        lines = [user("go"), said("m1", call("tu1", "git show --stat HEAD")),
+                 {"type": "user", "message": {"role": "user", "content": [
+                     {"type": "tool_result", "tool_use_id": "tu1", "content": f"commit {then}\n feat"}]}},
+                 said("m2", call("tu2", f"git commit --fixup={then[:7]} && git show {then}"))]
+        mock = M.Mock({"streams": [{"name": "main", "first": "go", "replies": M.conversation(lines),
+                                    "ids": M.seen_ids(lines), "hexes": M.seen_ids(lines, M.HEX)}]})
+        got = mock.answer(request(u("go"), a(call("tu1", "git show --stat HEAD")),
+                                  u([{"type": "tool_result", "tool_use_id": "tu1", "content": f"commit {now}\n feat"}])))
+        self.assertEqual(got[0]["input"]["command"], f"git commit --fixup={now[:7]} && git show {now}")
+
     def test_an_older_recording_follows_a_hash_that_came_out_all_digits_too(self):
         """A recording made before `hexes` holds only ids with a letter in them: a run whose
         new commit's short hash was all digits showed none, and the stale hash went on."""

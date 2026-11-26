@@ -1,5 +1,5 @@
 From acd71fe64f1f4a9b9790688162331044c8ec0567 Mon Sep 17 00:00:00 2001
-From: "Blendinger, Frank - AB12345" <frank@e2e.test>
+From: Frank Blendinger <frank@e2e.test>
 Date: Tue, 4 Aug 2026 18:06:04 +0200
 Subject: [PATCH 2/2] use the query-key factories in every discussions/comments
  hook

@@ -1,5 +1,5 @@
 From 7d3557dbb33a800b07e81beb34aff50faacff9c9 Mon Sep 17 00:00:00 2001
-From: "Novak, Alex - CD67890" <author-bot@e2e.test>
+From: Alice Agent <author-bot@e2e.test>
 Date: Wed, 8 May 2024 15:44:00 +0200
 Subject: [PATCH 3/3] do not fail the discussions loader when one discussion is
  missing

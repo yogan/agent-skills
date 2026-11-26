@@ -1,5 +1,5 @@
 From 65e29f8efa6aff36bd2fee2b0481c658629d83cb Mon Sep 17 00:00:00 2001
-From: "Blendinger, Frank - AB12345" <frank@e2e.test>
+From: Frank Blendinger <frank@e2e.test>
 Date: Tue, 4 Aug 2026 18:05:27 +0200
 Subject: [PATCH 1/2] extract react-query keys into per-feature factories
 

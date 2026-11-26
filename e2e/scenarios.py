@@ -145,10 +145,10 @@ REWORK_FIX = [
             # Opened again from the list, waiting on its reviewer: its card is the fix's steps to
             # the reply, whom it waits on, and the pushed fix to look at. No round runs.
             Click("\U000f09e4 t2 ", offset=3),
-            Expect(r"Waits on Miriam", region="screen", wait=30),
+            Expect(r"Waits on Bob", region="screen", wait=30),
             # Its story, one line per event in the order they happened, inside the one card.
-            Expect(r"Miriam commented[^╰]*You agreed the plan: Fix[^╰]*You pushed a fix[^╰]*"
-                   r"You replied[^╰]*Waits on Miriam", region="main"),
+            Expect(r"Bob commented[^╰]*You agreed the plan: Fix[^╰]*You pushed a fix[^╰]*"
+                   r"You replied[^╰]*Waits on Bob", region="main"),
             # The reply it posted is spent: no draft of it is offered again.
             Expect(r"Draft reply", region="screen", absent=True),
             Expect(button('Post'), region="screen", absent=True),
@@ -350,7 +350,7 @@ REWORK_MIND = [
             press('Fix it', turn=True, timeout=600),
             Expect(button('Ack and push'), region="screen"),
             Prompt("Stop, I don't want this fix after all: drop it, and draft a reply asking "
-                   "Miriam which of her two options she prefers.", timeout=600),
+                   "Bob which of his two options he prefers.", timeout=600),
             # A question back waits for its answer: Post alone, nothing that resolves the thread.
             Expect(button('Post'), region="screen", wait=60),
             Expect(button('Post + resolve'), region="screen", absent=True),
@@ -447,7 +447,7 @@ REWORK_STOPPED = [
             SUGGESTION_ON_BRANCH,                      # nothing went up over it
             press('Take in and push', timeout=600),
             Expect(button('“Fixed” + resolve'), region="screen", wait=120),
-            SUGGESTION_ON_BRANCH,                      # on top, as she made it
+            SUGGESTION_ON_BRANCH,                      # on top, as he made it
             # The fix under it, and the branch here what went up.
             Check("git fetch -q && git rev-parse HEAD @{u} | uniq | wc -l && "
                   "git show @{u}~1:src/features/comments/api/query-keys.ts | grep -c commentKeys",
@@ -511,7 +511,7 @@ def settles(who, *buttons):
 
 
 # The line above a fix's files where they are some of the commits of a push: the second of
-# Alex's two commits on top, or the first.
+# Alice's two commits on top, or the first.
 ONE_OF_TWO = Expect(r"1 of 2 commits of this push", region="panel", wait=60)
 # A file only the first commit changed, or only the second.
 FIRST_ONLY = r"UsersList\.tsx|useNow\.ts"
@@ -528,22 +528,22 @@ REREVIEW_PEERS = [
             # Its card: what the agent made of it when it came in, whose it is to settle, and
             # the way on through the others, never a "Seen".
             Expect(r"Analysis", region="screen"),
-            Expect(r"Chidi notes that", region="screen"),
-            Expect(settles("Chidi", "Next", "Reply…", "Analyse"), region="main"),
+            Expect(r"Clara notes that", region="screen"),
+            Expect(settles("Clara", "Next", "Reply…", "Analyse"), region="main"),
             Expect(button("Seen"), region="screen", absent=True),
             press("Next"),
             Expect(current("t4"), region="panel", wait=30),
-            Expect(settles("Miriam", "Next", "Reply…", "Analyse"), region="main"),
+            Expect(settles("Bob", "Next", "Reply…", "Analyse"), region="main"),
             # The card left behind still says whose it is: it is not closed on GitLab.
-            Expect(r"Chidi's to settle", region="main"),
+            Expect(r"Clara's to settle", region="main"),
             Expect(r"\bClosed\.", region="main", absent=True),
             press("Next"),
             Expect(current("t5"), region="panel", wait=30),
             # The last of them: its way on closes the card.
-            Expect(settles("Chidi", "Close", "Reply…", "Analyse"), region="main"),
+            Expect(settles("Clara", "Close", "Reply…", "Analyse"), region="main"),
             press("Close"),
             Expect(current("t5"), region="panel", absent=True, wait=30),
-            # Chidi resolves his own: closed by itself at the next update check, nothing judged.
+            # Clara resolves her own: closed by itself at the next update check, nothing judged.
             Check(f"{NEWS} peer-resolve", r"resolved their thread"),
             Expect(r"Closed \(1\)", region="panel", wait=60),
             Expect(r"From other reviewers\n[^\n]*\bt4\b[^\n]*\n[^\n]*\bt5\b", region="panel"),
@@ -551,7 +551,7 @@ REREVIEW_PEERS = [
             Click(ROW5["t3"], offset=1, region="panel"),
             Expect(current("t3"), region="panel", wait=30),
             # Its card ends on who resolved it: no verdict, nothing to answer.
-            Expect(r"Chidi resolved it[^╭]*\Z", region="main", wait=30),
+            Expect(r"Clara resolved it[^╭]*\Z", region="main", wait=30),
             Expect(r"Verdict", region="screen", absent=True),
             *[Expect(button(b), region="screen", absent=True)
               for b in ("Next", "Reply…", "Follow up", "Wait for author")],
@@ -562,9 +562,9 @@ REREVIEW_COMMITS = [
             Panel(True),
             Expect(r"Waiting for author", region="panel", wait=60),
             Expect(r"From other reviewers", region="panel"),
-            # Alex answers both of your threads with a commit each, pushed together on top.
+            # Alice answers both of your threads with a commit each, pushed together on top.
             Check(f"{NEWS} fixes-on-top", r"pushed two commits on top"),
-            Expect(r"Alex pushed · t1, t2\b", region="panel", wait=120),
+            Expect(r"Alice pushed · t1, t2\b", region="panel", wait=120),
             # The second commit fixed t2: its files alone, and the line says it is one of two.
             Click(ROW5["t2"], offset=1, region="panel"),
             Expect(current("t2"), region="panel", wait=30),
@@ -578,7 +578,7 @@ REREVIEW_COMMITS = [
             Expect(r"useNow\.ts", region="panel"),
             Expect(r"UsersList\.tsx", region="panel"),
             Expect(SECOND_ONLY, region="panel", absent=True),
-            # Miriam's thread, on t2's line: the second commit is its fix too, to look at. Its
+            # Bob's thread, on t2's line: the second commit is its fix too, to look at. Its
             # way into the diff viewer is the sidebar's, above the fix's files: a card leaves
             # that button to the sidebar wherever the sidebar shows them.
             Click(ROW5["t4"], offset=1, region="panel"),
@@ -641,7 +641,7 @@ SCENARIOS = [
             # The author's push that changed t1's lines is its fix, found from the MR's
             # versions: on its card with the push's link, its files in the sidebar.
             Click(" t1 ", offset=1, region="panel"),
-            Expect(r"Alex pushed a fix · .*diff", region="screen", wait=60),
+            Expect(r"Alice pushed a fix · .*diff", region="screen", wait=60),
             Expect(r"Show in hunk", region="panel"),
             # The fix's own change: the commented file's old lines beside its new ones, and the
             # fix's other files listed under it.
@@ -653,19 +653,19 @@ SCENARIOS = [
             Expect(r"\}\) => \{", region="panel", wait=30),
         ]),
     Scenario(
-        "rereview-news", "MR !2 waiting: main moves, Alex rebases onto it with a fix, and News names the topics whose lines the push changed",
+        "rereview-news", "MR !2 waiting: main moves, Alice rebases onto it with a fix, and News names the topics whose lines the push changed",
         REVIEW2, needs_rig=True, mods=[MOD], recording="rereview-2", steps=[
             Prompt("/review-mr !2", timeout=600),
             Panel(True),
             Expect(r"\bNews\b", region="panel", wait=60),
-            # The update check has seen Alex's first push (it changed t5's import line too)
+            # The update check has seen Alice's first push (it changed t5's import line too)
             # before the rebase comes, so the rebase's line is its own.
-            Expect(r"Alex pushed · t", region="panel", wait=120),
+            Expect(r"Alice pushed · t", region="panel", wait=120),
             Check(f"{NEWS} main", r"main moved"),
             Check(f"{NEWS} rebase-fix", r"replied"),
             # The rebase with the fix: its line names the topics whose lines it changed, not
             # every topic on a file it touched (t5's import is forty lines from the fix).
-            Expect(r"Alex rebased and pushed", region="panel", wait=240),
+            Expect(r"Alice rebased and pushed", region="panel", wait=240),
             Expect(r"rebased and pushed[^\n]*\bt5\b", region="panel", absent=True),
             # t2's fix is beside its comment's line: named once judged its fix. (t4's is too,
             # but rereview-2's recording has no judgment of t4's news to play.)
@@ -675,7 +675,7 @@ SCENARIOS = [
         "rereview-peers", "MR !5: other reviewers' threads, one card after another, and one closes by itself once resolved",
         REVIEW5, needs_rig=True, mods=[MOD], steps=REREVIEW_PEERS),
     Scenario(
-        "rereview-commits", "MR !5: Alex pushes a fix commit per thread on top, and each topic shows its own commit's files",
+        "rereview-commits", "MR !5: Alice pushes a fix commit per thread on top, and each topic shows its own commit's files",
         REVIEW5, needs_rig=True, mods=[MOD], steps=REREVIEW_COMMITS),
     Scenario(
         "rework-3", "MR !3, rework: three reviewer threads", WORK,
@@ -687,7 +687,7 @@ SCENARIOS = [
             Expect(r"\bt3\b", region="panel"),
             # The current topic's thread, as a comment box on the code it is on: the link
             # icon, its author.
-            Expect("\U000f03cc Miriam", region="panel"),
+            Expect("\U000f03cc Bob", region="panel"),
             Click("✕"),                 # its own close
             Panel(False),
         ]),

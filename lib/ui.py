@@ -270,7 +270,7 @@ def push_aside_md(also=(), rebase=False, mixed=False):
 
 def closed_md(text, at=None, url=None):
     """A topic's closing line, the last of its card before the buttons in both skills: when,
-    who closed it and how (`Miriam resolved it`). It carries no link: a resolve is no
+    who closed it and how (`Bob resolved it`). It carries no link: a resolve is no
     comment to open, and the comments of the story above it each link themselves (`url` is
     taken and not drawn, for the callers that still pass it). The review-ui mod draws the
     same words as the outcome of the press that closed it."""

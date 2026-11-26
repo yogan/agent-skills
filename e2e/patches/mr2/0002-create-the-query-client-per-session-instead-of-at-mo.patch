@@ -1,20 +1,41 @@
-From 5af2f2806d0694876ca380d330c5c0a52bc96bb3 Mon Sep 17 00:00:00 2001
-From: "Novak, Alex - CD67890" <author-bot@e2e.test>
+From 6d15c494a326624a7ce389874cf5bdcfcb8dfd60 Mon Sep 17 00:00:00 2001
+From: Alice Agent <author-bot@e2e.test>
 Date: Wed, 8 May 2024 09:20:00 +0200
 Subject: [PATCH 2/3] create the query client per session instead of at module
  scope
 
 ---
- src/lib/query-client.ts  | 20 +++++++++++++++-----
+ src/lib/auth.tsx         |  2 ++
+ src/lib/query-client.ts  | 26 +++++++++++++++++++++-----
  src/providers/app.tsx    |  4 ++--
  src/routes/protected.tsx |  6 +++---
- 3 files changed, 20 insertions(+), 10 deletions(-)
+ 4 files changed, 28 insertions(+), 10 deletions(-)
 
+diff --git a/src/lib/auth.tsx b/src/lib/auth.tsx
+index 225157e..b3fef79 100644
+--- a/src/lib/auth.tsx
++++ b/src/lib/auth.tsx
+@@ -8,6 +8,7 @@ import {
+   LoginCredentialsDTO,
+   RegisterCredentialsDTO,
+ } from '@/features/auth';
++import { resetQueryClient } from '@/lib/query-client';
+ import storage from '@/utils/storage';
+ 
+ async function handleUserResponse(data: UserResponse) {
+@@ -38,6 +39,7 @@ async function registerFn(data: RegisterCredentialsDTO) {
+ 
+ async function logoutFn() {
+   storage.clearToken();
++  resetQueryClient();
+   window.location.assign(window.location.origin as unknown as string);
+ }
+ 
 diff --git a/src/lib/query-client.ts b/src/lib/query-client.ts
-index fc94c93..34d2039 100644
+index fc94c93..cfdf63b 100644
 --- a/src/lib/query-client.ts
 +++ b/src/lib/query-client.ts
-@@ -2,8 +2,18 @@ import { QueryClient } from '@tanstack/react-query';
+@@ -2,8 +2,24 @@ import { QueryClient } from '@tanstack/react-query';
  
  import { queryConfig } from './react-query';
  
@@ -28,7 +49,8 @@ index fc94c93..34d2039 100644
 +    defaultOptions: queryConfig,
 +  });
 +
-+// One client per browser session. Tests build their own via createQueryClient(), so
++// One client per signed-in session: created on first use and dropped on logout, so the
++// next user starts with an empty cache. Tests build their own via createQueryClient(), so
 +// no cache is shared between them.
 +let client: QueryClient | undefined;
 +
@@ -37,6 +59,11 @@ index fc94c93..34d2039 100644
 +    client = createQueryClient();
 +  }
 +  return client;
++};
++
++export const resetQueryClient = () => {
++  client?.clear();
++  client = undefined;
 +};
 diff --git a/src/providers/app.tsx b/src/providers/app.tsx
 index ced25ab..b2ed6e9 100644
@@ -86,5 +113,5 @@ index 2cc3f36..e9d1138 100644
            return null;
          },
 -- 
-2.55.0
+2.56.1
 
