@@ -371,7 +371,10 @@ def refuse_rejudge(t, kind, severity, by_user):
 
 
 def attach_thread(state, t, discussion_id, ctx, iid, start_sha=None):
-    """Link a posted GitLab thread to a topic and capture its baseline."""
+    """Link a posted GitLab thread to a topic and capture its baseline. A match still offered
+    for it is spent: the thread is on a topic now."""
+    if state.get("proposals"):
+        state["proposals"] = [p for p in state["proposals"] if p["thread"] != discussion_id]
     first_thread = not t["thread_ids"]
     if discussion_id not in t["thread_ids"]:
         t["thread_ids"].append(discussion_id)
@@ -528,7 +531,11 @@ def kind_icon(t):
 # `gone` is not one: it is set again on every sync for each thread the fetch no longer
 # lists, and a thread listed again is not deleted. Kept across a fetch, one fetch that came
 # back empty left every thread gone for good, out of adoption and skipped by `resolve`.
-LOCAL_THREAD_FIELDS = ()
+#
+# `analysis` is: what the agent found of one of the user's own comments, asked for with its
+# card's Analyse. GitLab has no such field, so a sync that dropped it lost it within seconds,
+# before the comment's match card could show it.
+LOCAL_THREAD_FIELDS = ("analysis",)
 
 
 def sync(state, live, ctx, iid):
@@ -551,6 +558,14 @@ def sync(state, live, ctx, iid):
         if tid not in live:                     # discussion deleted upstream
             state["threads"][tid]["resolved"] = True
             state["threads"][tid]["gone"] = True
+    # A comment of the user's own deleted or resolved while its match waits, or linked to a
+    # topic meanwhile (posted by hand, and the posted check linked it while the update check
+    # judged it): nothing is left to match, so the match goes, and the next one waiting
+    # comes up. Left, it took the sidebar back to the list of their comments mid-topics.
+    if state.get("proposals"):
+        on_topic = {th for t in state["topics"] for th in t["thread_ids"]}
+        state["proposals"] = [p for p in state["proposals"] if p["thread"] not in on_topic
+                              and not own_settled(state["threads"].get(p["thread"]) or {"gone": True})]
     adopt_inbound(state, ctx, iid)
     # A topic linked before this fix existed has no baseline of its own either, and
     # `adopt_inbound` above never revisits it (its thread is already in `linked`) — so
@@ -1994,23 +2009,15 @@ def render_proposal(state, thread=None):
     advice = {"separate": f"keep it apart from {into}, as a topic of its own.",
               "link": f"link it to {into}: it is {into}'s draft, posted by hand."}.get(
         p.get("recommend"), f"merge it into {into}.")
-    # The card is about the user's own comment, so it is signed only where someone else
-    # answered it and the two must be told apart.
-    notes = x.get("notes") or []
-    if any(not n.get("mine") for n in notes):
-        comment = [note_md(n.get("author"), n.get("body"), x.get("file"), x.get("line"),
-                           compact=True, url=n.get("url"), mine=bool(n.get("mine")),
-                           when=when_of(n.get("at")))
-                   for n in notes]
-        comment = [ln for c in comment for ln in (c, "")][:-1]
-    else:
-        link = f"[{LINK_ICON}]({x['url']}) " if x.get("url") else ""
-        body = (x.get("body") or "").strip().splitlines() or [""]
-        comment = [f"> {link}{body[0]}".rstrip()] + [f"> {ln}".rstrip() for ln in body[1:]]
+    comment = own_comment_md(x)
     # The topic it may be: its handle and its summary in quotes, so where the title starts
     # and ends is plain; neither a merge nor a split is implied until the recommendation.
     match = f"**Possible match:** {into} — “{t.get('summary') or ''}”" if t else ""
-    out = [f"**Your comment** · {loc_md(loc)}", "", *comment, "", match, ""]
+    out = [f"**Your comment** · {loc_md(loc)}", "", *comment, ""]
+    # What the agent found of the comment while the user's review was open, asked for there.
+    if analysis := own_analysis_md(x):
+        out += [*analysis, ""]
+    out += [match, ""]
     if p.get("why"):
         out += [p["why"].strip(), ""]
     out.append(ui.recommendation_md(advice))
@@ -2018,6 +2025,131 @@ def render_proposal(state, thread=None):
     if more:
         out += ["", f"_{more} more of your comments to match after this one._"]
     return "\n".join(out)
+
+
+def own_comment_md(x):
+    """The user's own comment `x` (a thread) as a card quotes it. The card is about their own
+    comment, so it is signed only where it holds more than that comment (someone answered
+    it, or they did themselves) and the notes must be told apart."""
+    notes = x.get("notes") or []
+    if len(notes) > 1:
+        comment = [note_md(n.get("author"), n.get("body"), x.get("file"), x.get("line"),
+                           compact=True, url=n.get("url"), mine=bool(n.get("mine")),
+                           when=when_of(n.get("at")))
+                   for n in notes]
+        return [ln for c in comment for ln in (c, "")][:-1]
+    link = f"[{LINK_ICON}]({x['url']}) " if x.get("url") else ""
+    body = (x.get("body") or "").strip().splitlines() or [""]
+    return [f"> {link}{body[0]}".rstrip()] + [f"> {ln}".rstrip() for ln in body[1:]]
+
+
+# What the agent found of one of the user's own comments, asked for while their own review
+# is open (the card's Analyse): whether the point holds against the code.
+OWN_VERDICTS = {"holds": "Holds", "partly": "Partly holds", "wrong": "Does not hold"}
+
+
+def own_analysis_md(x):
+    """The agent's analysis of the user's own comment `x`, as a card part: none where none
+    was asked for."""
+    a = x.get("analysis")
+    if not a:
+        return []
+    return [ui.heading_md(ui.ANALYSIS_ICON, f"Analysis: {OWN_VERDICTS.get(a.get('verdict'), '')}"),
+            "", (a.get("text") or "").strip()]
+
+
+def own_thread(state, thread):
+    """The user's own posted thread `thread`, or a refusal naming the ones there are."""
+    x = state["threads"].get(thread)
+    if not x or not x.get("mine") or x.get("gone"):
+        ids = ", ".join(o["id"] for o in own_threads(state)) or "none"
+        die(f"no comment of yours with the discussion id {thread} (yours: {ids})")
+    return x
+
+
+def render_own(state, thread):
+    """One of the user's own comments, as its card: the comment, and the agent's analysis of
+    it where they asked for one. While their own review is open, nothing of the agent's own
+    topics: those wait until the review is in, so they cannot steer it. Once it is in, a
+    comment already on a topic says which, as the sidebar's row does."""
+    x = own_thread(state, thread)
+    out = [f"**Your comment** · {loc_md(_thread_loc(x) or MR_LEVEL)}", "", *own_comment_md(x)]
+    analysis = own_analysis_md(x)
+    if analysis:
+        out += ["", *analysis]
+    on = next((t for t in state["topics"] if thread in t["thread_ids"]), None)
+    if on and state.get("own_review") != "pending":
+        out += ["", f"**On topic** {on['id']} — “{on.get('summary') or ''}”"]
+    return "\n".join(out)
+
+
+# Lines of the file shown on each side of the comment's line, in `own_context`.
+OWN_CONTEXT_LINES = 40
+# `own_context` gives the MR's whole change (lock files left out) up to this many lines of
+# diff, so a point that turns on another file (a script that starts the server) is settled
+# from it too; past it, the comment's file alone.
+OWN_CONTEXT_DIFF_LINES = 800
+LOCK_FILES = ("yarn.lock", "package-lock.json", "pnpm-lock.yaml", "poetry.lock", "uv.lock",
+              "Cargo.lock", "go.sum", "composer.lock", "Gemfile.lock")
+
+
+def own_context(state, thread):
+    """What judging one of the user's own comments needs, in one read: the comment, which
+    files the MR changes, its change (the whole of it where that is short, else the comment's
+    file), and that file around the line as the comment saw it, numbered. So Analyse judges against what the sidebar shows, from
+    the MR's own change, rather than searching the checkout: a search drew its calls on
+    screen, and one concluded a file the MR changes was unchanged."""
+    x = own_thread(state, thread)
+    file, line = x.get("file"), x.get("line")
+    out = [f"Your comment ({thread}) at {file}:{line}:" if file else f"Your comment ({thread}), on the MR as a whole:",
+           *[f"  {ln}" for ln in (x.get("body") or "").strip().splitlines()]]
+    wt = get_worktree(state.get("slug") or "", state.get("iid"))
+    base = state.get("diff_base")
+    if not (wt and os.path.isdir(wt) and base):
+        return "\n".join(out + ["", "(no review worktree or MR base here: read the code yourself)"])
+
+    def git(*a):
+        r = subprocess.run(["git", "-C", wt, *a], capture_output=True, text=True, errors="replace")
+        return r.stdout if r.returncode == 0 else ""
+
+    def known(sha):
+        return bool(sha) and subprocess.run(["git", "-C", wt, "cat-file", "-e", f"{sha}^{{commit}}"],
+                                            capture_output=True).returncode == 0
+    # The code the comment was posted on; the worktree's own where that commit is not there
+    # (pushed away before the worktree fetched it): an empty diff would read as "unchanged".
+    head = x.get("head_sha") if known(x.get("head_sha")) else "HEAD"
+    if not known(base):
+        return "\n".join(out + ["", "(the MR's base is not in the review worktree: read the code yourself)"])
+    out += ["", "Files this MR changes:",
+            git("diff", "--stat=120", "--stat-graph-width=20", base, head).rstrip()]
+    whole = git("diff", base, head, "--", ".", *[f":(exclude,glob)**/{f}" for f in LOCK_FILES]).rstrip()
+    if whole and whole.count("\n") < OWN_CONTEXT_DIFF_LINES:
+        out += ["", "This MR's change (lock files left out):", whole]
+    elif file:
+        diff = git("diff", base, head, "--", file).rstrip()
+        out += ["", f"This MR's change to {file}:", diff or "(none: the MR leaves this file as it was)"]
+    if file:
+        # A comment on a removed line counts its line in the code before the MR.
+        old = (x.get("side") or "new") == "old"
+        sha = (x.get("base_sha") if known(x.get("base_sha")) else base) if old else head
+        text = git("show", f"{sha}:{file}")
+        lines = text.splitlines()
+        at = int(line or 1)
+        if lines and at <= len(lines):
+            lo, hi = max(1, at - OWN_CONTEXT_LINES), min(len(lines), at + OWN_CONTEXT_LINES)
+            what = "before the MR" if old else "as the MR leaves it"
+            out += ["", f"{file} {what}, lines {lo}-{hi} (the comment is on {at}):",
+                    *[f"{n:5d}{'>' if n == at else ' '} {lines[n - 1]}" for n in range(lo, hi + 1)]]
+    return "\n".join(out)
+
+
+def emit_own(state, thread):
+    """`render_own`'s card with its manifest, naming the comment it is about (`own`), so
+    the mod hosts the comment's buttons on it."""
+    extra = view_context(state)
+    extra["own"] = thread
+    print(critical_manifest.with_manifest(render_own(state, thread), topic=None,
+                                          focus=current_topic(state), extra=extra))
 
 
 def own_threads(state):
@@ -2028,7 +2160,8 @@ def own_threads(state):
     proposed = {p["thread"]: p["into"] for p in state.get("proposals") or []}
     return [{"id": tid, "file": x.get("file"), "line": x.get("line"),
              "text": (plain_text(x.get("body")) or "")[:200],
-             "topic": linked.get(tid), "proposal": proposed.get(tid)}
+             "topic": linked.get(tid), "proposal": proposed.get(tid),
+             "resolved": own_settled(x)}
             for tid, x in state["threads"].items() if x.get("mine") and not x.get("gone")]
 
 
@@ -2046,30 +2179,43 @@ def close_own_review(state, how):
         return f"own review {how}"
     start_round(state)        # the first pass is the first round
     if state.get("proposals"):
-        return capture_emit(state, render_proposal(state))
+        return capture_emit(state, render_proposal(state), own=state["proposals"][0]["thread"])
     tid = state.get("focus")
     if not topic_for(state, tid):
         return f"own review {how}; no topic needs the user"
     anchor_notes(state, [topic_for(state, tid)])
     block = render_quote(state, tid, None)
+    own = own_threads(state)
     lead = (f"_No comments of yours on !{state.get('iid')} to match: "
-            "on to the agent's topics._" if not own_threads(state)
-            else "_Every comment of yours is on a topic already: on to the topics._")
+            "on to the agent's topics._" if not own
+            else "_Every comment of yours is on a topic already: on to the topics._"
+            if not any(x["resolved"] and not x["topic"] for x in own)
+            else "_Nothing of yours left to match (a comment you resolved stays out): "
+                 "on to the topics._")
     return capture_emit(state, lead + "\n\n" + block, tid)
 
 
-def capture_emit(state, block, topic=None):
+def capture_emit(state, block, topic=None, own=None):
     """`emit`'s output as text, for a caller that prints it after saving."""
     buf = io.StringIO()
     with contextlib.redirect_stdout(buf):
-        emit(state, block, topic)
+        emit(state, block, topic, own)
     return buf.getvalue().rstrip("\n")
 
 
+def own_settled(x):
+    """Whether the user's own thread `x` is settled in GitLab itself: deleted, or resolved by
+    them (a point they dropped, "never mind, I checked"). Neither is matched to a topic: a
+    resolved one became a topic of its own once, for a point already closed. One someone
+    else resolved is matched as any other, and its resolution waits for their ack there."""
+    return bool(x.get("gone") or (x.get("resolved") and x.get("resolved_mine")))
+
+
 def unsettled_own(state):
-    """The user's own threads on no topic and in no proposal: what the matching has still to
-    settle, or, once the topics run, the comments they posted since."""
-    return [x["id"] for x in own_threads(state) if not (x["topic"] or x["proposal"])]
+    """The user's own threads on no topic and in no proposal, and not resolved: what the
+    matching has still to settle, or, once the topics run, the comments they posted since."""
+    return [x["id"] for x in own_threads(state)
+            if not (x["topic"] or x["proposal"] or x["resolved"])]
 
 
 def answer_mark(state, t):
@@ -2484,10 +2630,13 @@ def card_face(state, t):
     ], sort_keys=True, default=str).encode()).hexdigest()[:12]
 
 
-def emit(state, block, topic=None):
+def emit(state, block, topic=None, own=None):
     """Print a gated view with its manifest, naming the topic it is about and the current
-    one, so the paste gate enforces only what belongs to the topic being decided."""
+    one, so the paste gate enforces only what belongs to the topic being decided. `own`: the
+    user's own comment a card is about (a match's), so the mod hosts that comment's buttons."""
     extra = view_context(state, topic)
+    if own:
+        extra["own"] = own
     t = topic_for(state, topic) if topic else None
     if t:
         extra["face"] = card_face(state, t)
@@ -3089,6 +3238,8 @@ def render_candidates(state, me):
             continue
         if x.get("gone"):
             continue          # deleted upstream — offering it to link would be a trap
+        if x.get("mine") and own_settled(x) and own_review_open(state):
+            continue          # resolved by them: a point dropped, nothing to match
         # A one-line preview, so markdown is flattened rather than cut mid-fence: the
         # first 80 raw characters of a comment can open a ```suggestion block on screen.
         preview = plain_text(x.get("body")) or "(no prose — code only)"
@@ -4660,7 +4811,7 @@ def set_lang(slug, lang):
 
 # The commands that only read the state: they run alongside any other, since a write is
 # whole or nothing (`save`). The mod asks for these after every view and on every move.
-READ_ONLY = ("state", "code", "draft", "path", "begun", "proposal", "bodies", "judge-prompt", "hunk-show",
+READ_ONLY = ("state", "code", "draft", "path", "begun", "proposal", "own", "own-context", "bodies", "judge-prompt", "hunk-show",
              "view", "point", "notes", "reply")
 
 
@@ -4922,6 +5073,27 @@ def main():
                         "its card (the first, or the one of <discussion_id>)")
     pq.add_argument("thread", nargs="?")
     pq.add_argument("--iid", type=int)
+
+    pw = sub.add_parser("own", help="one of the user's own comments, while their own review "
+                        "is open, as its card")
+    pw.add_argument("thread", help="the comment's discussion id")
+    pw.add_argument("--iid", type=int)
+
+    pc = sub.add_parser("own-context", help="what judging one of the user's own comments needs: "
+                        "the comment, the MR's change to its file, and the code around it")
+    pc.add_argument("thread", help="the comment's discussion id")
+    pc.add_argument("--iid", type=int)
+
+    pa = sub.add_parser("own-analysis", help="store whether one of the user's own comments "
+                        "holds against the code, and show its card. Never names or hints at "
+                        "the agent's own topics, which wait for the user's review")
+    pa.add_argument("thread", help="the comment's discussion id")
+    pa.add_argument("--verdict", required=True, choices=tuple(OWN_VERDICTS),
+                    help="holds, partly (holds in part) or wrong (does not hold)")
+    pa.add_argument("--text", required=True,
+                    help="two to four English sentences: what the code does there, and why the "
+                         "point holds or does not; `-` reads it from stdin")
+    pa.add_argument("--iid", type=int)
 
     pf = sub.add_parser("follow-up", help="on a press: the agent adds nothing to the user's "
                         "own comment merged into <t>")
@@ -5496,7 +5668,19 @@ def main():
         save(path, state)
         print(f"{tref(args.topic)}: nothing to add; waiting on the author")
     elif cmd == "proposal":
-        emit(state, render_proposal(state, args.thread))
+        props = state.get("proposals") or []
+        emit(state, render_proposal(state, args.thread),
+             own=args.thread or (props[0]["thread"] if props else None))
+    elif cmd == "own":
+        emit_own(state, args.thread)
+    elif cmd == "own-context":
+        print(own_context(state, args.thread))
+    elif cmd == "own-analysis":
+        x = own_thread(state, args.thread)
+        text = sys.stdin.read() if args.text == "-" else args.text
+        x["analysis"] = {"verdict": args.verdict, "text": text.strip()}
+        save(path, state)
+        emit_own(state, args.thread)
     elif cmd == "settle":
         props = state.get("proposals") or []
         p = next((x for x in props if x["thread"] == args.thread), None) or \

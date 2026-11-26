@@ -1874,7 +1874,7 @@ class TestStateForTheMod(unittest.TestCase):
                 self.assertEqual([t["fix_kept"] for t in F.state_json(state)["topics"]], [False, False])
 
     def test_a_push_that_came_with_a_rebase_is_kept_without_the_target_branch_s_changes(self):
-        """Alex rebased onto main, which had moved by a docs change, and fixed the topic in
+        """Alice rebased onto main, which had moved by a docs change, and fixed the topic in
         the same push: the fix the sidebar lists and the viewer shows held the docs too."""
         with tempfile.TemporaryDirectory() as wt:
             git = lambda *a: subprocess.run(["git", "-C", wt, *a], check=True,  # noqa: E731
@@ -2709,14 +2709,14 @@ class TestVerdict(unittest.TestCase):
             self.assertEqual(judge_store(self.state, asked, fenced)["stored"], ["t1"])
 
     def test_a_card_drawn_again_after_your_follow_up_still_says_what_was_judged(self):
-        """Back on the topic after posting: its card ended "Alex replied / Waits on Alex",
-        with no line for the reply just posted, and had lost "What you asked / What Alex
+        """Back on the topic after posting: its card ended "Alice replied / Waits on Alice",
+        with no line for the reply just posted, and had lost "What you asked / What Alice
         did / Verdict"."""
-        self.state["author"] = "Alex Novak"
+        self.state["author"] = "Alice Agent"
         th = self.state["threads"]["d1"]
         th.update(mine=True, notes=[
             {"author": "Ann", "body": "No staleTime.", "mine": True, "at": "2026-11-05T09:00:00Z"},
-            {"author": "Novak, Alex", "body": "In a follow-up MR.", "mine": False, "at": "2026-11-05T10:00:00Z"}])
+            {"author": "Agent, Alice", "body": "In a follow-up MR.", "mine": False, "at": "2026-11-05T10:00:00Z"}])
         self._judge(text="Nothing in this MR sets it.")
         self.t["verdict"]["did"] = "Proposed a follow-up MR."
         th["notes"].append({"author": "Ann", "body": "Fine, thanks.", "mine": True, "at": "2026-11-05T11:00:00Z"})
@@ -2724,22 +2724,22 @@ class TestVerdict(unittest.TestCase):
         with self.drawn(), patch.object(F, "topic_status", return_value="open"):
             lines = F.render_quote(self.state, "t1").splitlines()
         card = "\n".join(lines)
-        for part in ("What you asked", "What Alex did", "Verdict: Not settled", "Nothing in this MR sets it."):
+        for part in ("What you asked", "What Alice did", "Verdict: Not settled", "Nothing in this MR sets it."):
             self.assertIn(part, card)
         self.assertRegex(lines[-2], r"You replied$")                 # the follow-up, in the story
-        self.assertEqual(lines[-1], f"{F.ui.STEP_WAITS_ICON} Waits on Alex")
+        self.assertEqual(lines[-1], f"{F.ui.STEP_WAITS_ICON} Waits on Alice")
 
     def test_a_judged_answer_s_follow_up_draft_comes_after_the_story(self):
-        self.state["author"] = "Alex Novak"
+        self.state["author"] = "Alice Agent"
         self.state["threads"]["d1"].update(mine=True, notes=[
             {"author": "Ann", "body": "No staleTime.", "mine": True, "at": "2026-11-05T09:00:00Z"},
-            {"author": "Novak, Alex", "body": "In a follow-up MR.", "mine": False, "at": "2026-11-05T10:00:00Z"}])
+            {"author": "Agent, Alice", "body": "In a follow-up MR.", "mine": False, "at": "2026-11-05T10:00:00Z"}])
         self._judge(text="Nothing in this MR sets it.")
         self.t["draft"] = "A cap would still help."
         with self.drawn(), patch.object(F, "topic_status", return_value="open"):
             card = F.render_quote(self.state, "t1")
         self.assertIn("Verdict", card)
-        self.assertLess(card.index("Waits on Alex"), card.index("Draft follow-up"))
+        self.assertLess(card.index("Waits on Alice"), card.index("Draft follow-up"))
         self.assertEqual(card.strip().splitlines()[-1], "> A cap would still help.")
 
     def test_the_view_and_the_state_name_the_same_face_and_news_changes_it(self):
@@ -2752,14 +2752,14 @@ class TestVerdict(unittest.TestCase):
             now = F.state_json(self.state)
         face = wm.call_args.kwargs["extra"]["face"]
         self.assertEqual(now["face"], face)
-        self.state["threads"]["d1"]["notes"] = [{"author": "Novak, Alex", "body": "Done now.", "mine": False,
+        self.state["threads"]["d1"]["notes"] = [{"author": "Agent, Alice", "body": "Done now.", "mine": False,
                                                  "at": "2026-11-06T10:00:00Z", "url": "u"}]
         self.assertNotEqual(F.card_face(self.state, self.t), face)
 
     def test_what_is_new_in_a_thread_is_what_others_wrote_since_you_last_acted(self):
         th = self.state["threads"]["d1"]
         th["notes"] = [{"author": "Ann", "body": "Stale.", "mine": True, "at": "2026-11-05T09:00:00Z"},
-                       {"author": "Novak, Alex", "body": "Done.", "mine": False, "at": "2026-11-05T10:00:00Z"}]
+                       {"author": "Agent, Alice", "body": "Done.", "mine": False, "at": "2026-11-05T10:00:00Z"}]
         self.assertEqual(F.thread_new(self.state, self.t), 1)
         self.t["acked_at"] = "2026-11-05T11:00:00Z"
         self.assertEqual(F.thread_new(self.state, self.t), 0)
@@ -2868,14 +2868,14 @@ class TestVerdict(unittest.TestCase):
 
     def test_an_answered_card_recaps_the_ask_then_what_was_done_then_the_verdict(self):
         self.t["why"] = "The old analysis. **Recommendation:** Raise it."
-        self.state["author"] = "Alex Novak"
+        self.state["author"] = "Alice Agent"
         self.state["threads"]["d1"].update(body="Missing await here.", mine=True)
         self.t["verdict"] = {"says": "settled", "text": "The write is awaited now.",
                              "asked": "The write was not awaited; asked for an await.",
                              "did": "Pushed the await; no reply.", "on": F.answer_mark(self.state, self.t)}
         with self.drawn():
             card = F.render_quote(self.state, "t1")
-        order = [card.index(x) for x in ("What you asked", "asked for an await", "What Alex did",
+        order = [card.index(x) for x in ("What you asked", "asked for an await", "What Alice did",
                                          "Pushed the await; no reply.", "Verdict: Settled",
                                          "The write is awaited now.")]
         self.assertEqual(order, sorted(order))
@@ -2884,27 +2884,27 @@ class TestVerdict(unittest.TestCase):
 
     def test_an_answered_card_ends_on_the_author_s_latest_answer_not_the_verdict(self):
         """The card rule: the latest event last, never the agent's judgment of it."""
-        self.state["author"] = "Alex Novak"
+        self.state["author"] = "Alice Agent"
         self.state["threads"]["d1"]["notes"] = [
             {"author": "Ann", "body": "Missing await.", "mine": True, "at": "2026-11-05T09:00:00Z"},
-            {"author": "Novak, Alex", "body": "Done.", "mine": False, "at": "2026-11-05T10:12:00Z"}]
+            {"author": "Agent, Alice", "body": "Done.", "mine": False, "at": "2026-11-05T10:12:00Z"}]
         self.t["verdict"] = {"says": "settled", "text": "Awaited now.", "on": F.answer_mark(self.state, self.t)}
         with self.drawn():
             card = F.render_quote(self.state, "t1")
-        self.assertRegex(card.splitlines()[-1], rf"^(Nov 5, )?\d\d:12 {F.ui.STATE_ICON['answered']} Alex replied$")
+        self.assertRegex(card.splitlines()[-1], rf"^(Nov 5, )?\d\d:12 {F.ui.STATE_ICON['answered']} Alice replied$")
         self.t["pushed"] = {"from": "a", "to": "b", "at": "2026-11-05T11:30:00Z"}
         with self.drawn(), patch.object(F, "verdict_of", return_value=self.t["verdict"]):
             card = F.render_quote(self.state, "t1")
         lines = card.splitlines()
-        self.assertRegex(lines[-1], rf"^(Nov 5, )?\d\d:30 {F.ui.PUSHED_ICON} Alex pushed a fix")
+        self.assertRegex(lines[-1], rf"^(Nov 5, )?\d\d:30 {F.ui.PUSHED_ICON} Alice pushed a fix")
         # The whole story above it, in the order it happened: the comment, the reply, the
         # push. One line picked out of it left nothing to check the verdict against.
         self.assertRegex(lines[-3], r"You posted the initial comment$")
-        self.assertRegex(lines[-2], r"Alex replied$")
+        self.assertRegex(lines[-2], r"Alice replied$")
 
     def test_an_answered_card_carries_no_copy_of_the_change(self):
         """The sidebar shows the author's change, every file of it, old and new: the same
-        hunk on the card under "What Alex did" was the same code twice on one screen."""
+        hunk on the card under "What Alice did" was the same code twice on one screen."""
         self.state["threads"]["d1"].update(file="a.ts", line=3, side="new", head_sha="B")
         self.t["verdict"] = {"says": "settled", "text": "Awaited now.", "did": "Pushed the await.",
                              "on": F.answer_mark(self.state, self.t)}
@@ -3040,17 +3040,17 @@ class TestRounds(unittest.TestCase):
         self.assertEqual([p["head"] for p in self.state["pushes"]], ["c1"])
 
     def test_another_reviewer_s_reply_on_your_thread_flags_it_and_leaves_it_waiting(self):
-        """Every comment of somebody else's is news, not only the author's: Chidi joined
-        your thread while it waited on Alex."""
+        """Every comment of somebody else's is news, not only the author's: Clara joined
+        your thread while it waited on Alice."""
         x = self.state["threads"]["d3"]
         x["notes"] = [{"mine": True, "author": "You", "at": "2026-11-04T10:00:00Z"},
-                      {"mine": False, "author": "Okafor, Chidi", "at": "2026-11-05T09:00:00Z"}]
+                      {"mine": False, "author": "Checker, Clara", "at": "2026-11-05T09:00:00Z"}]
         x["last_at"] = "2026-11-05T09:00:00Z"
         t3 = F.topic_for(self.state, "t3")
         self.assertEqual(F.topic_status(self.state, t3), "open")
         j = F.state_json(self.state)
         self.assertEqual((j["topics"][2]["inbox"], j["topics"][2]["news"]), ("fyi", ["reply"]))
-        self.assertEqual((j["inbox"]["replies"], j["inbox"]["by"]), (["t3"], {"t3": "Chidi"}))
+        self.assertEqual((j["inbox"]["replies"], j["inbox"]["by"]), (["t3"], {"t3": "Clara"}))
         F.focus_on(self.state, "t3")
         F.settle(self.state)
         self.assertIsNone(F.state_json(self.state)["topics"][2]["inbox"])
@@ -3141,7 +3141,7 @@ class TestAnswersInCode(unittest.TestCase):
         self.assertIn("pushed a change to the lines", judge_prompt(self.state)[0])
 
     def test_a_topic_s_news_is_dated_by_its_comment_not_by_a_push(self):
-        """Chidi's thread from Nov 15 said 00:21 in the News box, the time of a push."""
+        """Clara's thread from Nov 15 said 00:21 in the News box, the time of a push."""
         self.state["threads"]["d1"].update(awaiting="you", last_at="2026-11-04T10:00:00Z")
         self.push(TouchedDiff.REWRITE)
         self.t["pushed"]["at"] = "2026-11-19T00:21:00Z"
@@ -3281,8 +3281,8 @@ class TestAnswersInCode(unittest.TestCase):
         self.assertEqual(self.t["pushed"]["from"], "c0")
 
     def test_a_push_beside_another_reviewer_s_lines_is_no_news_of_it(self):
-        """Chidi's thread was on an import; Alex's fix changed the loader forty lines down,
-        and News said the push touched Chidi's thread too."""
+        """Clara's thread was on an import; Alice's fix changed the loader forty lines down,
+        and News said the push touched Clara's thread too."""
         self.t["source"] = "peer"
         self.push("@@ -40,0 +41,2 @@\n+x\n+y\n")
         self.assertNotIn("pushed", self.t)
@@ -3372,7 +3372,7 @@ class TestAnswersInCode(unittest.TestCase):
         self.assertTrue(self.state["pushes"][-1]["rebase"])
 
     def test_a_rebase_that_came_with_a_change_to_the_file_names_its_topic(self):
-        """Alex rebased onto main and fixed two topics in the same push: News said "rebased ·
+        """Alice rebased onto main and fixed two topics in the same push: News said "rebased ·
         changes 2 of its files" and named no topic, and the topic whose file changed beside
         its lines stayed waiting, unjudged."""
         before = [{"new_path": "a.ts", "old_path": "a.ts", "diff": "@@ -1 +1 @@\n-x\n+y\n"}]
@@ -3682,6 +3682,173 @@ class TestProposalCard(unittest.TestCase):
         self.assertIn("Recommendation**\n\nKeep it apart from t1, as a topic of its own.", card)
 
 
+class TestOwnCommentCard(unittest.TestCase):
+    """One of the user's own comments while their own review is open: its card, and the
+    agent's analysis of it (the card's Analyse)."""
+
+    def state(self):
+        state = new_state(own_review="pending",
+                          threads={"d1": {"mine": True, "file": "a.ts", "line": 3,
+                                          "body": "isn't this clashing with port 3000?", "url": "http://gl/n1"},
+                                   "d2": {"mine": False, "file": "b.ts", "line": 1, "body": "theirs"}})
+        F.add_topic(state, summary="CORS origin is rejected", severity="critical")
+        return state
+
+    def test_the_card_is_the_comment_and_nothing_of_the_agent_s_topics(self):
+        card = F.render_own(self.state(), "d1")
+        self.assertIn("**Your comment** · `a.ts:3`", card)
+        self.assertIn(") isn't this clashing with port 3000?", card)
+        self.assertNotIn("CORS", card)
+        self.assertNotIn("t1", card)
+        self.assertNotIn("Analysis", card)              # none asked for yet
+
+    def test_its_analysis_is_on_the_card_and_on_the_match_later(self):
+        state = self.state()
+        state["threads"]["d1"]["analysis"] = {"verdict": "partly", "text": "Both listen on 3000."}
+        self.assertIn("Analysis: Partly holds**\n\nBoth listen on 3000.", F.render_own(state, "d1"))
+        state["own_review"] = "done"
+        state["proposals"] = [{"thread": "d1", "into": "t1", "summary": "s", "recommend": "separate"}]
+        with patch.dict(os.environ, {"REVIEW_UI_DRAWN": "1"}):
+            self.assertIn("Analysis: Partly holds**\n\nBoth listen on 3000.", F.render_proposal(state))
+
+    def test_once_the_review_is_in_a_comment_on_a_topic_says_which(self):
+        state = self.state()
+        state["topics"][0]["thread_ids"].append("d1")
+        self.assertNotIn("On topic", F.render_own(state, "d1"))      # its review still open
+        state["own_review"] = "done"
+        self.assertIn("**On topic** t1 — “CORS origin is rejected”", F.render_own(state, "d1"))
+
+    def test_a_match_s_card_names_the_comment_it_is_about(self):
+        state = self.state()
+        state["own_review"] = "done"
+        state["proposals"] = [{"thread": "d1", "into": "t1", "summary": "s"}]
+        out = io.StringIO()
+        with patch.dict(os.environ, {"REVIEW_UI_DRAWN": "1"}), contextlib.redirect_stdout(out):
+            F.emit(state, F.render_proposal(state), own="d1")
+        self.assertIn('"own": "d1"', out.getvalue())
+
+    def test_its_analysis_outlives_the_next_sync(self):
+        state = self.state()
+        state["threads"]["d1"]["analysis"] = {"verdict": "wrong", "text": "Separate commands."}
+        F.sync(state, {"d1": {**state["threads"]["d1"], "analysis": None} | {"body": "edited"},
+                       "d2": state["threads"]["d2"]}, None, None)
+        self.assertEqual(state["threads"]["d1"]["analysis"]["verdict"], "wrong")
+
+    def test_only_the_user_s_own_comment_has_one(self):
+        with patch.object(F, "die", side_effect=SystemExit) as died:
+            with self.assertRaises(SystemExit):
+                F.own_thread(self.state(), "d2")
+        self.assertIn("yours: d1", died.call_args[0][0])
+
+
+class TestOwnCommentSettledInGitLab(unittest.TestCase):
+    """A comment of the user's own they deleted or resolved in GitLab while their review is
+    open or its comments are matched: nothing is left to match."""
+
+    @staticmethod
+    def mine(resolved=False, by_me=True):
+        return {"mine": True, "body": "do those ports collide?", "file": "vite.config.ts",
+                "line": 16, "resolved": resolved, "resolved_mine": resolved and by_me, "notes": []}
+
+    def state(self):
+        state = new_state(own_review="pending")
+        F.add_topic(state, summary="CORS origin is rejected", severity="critical")
+        return state
+
+    def test_a_resolved_one_stays_listed_but_is_not_matched(self):
+        state = self.state()
+        F.sync(state, {"d1": self.mine(resolved=True), "d2": self.mine()}, None, None)
+        own = {x["id"]: x for x in F.own_threads(state)}
+        self.assertTrue(own["d1"]["resolved"])
+        self.assertEqual(F.unsettled_own(state), ["d2"])
+        state["own_review"] = "matching"
+        self.assertNotIn("d1", F.render_candidates(state, "me"))
+        self.assertIn("d2", F.render_candidates(state, "me"))
+
+    def test_one_someone_else_resolved_is_matched_as_any_other(self):
+        state = self.state()
+        F.sync(state, {"d1": self.mine(resolved=True, by_me=False)}, None, None)
+        self.assertEqual(F.unsettled_own(state), ["d1"])
+
+    def test_a_deleted_one_goes_from_the_list(self):
+        state = self.state()
+        F.sync(state, {"d1": self.mine(), "d2": self.mine()}, None, None)
+        F.sync(state, {"d2": self.mine()}, None, None)
+        self.assertEqual([x["id"] for x in F.own_threads(state)], ["d2"])
+
+    def test_its_waiting_match_goes_when_it_is_resolved_or_deleted(self):
+        state = self.state()
+        state["own_review"] = "matching"     # its comments not yet adopted as topics
+        F.sync(state, {"d1": self.mine(), "d2": self.mine(), "d3": self.mine()}, None, None)
+        state["proposals"] = [{"thread": d, "into": "t1", "summary": "s"} for d in ("d1", "d2", "d3")]
+        F.sync(state, {"d1": self.mine(resolved=True), "d3": self.mine()}, None, None)
+        self.assertEqual([p["thread"] for p in state["proposals"]], ["d3"])
+
+    def test_a_match_for_a_comment_already_on_a_topic_is_spent(self):
+        state = self.state()
+        state["own_review"] = "matching"     # its comments not yet adopted as topics
+        F.sync(state, {"d1": self.mine(), "d2": self.mine()}, None, None)
+        state["proposals"] = [{"thread": d, "into": "t1", "summary": "s", "recommend": "link"} for d in ("d1", "d2")]
+        state["topics"][0]["thread_ids"].append("d1")         # linked meanwhile (posted by hand)
+        F.sync(state, {"d1": self.mine(), "d2": self.mine()}, None, None)
+        self.assertEqual([p["thread"] for p in state["proposals"]], ["d2"])
+
+    def test_with_only_a_resolved_one_left_the_topics_start_saying_so(self):
+        state = self.state()
+        F.sync(state, {"d1": self.mine(resolved=True)}, None, None)
+        with patch.dict(os.environ, {"REVIEW_UI_DRAWN": "1"}), \
+                patch.object(F, "render_quote", return_value="(t1)"), patch.object(F, "anchor_notes"):
+            out = F.close_own_review(state, "done")
+        self.assertIn("a comment you resolved stays out", out)
+
+
+class TestOwnContext(unittest.TestCase):
+    """What Analyse reads before judging one of the user's own comments: one call, so it
+    needs no search of the checkout, and the MR's change in it."""
+
+    def test_it_holds_the_comment_the_mr_s_change_and_the_code_around_the_line(self):
+        wt = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, wt)
+
+        def git(*a):
+            return subprocess.run(["git", "-C", wt, "-c", "user.name=t", "-c", "user.email=t@e2e.test", *a],
+                                  capture_output=True, text=True, check=True).stdout.strip()
+        git("init", "-q")
+        with open(os.path.join(wt, "vite.config.ts"), "w") as f:
+            f.write("server: {\n  port: 3000,\n},\n")
+        git("add", ".")
+        git("commit", "-qm", "base")
+        base = git("rev-parse", "HEAD")
+        with open(os.path.join(wt, "vite.config.ts"), "a") as f:
+            f.write("preview: {\n  port: 3000,\n},\n")
+        with open(os.path.join(wt, "yarn.lock"), "w") as f:
+            f.write("lots\n")
+        git("add", ".")
+        git("commit", "-qm", "mr")
+        head = git("rev-parse", "HEAD")
+        state = new_state(own_review="pending", diff_base=base,
+                          threads={"d1": {"mine": True, "file": "vite.config.ts", "line": 5,
+                                          "body": "do those ports collide?", "head_sha": head}})
+        with patch.object(F, "get_worktree", return_value=wt):
+            out = F.own_context(state, "d1")
+        self.assertIn("Your comment (d1) at vite.config.ts:5:\n  do those ports collide?", out)
+        self.assertIn("+preview: {", out)                    # the MR's change, the new block in it
+        self.assertNotIn("+lots", out)                       # lock files left out
+        self.assertIn("    5> " + "  port: 3000,", out)    # the code, the comment's line marked
+
+        # A comment whose commit the worktree never fetched: the worktree's own code, and the
+        # MR's change still there, never "unchanged".
+        state["threads"]["d1"]["head_sha"] = "0" * 40
+        with patch.object(F, "get_worktree", return_value=wt):
+            out = F.own_context(state, "d1")
+        self.assertIn("+preview: {", out)
+        # A comment on a removed line: the code before the MR, at that line.
+        state["threads"]["d1"].update(head_sha=head, side="old", base_sha=base, line=2)
+        with patch.object(F, "get_worktree", return_value=wt):
+            out = F.own_context(state, "d1")
+        self.assertIn("vite.config.ts before the MR, lines 1-3", out)
+
+
 class TestDraftSuggestion(unittest.TestCase):
     def test_a_draft_s_suggestion_is_a_diff_against_the_lines_it_replaces(self):
         out = F.render_draft("Use this:\n\n```suggestion\nnew\n```", "a.ts", 2, ["l1", "old", "l3"])
@@ -3955,7 +4122,7 @@ class TestPostAndResolve(unittest.TestCase):
     thread resolved and the topic closed in one press, where it stands."""
 
     def setUp(self):
-        self.state = {"iid": 2, "author": "Alex Kim",
+        self.state = {"iid": 2, "author": "Alice Kim",
                       "threads": {"d1": {"mine": True, "resolved": False, "awaiting": "you",
                                          "url": "http://gl/g/p/-/merge_requests/2#note_1", "notes": []}},
                       "topics": [{"id": "t2", "thread_ids": ["d1"], "draft": "Fine in a follow-up MR, thanks."}]}
@@ -3989,13 +4156,13 @@ class TestPostAndResolve(unittest.TestCase):
             steps = F.story_steps(self.state, t)
             self.assertTrue(steps[-1].endswith(said), steps)
             self.assertTrue(F.close_in_story(self.state, t))     # the closing line not again
-            # Alex reopens it with a reply: that comment still replied and resolved it.
-            th["notes"].append({"author": "Alex Kim", "at": "2026-11-09T12:40:00Z", "url": "http://gl/n3"})
+            # Alice reopens it with a reply: that comment still replied and resolved it.
+            th["notes"].append({"author": "Alice Kim", "at": "2026-11-09T12:40:00Z", "url": "http://gl/n3"})
             th["resolved"] = False
             t["state"] = "open"
             steps = F.story_steps(self.state, t)
         self.assertTrue(steps[-2].endswith(said), steps)
-        self.assertIn("Alex", steps[-1])
+        self.assertIn("Alice", steps[-1])
 
     def test_a_thread_resolved_already_is_not_reopened_by_it(self):
         self.state["threads"]["d1"]["resolved"] = True
@@ -4020,7 +4187,7 @@ class TestPostThatFailsAfterItsNote(unittest.TestCase):
     draft offered, and the next press posted it a second time."""
 
     def setUp(self):
-        self.state = {"iid": 2, "author": "Alex Kim", "author_username": "alex",
+        self.state = {"iid": 2, "author": "Alice Kim", "author_username": "alex",
                       "threads": {"d1": {"mine": True, "resolved": False, "awaiting": "you", "notes": []}},
                       "topics": [{"id": "t2", "thread_ids": ["d1"], "draft": "Fine in a follow-up MR, thanks."}]}
         self.calls = []

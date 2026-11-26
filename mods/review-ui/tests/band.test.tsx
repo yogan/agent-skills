@@ -569,7 +569,7 @@ test('the list is in groups of one look: the round in the topics\' own order, wa
   const w = world(on, [stateOf('t3', [
     topic('t1', 'needs_ack'), topic('t2', 'open'), topic('t3', 'needs_ack'),
     { ...topic('t5', 'acked'), peer: true, watching: true }, topic('t6', 'acked'),
-  ], { in_round: true, round: ['t3', 't1'], author: 'Alex' })])
+  ], { in_round: true, round: ['t3', 't1'], author: 'Alice' })])
   await openReview($, w, view('t3'))
   // Tall enough for every row: a list over a fifth of the height scrolls (its own test).
   const ui = await $.ui.mount({ ...PANEL, props: { ...PANEL.props, scroll: { offset: 0, bodyRows: 60 } }, surface: 'terminal' })
@@ -838,6 +838,8 @@ test('before the topics: your own review first, your own comments in the sidebar
   expect(await panel.find({ type: 'Text', text: /Add a widget cache/ })).toBeDefined()           // the MR's heading
   expect(await panel.find({ type: 'Text', text: /null here\?/ })).toBeDefined()
   await panel.unmount()
+  // Listed, none opened: the person opens their comments themselves.
+  expect(w.ran.some(r => r.argv.includes('--thread'))).toBe(false)
 
   const ui = await mountStep($, 'terminal')
   expect(await labels(ui)).toEqual(['My review is done', 'Show sidebar'])
@@ -848,6 +850,118 @@ test('before the topics: your own review first, your own comments in the sidebar
   expect(w.ran.map(r => r.argv.slice(2).join(' '))).toContain('own-review done --iid 42')
   expect(w.placed.length).toBe(1)
   expect(w.prompts).toEqual([])
+})
+
+// One of your own comments as its card, while your review is open (findings.py's `own`).
+const ownView = (id: string) => {
+  const head = `**Your comment** · \`${id}.ts:3\``
+  return `${head}\n\n> my comment ${id}\n\n<!-- paste-gate:critical\n`
+    + JSON.stringify({ first: head, critical: [], focus: null, review: REVIEW, own: id }) + '\n-->'
+}
+
+test("before the topics: opening one of your comments brings up its card, Analyse and the way to the others on it, My review is done in the band", async ($, on) => {
+  const pending = stateOf(null, [topic('t1', 'draft')], { own_review: 'pending', own_threads: OWN })
+  const w = world(on, [pending], { own: { stdout: ownView('d1') } })
+  await openReview($, w, view('t1'))
+  const pane = await $.ui.mount({ ...PANEL, surface: 'terminal' })
+  await pane.press({ key: 'own-d1' })
+  await pane.unmount()
+  expect(w.ran.map(r => r.argv.slice(2).join(' '))).toContain('own d1 --iid 42')
+  const card = await $.ui.mount({ plugin: 'review-ui', component: 'Placed', surface: 'terminal', props: { id: w.placed.at(-1) as string, plugin: 'review-ui' } })
+  expect((await labels(card)).slice(1)).toEqual(['Analyse', 'Previous', 'Next'])   // after its ✕
+  expect(await card.find({ type: 'Button', key: 'own-close' })).toBeDefined()
+  // The band keeps My review is done, though a card is up.
+  const band = await $.ui.mount({ ...BAND, surface: 'terminal' })
+  expect(await labels(band)).toEqual(['My review is done', 'Show sidebar'])
+  await band.unmount()
+  // Analyse asks the agent to judge the comment, its own findings kept out.
+  await card.press({ key: 'own-analyse' })
+  expect(w.prompts.at(-1)).toMatch(/^Analyse my own comment at db\.ts:59 \(discussion d1\).*do not name, hint at or compare.*own-analysis d1/)
+  // Next brings up the next comment's card.
+  const before = w.placed.length
+  await card.press({ key: 'next' })
+  await card.unmount()
+  expect(w.ran.map(r => r.argv.slice(2).join(' '))).toContain('own d2 --iid 42')
+  expect(w.placed.length).toBe(before + 1)
+})
+
+test('before the topics: an analysis arriving after you opened another comment is the open one, its buttons on it', async ($, on) => {
+  const w = world(on, [stateOf(null, [topic('t1', 'draft')], { own_review: 'pending', own_threads: OWN })], { own: { stdout: ownView('d2') } })
+  await openReview($, w, view('t1'))
+  const pane = await $.ui.mount({ ...PANEL, surface: 'terminal' })
+  await pane.press({ key: 'own-d2' })                      // clicked while the analysis of d1 runs
+  await pane.unmount()
+  // The model's analysis of d1 comes back as its card.
+  await $.tool.call({ tool: 'Bash', command: 'python3 $SD/findings.py own-analysis d1 --verdict wrong --text - --iid 42', tool_use_id: 'tu-an' } as never)
+  w.tool.stdout = ownView('d1')
+  await $.tool.call({ tool: 'Bash', command: 'python3 $SD/findings.py own-analysis d1 --verdict wrong --text - --iid 42', tool_use_id: 'tu-an2' } as never)
+  const card = await $.ui.mount({ plugin: 'review-ui', component: 'ToolUse', surface: 'terminal', props: { tool: 'Bash', input: { command: 'python3 $SD/findings.py own-analysis d1 --iid 42' }, output: { stdout: ownView('d1') }, tool_use_id: 'tu-an2', isRunning: false, isErrored: false } } as never)
+  expect((await labels(card)).slice(1)).toEqual(['Analyse', 'Previous', 'Next'])
+  await card.unmount()
+})
+
+test("before the topics: a comment's card closes with its ✕, none open after, the comment kept", async ($, on) => {
+  const w = world(on, [stateOf(null, [topic('t1', 'draft')], { own_review: 'pending', own_threads: OWN })], { own: { stdout: ownView('d1') } })
+  await openReview($, w, view('t1'))
+  const pane = await $.ui.mount({ ...PANEL, surface: 'terminal' })
+  await pane.press({ key: 'own-d1' })
+  const card = await $.ui.mount({ plugin: 'review-ui', component: 'Placed', surface: 'terminal', props: { id: w.placed.at(-1) as string, plugin: 'review-ui' } })
+  await card.press({ key: 'own-close' })
+  await card.unmount()
+  // Closed: its buttons go, and nothing ran that would drop the comment.
+  const again = await $.ui.mount({ plugin: 'review-ui', component: 'Placed', surface: 'terminal', props: { id: w.placed.at(-1) as string, plugin: 'review-ui' } })
+  expect(await labels(again)).toEqual([])
+  expect(await again.find({ type: 'Button', key: 'own-close' })).toBeUndefined()
+  await again.unmount()
+  await pane.unmount()
+  expect(w.ran.some(r => /own-review|drop|settle/.test(r.argv.slice(2).join(' ')))).toBe(false)
+})
+
+test('your review in: the comment you had open gives way to the one whose match waits, its buttons in reach', async ($, on) => {
+  const proposal = { thread: 'd1', into: 't1', summary: 'x', where: 'db.ts:59', comment: 'null here?', why: 'Both are about the null.' }
+  const done = stateOf(null, [topic('t1', 'draft'), topic('t2', 'draft')], {
+    own_review: 'done', proposals: [proposal],
+    own_threads: [{ ...OWN[0], proposal: 't1' }, { ...OWN[1], topic: 't2' }],
+  })
+  const w = world(on, [stateOf(null, [topic('t1', 'draft')], { own_review: 'pending', own_threads: OWN }), done], { own: { stdout: ownView('d2') } })
+  await openReview($, w, view('t1'))
+  // The second comment open while the review is, then the review handed in.
+  const pane = await $.ui.mount({ ...PANEL, surface: 'terminal' })
+  await pane.press({ key: 'own-d2' })
+  await pane.unmount()
+  const ui = await mountStep($, 'terminal')
+  await ui.press({ key: 'own-done' })
+  await ui.unmount()
+  const after = await mountStep($, 'terminal')
+  expect(await labels(after)).toEqual(['Merge into t1', 'Keep separate', 'Explain', 'Show sidebar'])
+  await after.unmount()
+})
+
+test('matching your comments: each opens as its card, a match with its answers, one on a topic saying so, both with the way to the others', async ($, on) => {
+  const proposal = { thread: 'd1', into: 't1', summary: 'x', where: 'db.ts:59', comment: 'null here?', why: 'Both are about the null.' }
+  const matching = stateOf(null, [topic('t1', 'draft'), topic('t2', 'draft')], {
+    own_review: 'done', proposals: [proposal],
+    own_threads: [{ ...OWN[0], proposal: 't1' }, { ...OWN[1], topic: 't2' }],
+  })
+  const w = world(on, [matching], { own: { stdout: ownView('d2') }, proposal: { stdout: ownView('d1') } })
+  await openReview($, w, view('t1'))
+  // The comment already on t2, opened in the sidebar: its card, the way on it, the band empty.
+  const pane = await $.ui.mount({ ...PANEL, surface: 'terminal' })
+  await pane.press({ key: 'own-d2' })
+  await pane.unmount()
+  expect(w.ran.map(r => r.argv.slice(2).join(' '))).toContain('own d2 --iid 42')
+  const card = await $.ui.mount({ plugin: 'review-ui', component: 'Placed', surface: 'terminal', props: { id: w.placed.at(-1) as string, plugin: 'review-ui' } })
+  expect(await labels(card)).toEqual(['Previous', 'Next'])
+  const band = await $.ui.mount({ ...BAND, surface: 'terminal' })
+  expect(await labels(band)).not.toContain('Next')
+  await band.unmount()
+  // Next: the comment whose match waits, its answers and the way on its card.
+  await card.press({ key: 'next' })
+  await card.unmount()
+  expect(w.ran.map(r => r.argv.slice(2).join(' '))).toContain('proposal d1 --iid 42')
+  const match = await $.ui.mount({ plugin: 'review-ui', component: 'Placed', surface: 'terminal', props: { id: w.placed.at(-1) as string, plugin: 'review-ui' } })
+  expect(await labels(match)).toEqual(['Merge into t1', 'Keep separate', 'Explain', 'Previous', 'Next'])
+  await match.unmount()
 })
 
 test('before the topics, with no comments of your own: the sidebar shows no topic and no code', async ($, on) => {
@@ -1018,9 +1132,9 @@ const inbox = (over: object = {}) => ({
 // reviewer resolving a thread, which they often do without a word.
 test('rework-mr: news names who replied, and says a reviewer resolved a thread', () => {
   const r = JSON.parse(reworkState(null, [reworkTopic('t1', 'none'), { ...reworkTopic('t2', 'plan'), inbox: 'new', news: ['reply'], news_at: '2026-11-09T12:00:00Z' }],
-    { inbox: inbox({ replies: ['t2'], by: { t2: 'Miriam' }, resolves: [{ id: 't1', by: 'Miriam', at: '2026-11-09T12:10:00Z' }] }) }))
+    { inbox: inbox({ replies: ['t2'], by: { t2: 'Bob' }, resolves: [{ id: 't1', by: 'Bob', at: '2026-11-09T12:10:00Z' }] }) }))
   const lines = inboxOf(r)?.lines.map(l => `${l.topic} ${l.tone} ${l.what}`)
-  expect(lines).toEqual(['t2 needs Miriam replied', 't1 info Miriam resolved it'])
+  expect(lines).toEqual(['t2 needs Bob replied', 't1 info Bob resolved it'])
 })
 
 test("a box line about a topic links to its thread on GitLab", async ($, on) => {
@@ -2638,7 +2752,7 @@ test('a file the MR only edits keeps its marks and says nothing beside its name'
 test('rework-mr: the box opens the first topic flagged new, named after it, not the round\'s first', async ($, on) => {
   const t1 = { ...reworkTopic('t1', 'plan'), inbox: 'new', news: ['reply'], news_at: '2026-11-09T12:36:00Z' }
   const idle = reworkState(null, [t1, reworkTopic('t2', 'reply')], {
-    in_round: false, pass: 'fix', round: ['t2', 't1'], inbox: inbox({ replies: ['t1'], by: { t1: 'Miriam' }, first: 't2' }) })
+    in_round: false, pass: 'fix', round: ['t2', 't1'], inbox: inbox({ replies: ['t1'], by: { t1: 'Bob' }, first: 't2' }) })
   const opened = reworkState('t1', [{ ...t1, inbox: 'yours' }, reworkTopic('t2', 'reply')], { in_round: true, pass: 'fix', round: ['t1', 't2'], inbox: inbox() })
   const w = world(on, [idle, opened])
   await openRework($, w, reworkView('t1'))
@@ -3225,6 +3339,24 @@ test("rework-mr: a fix's files are an area of an eighth of the sidebar, scrollin
   expect(line.slice(line.indexOf('files-hunk'))).toMatch(/─{3,}/)
   await panel.unmount()
 })
+
+// Closed: Review in hunk. Open, or notes waiting in it: Read hunk notes. Read and closed:
+// Review in hunk again. Once notes waited, the line lost its key to the card and showed none.
+for (const [hunk, label, about] of [
+  [{ open: false, notes: 0 }, /Review in hunk$/, 'closed'],
+  [{ open: true, notes: 0 }, /Read hunk notes$/, 'open'],
+  [{ open: true, notes: 2 }, /Read hunk notes$/, 'open with notes'],
+  [{ open: false, notes: 1 }, /Read hunk notes$/, 'closed with notes waiting'],
+] as const) {
+  test(`rework-mr: the sidebar's diff viewer key follows the viewer: ${about}`, async ($, on) => {
+    const fix = codeOf(20, [3, 3], { mode: 'fix', file: 'src/f1.ts', commented: 'src/f1.ts', fix_files: [['src/f1.ts', 1, 1]] })
+    const w = world(on, [reworkState('t1', [reworkTopic('t1', 'fixed', { checks: 'passed' })], { hunk })], { code: { stdout: JSON.stringify(fix) } })
+    await openRework($, w, reworkView('t1'))
+    const panel = await $.ui.mount({ ...PANEL, surface: 'terminal' })
+    expect(String((await panel.find({ type: 'Button', key: 'files-hunk' }))?.props.label)).toMatch(label)
+    await panel.unmount()
+  })
+}
 
 test('rework-mr: a turn that moved the rework on without a card brings up the current topic\'s', async ($, on) => {
   // The model finished a press it was handed (Push and resolve, a fix in two commits): t1
@@ -4026,9 +4158,9 @@ test('rework-mr: the model may not post on its own', async ($, on) => {
 
 // The Merged box was drawn like any other, and went from "approved" straight to "merged".
 test('a merged MR looks like success: its box and its merge line in green, the pipeline that passed in its story', async ($, on) => {
-  const mr = { state: 'merged', merged_at: '2026-11-09T15:20:00Z', merged_by: 'You', auto_merge: false, approved_by: ['Miriam'], pipeline: { status: 'passed' } }
+  const mr = { state: 'merged', merged_at: '2026-11-09T15:20:00Z', merged_by: 'You', auto_merge: false, approved_by: ['Bob'], pipeline: { status: 'passed' } }
   const w = world(on, [reworkState(null, [reworkTopic('t1', 'none')], {
-    mr, in_round: false, inbox: inbox({ mr: [{ kind: 'approved', at: '2026-11-09T15:00:00Z', by: 'Miriam' }, { kind: 'merged', at: '2026-11-09T15:20:00Z', by: 'You' }] }),
+    mr, in_round: false, inbox: inbox({ mr: [{ kind: 'approved', at: '2026-11-09T15:00:00Z', by: 'Bob' }, { kind: 'merged', at: '2026-11-09T15:20:00Z', by: 'You' }] }),
   })])
   await openRework($, w, reworkView('t1'))
   const panel = await $.ui.mount({ ...PANEL, surface: 'terminal' })
@@ -4039,18 +4171,18 @@ test('a merged MR looks like success: its box and its merge line in green, the p
   // The merged icon is green everywhere: the heading's too.
   expect((await panel.findAll({ type: 'Text' })).filter(t => t.text === '\u{f062d}').map(t => t.props.color)).toEqual(['success', 'success'])
   const story = (await panel.findAll({ type: 'Text' })).map(t => String(t.text ?? '')).filter(t => /approved|pipeline|merged the MR/.test(t))
-  expect(story).toEqual(['Miriam approved the MR', 'The pipeline passed', 'You merged the MR'])
+  expect(story).toEqual(['Bob approved the MR', 'The pipeline passed', 'You merged the MR'])
   await panel.unmount()
 })
 
 test('the pipeline that passed has its time, and its place in the story by it', async ($, on) => {
-  const mr = { state: 'merged', merged_at: '2026-11-09T15:20:00Z', merged_by: 'You', auto_merge: false, approved_by: ['Miriam'],
+  const mr = { state: 'merged', merged_at: '2026-11-09T15:20:00Z', merged_by: 'You', auto_merge: false, approved_by: ['Bob'],
     pipeline: { status: 'passed', at: '2026-11-09T15:10:00Z' } }
   const r = JSON.parse(reworkState(null, [reworkTopic('t1', 'none')], {
-    mr, in_round: false, inbox: inbox({ mr: [{ kind: 'approved', at: '2026-11-09T15:15:00Z', by: 'Miriam' }, { kind: 'merged', at: '2026-11-09T15:20:00Z', by: 'You' }] }),
+    mr, in_round: false, inbox: inbox({ mr: [{ kind: 'approved', at: '2026-11-09T15:15:00Z', by: 'Bob' }, { kind: 'merged', at: '2026-11-09T15:20:00Z', by: 'You' }] }),
   }))
   const lines = inboxOf(r)?.lines.filter(l => /approved|pipeline|merged the MR/.test(l.what)).map(l => [l.at, l.what])
-  expect(lines).toEqual([['2026-11-09T15:10:00Z', 'The pipeline passed'], ['2026-11-09T15:15:00Z', 'Miriam approved the MR'],
+  expect(lines).toEqual([['2026-11-09T15:10:00Z', 'The pipeline passed'], ['2026-11-09T15:15:00Z', 'Bob approved the MR'],
     ['2026-11-09T15:20:00Z', 'You merged the MR']])
 })
 
@@ -4130,8 +4262,8 @@ test('the box gives one line a topic with the verdict, resolved-but-not-fixed sa
 test("the box says an answer's verdict in its card's words: partly fixed where the card says so", () => {
   const t1 = { ...topic('t1', 'needs_ack'), inbox: 'new', verdict: 'more', verdict_case: 'partly-fixed' }
   const t2 = { ...topic('t2', 'needs_ack'), inbox: 'new', verdict: 'more', verdict_case: 'fix-wrong' }
-  const r = JSON.parse(stateOf(null, [t1, t2], { author: 'Alex', inbox: inbox({ replies: ['t1'], resolved: ['t2'], first: 't1' }) }))
-  expect(inboxOf(r)?.lines.map(l => l.what)).toEqual(['Alex answered: partly fixed', 'Alex resolved, fix is wrong'])
+  const r = JSON.parse(stateOf(null, [t1, t2], { author: 'Alice', inbox: inbox({ replies: ['t1'], resolved: ['t2'], first: 't1' }) }))
+  expect(inboxOf(r)?.lines.map(l => l.what)).toEqual(['Alice answered: partly fixed', 'Alice resolved, fix is wrong'])
 })
 
 test("a merged MR's box offers to check an answer not accepted yet, not to open a round", async ($, on) => {
@@ -4719,6 +4851,78 @@ const resumed = (on: On, w: World, review: object, calls: { id: string; out: str
 }
 const startSession = ($: Engine) => (($ as unknown as { session: { start: (e: object) => Promise<unknown> } }).session.start({ source: 'resume', cwd: '/wt' }))
 
+// One of the person's own comments settled in GitLab itself while their review is open or
+// its comments are matched: deleted, or resolved ("never mind, I checked").
+const ownSetup = (on: On, first: string, extra: Record<string, Out>) => {
+  const tick = heldClock(on)
+  on('tool.register' as never, (() => ({ value: undefined })) as never)
+  on('session.start' as never, ((_: unknown, e: object) => e) as never)
+  const w = world(on, [first], extra)
+  return { tick, w }
+}
+const ownCard = ($: Engine, id: string) => $.ui.mount({ plugin: 'review-ui', component: 'Placed', surface: 'terminal', props: { id, plugin: 'review-ui' } })
+
+test('your review open: the comment you opened, deleted in GitLab, leaves the list, its card says so with nothing to press', async ($, on) => {
+  const pending = (own: typeof OWN) => stateOf(null, [topic('t1', 'draft')], { own_review: 'pending', own_threads: own })
+  const ex: Record<string, Out> = { own: { stdout: ownView('d1') }, refresh: { stdout: pending(OWN) } }
+  const { tick, w } = ownSetup(on, pending(OWN), ex)
+  await startSession($)
+  await openReview($, w, view('t1'))
+  const pane = await $.ui.mount({ ...PANEL, surface: 'terminal' })
+  await pane.press({ key: 'own-d1' })
+  await pane.unmount()
+  const id = w.placed.at(-1) as string
+  ex.refresh = { stdout: pending([OWN[1] as typeof OWN[number]]) }
+  await tick()
+  const card = await ownCard($, id)
+  expect(await card.find({ type: 'Text', text: /Deleted in GitLab/ })).toBeDefined()
+  expect(await labels(card)).toEqual([])
+  await card.unmount()
+  const after = await $.ui.mount({ ...PANEL, surface: 'terminal' })
+  expect(await after.find({ type: 'Button', key: 'own-d1' })).toBeUndefined()
+  await after.unmount()
+})
+
+test('your review open: a comment you resolved stays listed as resolved, its card says it is left out of the matching', async ($, on) => {
+  const pending = (own: typeof OWN) => stateOf(null, [topic('t1', 'draft')], { own_review: 'pending', own_threads: own })
+  const resolved = [{ ...OWN[0], resolved: true }, OWN[1]] as typeof OWN
+  const ex: Record<string, Out> = { own: { stdout: ownView('d1') }, refresh: { stdout: pending(OWN) } }
+  const { tick, w } = ownSetup(on, pending(OWN), ex)
+  await startSession($)
+  await openReview($, w, view('t1'))
+  const pane = await $.ui.mount({ ...PANEL, surface: 'terminal' })
+  await pane.press({ key: 'own-d1' })
+  await pane.unmount()
+  const id = w.placed.at(-1) as string
+  ex.refresh = { stdout: pending(resolved) }
+  await tick()
+  const card = await ownCard($, id)
+  expect(await card.find({ type: 'Text', text: /Resolved in GitLab: left out of the matching/ })).toBeDefined()
+  await card.unmount()
+  const after = await $.ui.mount({ ...PANEL, surface: 'terminal' })
+  expect(await after.find({ type: 'Text', text: / resolved$/ })).toBeDefined()
+  await after.unmount()
+})
+
+test('matching: the open match, its comment resolved in GitLab, gives way to the next one waiting, its card up', async ($, on) => {
+  const p = (thread: string) => ({ thread, into: 't1', summary: 'x', where: `${thread}.ts:1`, comment: 'c', why: 'w' })
+  const own = (d1: object = {}) => [{ ...OWN[0], proposal: 't1', ...d1 }, { ...OWN[1], proposal: 't1' }]
+  const matching = (proposals: object[], d1: object = {}) => stateOf(null, [topic('t1', 'draft')], { own_review: 'done', proposals, own_threads: own(d1) })
+  const ex: Record<string, Out> = { proposal: { stdout: ownView('d1') }, refresh: { stdout: matching([p('d1'), p('d2')]) } }
+  const { tick, w } = ownSetup(on, matching([p('d1'), p('d2')]), ex)
+  await startSession($)
+  await openReview($, w, view('t1'))
+  const pane = await $.ui.mount({ ...PANEL, surface: 'terminal' })
+  await pane.press({ key: 'own-d1' })
+  await pane.unmount()
+  const before = w.placed.length
+  ex.proposal = { stdout: ownView('d2') }
+  ex.refresh = { stdout: matching([p('d2')], { proposal: null, resolved: true }) }
+  await tick()
+  expect(w.ran.map(r => r.argv.slice(2).join(' '))).toContain('proposal d2 --iid 42')
+  expect(w.placed.length).toBe(before + 1)
+})
+
 test('back after a restart, the newest card of the transcript hosts the buttons again, and the older one of its topic is its title line', async ($, on) => {
   const head = '\u{f0182} **t1** **summary of t1** · `src/cache.ts:17`'
   const out = `${head}\n\nsome view\n\n<!-- paste-gate:critical\n` + JSON.stringify({ first: head, critical: [], topic: 't1', focus: 't1', review: REVIEW }) + '\n-->'
@@ -4775,7 +4979,7 @@ test('a fresh session opening a review that has state already asks GitLab at the
   const tick = heldClock(on)
   on('tool.register' as never, (() => ({ value: undefined })) as never)
   on('session.start' as never, ((_: unknown, e: object) => e) as never)
-  const story = reworkView('t1').replace('some view', 'some view\n\n09:12 \u{F012C} Miriam commented')
+  const story = reworkView('t1').replace('some view', 'some view\n\n09:12 \u{F012C} Bob commented')
   const kept = reworkState(null, [reworkTopic('t1', 'none', { state: 'waiting' }), reworkTopic('t2', 'none', { state: 'waiting' })], { in_round: false, inbox: inbox() })
   const w = world(on, [kept], { refresh: { stdout: kept } })
   await startSession($)
@@ -4790,7 +4994,7 @@ test('a fresh session opening a review that has state already asks GitLab at the
   expect(texts).toContain('summary of t2')
   await panel.unmount()
   const card = await $.ui.mount(cardRow('tu-open', story))
-  expect(JSON.stringify([...await card.findAll({ type: 'Text' }), ...await card.findAll({ type: 'Markdown' })])).toContain('Miriam')
+  expect(JSON.stringify([...await card.findAll({ type: 'Text' }), ...await card.findAll({ type: 'Markdown' })])).toContain('Bob')
   await card.unmount()
 })
 

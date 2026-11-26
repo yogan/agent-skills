@@ -3,7 +3,7 @@ import type { EngineInterface, Register } from 'claude-code'
 
 import type { ReviewCard, ReviewHost, ReviewOutcome, ReviewJudging, ReviewNote, ReviewNotice, ReviewPlaced, ReviewSession, ReviewState } from '../types'
 import {
-  argsFor, boxLookOf, buttonsFor, checkPrompt, judgingOf, endOf, hasNext, iconOf, isHeldTopic, isMergeWatched, outcomeOf, earlyPrompt, proposePrompt, replyPrompt, clockOf, currentTopic, didText, inboxOf, openerOf, sentenceOf, noteForModel, ownMergedPrompt, peerMergedPrompt, stepOf, untilOf, waitingLine, waitingOf,
+  argsFor, boxLookOf, buttonsFor, checkPrompt, judgingOf, endOf, hasNext, iconOf, isHeldTopic, isMergeWatched, outcomeOf, earlyPrompt, proposePrompt, replyPrompt, clockOf, currentTopic, didText, inboxOf, openerOf, sentenceOf, noteForModel, ownCardButtons, ownMergedPrompt, ownWay, peerMergedPrompt, stepOf, untilOf, waitingLine, waitingOf,
   type BandButton, type InboxLine,
 } from './review.ts'
 import {
@@ -12,7 +12,7 @@ import {
 } from './panel.ts'
 import { blocksOf, drawableDiff, type DiffSize, type SizeRun, inPresses, inlineOf, namesPresses, withEmoji, withOutcome, withoutDraft, isPostCommand, isViewCommand, partsOf, sizeOf, sizeRunsOf, withoutPasted, withSuggestions, manifestOf, titleOf, viewOf, withNote, withoutExcerpt, withoutExcerptLabel, withoutThread } from './views.ts'
 import {
-  askedFor, barPaint, cellsOf, changeKinds, clampOffset, codeArgsOf, codeWindow, currentOwn, firstOffset, phaseOf, pressOf, pushOf, revealedAt, stepOwn,
+  askedFor, barPaint, cellsOf, changeKinds, clampOffset, codeArgsOf, codeWindow, currentOwn, firstOffset, NO_OWN, phaseOf, pressOf, pushOf, revealedAt, stepOwn,
   type BarLook, type BarSpec, type CodeView,
 } from './sidebar.ts'
 import { COMMENTED, iconOfFile } from './files.ts'
@@ -34,7 +34,7 @@ const REVIEW_SKILLS = ['review-mr', 'rework-mr']
 const review = atom({ plugin: 'review-ui', key: 'review' } as const, null as ReviewState | null, { shape: 'review-1' })
 const card = atom({ plugin: 'review-ui', key: 'card' } as const, null as ReviewCard | null, { shape: 'card-1' })
 const placed = atom({ plugin: 'review-ui', key: 'placed' } as const, {} as ReviewPlaced, { shape: 'placed-1' })
-const placedOf = atom({ plugin: 'review-ui', key: 'placed-of' } as const, {} as Record<string, { topic?: string; draft?: string }>, { shape: 'placed-of-1' })
+const placedOf = atom({ plugin: 'review-ui', key: 'placed-of' } as const, {} as Record<string, { topic?: string; draft?: string; own?: string }>, { shape: 'placed-of-1' })
 const notice = atom({ plugin: 'review-ui', key: 'notice' } as const, null as ReviewNotice, { shape: 'notice-1' })
 const hostCard = atom({ plugin: 'review-ui', key: 'host' } as const, null as ReviewHost | null, { shape: 'host-1' })
 // The topic whose draft was just copied, while its Copy reads "Copied!"; and the topics
@@ -346,10 +346,28 @@ const refresh = async ($: EngineInterface, s: ReviewSession, how: 'state' | 'ref
   // The new state's file first, then the state: drawn with the state, the file is there.
   const next = (await read($, stamp)) + 1
   await syncCode($, s, state, { now: next })
-  await update($, review, () => state)
+  await setReview($, state, s)
   await update($, stamp, () => next)
   await remember($, s)
   return state
+}
+
+// The state, as the scripts last gave it. The comment the person opened while their review was
+// open belongs to that phase: once it is in, their pick is forgotten, so the comment whose
+// match waits for an answer is the one shown, with the buttons that answer it.
+//
+// The open comment's match gone because the comment was deleted or resolved in GitLab: the
+// next comment whose match waits comes up, as after a press that settled it.
+const setReview = async ($: EngineInterface, state: ReviewState, s?: ReviewSession) => {
+  const before = await read($, review)
+  if (before?.own_review === 'pending' && state.own_review !== 'pending') await update($, ownPick, () => null)
+  const open = (await read($, hostCard))?.own
+  const isOpenGone = !!open && phaseOf(state) === 'own'
+    && !!before?.proposals?.some(p => p.thread === open) && !state.proposals?.some(p => p.thread === open)
+    && !(state.own_threads ?? []).some(x => x.id === open && !x.resolved)
+  await update($, review, () => state)
+  const next = state.proposals?.[0]?.thread
+  if (isOpenGone && s && next) await pickOwn($, s, next, true)
 }
 
 const check = async ($: EngineInterface) => {
@@ -409,7 +427,7 @@ const pressEnd = async ($: EngineInterface, s: ReviewSession, b: BandButton) => 
       await update($, cleanedUp, () => ran.stdout.trim())
       await update($, notice, () => null)
     } else {
-      await update($, review, () => JSON.parse(ran.stdout) as ReviewState)
+      await setReview($, JSON.parse(ran.stdout) as ReviewState)
     }
     await $.session.append({
       message: { type: 'user', content: [{ type: 'text', text: `[review-ui] The user pressed a button: ${b.label}. ${ran.stdout.trim().startsWith('{') ? 'The sidebar shows how it stands.' : ran.stdout.trim()}` }] },
@@ -612,8 +630,15 @@ const openSidebar = async ($: EngineInterface, s: ReviewSession, focus: boolean)
 const shownCard = async ($: EngineInterface, id: string, stdout: string) => {
   const view = viewOf(stdout)
   if (!view) return
-  await update($, hostCard, () => ({ id, topic: view.topic ?? null, step: view.step ?? null, face: view.face ?? null }))
+  await update($, hostCard, () => ({ id, topic: view.topic ?? null, step: view.step ?? null, face: view.face ?? null, own: view.own ?? null }))
+  await followOwn($, view.own)
   await noteCard($, id, view.topic, view.text)
+}
+
+// A card about one of the person's own comments, newest in the chat: that comment is the open
+// one, as the card is what they see (an analysis that arrives after they clicked another row).
+const followOwn = async ($: EngineInterface, own: string | undefined) => {
+  if (own) await update($, ownPick, () => own)
 }
 
 // A card come up, in the order cards do. One card per topic: every view of a topic is its
@@ -677,8 +702,9 @@ const placeOutput = async ($: EngineInterface, stdout: string) => {
   if (!view) return false
   const id = `card-${Object.keys(await read($, placed)).length + 1}`
   await update($, placed, m => ({ ...m, [id]: view.text }))
-  await update($, placedOf, m => ({ ...m, [id]: { topic: view.topic, draft: view.draft } }))
-  await update($, hostCard, () => ({ id, topic: view.topic ?? null, step: view.step ?? null, face: view.face ?? null }))
+  await update($, placedOf, m => ({ ...m, [id]: { topic: view.topic, draft: view.draft, ...(view.own ? { own: view.own } : {}) } }))
+  await update($, hostCard, () => ({ id, topic: view.topic ?? null, step: view.step ?? null, face: view.face ?? null, own: view.own ?? null }))
+  await followOwn($, view.own)
   await noteCard($, id, view.topic, view.text)
   await $.ui.place({ id })
   return true
@@ -944,17 +970,25 @@ const leaveTopic = async ($: EngineInterface, s: ReviewSession) => {
   if (now?.current) await placeTopic($, s, now.current)
 }
 
-// A comment of the person's own made current, in the sidebar or with Previous and Next. One
-// whose match waits for an answer brings its card up, so what the band asks is on screen.
+// A comment of the person's own made current, in the sidebar or with Previous and Next: its
+// card comes up. While their review is open, with its buttons (`ownCardButtons`); comments
+// arriving meanwhile only join the sidebar's list. While its comments are matched, a comment
+// whose match waits brings up the match, with the buttons that answer it; one already on a
+// topic its own card, saying which. Both carry the way to the others (`ownWay`).
 const pickOwn = async ($: EngineInterface, s: ReviewSession, id: string, isStep = false) => {
   const before = await read($, ownPick)
   const r = await read($, review)
   if (r) await syncCode($, s, r, { own: id })
   await update($, ownPick, () => id)
-  if (!r) return
-  if ((isStep || before !== id) && r.own_review !== 'pending' && r.proposals?.some(p => p.thread === id)) {
-    await placeView($, s, ['proposal', id])
-  }
+  if (!r || !(isStep || before !== id)) return
+  if (r.own_review !== 'pending' && r.proposals?.some(p => p.thread === id)) await placeView($, s, ['proposal', id])
+  else await placeView($, s, ['own', id])
+}
+
+// The open comment's card closed (its ✕) while the person's review is open: none is open, the
+// sidebar lists their comments, and the comment stays in the review, matched once it is done.
+const closeOwn = async ($: EngineInterface) => {
+  await update($, ownPick, () => NO_OWN)
 }
 
 const codeFor = async ($: EngineInterface, r: ReviewState, own: ReturnType<typeof currentOwn>) => {
@@ -1627,14 +1661,28 @@ const cardButtons = async ($: EngineInterface, e: Parameters<EngineInterface['ui
   if (host?.id !== id) return null
   const { s, r } = await known($)
   if (!s || !r) return null
-  const { buttons: all, press, isHosted } = await stepControls($, s, r, await read($, working))
+  const ctl = await stepControls($, s, r, await read($, working))
+  const { press } = ctl
+  // While the person's own review is open, a card hosts buttons only as the open comment's:
+  // its own (`ownCardButtons`). My review is done is the band's alone, so no card takes it
+  // away, whatever comes up in the chat meanwhile. While its comments are matched, the open
+  // comment's card carries what answers its match, if one waits, and the way to the others.
+  // Nothing while a press or the model works.
+  const isPending = r.own_review === 'pending'
+  const ownOpen = phaseOf(r) === 'own' ? currentOwn(r, await read($, ownPick)) : undefined
+  const isOwnCard = !!ownOpen && host.own === ownOpen.id
+  if (isPending && !isOwnCard) return null
+  const all = !isOwnCard ? ctl.buttons
+    : !ctl.isIdle ? []
+      : isPending ? ownCardButtons(r, ownOpen) : [...ctl.buttons, ...ownWay(r)]
+  const isHosted = isOwnCard || ctl.isHosted
   // The diff viewer's key is the line above the fix's files, where the sidebar beside the
   // chat lists them: one key for one thing on screen, so the card leaves its own out there.
   const vp = (e as { viewport?: { isFullscreen?: boolean } }).viewport
   const code = await codeFor($, r, currentOwn(r, await read($, ownPick)))
   const isInSidebar = vp?.isFullscreen === true && (await panelShown($)) && (code?.view.fix_files?.length ?? 0) > 0
   // But notes the person left there: reading them is what the card is about now, so the
-  // key is the card's own (and the sidebar's line gives it up, below).
+  // card carries the key beside the push, and the sidebar's line keeps it too.
   const buttons = isInSidebar ? all.filter(b => !HUNK_KEYS.includes(b.key) || isNotesKey(b, r)) : all
   // Its news still with the mod's model call: the card says so itself, where its buttons
   // will be, not only the band's line under the chat. A card with no verdict and no
@@ -1646,18 +1694,22 @@ const cardButtons = async ($: EngineInterface, e: Parameters<EngineInterface['ui
   const { Box, Text } = els
   // The way on is a different kind of press from the decisions: it stands apart, at the
   // right end of the row, and never gives way to them: the decisions wrap instead.
-  const way = buttons.filter(b => b.key === 'next')
+  const way = buttons.filter(b => WAY_KEYS.includes(b.key))
   const who = r.skill === 'rework-mr' ? 'the reviewer wrote' : `${r.author ?? 'the author'} did`
   return (
     <Box flexDirection="row" marginTop={1} width="100%">
       <Box flexDirection="row" flexWrap="wrap" columnGap={1} flexGrow={1}>
         {isJudging && <Text key="card-judging" color="yellow">{`${iconOf('Judge') ?? ''} Judging what ${who}…`}</Text>}
-        {buttons.filter(b => b.key !== 'next').map(b => drawChip(els, b, press(b)))}
+        {buttons.filter(b => !WAY_KEYS.includes(b.key)).map(b => drawChip(els, b, press(b)))}
       </Box>
-      <Box flexDirection="row" flexShrink={0}>{way.map(b => drawChip(els, b, press(b)))}</Box>
+      <Box flexDirection="row" columnGap={1} flexShrink={0}>{way.map(b => drawChip(els, b, press(b)))}</Box>
     </Box>
   )
 }
+
+// A card's way on, apart at its right end: Next, and Previous beside it where the person's own
+// comments are stepped through.
+const WAY_KEYS = ['own-prev', 'next']
 
 // The keys that open the fix in the diff viewer, which the sidebar's files area carries too.
 const HUNK_KEYS = ['hunk', 'hunk-notes', 'hunk-pushed']
@@ -1724,10 +1776,30 @@ const drawCard = async ($: EngineInterface, e: Parameters<EngineInterface['ui'][
     // A card that was a draft alone, and the draft is no longer the topic's: nothing is left
     // to show, and an empty frame reads as a broken card.
     if (!shownText.trim()) return <Box />
+    // One of the person's own comments, open while their review is: its newest card closes
+    // with a ✕, back to the list of their comments with none open (`closeOwn`).
+    const isOwnOpen = !!of.own && r?.own_review === 'pending' && (await read($, hostCard))?.id === id
+      && currentOwn(r, await read($, ownPick))?.id === of.own
+    // The comment settled in GitLab itself since its card came up: said under it, as the
+    // card's own words predate it and its buttons have gone.
+    const ownNow = of.own && r && phaseOf(r) === 'own' ? (r.own_threads ?? []).find(x => x.id === of.own) : undefined
+    const ownFate = !of.own || !r || phaseOf(r) !== 'own' ? null
+      : !ownNow ? 'Deleted in GitLab.'
+        : ownNow.resolved && !ownNow.topic ? 'Resolved in GitLab: left out of the matching.' : null
     // A card with no title line (a redrafted reply): its topic is the manifest's.
     return (
       <Box borderStyle="round" paddingX={1} flexDirection="column" width="100%">
-        {drawBlocks($, e, done ? withOutcome(shownText, done, LINK_ICON) : shownText, false, await copyChip($, e, of.topic ?? null), r?.people)}
+        {isOwnOpen ? (
+          <Box flexDirection="row" width="100%">
+            <Box flexGrow={1} flexDirection="column">
+              {drawBlocks($, e, shownText, false, null, r?.people)}
+            </Box>
+            <Box key="own-close-gap" marginLeft={1} flexShrink={0}>
+              {iconKey({ Button, Text }, 'own-close', GLYPH.close, () => { void closeOwn($) })}
+            </Box>
+          </Box>
+        ) : drawBlocks($, e, done ? withOutcome(shownText, done, LINK_ICON) : shownText, false, await copyChip($, e, of.topic ?? null), r?.people)}
+        {ownFate && <Box key="own-fate" marginTop={1}><Text color={DIM_COLOR}>{ownFate}</Text></Box>}
         {buttons}
       </Box>
     )
@@ -1842,7 +1914,7 @@ const drawPending = async ($: EngineInterface, e: Parameters<EngineInterface['ui
 // A view as the chat shows it. The explainer link heads the opener; it is about the whole MR,
 // not the topic below it, so it stands on its own line above the topic's card.
 // `of`: the topic and the draft version the view was printed with (its manifest's).
-type ViewOf = { topic?: string; draft?: string }
+type ViewOf = { topic?: string; draft?: string; own?: string }
 const drawView = async ($: EngineInterface, e: Parameters<EngineInterface['ui']['resolve']>[0], text: string, id: string, of: ViewOf = {}) => {
   const { Box, Markdown } = $.ui.resolve(e)
   const [lead, body] = splitLead(text)
@@ -2082,16 +2154,24 @@ const stepControls = async ($: EngineInterface, s: ReviewSession, r: ReviewState
   // model works. A key that only shows something (the sidebar's Show in hunk) stays drawn
   // meanwhile, from `offered`: a key that vanishes for the moment its own press runs moves
   // everything after it on its line.
-  const offered = isSettledPick ? [
+  // The comment's own card is up (it names the comment): the way to the others is on it.
+  // Without one, the band leads back to the comment whose match waits.
+  const host = await read($, hostCard)
+  const isOwnCard = r.own_review !== 'pending' && phaseOf(r) === 'own' && !!own && host?.own === own.id
+  const offered = isSettledPick ? (isOwnCard ? [] : [
     { key: 'own-back', label: 'Next', press: { kind: 'own-step', by: 1, to: r.proposals?.[0]?.thread } },
-  ] as BandButton[]
+  ] as BandButton[])
     : buttonsFor({ ...asked, explained: await read($, explained), unjudged: (await read($, judging)).failed })
-  const buttons = isWorking || doing ? [] : offered
+  const isIdle = !(isWorking || doing)
+  const buttons = isIdle ? offered : []
   // The newest card in the chat is the current step's: the buttons are drawn on it, and the
   // band keeps the feedback alone. A step with no card of its own keeps them in the band.
-  const host = await read($, hostCard)
-  const isHosted = !isSettledPick && !!host && host.topic === (r.current ?? null)
-  return { buttons, offered, press, isHosted, host }
+  // A card about another of the person's comments never hosts this one's buttons: pressed
+  // there, they would settle the comment the card does not show.
+  const isOtherOwn = phaseOf(r) === 'own' && !!host?.own && host.own !== own?.id
+  const isHosted = isOwnCard
+    || (!isSettledPick && !isOtherOwn && r.own_review !== 'pending' && !!host && host.topic === (r.current ?? null))
+  return { buttons, offered, press, isHosted, host, isIdle }
 }
 
 // What only a running process can hold: a turn under way, a press, a check asking GitLab, the
@@ -2558,14 +2638,15 @@ export const register: Register = on => {
         const isCurrent = x.id === own?.id
         if (isCurrent) currentRow = listRows.length
         const base = { bold: isCurrent || undefined, dimColor: !isCurrent || undefined }
-        // What became of it: on a topic, or proposed for one; nothing while it waits.
-        const fate = x.topic ? ` on ${x.topic}` : x.proposal ? ` → ${x.proposal}?` : ''
+        // What became of it: on a topic, or proposed for one, or resolved (left out of the
+        // matching); nothing while it waits.
+        const fate = x.topic ? ` on ${x.topic}` : x.proposal ? ` → ${x.proposal}?` : x.resolved ? ' resolved' : ''
         const room = Math.max(8, cols - 4 - whereWidth - fate.length - listReserve)
         listRows.push(
           <Box key={`own-${x.id}`} flexDirection="row">
             <Text color={ACCENT}>{isCurrent ? '▌' : ' '}</Text>
             <Button key={`own-${x.id}`} plain onPress={() => pickOwn($, s, x.id)}>
-              <Text {...base}>{`${STATE_ICON[x.topic ? 'done' : 'new']} `}</Text>
+              <Text {...base}>{`${STATE_ICON[x.topic || x.resolved ? 'done' : 'new']} `}</Text>
               <Text {...base} color={ACCENT}>{x.where.slice(0, whereWidth).padEnd(whereWidth)}</Text>
               <Text {...base}>{` ${fitTitle(x.text.replace(/\s+/g, ' '), room).padEnd(room)}`}</Text>
               <Text {...base} dimColor>{fate}</Text>
@@ -3243,7 +3324,9 @@ export const register: Register = on => {
         )
       })
       const { offered, press } = await stepControls($, s, r, await read($, working))
-      const found = offered.find(b => HUNK_KEYS.includes(b.key) && !isNotesKey(b, r))
+      // The line always carries the viewer's key, worded for where the viewer is (Read hunk
+      // notes once it is open or notes wait in it): notes waiting put it on the card too.
+      const found = offered.find(b => HUNK_KEYS.includes(b.key))
       // rework-mr, a fix pushed more than once: which push the area shows, and the keys that
       // step between them. The file is read first, then picked, as a file's pick is.
       const topic = r.topics.find(x => x.id === r.current)

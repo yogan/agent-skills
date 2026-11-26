@@ -330,6 +330,20 @@ about the steps alone ("reading the diff", "seeding"), or there are none. A hint
 finding steers the review the user is about to do on their own, which is what waiting is
 for.
 
+**Asked to analyse one of their own comments** (its card's Analyse, while their review is
+open): judge on the code alone whether its point holds, never naming, hinting at or comparing
+with a finding of yours, then store it and show its card, which ends your turn. Read what it
+needs first, in one call: the comment, the MR's change and the code around the comment's
+line. Judge from that; run nothing else unless it cannot settle the point, and say a file is
+unchanged only where the MR's change leaves it out:
+
+```bash
+python3 $SD/findings.py own-context <discussion_id> --iid <n>
+python3 $SD/findings.py own-analysis <discussion_id> --verdict holds|partly|wrong --text - --iid <n> <<'EOF'
+<two to four sentences: what the code does there, and why the point holds or does not>
+EOF
+```
+
 **"My review is done: pull in my comments"** reaches you as their prompt. Then:
 
 ```bash
@@ -775,5 +789,5 @@ details can be collapsed or hidden.
 repo. `python3`. (`clip.sh` copies to the clipboard via macOS `pbcopy`; where that is
 missing the copy is skipped and nothing else changes.) Build blocks: the `explain-branch` and `review-branch`
 skills installed. `findings.py` subcommands: sync·todo·present·resume·updates·bodies·quote·draft·diff·view·point·notes·reply·candidates·
-import·add·set·drop·merge·link·posted·own-review·propose·verdict·peer·head·base·branch·set-head·worktree·explainer·seed·prune·path·begun·lang
+import·add·set·drop·merge·link·posted·own-review·own·own-context·own-analysis·propose·verdict·peer·head·base·branch·set-head·worktree·explainer·seed·prune·path·begun·lang
 (run any with `-h`).

@@ -109,6 +109,34 @@ export const stepOf = (topic: ReviewTopic | undefined): Step => {
 
 const ask = (prompt: string): Press => ({ kind: 'ask', prompt })
 
+// review-mr, one of the person's own comments open while their review is: whether its point
+// holds, judged by the agent on the code alone. The agent's own findings wait until the
+// review is in, so the prompt keeps them out of the answer.
+export const ownAnalysePrompt = (own: { id: string; where: string }): string =>
+  `Analyse my own comment at ${own.where} (discussion ${own.id}): does its point hold against the code? `
+  + `Read \`findings.py own-context ${own.id}\` first (the comment, this MR's change and the code around it) `
+  + 'and judge from that; run nothing else unless it cannot settle the point. '
+  + 'Judge it on the code alone, and do not name, hint at or compare it with any finding or topic of yours: '
+  + `those wait until my review is in. Store your verdict and show the card: \`findings.py own-analysis ${own.id} `
+  + '--verdict holds|partly|wrong --text -\`.'
+
+// review-mr, a card of one of the person's own comments: the way to the comment before and
+// after it in the sidebar's order, wrapping round, where there is another. The same on every
+// such card, before their review is in and while its comments are matched, as the sidebar's
+// rows are the same list throughout.
+export const ownWay = (review: ReviewState): BandButton[] => (review.own_threads ?? []).length > 1 ? [
+  { key: 'own-prev', label: 'Previous', press: { kind: 'own-step', by: -1 } },
+  { key: 'next', label: 'Next', press: { kind: 'own-step', by: 1 } },
+] : []
+
+// review-mr, one of the person's own comments open while their review is: its card's buttons.
+// Analyse, then the way to the others (`ownWay`). My review is done stays in the band all
+// along (`stepControls`).
+export const ownCardButtons = (review: ReviewState, own: { id: string; where: string }): BandButton[] => [
+  { key: 'own-analyse', label: 'Analyse', press: ask(ownAnalysePrompt(own)) },
+  ...ownWay(review),
+]
+
 // Whether the round has another topic to go on to: Next is offered only then. A card with
 // none left, or opened while no round runs, is closed with its ✕ (register.tsx's `drawCard`),
 // or, with nothing left on it, offers the round the sidebar's box would open (`wayOnSettled`).
@@ -177,6 +205,7 @@ const ICON: Record<string, string> = {
   'Propose a plan': '\u{F0982}', // md-map_outline
   'Explain': '\u{F1739}', 'Explain further': '\u{F1739}', 'Analyse more': '\u{F1739}', 'Analyse': '\u{F1739}', // md-chat_question_outline
   'Next': '\u{F0BB1}', // md-page_next_outline
+  'Previous': '\u{F0BB3}', // md-page_previous_outline
   'Close': '\u{F0156}', // md-close, the card's own ✕
   'Post': '\u{F048A}', 'Send follow-up': '\u{F048A}', '“Fixed”': '\u{F048A}', // md-send
   'Post + resolve': '\u{F1161}', '“Fixed” + resolve': '\u{F1161}', // md-send_check

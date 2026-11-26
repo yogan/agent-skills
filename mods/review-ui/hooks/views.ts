@@ -18,6 +18,8 @@ const VIEW_COMMANDS = [
   // The question whether to generate an explainer, with the agent's recommendation.
   String.raw`findings\.py${Q}\s+explainer\b[^\n]*--recommend`,
   String.raw`findings\.py${Q}\s+(?:proposal\b|own-review\s+(?:matched|done)\b)`,
+  // One of the person's own comments while their review is open, and its analysis.
+  String.raw`findings\.py${Q}\s+own(?:-analysis)?(?=\s|$)`,
   String.raw`findings\.py${Q}\s+diff\b[^\n]*--show`,
   String.raw`threads\.py${Q}\s+(?:present|todo|quote|reply-view|change-view)\b`,
   // A comment posted by hand that no longer holds: the verdict and its corrected version.
@@ -71,9 +73,12 @@ export type Manifest = {
   // What the topic's card said when the view was printed, as a fingerprint (the scripts'
   // `card_face`): the state carries the current topic's, and a card with another is stale.
   face?: string
+  // review-mr: the person's own comment the view is about, by its discussion id.
+  own?: string
 }
 
-export type View = { text: string; topic?: string; step?: string; draft?: string; face?: string }
+// `own`: the person's own comment the view is about (findings.py's `own`), by its discussion id.
+export type View = { text: string; topic?: string; step?: string; draft?: string; face?: string; own?: string }
 
 // A script the command names through a variable it assigns first (`S=$SD/threads.py &&
 // python3 $S quote t1`) is the same script: the variable is read as what it holds.
@@ -175,6 +180,7 @@ export const viewOf = (stdout: unknown): View | undefined => {
   }
   text = text.trim()
   if (!text) return undefined
+  if (manifest?.own) return { text, own: manifest.own }
   if (!manifest?.topic) return { text }
   return { text, topic: manifest.topic, ...(manifest.step ? { step: manifest.step } : {}), ...(manifest.draft ? { draft: manifest.draft } : {}), ...(manifest.face ? { face: manifest.face } : {}) }
 }

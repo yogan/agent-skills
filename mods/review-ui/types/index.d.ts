@@ -129,6 +129,8 @@ export type ReviewThread = { url?: string | null; file?: string | null; line?: n
 export type ReviewOwnThread = {
   id: string; file: string | null; line: number | null; where: string; text: string
   topic: string | null; proposal: string | null
+  // Resolved in GitLab: a point the person dropped, left out of the matching.
+  resolved?: boolean
   thread?: ReviewThread[]
 }
 
@@ -219,7 +221,8 @@ export type ReviewCard = { topic: string; draft: string | null }
 // step's: its row (a tool call's id, or a placed row's) and the topic it shows, null for one
 // that shows none (the opener, a comment's match, the explainer question).
 // `face`: what the topic's card said when this one was drawn (the scripts' `card_face`).
-export type ReviewHost = { id: string; topic: string | null; step?: string | null; face?: string | null }
+// `own`: review-mr, the person's own comment the card is about, while their review is open.
+export type ReviewHost = { id: string; topic: string | null; step?: string | null; face?: string | null; own?: string | null }
 
 // A view the mod drew itself after a press (no tool call to hang it under), by row id.
 export type ReviewPlaced = Record<string, string>
@@ -302,7 +305,7 @@ declare module 'claude-code' {
       host: Shaped<ReviewHost | null>
       // The topic and draft version of each card a press placed, by its id, as a model's
       // card has them in its manifest.
-      'placed-of': Shaped<Record<string, { topic?: string; draft?: string }>>
+      'placed-of': Shaped<Record<string, { topic?: string; draft?: string; own?: string }>>
       // What a press did to each card it finished, by the card's id.
       outcomes: Shaped<Record<string, ReviewOutcome>>
       // The cards of the review in the order they came up (`at`, by card id), and for each

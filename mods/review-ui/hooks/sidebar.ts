@@ -16,12 +16,19 @@ export const phaseOf = (r: ReviewState): Phase =>
     : 'topics'
 
 // The own thread that is current: in the matching, the one whose proposal the band asks
-// about; before it, the one the person picked, else the first.
+// about; before it, only the one the person opened.
 //
-// The person's pick always wins, so every row they click or step to becomes current; with
-// none, the first comment whose proposal waits, else the first comment.
+// The person's pick always wins, so every row they click or step to becomes current. With
+// none, while their review is open, none is current: they open their comments themselves,
+// and one they just posted is listed without coming up. In the matching, the first comment
+// whose proposal waits, else the first comment.
+// The pick of none: the person closed the comment's card (its ✕) while their review is open,
+// back to the list of their comments with none open.
+export const NO_OWN = 'none'
+
 export const currentOwn = (r: ReviewState, picked: string | null): ReviewOwnThread | undefined => {
   const own = r.own_threads ?? []
+  if (r.own_review === 'pending' && !own.some(x => x.id === picked)) return undefined
   const asked = r.proposals?.[0]?.thread
   return own.find(x => x.id === picked) ?? (asked ? own.find(x => x.id === asked) : undefined) ?? own[0]
 }
