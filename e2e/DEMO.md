@@ -29,7 +29,7 @@ Short, for the phone. Setup and fallbacks: [RUNBOOK.md](RUNBOOK.md).
   - Alice asked "404s or all?", pushed a catch for all
   - ask the agent (prompt) which option is best
   - draft follow-up: swallow only 404s, **Post**
-- `t3` "fix to come": *Wait for author*
+- `t3` Alice defers to a follow-up MR: agree → **Post + resolve** (or push back)
 - **if time:** `t5`, Clara's thread → **Analyse**
 
 ## `/rework-mr !3` — my MR, Bob's three comments
