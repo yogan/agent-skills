@@ -539,9 +539,10 @@ If you find yourself writing a conclusion before a pasted `quote`, reorder.
 Draft rules — see [REFERENCE.md](REFERENCE.md). In short: **write the comment body in the
 language named by the `drafts <lang>` marker** — on every `sync`/`todo`/`present` header and
 a posted topic's `quote` header; an unposted topic carries it on its draft label (`Draft of
-comment to post (de)`), and while it has no draft yet `quote`'s note to you names it. If you
-cannot see it in the output in front of you, run
-`python3 $SD/findings.py lang` rather than assuming (`de` means informal *du*). **The body is
+comment to post (<lang>)`), and while it has no draft yet `quote`'s note to you names it. The
+same goes for any text meant for GitLab that you only suggest in chat (a reply, a follow-up).
+If you cannot see it in the output in front of you, run `python3 $SD/findings.py lang` rather
+than assuming: it differs per repository (`de` means informal *du*). **The body is
 the only thing in that language**: summaries, headings and your own prose stay English. **As
 short as possible**; a ```suggestion block for a line-precise fix, its range
 (`suggestion:-A+B`, A lines above the comment's line through B below) covering every line it
