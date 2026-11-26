@@ -39,7 +39,8 @@ the red/green diff background AND nested syntax highlighting of the changed
 code; use plain `language-diff` if you just want the diff coloring with no
 language known. Lines are plain unified-diff text (leading `+`, `-`, or a
 space for context; `@@ ... @@` hunk headers and `diff --git`/`---`/`+++`
-headers are recognized and dimmed automatically):
+headers are recognized and dimmed automatically, and a bare `@@` line marks lines left
+out between two hunks, drawn as a dim `⋯`):
 
     <pre><code class="language-diff-javascript">-export const devAuthEnabled = import.meta.env.MODE !== 'production'
     +export const devAuthAvailable = import.meta.env.MODE !== 'production'</code></pre>
@@ -727,6 +728,11 @@ HIGHLIGHT_JS = """
   function highlightDiffLine(line, lang) {
     if (/^(diff --git|index |new file mode|deleted file mode|--- |\\+\\+\\+ |old mode|new mode|similarity index|rename (from|to))/.test(line)) {
       return { cls: 'diff-meta', html: escHtml(line) };
+    }
+    // A bare `@@`: lines left out between two hunks, drawn as the gap it is. Read as context,
+    // it showed as a line of code reading "@@".
+    if (/^@@\\s*$/.test(line)) {
+      return { cls: 'diff-hunk', marker: ' ', html: '\u22EF' };
     }
     if (/^@@.*@@/.test(line)) {
       return { cls: 'diff-hunk', html: escHtml(line) };

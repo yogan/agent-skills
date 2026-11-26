@@ -813,6 +813,11 @@ VITE_APP_ENABLE_API_MOCKING=true
     if (/^(diff --git|index |new file mode|deleted file mode|--- |\+\+\+ |old mode|new mode|similarity index|rename (from|to))/.test(line)) {
       return { cls: 'diff-meta', html: escHtml(line) };
     }
+    // A bare `@@`: lines left out between two hunks, drawn as the gap it is. Read as context,
+    // it showed as a line of code reading "@@".
+    if (/^@@\s*$/.test(line)) {
+      return { cls: 'diff-hunk', marker: ' ', html: '\u22EF' };
+    }
     if (/^@@.*@@/.test(line)) {
       return { cls: 'diff-hunk', html: escHtml(line) };
     }
