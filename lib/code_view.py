@@ -673,25 +673,29 @@ def place_now(repo, thread):
 def fix_view(repo, thread, files, pick=None, base="HEAD", commit=None, moved=()):
     """A fix's file for the sidebar: `files` is the fix's `[path, added, removed]` each, and
     `moved` the places it moved the commented code to (`{"file", "first", "last"}` in the
-    code at `commit`; see `moved_to`). The one shown is `pick` where it is one of them, else
-    where the code went where the fix moved it (the comment's file then shows it removed,
-    and nothing of what became of it), else the comment's file where the fix touches it,
-    else the fix's first. Its change from `base` (to `commit`, or the files on disk), the
-    comment's lines carried through it where it is the comment's file, or marked where the
-    code went; elsewhere the first changed row stands for where to look. None for a fix
-    with no files.
+    code at `commit`; see `moved_to`). The one shown is `pick` where it is one of them or the
+    comment's file, else where the code went where the fix moved it (the comment's file then
+    shows it removed, and nothing of what became of it), else the comment's file where the
+    fix touches it, else the fix's first. Its change from `base` (to `commit`, or the files
+    on disk), the comment's lines carried through it where it is the comment's file, or
+    marked where the code went; elsewhere the first changed row stands for where to look.
+    None for a fix with no files.
 
-    Adds `fix_files` (all of `files`, the comment's file first where the fix touches it, then
-    where its code went: the files the topic is about lead the list it opens on) and
-    `commented` (the comment's file now), so the sidebar lists the fix and marks the file
-    the comment is on."""
+    Adds `fix_files` (all of `files`, the comment's file first, listed at no size where the
+    fix left it alone, then where its code went: the files the topic is about lead the list
+    it opens on) and `commented` (the comment's file now), so the sidebar lists the fix and
+    marks the file the comment is on."""
     names = [f for f, _a, _r in files]
     if not names:
         return None
     now = commented(repo, thread)
     went = [q for q in moved if q["file"] in names]
-    want = (pick if pick in names else went[0]["file"] if went else now if now in names
-            else names[0])
+    want = (pick if pick in names or (pick and pick == now) else went[0]["file"] if went
+            else now if now in names else names[0])
+    # The comment's file is listed even where the fix left it alone, at no size: its thread is
+    # drawn on it alone, and the fix opens on its change, so it must stay one pick away.
+    if now and now not in names:
+        files = [[now, 0, 0], *files]
     there = next((q for q in went if q["file"] == want), None)
     its = want == now and not there
     if there:

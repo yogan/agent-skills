@@ -943,7 +943,7 @@ class TestSyncRefreshesThreads(unittest.TestCase):
     def test_who_resolved_a_thread_and_when_is_kept(self):
         orig = T.api
         note = {"resolvable": True, "resolved": True, "id": 1, "author": {"name": "Robin"},
-                "body": "b", "resolved_by": {"name": "Haas, Miriam", "username": "mh"},
+                "body": "b", "resolved_by": {"name": "Builder, Bob", "username": "mh"},
                 "resolved_at": "2026-02-01T13:02:00Z", "position": self.POSITION}
         T.api = lambda *a, **k: [{"id": "d1", "notes": [note]}]
         try:
@@ -951,7 +951,7 @@ class TestSyncRefreshesThreads(unittest.TestCase):
         finally:
             T.api = orig
         self.assertEqual((x["resolved_by"], x["resolved_mine"], x["resolved_at"]),
-                         ("Haas, Miriam", True, "2026-02-01T13:02:00Z"))
+                         ("Builder, Bob", True, "2026-02-01T13:02:00Z"))
 
     def test_a_range_that_disappears_is_dropped(self):
         """The reviewer edited a multi-line comment down to one line — an update() would
@@ -1982,7 +1982,7 @@ class TestWhereTheModDraws(unittest.TestCase):
 
     def setUp(self):
         me_note = {"author": "Frank", "body": "Done, see the push.", "mine": True}
-        them = {"author": "Haas, Miriam - EF13579", "body": "Naming:\nplease.", "mine": False}
+        them = {"author": "Builder, Bob - EF13579", "body": "Naming:\nplease.", "mine": False}
         self.state = {"iid": 3, "title": "Extract keys", "topics": [
             {"id": "t1", "thread_ids": ["d1"], "summary": "Rename the factory"},
             {"id": "t2", "thread_ids": ["d2"], "summary": "Fix the detail key"},
@@ -1991,12 +1991,12 @@ class TestWhereTheModDraws(unittest.TestCase):
                    "notes": [them]},
             "d2": {"resolved": False, "awaiting": "you", "file": "b.ts", "line": 2,
                    "notes": [them, me_note, them]},
-        }, "mr_comments": [{"author": "Haas, Miriam - EF13579", "body": "LGTM otherwise"}]}
+        }, "mr_comments": [{"author": "Builder, Bob - EF13579", "body": "LGTM otherwise"}]}
 
     def test_a_comment_on_the_mr_carries_its_link_and_its_writer_a_colour(self):
         """The sidebar heads each comment on the MR as a thread's: the link glyph, and the
         writer in a colour of their own, though they wrote in no thread."""
-        note = {"resolvable": False, "id": 42, "author": {"name": "Chidi Obi"}, "body": "Thanks"}
+        note = {"resolvable": False, "id": 42, "author": {"name": "Clara Checker"}, "body": "Thanks"}
         orig = T.api
         T.api = lambda *a, **k: [{"id": "d9", "notes": [note]}]
         got = []
@@ -2006,7 +2006,7 @@ class TestWhereTheModDraws(unittest.TestCase):
             T.api = orig
         self.assertEqual(got[0]["url"], "http://gl/-/merge_requests/4#note_42")
         self.state["mr_comments"] += got
-        self.assertEqual(T.state_json(self.state)["people"], ["Miriam", "Chidi"])
+        self.assertEqual(T.state_json(self.state)["people"], ["Bob", "Clara"])
 
     def test_your_move_is_new_until_you_have_replied_then_answered(self):
         self.assertEqual(T.ui_state(self.state, self.state["topics"][0]), "new")
@@ -2015,8 +2015,8 @@ class TestWhereTheModDraws(unittest.TestCase):
     def test_the_panel_state_holds_the_whole_current_thread_and_the_mr_comments(self):
         got = T.state_json(self.state)
         self.assertEqual(got["current"], "t1")
-        self.assertEqual([n["author"] for n in got["thread"][0]["notes"]], ["Miriam"])
-        self.assertEqual(got["mr_comments"][0]["author"], "Miriam")
+        self.assertEqual([n["author"] for n in got["thread"][0]["notes"]], ["Bob"])
+        self.assertEqual(got["mr_comments"][0]["author"], "Bob")
         self.assertEqual([t["state"] for t in got["topics"]], ["new", "answered"])
 
     def test_a_drawn_quote_heads_each_comment_with_its_link_and_time_and_no_bare_url(self):
@@ -2255,14 +2255,14 @@ class TestRounds(unittest.TestCase):
         state = self.state(2)
         T.start_round(state)
         live = {k: dict(v) for k, v in state["threads"].items()}
-        live["d1"].update(resolved=True, resolved_by="Haas, Miriam - X1", resolved_at="2026-02-01T13:02:00Z")
+        live["d1"].update(resolved=True, resolved_by="Builder, Bob - X1", resolved_at="2026-02-01T13:02:00Z")
         live["d2"]["notes"] = [*live["d2"]["notes"],
-                               {"author": "Haas, Miriam - X1", "body": "And tests?", "at": "2026-02-01T13:05:00Z", "mine": False}]
+                               {"author": "Builder, Bob - X1", "body": "And tests?", "at": "2026-02-01T13:05:00Z", "mine": False}]
         T.sync(state, live)
         T.sync(state, live)                               # noted once, however often it syncs
         box = T.state_json(state)["inbox"]
-        self.assertEqual(box["resolves"], [{"id": "t1", "by": "Miriam", "at": "2026-02-01T13:02:00Z"}])
-        self.assertEqual(box["by"], {"t2": "Miriam"})
+        self.assertEqual(box["resolves"], [{"id": "t1", "by": "Bob", "at": "2026-02-01T13:02:00Z"}])
+        self.assertEqual(box["by"], {"t2": "Bob"})
         # Your own resolve is none; and a new round has seen the news.
         mine = {k: dict(v) for k, v in live.items()}
         mine["d2"].update(resolved=True, resolved_mine=True)
@@ -3129,7 +3129,7 @@ class TestKeepPlan(unittest.TestCase):
         return ask.get("prompt", ""), done
 
     def test_a_proposal_names_a_topic_once_and_never_renames_it(self):
-        """The background check rewrote every title to the latest news ("Miriam now asks to
+        """The background check rewrote every title to the latest news ("Bob now asks to
         revert the rename"): the topic no longer said which thread it was."""
         self.assertEqual(self.t1["summary"], "point 1")
         self.assertNotIn("(*give summary*)", self.judge("")[0])             # named: not asked for one
@@ -3206,17 +3206,17 @@ class TestKeepPlan(unittest.TestCase):
         card = self.keep_after(("Robin Roe", "2026-01-10T00:00:00Z", False),   # before the plan
                                ("Jan Doe", "2026-02-01T00:00:00Z", False),
                                ("Me", "2026-02-02T00:00:00Z", True),
-                               ("Miriam Moe", "2026-02-03T00:00:00Z", False))
-        self.assertIn(T.ui.step_md(T.ui.STATE_ICON["answered"], "Jan and Miriam wrote again; the plan "
+                               ("Bob Moe", "2026-02-03T00:00:00Z", False))
+        self.assertIn(T.ui.step_md(T.ui.STATE_ICON["answered"], "Jan and Bob wrote again; the plan "
                                    "still holds", "2026-02-03T00:00:00Z"), card)
 
     def test_a_second_keep_names_only_who_wrote_since_the_first(self):
         self.keep_after(("Jan Doe", "2026-02-01T00:00:00Z", False))
         self.state["threads"]["d1"]["notes"].append(
-            {"author": "Miriam Moe", "body": "thanks", "at": "2026-02-05T00:00:00Z", "mine": False})
+            {"author": "Bob Moe", "body": "thanks", "at": "2026-02-05T00:00:00Z", "mine": False})
         self.run_cli("keep-plan", "t1", "--why", "a thank-you")
         card = T.render_quote(self.state, "t1")
-        self.assertIn("Miriam wrote again; the plan still holds", card)
+        self.assertIn("Bob wrote again; the plan still holds", card)
         self.assertNotIn("Jan and", card)
 
     def test_a_plan_kept_before_the_names_were_stored_says_nothing(self):
@@ -3492,10 +3492,13 @@ class TestPushedFixInTheSidebar(unittest.TestCase):
 
     def test_a_fix_that_left_the_comment_s_file_alone_opens_on_its_first_file(self):
         """It showed the comment's file as the MR changes it ("new file"), the fix's files
-        listed under it, and no change of the fix on screen until one was picked."""
+        listed under it, and no change of the fix on screen until one was picked. Once it
+        opened on the fix, the comment's file was missing from the list, and its thread with
+        it: it leads the list now, at no size."""
         got, seen = self.run_code([("a.ts", 4, 4), ("c.ts", 1, 0)])
         self.assertEqual((got["mode"], seen["path"], seen["line"]), ("pushed", "a.ts", None))
-        self.assertEqual((got["commented"], got["fix_files"]), ("b.ts", [["a.ts", 4, 4], ["c.ts", 1, 0]]))
+        self.assertEqual((got["commented"], got["fix_files"]),
+                         ("b.ts", [["b.ts", 0, 0], ["a.ts", 4, 4], ["c.ts", 1, 0]]))
 
     def test_a_push_carrying_another_topic_s_fix_opens_on_the_topic_s_own_file(self):
         """Carried by t2's push, which left t1's file alone, t1 opened on the push's first
@@ -4179,10 +4182,10 @@ class TestStateByWord(unittest.TestCase):
             return ["PUSHED"] + ([T.ui.step_md(close["icon"], close["text"], close["at"])] if close else [])
         self.pushed()
         th = self.state["threads"]["d1"]
-        th.update(resolved=True, resolved_by="Haas, Miriam - X1", resolved_at="2026-02-01T13:02:00Z")
+        th.update(resolved=True, resolved_by="Builder, Bob - X1", resolved_at="2026-02-01T13:02:00Z")
         with mock.patch.object(T, "story_steps", side_effect=story):
             parts = [x for x in T._step_parts(self.state, self.t1) if x]
-        self.assertRegex(parts[-1], rf"^((Nov|Feb) \d+, )?\d\d:\d\d {T.ui.STEP_DONE_ICON} Miriam resolved it$")
+        self.assertRegex(parts[-1], rf"^((Nov|Feb) \d+, )?\d\d:\d\d {T.ui.STEP_DONE_ICON} Bob resolved it$")
         th.update(resolved=False, resolved_by=None, resolved_at=None)
         with mock.patch.object(T, "api_post", return_value={"id": 9}):
             T.post_reply(self.state, {"enc": "g%2Fp", "web": "https://gl/g/p"}, 1, "t1", None,
@@ -4198,7 +4201,7 @@ class TestStateByWord(unittest.TestCase):
         self.assertIsNone(T.closing_line(self.state, self.t1))
 
     def test_a_fixed_and_resolve_stays_that_after_the_reviewer_reopens_it(self):
-        """t1's "Fixed" + resolve read "You fixed and resolved it" until Miriam reopened the
+        """t1's "Fixed" + resolve read "You fixed and resolved it" until Bob reopened the
         thread, and "12:36 You replied" from then on."""
         self.pushed()
         th = self.state["threads"]["d1"]
@@ -4229,13 +4232,13 @@ class TestStateByWord(unittest.TestCase):
         self.pushed()
         self.t1["plan_at"] = "2026-02-01T12:00:00Z"
         th = self.state["threads"]["d1"]
-        th.update(resolved=True, resolved_by="Haas, Miriam - X1", resolved_at="2026-02-01T13:02:00Z")
+        th.update(resolved=True, resolved_by="Builder, Bob - X1", resolved_at="2026-02-01T13:02:00Z")
         with mock.patch.object(T, "_git", return_value=""):
             parts = T._step_parts(self.state, self.t1)
         # The story is the card's last part, after the analysis the plan stood on.
         steps = parts[:-1][len(parts) - 2 - parts[:-1][::-1].index(""):]
         self.assertTrue(any(re.search(r"^(Feb 1, )?\d\d:00 \S+ You agreed the plan: Fix\. p$", x) for x in steps))
-        self.assertRegex(steps[-1], r" Miriam resolved it$")        # no gap before the close
+        self.assertRegex(steps[-1], r" Bob resolved it$")        # no gap before the close
 
     def test_a_resolve_before_a_later_push_is_told_before_it(self):
         """The reviewer replied and resolved together, and the fix went up half an hour

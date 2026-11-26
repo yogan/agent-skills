@@ -2406,7 +2406,7 @@ def fix_accepted(state, t):
 
 
 def names_md(names):
-    """`Jan`, `Jan and Robin`, `Jan, Robin and Miriam`."""
+    """`Jan`, `Jan and Robin`, `Jan, Robin and Bob`."""
     return " and ".join([", ".join(names[:-1]), names[-1]] if len(names) > 1 else names)
 
 

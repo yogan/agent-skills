@@ -227,6 +227,26 @@ class TestView(unittest.TestCase):
         v = code_view.fix_view(repo, thread, files, "o.md", before, after)
         self.assertEqual((v["file"], v["line"], v["at"]), ("o.md", None, [1, 1]))
 
+    def test_a_fix_that_left_the_comment_s_file_alone_still_lists_it(self):
+        """The fix changed another file only: it opens on that change, and the comment's
+        file leads the list unchanged, one pick away from the thread on its line."""
+        repo, before = self.repo(list("abcdef"), list("abcdef"))
+        with open(os.path.join(repo, "o.md"), "w") as f:
+            f.write("x\n")
+        self.git(repo, "add", "-A")
+        self.git(repo, "commit", "-qm", "the fix")
+        after = subprocess.run(["git", "-C", repo, "rev-parse", "HEAD"], capture_output=True, text=True).stdout.strip()
+        files = [["o.md", 1, 0]]
+        thread = {"file": "t.md", "line": 3, "head_sha": before, "side": "new"}
+        v = code_view.fix_view(repo, thread, files, None, before, after)
+        self.assertEqual((v["file"], v["commented"]), ("o.md", "t.md"))
+        self.assertEqual(v["fix_files"], [["t.md", 0, 0], ["o.md", 1, 0]])
+        # Picked, the comment's file shows its thread's line and no change of the fix.
+        v = code_view.fix_view(repo, thread, files, "t.md", before, after)
+        self.assertEqual((v["file"], v["line"]), ("t.md", 3))
+        self.assertEqual({r[0] for r in v["rows"]}, {" "})
+        self.assertEqual(v["fix_files"], [["t.md", 0, 0], ["o.md", 1, 0]])
+
     def test_a_fix_that_moved_the_code_opens_where_it_went(self):
         """The push moved the commented function into another file: the comment's file
         shows only its removal, so the view opens on the function where it is now, its line
