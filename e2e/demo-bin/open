@@ -1,0 +1,15 @@
+#!/bin/sh
+# The talk's `open`, first on the demo windows' PATH (drive.py's showcase): a page goes to a
+# browser other than the one showing the slides, so opening an explainer never touches the
+# slides' app. Sent to that app, even into its other window, the page took the slides out of
+# fullscreen. Everything else is the system's `open`, unchanged.
+#
+#   DEMO_BROWSER   the app pages open in (default: Microsoft Edge; the slides are in Safari)
+SYSTEM_OPEN=${DEMO_SYSTEM_OPEN:-/usr/bin/open}
+for a in "$@"; do
+  case $a in
+    *.html|*.htm|*.html\#*|file://*)
+      exec "$SYSTEM_OPEN" -a "${DEMO_BROWSER:-Microsoft Edge}" "$@" ;;
+  esac
+done
+exec "$SYSTEM_OPEN" "$@"

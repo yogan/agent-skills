@@ -1010,7 +1010,11 @@ def showcase(sc, model, session, pace):
     pane = Pane(wid.strip(), cwd=cwd, env=rig_env())
     # `env -u`: a caller may have switched the mod's rendering and the tab names off for its
     # own checks (tmux-demo.sh does), and a tmux server it started hands that on to every window.
-    pane.type("clear; env -u REVIEW_UI_DRAWN -u AGENT_TAB_OFF " + claude_command(
+    # `demo-bin` first on its PATH: the talk's own `open` (demo-bin/open), so an explainer opens
+    # in a browser other than the slides'. Spelled out here, as the window's shell may be one
+    # whose `$PATH` is a list.
+    path = shlex.quote(f"PATH={E2E / 'demo-bin'}:{os.environ.get('PATH', '')}")
+    pane.type(f"clear; env -u REVIEW_UI_DRAWN -u AGENT_TAB_OFF {path} " + claude_command(
         sc, model, verify=False, mock=mock.command if mock else None))
     pane.keys("Enter")
     print(f"── {sc.name}: {sc.about}  (window {session}:{window})")

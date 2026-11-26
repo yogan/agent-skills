@@ -3,14 +3,16 @@
 A local GitLab CE with a seeded project, three MRs and pre-seeded review conversations, for
 demoing and end-to-end testing `review-mr` and `rework-mr` without touching a real instance.
 
-Talk-day checklist and run of show: [RUNBOOK.md](RUNBOOK.md).
+Talk-day checklist and run of show: [RUNBOOK.md](RUNBOOK.md). The presenter's short notes for
+the stage: [DEMO.md](DEMO.md). Both describe what `fixture.py` builds, so a change to the demo
+MRs updates them too.
 
 ## Layout
 
 | File | Purpose |
 |---|---|
 | `docker-compose.yml` | GitLab CE (arm64-native), `http://gitlab.test`, no CI runner |
-| `bootstrap.py` | one-time: users, deterministic tokens, group, project, `glab` auth |
+| `bootstrap.py` | one-time: users with their names and avatars, deterministic tokens, group, project, `glab` auth |
 | `fixture.py` | resettable: branches, the three MRs, seeded threads, skill state |
 | `tmux-demo.sh` | talk day: verify the rig, reset it only if needed, build the demo tmux session |
 | `drive.py` | drives a real claude in tmux through a scenario: `verify` checks it, `showcase` shows it |
@@ -62,16 +64,17 @@ Talk-day checklist and run of show: [RUNBOOK.md](RUNBOOK.md).
 
 ### Accounts
 
-| User | Role | Login |
-|---|---|---|
-| `root` | admin — bootstrap only | `root` / `Rk8xQ2-mT9zV4-pB6nL1` |
-| `frank` | **the live identity** — both skills, browser, `glab` | `frank` / `Ud5jH3-wN7cY2-qF4tM8` |
-| `author-bot` | authors MR !1, !2; replies in !2's threads | fixture only |
-| `reviewer-bot` | posts the review threads on MR !3 | fixture only |
-| `peer-bot` | one extra thread on MR !2 | fixture only |
+| User | Shown as | Role | Login |
+|---|---|---|---|
+| `root` | | admin — bootstrap only | `root` / `Rk8xQ2-mT9zV4-pB6nL1` |
+| `frank` | Frank Blendinger | **the live identity** — both skills, browser, `glab` | `frank` / `Ud5jH3-wN7cY2-qF4tM8` |
+| `author-bot` | Alice Agent | authors MR !1, !2 and !5; replies in !2's threads | fixture only |
+| `reviewer-bot` | Bob Builder | posts the review threads on MR !3, and one on !5 | fixture only |
+| `peer-bot` | Clara Checker | another reviewer's threads on MR !2 and !5 | fixture only |
 
-Display names use the enterprise `Last, First - ID` shape on purpose — `lib/mr_common.py`'s
-`first_name()` parses exactly that, so the fixture exercises the real path.
+`bootstrap.py` sets each display name and avatar (`avatars/`) on every run, so a re-run brings
+an existing instance up to date. `frank.png` is the presenter's own; the others are drawn by
+`avatars/draw.py`.
 
 ## Reset before every run
 
@@ -161,7 +164,7 @@ On talk day use `./tmux-demo.sh` instead — it runs this only if the state does
 | `!1` | `author-bot` | upstream **PR #175** (standalone mock server), 2 real commits, 20 files, with 2 planted flaws alongside 2 genuine upstream ones. Targets `release/2024-06`, not `main`. Explainer and seed prepared, so nothing is generated live | `/review-mr`, live first pass |
 | `!2` | `author-bot` | route-level prefetch, plus a seeded conversation: fixed-by-push, author-asks-a-question, promised-but-not-done, untouched, and one peer thread | `/review-mr`, re-review |
 | `!3` | **you** | query-key factories in 2 commits, with 3 reviewer threads (trivial / hard / scope creep) | `/rework-mr` |
-| `!5` | `author-bot` | relative dates in the lists, 1 commit, pre-seeded like !2: two threads of yours, and three of other reviewers' (Chidi, Miriam), each titled and judged for your information. Its fixes come from `news.py fixes-on-top`, one commit per thread of yours | `/review-mr`, re-review with other reviewers |
+| `!5` | `author-bot` | relative dates in the lists, 1 commit, pre-seeded like !2: two threads of yours, and three of other reviewers' (Clara, Bob), each titled and judged for your information. Its fixes come from `news.py fixes-on-top`, one commit per thread of yours | `/review-mr`, re-review with other reviewers |
 
 The MR !2 state is not hand-written. Threads are posted, recorded through `findings.py`'s own
 CLI (`import` → `link`), the baseline is taken with `set-head` while the worktree still sits on
