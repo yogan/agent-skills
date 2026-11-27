@@ -135,6 +135,35 @@ class TestRecord(Case):
         self.r.hook("pre-push", PUSH)
         self.assertEqual(checks.status(self.r.root)[1], "a pre-push hook was added")
 
+    def test_a_shim_rewritten_for_another_worktree_keeps_the_record(self):
+        """A hook manager installed from node_modules (lefthook) writes the absolute path of
+        its binary into the shared hooks, so an install in another worktree of the clone
+        rewrites them with nothing changed in what they run."""
+        shim = ("#!/bin/sh\nif {bin} -h >/dev/null 2>&1\nthen\n  {bin} run \"pre-push\" \"$@\"\n"
+                "fi\n")
+        at = "{}/node_modules/lefthook-darwin-arm64/bin/lefthook".format
+        self.r.hook("pre-push", shim.format(bin=at("/home/someone/proj")))
+        self.r.record()
+        self.r.hook("pre-push", shim.format(bin=at("/home/someone/proj.wt/topic")))
+        self.assertIsNone(checks.status(self.r.root)[1])
+        self.r.hook("pre-push", shim.replace("run", "run --no-tty").format(
+            bin=at("/home/someone/proj.wt/topic")))
+        self.assertEqual(checks.status(self.r.root)[1], "the pre-push hook changed")
+
+    def test_every_changed_hook_is_named(self):
+        for ev, body in (("pre-commit", FORMAT), ("commit-msg", MSG), ("pre-push", PUSH)):
+            self.r.hook(ev, body)
+        self.r.record()
+        for ev, body in (("pre-commit", FORMAT), ("commit-msg", MSG), ("pre-push", PUSH)):
+            self.r.hook(ev, body + "true\n")
+        self.assertEqual(checks.status(self.r.root)[1],
+                         "the commit-msg, pre-commit and pre-push hooks changed")
+        self.r.record()
+        os.remove(os.path.join(self.r.root, ".hooks", "pre-push"))
+        self.r.hook("commit-msg", MSG)
+        self.assertEqual(checks.status(self.r.root)[1],
+                         "the commit-msg hook changed; the pre-push hook was removed")
+
     def test_kept_in_the_git_folder_out_of_the_tree(self):
         self.r.record()
         self.assertTrue(os.path.exists(os.path.join(self.r.root, ".git", checks.RECORD)))

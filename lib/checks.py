@@ -103,10 +103,29 @@ def _hash(path):
         return None
 
 
+# An absolute path into a node_modules folder, as a hook manager installed from npm
+# (lefthook) writes its own binary into the shims it installs. The hooks folder is shared by
+# every worktree of a clone, so an install in any of them rewrites the shims with that
+# worktree's path and nothing else changed; what the hooks run lives in the manager's config,
+# which the record names among the files it was read from. Only a path that starts a word
+# counts: `$dir/frontend/node_modules` is the shim choosing where to look, and stays.
+_INSTALL_PATH = re.compile(rb"(?<![^\s\"'=])/[^\s\"'`;|&<>()$]*/node_modules/")
+
+
+def _hook_hash(path):
+    """A hook's hash, blind to where its manager was installed from."""
+    try:
+        with open(path, "rb") as fh:
+            data = fh.read()
+    except OSError:
+        return None
+    return hashlib.sha256(_INSTALL_PATH.sub(b"node_modules/", data)).hexdigest()[:16]
+
+
 def fingerprint(root, based_on):
     return {
         "hooks_path": _out(root, "config", "--get", "core.hooksPath"),
-        "hooks": {ev: _hash(p) for ev, p in present_hooks(root).items()},
+        "hooks": {ev: _hook_hash(p) for ev, p in present_hooks(root).items()},
         "files": {p: _hash(_path(root, p)) for p in sorted(set(based_on))},
     }
 
@@ -144,15 +163,27 @@ def status(root):
     now = fingerprint(root, list((old.get("files") or {})))
     if now["hooks_path"] != old.get("hooks_path"):
         return rec, "core.hooksPath changed"
+    kinds = {"changed": [], "added": [], "removed": []}
     for ev in sorted(set(now["hooks"]) | set(old.get("hooks") or {})):
         a, b = (old.get("hooks") or {}).get(ev), now["hooks"].get(ev)
         if a != b:
-            return rec, (f"a {ev} hook was added" if a is None else
-                         f"the {ev} hook was removed" if b is None else f"the {ev} hook changed")
+            kinds["added" if a is None else "removed" if b is None else "changed"].append(ev)
+    said = [_hooks_said(evs, kind) for kind, evs in kinds.items() if evs]
+    if said:
+        return rec, "; ".join(said)
     for p, h in sorted((old.get("files") or {}).items()):
         if now["files"].get(p) != h:
             return rec, f"{p} changed"
     return rec, None
+
+
+def _hooks_said(evs, kind):
+    """"the pre-commit hook changed", "the commit-msg and pre-push hooks were removed"."""
+    names = evs[0] if len(evs) == 1 else ", ".join(evs[:-1]) + " and " + evs[-1]
+    if kind == "added":
+        return f"a {names} hook was added" if len(evs) == 1 else f"{names} hooks were added"
+    verb = kind if kind == "changed" else ("was " if len(evs) == 1 else "were ") + kind
+    return f"the {names} hook{'s' if len(evs) > 1 else ''} {verb}"
 
 
 def store(root, record):
