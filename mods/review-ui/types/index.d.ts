@@ -173,6 +173,8 @@ export type ReviewState = {
     pipeline?: { status: 'running' | 'passed' | 'failed'; url?: string | null; at?: string | null } | null
     can_merge?: boolean | null
     merge_error?: string | null
+    // The iid of the open MR whose branch this one targets: the MR below it in a stack.
+    stacked_on?: number | null
     // rework-mr: the merge the user pressed for, until GitLab merged it or it no longer applies.
     merge?: { how: 'merge' | 'auto'; at: string; sha?: string | null; error?: string | null } | null
   } | null

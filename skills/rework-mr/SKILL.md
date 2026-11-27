@@ -425,7 +425,8 @@ is somebody else's truncated sentence tells the user nothing.
 ## The end of the MR (where cards are drawn)
 
 Once every topic is settled, the sidebar's box takes the MR to its end, each step the user's
-press: Merge (or Set to auto-merge while the pipeline runs) once the MR is approved, then
+press: Merge (or Set to auto-merge while the pipeline runs) once the MR is approved — not
+while it is stacked on another open MR, whose branch it would merge into — then
 Clean up locally once it is merged, which removes the worktree or switches the main checkout
 back, and deletes this review's own state. **Never merge, set auto-merge or clean up
 yourself**, and never offer to. After a `Clean up locally` note the session is over: run

@@ -324,7 +324,25 @@ def mr_status(ctx, iid, me=None, mr=None):
         "pipeline": pipeline_of(mr),
         "can_merge": (mr.get("user") or {}).get("can_merge"),
         "merge_error": mr.get("merge_error"),
+        "stacked_on": stacked_on(ctx, mr) if mr.get("state") == "opened" else None,
     }
+
+
+def stacked_on(ctx, mr):
+    """The iid of the open MR whose branch `mr` targets: the MR below it in a stack, or None.
+    GitLab calls such an MR mergeable and its merge goes into the branch below, not waiting
+    for the MR below to land; GitLab retargets it to the default branch once that one merged
+    and its branch is gone. A failed lookup is None, as for an MR with no stack."""
+    target = mr.get("target_branch")
+    if not target:
+        return None
+    r = run(["glab", "api", f"projects/{ctx['enc']}/merge_requests?state=opened"
+             f"&source_branch={quote(target, safe='')}"])
+    try:
+        below = json.loads(r.stdout) if r.returncode == 0 and r.stdout.strip() else []
+    except json.JSONDecodeError:
+        return None
+    return next((m.get("iid") for m in below if isinstance(m, dict) and m.get("iid") != mr.get("iid")), None)
 
 
 def merge(ctx, iid):
@@ -334,6 +352,11 @@ def merge(ctx, iid):
     `merge` or `auto`, or `(how, GitLab's reason)` where it refused."""
     mr = mr_object(ctx, iid)
     is_auto = (pipeline_of(mr) or {}).get("status") == "running"
+    below = stacked_on(ctx, mr)
+    if below:
+        # The box offers no merge here; a press from a box drawn before the stack was seen
+        # must not fold this MR into the one below either.
+        return ("auto" if is_auto else "merge"), f"Stacked on !{below}: merge that first"
     body = {"sha": mr.get("sha"), "squash": bool(mr.get("squash")),
             "should_remove_source_branch": bool(mr.get("force_remove_source_branch"))}
     if is_auto:

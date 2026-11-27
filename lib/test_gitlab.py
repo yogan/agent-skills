@@ -273,6 +273,7 @@ class TestTheEndOfTheMr(unittest.TestCase):
 
     def setUp(self):
         G.mr_object = _real_mr_object     # other tests here leave a stand-in behind
+        G.forget()                        # each test's MR, not one an earlier test read
 
     def tearDown(self):
         G.run = _real_run
@@ -313,6 +314,34 @@ class TestTheEndOfTheMr(unittest.TestCase):
         self.assertEqual((how, why), ("merge", None))
         self.assertEqual(sent, [("PUT", "projects/g%2Fp/merge_requests/3/merge",
                                  {"sha": "abc", "squash": True, "should_remove_source_branch": True})])
+
+    def test_a_stacked_mr_is_on_the_open_mr_whose_branch_it_targets(self):
+        asked = []
+
+        def fake_run(cmd, input=None):
+            asked.append(cmd[2])
+            return fake_result(stdout='[{"iid": 3}, {"iid": 7}]')
+        G.run = fake_run
+        self.assertEqual(G.stacked_on({"enc": "g%2Fp"}, {"iid": 3, "target_branch": "feat/a b"}), 7)
+        self.assertEqual(asked, ["projects/g%2Fp/merge_requests?state=opened&source_branch=feat%2Fa%20b"])
+        G.run = lambda cmd, input=None: fake_result(stdout="[]")
+        self.assertIsNone(G.stacked_on({"enc": "g%2Fp"}, {"iid": 3, "target_branch": "main"}))
+        G.run = lambda cmd, input=None: fake_result(returncode=1)
+        self.assertIsNone(G.stacked_on({"enc": "g%2Fp"}, {"iid": 3, "target_branch": "main"}))
+
+    def test_a_stacked_mr_is_never_merged_into_the_branch_below(self):
+        sent = []
+
+        def fake_run(cmd, input=None):
+            if "-X" in cmd:
+                sent.append(cmd)
+                return fake_result(stdout="{}")
+            if "merge_requests?" in cmd[2]:
+                return fake_result(stdout='[{"iid": 7}]')
+            return fake_result(stdout='{"iid": 3, "sha": "abc", "target_branch": "feat/a"}')
+        G.run = fake_run
+        self.assertEqual(G.merge({"enc": "g%2Fp"}, 3), ("merge", "Stacked on !7: merge that first"))
+        self.assertEqual(sent, [])
 
     def test_a_running_pipeline_sets_auto_merge_instead(self):
         (how, _), sent = self.merged({"sha": "abc", "head_pipeline": {"status": "running"}})

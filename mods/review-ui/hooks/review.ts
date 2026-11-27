@@ -952,6 +952,10 @@ export const endOf = (review: ReviewState | null, settled: boolean): EndLine | u
     return { text: 'Pipeline failed', tone: 'needs', button: { key: 'analyze-ci', label: 'Analyze CI failure', press: ask(CI_PROMPT), isPrimary: true } }
   }
   if (!settled) return undefined
+  // Stacked on another MR: GitLab would merge this one into the branch below, auto-merge
+  // included, without waiting for the MR below. Nothing to press: once that one merged,
+  // GitLab retargets this one to the default branch and the merge is offered as usual.
+  if (mr.stacked_on) return { text: `Stacked on !${mr.stacked_on} · merge that first`, tone: 'info' }
   // Set to auto-merge: what was pressed is on, and what it waits for, with the running
   // pipeline's icon the title line carries. A wait, no warning: plain, not dim.
   if (mr.auto_merge) return { text: 'Auto-merge on · merges when the pipeline passes', tone: 'busy', icon: INBOX_ICON['pipeline-running'] }
@@ -985,6 +989,8 @@ export const boxLookOf = (review: ReviewState | null, end: EndLine | undefined, 
   if (end?.tone === 'needs') return 'failed'
   // review-mr: the end is offered only once every topic is settled here (`endOf`).
   if (review.skill === 'review-mr') return end ? 'approved' : 'plain'
+  // Stacked: the end is the MR below's to reach first, not near for this one.
+  if (mr.stacked_on) return 'plain'
   return waiting === 0 && (isApproved(mr) || review.topics.every(isSettledHere)) ? 'approved' : 'plain'
 }
 

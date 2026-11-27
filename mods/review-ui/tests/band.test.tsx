@@ -4624,6 +4624,16 @@ test('rework-mr: the end of the MR offers Merge only once it is approved and Git
   expect(endText('rework-mr', {}, false)).toBeUndefined()
 })
 
+test('rework-mr: a stacked MR offers no merge, which would go into the branch below, and says so', () => {
+  expect(endText('rework-mr', { stacked_on: 7 })).toEqual(['Stacked on !7 · merge that first', null])
+  expect(endText('rework-mr', { stacked_on: 7, pipeline: { status: 'running' } })).toEqual(['Stacked on !7 · merge that first', null])
+  expect(endText('rework-mr', { stacked_on: 7 }, false)).toBeUndefined()
+  const r = ended('rework-mr', { stacked_on: 7 })
+  expect(boxLookOf(r, endOf(r, true), 0)).toBe('plain')
+  // Once the MR below merged, GitLab retargets this one: no stack, the merge as usual.
+  expect(endText('rework-mr', { stacked_on: null })).toEqual(['', 'Merge'])
+})
+
 test('rework-mr: the merge pressed is followed to its end, and a failure offers its analysis', () => {
   const at = '2026-11-14T12:00:00Z'
   expect(endText('rework-mr', { merge: { how: 'merge', at } })).toEqual(['Merging…', null])
